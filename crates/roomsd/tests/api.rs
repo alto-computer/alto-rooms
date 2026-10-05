@@ -166,6 +166,41 @@ async fn files_content_types_and_forbidden_csp() {
     assert_eq!(r.headers()["content-security-policy"], "sandbox allow-scripts allow-popups");
 }
 
+/// Next SSE frame carrying data, as (id, parsed data).
+async fn next_event(body: &mut Body) -> (String, serde_json::Value) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match body.frame().await {
+                None => panic!("event stream ended"),
+                Some(Ok(f)) => {
+                    let Ok(d) = f.into_data() else { continue };
+                    let s = String::from_utf8_lossy(&d).to_string();
+                    let Some(data) = s.lines().find_map(|l| l.strip_prefix("data:")) else { continue };
+                    let id = s.lines().find_map(|l| l.strip_prefix("id:")).expect("id line").trim().to_string();
+                    return (id, serde_json::from_str(data.trim()).unwrap());
+                }
+                Some(Err(e)) => panic!("stream error: {e}"),
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn events_stream_starts_with_resync_at_current_seq() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    st.core.create_room("before").unwrap();
+    let seq = st.core.current_seq();
+    let r = app.oneshot(get("/v1/events", API_HOST)).await.unwrap();
+    let mut body = r.into_body();
+    let (id, v) = next_event(&mut body).await;
+    assert_eq!(v["type"], "resync");
+    assert!(v["roomId"].is_null());
+    assert_eq!(v["seq"].as_u64().unwrap(), seq);
+    assert_eq!(id, seq.to_string());
+}
+
 #[tokio::test]
 async fn events_stream_delivers_room_added_with_seq() {
     let (_d, app, st) = app(false, "127.0.0.1:5000");
@@ -173,25 +208,10 @@ async fn events_stream_delivers_room_added_with_seq() {
     assert_eq!(r.headers()["content-type"], "text/event-stream");
     let mut body = r.into_body();
     st.core.create_room("x").unwrap();
-    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            match body.frame().await {
-                None => panic!("event stream ended"),
-                Some(Ok(f)) => {
-                    if let Ok(d) = f.into_data() {
-                        let s = String::from_utf8_lossy(&d).to_string();
-                        if s.contains("room.added") { return s; }
-                    }
-                }
-                Some(Err(e)) => panic!("stream error: {e}"),
-            }
-        }
-    })
-    .await
-    .unwrap();
-    let id = frame.lines().find_map(|l| l.strip_prefix("id:")).expect("id line").trim().to_string();
-    let data = frame.lines().find_map(|l| l.strip_prefix("data:")).expect("data line").trim();
-    let v: serde_json::Value = serde_json::from_str(data).unwrap();
+    let (_, first) = next_event(&mut body).await;
+    assert_eq!(first["type"], "resync", "every connection starts with resync");
+    let (id, v) = next_event(&mut body).await;
     assert_eq!(v["type"], "room.added");
     assert_eq!(v["seq"].as_u64().unwrap().to_string(), id);
+    assert!(v["seq"].as_u64().unwrap() > first["seq"].as_u64().unwrap());
 }

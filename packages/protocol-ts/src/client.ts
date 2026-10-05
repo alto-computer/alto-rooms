@@ -56,8 +56,10 @@ export function createRoomsClient(baseUrl: string, token?: string) {
       write<Note>("PUT", `/v1/journal/${date}/notes/${encodeURIComponent(name)}`, body, "text/markdown"),
     fileUrl: (info: Info, a: Artifact) =>
       `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}`,
-    subscribe: (onEvent: (e: RoomsEvent) => void) => {
+    /** Every (re)connection first delivers `resync {roomId: null}`; `onOpen` fires on each (re)open. */
+    subscribe: (onEvent: (e: RoomsEvent) => void, onOpen?: () => void) => {
       const es = new EventSource(baseUrl + "/v1/events");
+      if (onOpen) es.onopen = () => onOpen();
       es.onmessage = (m) => onEvent(JSON.parse(m.data) as RoomsEvent);
       return () => es.close();
     },
