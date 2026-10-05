@@ -152,7 +152,7 @@
   <text x="125" y="86" text-anchor="middle" font-size="13" font-weight="600">Room</text>
   <text x="125" y="104" text-anchor="middle" font-size="11" fill="#78716c">owned · linked</text>
   <rect x="62" y="122" width="126" height="34" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="125" y="144" text-anchor="middle" font-size="12">Artifact (.html)</text>
-  <text x="125" y="190" text-anchor="middle" font-size="11" fill="#78716c">한 파일 = 한 방</text>
+  <text x="125" y="184" text-anchor="middle" font-size="11" fill="#78716c">방에는 여러 아티팩트</text><text x="125" y="200" text-anchor="middle" font-size="11" fill="#78716c">각 파일은 한 방에만 (폴더라서)</text>
   <rect x="230" y="64" width="170" height="150" rx="8" fill="white" stroke="#ca8a04" stroke-width="1.5"/>
   <text x="315" y="86" text-anchor="middle" font-size="13" font-weight="600">Journal day</text>
   <text x="315" y="104" text-anchor="middle" font-size="11" fill="#78716c">journal/YYYY-MM-DD</text>
@@ -162,8 +162,8 @@
   <text x="200" y="250" font-size="11" fill="#78716c">그날 생긴 것은 날짜로 조회 (복사 없음)</text>
   <rect x="40" y="290" width="360" height="70" rx="8" fill="white" stroke="#78716c" stroke-width="1.2" stroke-dasharray="4 3"/>
   <text x="56" y="312" font-size="12" font-weight="600">.rooms/ (Rooms 자체 상태)</text>
-  <text x="56" y="332" font-size="11" fill="#78716c">state.json: 방 id·표시 이름·연결 경로·inode</text>
-  <text x="56" y="349" font-size="11" fill="#78716c">index.json: 첫 발견 시각 · token</text>
+  <text x="56" y="332" font-size="11" fill="#78716c">state.json: 방 id·표시 이름·연결 경로·inode (사람이 읽음)</text>
+  <text x="56" y="349" font-size="11" fill="#78716c">index.sqlite: 파생 색인 + 첫 발견 시각 · token</text>
   <rect x="470" y="40" width="150" height="50" rx="8" fill="white" stroke="#1c1917" stroke-width="1.5"/>
   <text x="545" y="62" text-anchor="middle" font-size="13" font-weight="600">Producer</text>
   <text x="545" y="80" text-anchor="middle" font-size="11" fill="#78716c">Claude Code · Codex · …</text>
@@ -236,9 +236,9 @@
 <ol>
   <li><strong>폴더 규칙(들어옴):</strong> 방 폴더(하위 포함)의 <code>.html</code>/<code>.htm</code> = 아티팩트. 그 외 확장자는 무시. 예외: Journal day 폴더의 <code>.md</code> = 노트.</li>
   <li><strong>무시 규칙:</strong> 숨김 파일·폴더(<code>.</code>로 시작), <code>node_modules</code>, <code>dist</code>, <code>build</code>, <code>.next</code>, <code>coverage</code>. linked 방은 폴더 안 <code>.gitignore</code>를 따른다. 사용자가 직접 둔 <code>.roomsignore</code>(gitignore 문법)를 따른다. Rooms는 <code>.roomsignore</code>를 스스로 쓰지 않는다.</li>
-  <li><strong>메타데이터는 선택:</strong> 제목 = <code>&lt;meta name="rooms:title"&gt;</code> → <code>&lt;title&gt;</code> → 파일 이름. 시각 = <code>rooms:created</code> → <strong>처음 본 시각 기록</strong>(<code>.rooms/index.json</code>, 첫 발견 때 파일 생성 시각 → 수정 시각으로 정하고 이후 고정). 만든 곳 = <code>rooms:agent</code>, <code>rooms:session</code>, <code>rooms:cwd</code>, <code>rooms:machine</code> (없으면 비움, v2 묻기용).</li>
+  <li><strong>메타데이터는 선택:</strong> 제목 = <code>&lt;meta name="rooms:title"&gt;</code> → <code>&lt;title&gt;</code> → 파일 이름. 시각 = <code>rooms:created</code> → <strong>처음 본 시각 기록</strong>(<code>index.sqlite</code>, 첫 발견 때 파일 생성 시각 → 수정 시각으로 정하고 이후 고정). 만든 곳 = <code>rooms:agent</code>, <code>rooms:session</code>, <code>rooms:cwd</code>, <code>rooms:machine</code> (없으면 비움, v2 묻기용).</li>
   <li><strong>owned vs linked:</strong> owned = Home 하위 실제 폴더, 이름 바꾸기 = 폴더 이름 변경. linked = 경로 참조, 이름 바꾸기 = 표시 이름만. Rooms는 linked 폴더 안에 어떤 파일도 쓰지 않는다.</li>
-  <li><strong>Rooms 상태 위치:</strong> 방 id·표시 이름(owned 포함)·연결 경로·owned 폴더 inode·방 순서는 <code>~/rooms/.rooms/state.json</code>, 아티팩트 첫 발견 시각은 <code>~/rooms/.rooms/index.json</code>. 보는 사람 상태(지난 방문, 사이드바 접힘, 탭)는 <strong>클라이언트</strong>가 가진다 — 코어는 보는 사람을 모른다.</li>
+  <li><strong>Rooms 상태 위치:</strong> 방 id·표시 이름(owned 포함)·연결 경로·owned 폴더 inode·방 순서는 사람이 읽을 수 있는 <code>~/rooms/.rooms/state.json</code>. 아티팩트 색인(경로·제목·시각·메타)과 첫 발견 시각은 <code>~/rooms/.rooms/index.sqlite</code> — <strong>파일이 진실, SQLite는 파일에서 다시 만들 수 있는 파생 색인</strong>(Codex의 sessions/*.jsonl + state.sqlite와 같은 패턴). 어긋나면 언제나 파일이 이긴다. 보는 사람 상태(지난 방문, 사이드바 접힘, 탭)는 <strong>클라이언트</strong>가 가진다 — 코어는 보는 사람을 모른다.</li>
   <li><strong>Journal:</strong> <code>journal</code>은 예약된 방 이름. Journal day = <code>journal/YYYY-MM-DD/</code> 폴더(없으면 노트 저장 시 생성) + 그날 생긴 다른 방 아티팩트 조회(복사 안 함).</li>
   <li><strong>쓰는 주체:</strong> 아티팩트 = <code>agent</code>, Journal 노트 = <code>me</code>. 데이터 모델에 <code>author</code> 칸을 두어 나중에 방에도 내 노트를 넣을 수 있게 열어 둔다.</li>
   <li><strong>방 삭제는 없다.</strong> 연결 해제도 v1에 없음 (필요해지면 추가).</li>
@@ -253,7 +253,7 @@
     <tr><td>관계형</td><td><code>room.kind == "linked"</code>이면 <code>room.path</code>는 Home 밖일 수 있고, Rooms는 그 경로에 쓰기 연산을 하지 않는다</td><td>팀 폴더를 더럽히지 않음</td></tr>
     <tr><td>관계형</td><td><code>author == "me"</code>인 항목은 Journal day 폴더의 <code>.md</code>뿐 (v1)</td><td>나를 위한 공간은 Journal에 모은다</td></tr>
     <tr><td>관계형</td><td>owned 방: 폴더 이름 = <code>slug(name)</code> (NFC 정규화, 공백→<code>-</code>), 표시 이름 원문은 state.json. 충돌 판정은 slug를 NFC·대소문자 무시로 비교 ("연구 도구" == "연구-도구"). linked 방: 표시 이름만 state.json</td><td>재시작 후에도 원문 이름 유지, APFS 대소문자 무시와 일치 (Q8)</td></tr>
-    <tr><td>시간</td><td>아티팩트의 Journal day = <code>createdAt</code>의 로컬 날짜. <code>createdAt</code>은 첫 발견 시 <code>.rooms/index.json</code>에 저장되어 재시작·임시파일 rename·동기화 후에도 바뀌지 않음 (<code>rooms:created</code> 메타가 있으면 그것이 우선)</td><td>"그날 생긴 것"의 정의 고정 (Q2)</td></tr>
+    <tr><td>시간</td><td>아티팩트의 Journal day = <code>createdAt</code>의 로컬 날짜. <code>createdAt</code>은 첫 발견 시 <code>.rooms/index.sqlite</code>에 저장되어 재시작·임시파일 rename·동기화 후에도 바뀌지 않음 (<code>rooms:created</code> 메타가 있으면 그것이 우선)</td><td>"그날 생긴 것"의 정의 고정 (Q2)</td></tr>
     <tr><td>시간</td><td>파일 이벤트 → 프로토콜 이벤트 지연 ≤ 2초 (디바운스 300ms)</td><td>AC-1</td></tr>
     <tr><td>시간</td><td>Room <code>id</code>는 생성 후 불변. owned 방은 폴더 inode(dev+ino)로 추적하므로 Finder에서 이름을 바꿔도 같은 id (표시 이름은 새 폴더 이름으로 갱신). inode를 못 찾으면 <code>room.removed</code></td><td>열린 탭·클라이언트 상태가 깨지지 않게 (Q3)</td></tr>
   </tbody>
@@ -306,7 +306,7 @@
 </table>
 
 <h3>Recovery / Retry Policy</h3>
-<p>파일 시스템이 진실이므로 코어 인덱스는 언제든 재스캔으로 복구된다. 시작 시 전체 스캔, 실행 중 감시, 오버플로 시 방 단위 재스캔. 노트 저장 실패는 클라이언트가 지수 백오프(1s·2s·4s, 최대 3회) 후 사용자에게 알림. SSE 연결이 끊기면 클라이언트는 재연결 후 <code>GET</code>으로 스냅샷을 다시 받는다(이벤트 재생 없음).</p>
+<p>파일 시스템이 진실이므로 색인은 언제든 재스캔으로 복구된다. 시작 시 <strong>백필</strong>(색인과 파일을 맞춤: 새 파일 추가, 사라진 파일 제거, 진행 상태는 워터마크로 기록), 실행 중 감시, 오버플로 시 방 단위 재스캔. <code>index.sqlite</code>가 깨지거나 지워지면 새로 만들고 전체 백필 — 잃는 것은 첫 발견 시각뿐이며 파일 시각으로 대체된다. 노트 저장 실패는 클라이언트가 지수 백오프(1s·2s·4s, 최대 3회) 후 사용자에게 알림. SSE 연결이 끊기면 클라이언트는 재연결 후 <code>GET</code>으로 스냅샷을 다시 받는다(이벤트 재생 없음).</p>
 
 <!-- ============================================== -->
 <h2 id="s4"><span class="num">4.</span> Architecture (macro) <span class="badge badge-warn">🟡</span></h2>
@@ -316,11 +316,12 @@
 <table>
   <thead><tr><th>Package</th><th>Responsibility</th><th>Depends on</th></tr></thead>
   <tbody>
-    <tr><td><code>packages/protocol</code></td><td>Rooms 프로토콜 타입·스키마(zod)·버전. 코어와 모든 클라이언트가 공유하는 유일한 코드</td><td>없음</td></tr>
-    <tr><td><code>packages/core</code></td><td>폴더 규칙 구현: 스캔·감시·무시 규칙·메타 추출·방/Journal/노트 연산. 라이브러리 facade <code>RoomsCore</code></td><td>protocol</td></tr>
-    <tr><td><code>apps/roomsd</code></td><td>Bun HTTP 서버. <code>RoomsCore</code>를 Rooms 프로토콜(HTTP+SSE)로 노출, 아티팩트 파일 제공, 원격 읽기 전용 가드</td><td>core, protocol</td></tr>
-    <tr><td><code>apps/desktop</code></td><td>Tauri + React + shadcn/ui 참고 클라이언트. roomsd를 사이드카로 띄우고 프로토콜만 사용</td><td>protocol (런타임: roomsd)</td></tr>
-    <tr><td><code>apps/web</code></td><td>desktop과 같은 React UI를 원격 읽기 전용으로 빌드해 roomsd가 제공</td><td>protocol</td></tr>
+    <tr><td><code>crates/rooms-protocol</code></td><td>Rooms 프로토콜 타입의 단일 정의(Rust). <code>ts-rs</code>로 TS 타입, <code>schemars</code>로 JSON Schema 생성. 코어와 모든 클라이언트가 공유하는 유일한 정의</td><td>serde</td></tr>
+    <tr><td><code>crates/rooms-core</code></td><td>폴더 규칙 구현: 순회·감시·무시 규칙·메타 추출·SQLite 색인·방/Journal/노트 연산. facade <code>RoomsCore</code>. HTTP·UI·AI를 모름</td><td>rooms-protocol</td></tr>
+    <tr><td><code>crates/roomsd</code></td><td>axum HTTP+SSE 서버(단일 바이너리). <code>RoomsCore</code>를 프로토콜로 노출, 아티팩트 파일을 별도 origin으로 제공, 원격 읽기 전용 리스너</td><td>rooms-core, rooms-protocol</td></tr>
+    <tr><td><code>packages/protocol-ts</code></td><td>생성된 TS 타입 + 얇은 <code>createRoomsClient</code>(fetch/EventSource). 손으로 타입을 쓰지 않음</td><td>(생성물)</td></tr>
+    <tr><td><code>apps/desktop</code></td><td>Tauri v2 + React + shadcn/ui 참고 클라이언트. roomsd를 사이드카로 띄우고 프로토콜만 사용</td><td>protocol-ts (런타임: roomsd)</td></tr>
+    <tr><td><code>apps/web</code></td><td>desktop과 같은 React UI의 원격 읽기 전용 빌드</td><td>protocol-ts</td></tr>
   </tbody>
 </table>
 
@@ -329,7 +330,7 @@
   <defs><marker id="a2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c1917"/></marker></defs>
   <rect x="20" y="40" width="150" height="54" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="95" y="63" text-anchor="middle" font-size="13">Producers</text><text x="95" y="81" text-anchor="middle" font-size="11" fill="#78716c">Claude Code · Codex · …</text>
   <rect x="20" y="190" width="150" height="54" rx="6" fill="#fef3c7" stroke="#ca8a04" stroke-width="1.5"/><text x="95" y="213" text-anchor="middle" font-size="13">Folders</text><text x="95" y="231" text-anchor="middle" font-size="11" fill="#78716c">~/rooms · linked</text>
-  <rect x="250" y="190" width="150" height="54" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="325" y="213" text-anchor="middle" font-size="13">core</text><text x="325" y="231" text-anchor="middle" font-size="11" fill="#78716c">RoomsCore</text>
+  <rect x="250" y="190" width="150" height="54" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="325" y="213" text-anchor="middle" font-size="13">core</text><text x="325" y="231" text-anchor="middle" font-size="11" fill="#78716c">RoomsCore (Rust)</text>
   <rect x="440" y="190" width="130" height="54" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="505" y="213" text-anchor="middle" font-size="13">roomsd</text><text x="505" y="231" text-anchor="middle" font-size="11" fill="#78716c">/v1 HTTP + SSE</text>
   <rect x="610" y="120" width="130" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="675" y="147" text-anchor="middle" font-size="13">desktop (Tauri)</text>
   <rect x="610" y="190" width="130" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="675" y="217" text-anchor="middle" font-size="13">web (원격)</text>
@@ -351,19 +352,19 @@
   <thead><tr><th>영역</th><th>선택</th><th>왜</th><th>대안과 기각 이유</th></tr></thead>
   <tbody>
     <tr><td>아키텍처 스타일</td><td>함수형 코어 + 명령형 껍데기 (포트·어댑터)</td><td>경로 분류·무시 규칙·메타 추출·날짜 분류·id 계산은 순수 함수 → 파일 없이 단위 테스트. 감시기·저장 방식 교체가 규칙 코드에 영향 없음</td><td>레이어드/MVC: 모델이 파일 시스템 자체라 중간 층이 전달만 함. 이벤트 소싱: 파일이 이미 진실이라 이중 진실</td></tr>
-    <tr><td>저장</td><td>파일 시스템이 진실 + 메모리 인덱스 + <code>.rooms/state.json</code>, <code>index.json</code></td><td>진실이 하나. 인덱스는 재스캔으로 복구. 사람이 열어볼 수 있고 마이그레이션 없음. 방 수십·아티팩트 수천 규모에 충분</td><td>SQLite: 파일과 DB 이중 진실 + 마이그레이션. KV(LevelDB): 이점 없음. 서버 DB: 과함</td></tr>
-    <tr><td>SQLite 도입 시점</td><td><code>bun:sqlite</code>를 <strong>버려도 되는 캐시</strong>로</td><td>본문 검색(FTS5)이 필요하거나 아티팩트가 약 1만 개를 넘어 시작 스캔이 느려질 때. <code>RoomsCore</code> 뒤라 프로토콜·UI 무영향</td><td>—</td></tr>
-    <tr><td>코어 런타임</td><td>Bun + TypeScript, <code>bun build --compile</code> 단일 바이너리</td><td>HTTP·테스트·SQLite 내장, Tauri 사이드카로 배포 쉬움, protocol 타입을 앱과 공유, 기존 도구(tabkeeper)와 같은 스택</td><td>Node: 배포 번거로움. Rust(Tauri 내부): 코어가 앱에 묶여 UI 교체 원칙 위반. Go: 타입 이중 관리</td></tr>
-    <tr><td>파일 감시</td><td><code>@parcel/watcher</code></td><td>FSEvents 네이티브, 재귀, 이벤트 묶음 → 큰 팀 폴더에도 가벼움</td><td>chokidar: 큰 트리에서 무겁고 폴링 시 CPU. <code>fs.watch</code>: 플랫폼별 이벤트 차이</td></tr>
-    <tr><td>HTML 메타</td><td><code>htmlparser2</code>로 앞 64KB 스트리밍</td><td>가볍고 깨진 HTML에도 강함</td><td>jsdom/linkedom: 무거움. 정규식: 깨지기 쉬움</td></tr>
-    <tr><td>무시 규칙</td><td><code>ignore</code> 패키지</td><td><code>.gitignore</code> 문법을 그대로 → <code>.roomsignore</code>도 같은 문법</td><td>직접 구현: 엣지 케이스 많음</td></tr>
-    <tr><td>프로토콜</td><td>HTTP + JSON + SSE, zod 스키마 → JSON Schema/OpenAPI 생성</td><td>curl로 바로 사용, 브라우저 EventSource로 원격 웹이 그대로 붙음, 여러 클라이언트 동시 접속, 제3자(Raycast·스크립트) 진입 장벽 낮음</td><td>JSON-RPC over stdio: 클라이언트 하나·로컬 전용에 적합. WebSocket: 양방향 불필요, 재연결 복잡. gRPC: 브라우저·제3자 장벽</td></tr>
+    <tr><td>저장</td><td><strong>파일이 진실(SSOT)</strong> + <code>rusqlite</code> 색인 <code>.rooms/index.sqlite</code> + 사람이 고칠 수 있는 <code>.rooms/state.json</code></td><td>Codex와 같은 패턴(파일 = 진실, SQLite = 파일 경로를 가리키는 검색·정렬 색인, 백필로 재구축). 파일에서 다시 알 수 없는 "첫 발견 시각"을 원자적으로 보관. 큰 팀 폴더도 시작 시 변경분만 맞춰 빠르게 뜸. 사이드바 "찾기"를 바로 지원하고 본문 검색(FTS5)도 같은 DB에 추가 가능</td><td>메모리 색인 + JSON: 매 시작 전체 스캔, 검색 확장 어려움. SQLite를 진실로: 에이전트가 파일만 쓰는 규칙과 충돌. 서버 DB: 과함</td></tr>
+    <tr><td>색인 규칙</td><td>파일과 다르면 파일이 이김 · DB는 지워도 됨</td><td>지우면 전체 백필로 복구(첫 발견 시각만 파일 시각으로 대체). 스키마 변경은 마이그레이션 대신 재생성으로 처리 가능</td><td>—</td></tr>
+    <tr><td>코어 런타임</td><td><strong>Rust</strong> (tokio), <strong>별도 프로세스</strong> 단일 바이너리 <code>roomsd</code></td><td>Codex CLI와 같은 구조: 네이티브 코어 + 프로토콜로 UI 분리. 상주 데몬에 맞는 작은 메모리·바이너리, Tauri와 언어 통일. UI 교체 가능성은 언어가 아니라 "별도 프로세스 + 프로토콜"에서 나온다</td><td>Bun+TS: 개발은 빠르나 상주 메모리·바이너리 크기 큼. Rust를 Tauri 프로세스 <em>안</em>에 넣기: 코어가 앱에 묶여 UI 교체 원칙 위반. Go: Tauri와 언어 분리 + 타입 생성 필요</td></tr>
+    <tr><td>파일 감시</td><td><code>notify</code> + <code>notify-debouncer-full</code></td><td>FSEvents 네이티브, 재귀, 이벤트 묶음·이름 변경 짝 맞춤 → 큰 팀 폴더에도 가벼움</td><td>폴링: CPU. OS API 직접: 플랫폼별 차이를 직접 처리해야 함</td></tr>
+    <tr><td>HTML 메타</td><td><code>lol_html</code> 스트리밍으로 앞 64KB의 <code>&lt;head&gt;</code>만</td><td>가볍고 깨진 HTML에도 강함, 필요한 태그만 보고 멈춤</td><td>html5ever 전체 DOM: 무거움. 정규식: 깨지기 쉬움</td></tr>
+    <tr><td>순회 + 무시 규칙</td><td><code>ignore</code> 크레이트 (ripgrep)</td><td><code>.gitignore</code> 의미 그대로 + 커스텀 무시 파일(<code>.roomsignore</code>) 지원 + 병렬 순회</td><td>직접 구현: 엣지 케이스 많음</td></tr>
+    <tr><td>프로토콜</td><td>HTTP + JSON + SSE (axum). Rust 타입 → <code>ts-rs</code>(TS) · <code>schemars</code>(JSON Schema)</td><td>curl로 바로 사용, 브라우저 EventSource로 원격 웹이 그대로 붙음, 여러 클라이언트 동시 접속, 제3자(Raycast·스크립트) 진입 장벽 낮음</td><td>JSON-RPC over stdio: 클라이언트 하나·로컬 전용에 적합. WebSocket: 양방향 불필요, 재연결 복잡. gRPC: 브라우저·제3자 장벽</td></tr>
     <tr><td>데스크탑</td><td>Tauri v2 + React + Vite + shadcn/ui + Tailwind v4</td><td>가벼움(시스템 WebKit). Alto 토큰이 shadcn/Tailwind v4용으로 준비됨. 같은 React 코드로 원격 웹 빌드</td><td>Electron: 무거움. SwiftUI: 웹과 코드 공유 불가, 아티팩트는 어차피 웹뷰</td></tr>
     <tr><td>클라이언트 상태</td><td>TanStack Query + SSE 이벤트로 id 기준 덮어쓰기</td><td>§5 S3의 seq 규칙을 그대로 구현</td><td>Redux 등 전역 스토어: 서버 상태 캐시에 과함</td></tr>
     <tr><td>카드 미리보기</td><td>보이는 카드만 sandbox iframe 축소 렌더 (스크립트 차단, 클릭 통과)</td><td>추가 인프라 없음, 항상 최신</td><td>썸네일 이미지 사전 생성: 헤드리스 브라우저가 필요해 무거움 → 성능 문제가 생기면 캐시로 추가</td></tr>
     <tr><td>원격 보기</td><td>Tailscale IP에 <strong>GET만 등록한 별도 리스너</strong>(포트 4319)</td><td>쓰기 경로가 구조적으로 없음 → 검사보다 안전</td><td><code>tailscale serve</code> 프록시: 요청이 loopback으로 보여 쓰기 검사가 뚫림</td></tr>
-    <tr><td>저장소 구성</td><td>Bun workspaces 모노레포 + dependency-cruiser</td><td>앱이 <code>packages/core</code>를 import하면 린트 에러 → UI 교체 가능성을 규칙으로 강제</td><td>여러 저장소: protocol 버전 맞추기 번거로움</td></tr>
-    <tr><td>테스트</td><td><code>bun test</code> + Playwright</td><td>코어 단위·통합·프로토콜 계약은 Bun, UI는 웹 빌드 기준 Playwright</td><td>—</td></tr>
+    <tr><td>저장소 구성</td><td>모노레포: Cargo workspace(<code>crates/</code>) + Bun workspaces(<code>packages/</code>, <code>apps/</code>)</td><td>앱은 생성된 <code>protocol-ts</code>만 의존 — 코어에 닿는 길이 프로토콜뿐이라 UI 교체 가능성이 구조로 강제됨. 생성 타입이 커밋된 것과 다르면 CI 실패</td><td>여러 저장소: protocol 버전 맞추기 번거로움</td></tr>
+    <tr><td>테스트</td><td><code>cargo test</code> + insta + Vitest + Playwright</td><td>코어 규칙·통합·프로토콜 스냅샷은 Rust, 클라이언트 로직은 Vitest, UI는 웹 빌드 기준 Playwright</td><td>—</td></tr>
   </tbody>
 </table>
 
@@ -371,9 +372,9 @@
 <table>
   <thead><tr><th>덩어리</th><th>단일 facade</th><th>호출자가 몰라도 되는 내부</th></tr></thead>
   <tbody>
-    <tr><td>폴더 해석</td><td><code>RoomsCore</code> (<code>openRooms(home)</code>)</td><td>chokidar/FSEvents 감시, 무시 규칙 합성, HTML 메타 추출, id 생성, 재스캔</td></tr>
-    <tr><td>프로토콜</td><td>roomsd <code>/v1</code></td><td>Bun 서버, SSE 팬아웃, 원격 가드, 정적 파일 제공</td></tr>
-    <tr><td>클라이언트</td><td><code>RoomsClient</code> (packages/protocol의 얇은 fetch 래퍼)</td><td>재연결, 스냅샷 재동기화</td></tr>
+    <tr><td>폴더 해석</td><td><code>RoomsCore::open(home)</code></td><td>notify 감시, ignore 순회, lol_html 메타 추출, SQLite 색인·백필, id 생성</td></tr>
+    <tr><td>프로토콜</td><td>roomsd <code>/v1</code></td><td>axum 서버, SSE 팬아웃, 원격 리스너, 아티팩트 별도 origin 제공</td></tr>
+    <tr><td>클라이언트</td><td><code>createRoomsClient</code> (packages/protocol-ts의 얇은 래퍼)</td><td>재연결, 스냅샷 재동기화</td></tr>
   </tbody>
 </table>
 
@@ -381,10 +382,10 @@
 <table>
   <thead><tr><th>모듈</th><th>응집도</th><th>결합도</th><th>근거</th></tr></thead>
   <tbody>
-    <tr><td>protocol</td><td>high</td><td>low</td><td>타입·스키마만. 런타임 의존 없음</td></tr>
-    <tr><td>core</td><td>high</td><td>low</td><td>파일 시스템만 안다. HTTP·UI·AI를 모른다</td></tr>
+    <tr><td>rooms-protocol</td><td>high</td><td>low</td><td>타입 정의만. serde 외 의존 없음</td></tr>
+    <tr><td>rooms-core</td><td>high</td><td>low</td><td>파일 시스템과 자기 색인만 안다. HTTP·UI·AI를 모른다</td></tr>
     <tr><td>roomsd</td><td>high</td><td>low</td><td>core를 프로토콜로 번역만 한다. 비즈니스 규칙 없음</td></tr>
-    <tr><td>desktop</td><td>high</td><td>low</td><td>프로토콜만 쓴다. core를 import하지 않는다(린트로 강제)</td></tr>
+    <tr><td>desktop</td><td>high</td><td>low</td><td>생성된 프로토콜 타입만 쓴다. 코어는 다른 언어·다른 프로세스라 직접 닿을 수 없다</td></tr>
   </tbody>
 </table>
 
@@ -401,7 +402,7 @@
 
 <div class="review-box">
   <h4>리뷰 시 확인할 점</h4>
-  desktop이 core를 직접 import하는 순간 "UI 교체 가능"이 깨진다 — 의존이 protocol 쪽으로만 흐르는가? core가 HTTP·AI·UI 어휘를 하나도 모르는가? 허리(S3)가 순수 값 타입(JSON)만 주고받는가?
+  코어가 별도 프로세스(Rust)라 앱은 프로토콜로만 닿는다 — 이 구조가 "UI 교체 가능"을 보장하는가? core가 HTTP·AI·UI 어휘를 하나도 모르는가? 허리(S3)가 순수 값 타입(JSON)만 주고받는가?
 </div>
 
 <!-- ============================================== -->
@@ -453,31 +454,31 @@ optional &lt;head&gt; meta (모두 생략 가능):
   <p class="seam-title">S2: Folder → RoomsCore (해석)</p>
   <p class="seam-sub">파일 시스템을 도메인 값(Room/Artifact/JournalDay)과 변경 이벤트로 번역.</p>
   <h5>Call-site (roomsd 안)</h5>
-  <pre><code>const core = await openRooms({ home: "~/rooms" });
-const rooms = core.listRooms();                 // Room[]
-const items = core.listArtifacts(room.id);      // Artifact[]
-const day   = core.getJournalDay("2026-10-05"); // JournalDay
-const off   = core.onChange((e) =&gt; sse.broadcast(e)); // RoomsEvent</code></pre>
+  <pre><code>let core  = RoomsCore::open(&amp;home)?;              // 백필 후 감시 시작
+let rooms = core.list_rooms();                     // Vec&lt;Room&gt;
+let items = core.list_artifacts(&amp;room.id)?;        // Vec&lt;Artifact&gt;
+let day   = core.journal_day(date);                // JournalDay
+let mut rx = core.subscribe();                     // broadcast::Receiver&lt;RoomsEvent&gt;
+while let Ok(e) = rx.recv().await { sse.send(e) }</code></pre>
   <h5>Frozen signature</h5>
-  <pre><code>export function openRooms(opts: { home: string }): Promise&lt;RoomsCore&gt;;
-
-export interface RoomsCore {
-  listRooms(): Room[];
-  listArtifacts(roomId: RoomId): Artifact[];          // createdAt 오름차순
-  getJournalDay(date: IsoDate): JournalDay;
-  createRoom(name: string): Promise&lt;Room&gt;;            // owned
-  linkFolder(path: string, name?: string): Promise&lt;Room&gt;;
-  renameRoom(roomId: RoomId, name: string): Promise&lt;Room&gt;;
-  saveNote(date: IsoDate, name: NoteName, body: string): Promise&lt;Note&gt;;
-  resolveFile(roomId: RoomId, relPath: string): string; // 절대경로, 방 밖이면 throw
-  onChange(listener: (e: RoomsEvent) =&gt; void): () =&gt; void;
-  close(): Promise&lt;void&gt;;
-}</code></pre>
+  <pre><code>impl RoomsCore {
+    pub fn open(home: &amp;Path) -&gt; Result&lt;Self, CoreError&gt;;
+    pub fn list_rooms(&amp;self) -&gt; Vec&lt;Room&gt;;
+    pub fn list_artifacts(&amp;self, room: &amp;RoomId) -&gt; Result&lt;Vec&lt;Artifact&gt;, CoreError&gt;; // created_at 오름차순
+    pub fn journal_day(&amp;self, date: IsoDate) -&gt; JournalDay;
+    pub fn create_room(&amp;self, name: &amp;str) -&gt; Result&lt;Room, CoreError&gt;;                 // owned
+    pub fn link_folder(&amp;self, path: &amp;Path, name: Option&lt;&amp;str&gt;) -&gt; Result&lt;Room, CoreError&gt;;
+    pub fn rename_room(&amp;self, room: &amp;RoomId, name: &amp;str) -&gt; Result&lt;Room, CoreError&gt;;
+    pub fn save_note(&amp;self, date: IsoDate, name: &amp;NoteName, body: &amp;str) -&gt; Result&lt;Note, CoreError&gt;;
+    pub fn resolve_file(&amp;self, room: &amp;RoomId, rel: &amp;RelPath) -&gt; Result&lt;PathBuf, CoreError&gt;; // 방 밖이면 Err
+    pub fn subscribe(&amp;self) -&gt; broadcast::Receiver&lt;RoomsEvent&gt;;
+}
+// 모든 값 타입은 crates/rooms-protocol에 정의 (serde + ts-rs + schemars)</code></pre>
   <h5>경계 계약</h5>
   <table><tbody>
     <tr class="contract-row"><th>건너감</th><td>↓ Home 경로 / 이름·경로·노트 본문. ↑ 순수 값 타입(protocol 패키지의 타입)과 <code>RoomsEvent</code></td></tr>
-    <tr class="contract-row"><th>제어·상태 소유</th><td>core가 인덱스(메모리)와 <code>.rooms/state.json</code>을 소유. 파일 시스템이 진실, 인덱스는 언제든 재구성 가능</td></tr>
-    <tr class="contract-row"><th>상대편 보장</th><td>모든 반환값은 protocol 스키마를 통과한다. <code>resolveFile</code>은 방 밖 경로(<code>..</code>, 심볼릭 링크 탈출)를 절대 반환하지 않는다</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>core가 색인(<code>index.sqlite</code>)과 <code>.rooms/state.json</code>을 소유. 파일 시스템이 진실, 색인은 백필로 언제든 재구성 가능</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>모든 반환값은 protocol 스키마를 통과한다. <code>resolve_file</code>은 방 밖 경로(<code>..</code>, 심볼릭 링크 탈출)를 절대 반환하지 않는다</td></tr>
   </tbody></table>
 </div>
 
@@ -543,7 +544,7 @@ GET    /v1/events                       → text/event-stream of RoomsEvent (각
 <!-- ============================================== -->
 <h2 id="s6"><span class="num">6.</span> Contracts (node — Design by Contract) <span class="badge badge-warn">🟡</span></h2>
 
-<h3>Value types (packages/protocol)</h3>
+<h3>Value types (crates/rooms-protocol → 생성된 TS 형태로 표기)</h3>
 <pre><code>type RoomId = string;      // 생성 시 발급(nanoid 12), 이름 바꿔도 불변
 type ArtifactId = string;  // sha1(roomId + ":" + relPath) 앞 16자 — 이동하면 새 id
 type IsoDate = `${number}-${number}-${number}`; // 로컬 날짜
@@ -574,10 +575,10 @@ type RoomsEvent = { seq: number } & (
 <table>
   <thead><tr><th>이름</th><th>타입</th><th>Invariants / Validation</th></tr></thead>
   <tbody>
-    <tr><td><code>name</code> (방)</td><td><code>string</code></td><td>trim 후 1–80자, <code>/ \ :</code> 및 <code>..</code> 금지, 대소문자 무시 <code>journal</code> 금지. roomsd 진입에서 zod</td></tr>
+    <tr><td><code>name</code> (방)</td><td><code>string</code></td><td>trim 후 1–80자, <code>/ \ :</code> 및 <code>..</code> 금지, 대소문자 무시 <code>journal</code> 금지. roomsd 진입(serde 역직렬화 + 검증)</td></tr>
     <tr><td><code>path</code> (연결)</td><td><code>string</code></td><td>절대경로(realpath), 존재하는 디렉터리, 읽기 가능. Home·Home 상위·Home 하위 금지, 기존 linked 방의 상위·하위 금지(한 파일은 한 방에만). core에서 검증</td></tr>
     <tr><td><code>roomId</code></td><td><code>RoomId</code></td><td>존재해야 함. roomsd 라우트</td></tr>
-    <tr><td><code>date</code></td><td><code>IsoDate</code></td><td><code>YYYY-MM-DD</code>, 실재 날짜. zod</td></tr>
+    <tr><td><code>date</code></td><td><code>IsoDate</code></td><td><code>YYYY-MM-DD</code>, 실재 날짜. roomsd 진입에서 검증</td></tr>
     <tr><td><code>name</code> (노트)</td><td><code>NoteName</code></td><td>1–60자 + <code>.md</code> 자동 부착, 경로 문자 금지</td></tr>
     <tr><td><code>body</code></td><td><code>string</code></td><td>UTF-8, ≤ 1MB</td></tr>
     <tr><td><code>relPath</code></td><td><code>string</code></td><td>정규화 후 방 루트 안. 심볼릭 링크 해석 후에도 방 안</td></tr>
@@ -743,9 +744,9 @@ type RoomsEvent = { seq: number } & (
 <table>
   <thead><tr><th>Layer</th><th>What</th><th>Tool</th></tr></thead>
   <tbody>
-    <tr><td>Unit (core)</td><td>무시 규칙 합성, meta/title 추출 fallback, 슬러그·이름 검증, ArtifactId 안정성, Journal day 분류(로컬 날짜), path escape 방지</td><td><code>bun test</code></td></tr>
-    <tr><td>Integration (core)</td><td>임시 Home에 파일 쓰기/수정/삭제/이름변경 → 이벤트·인덱스 일치, linked 폴더 무쓰기 검증(쓰기 감시)</td><td><code>bun test</code> + tmp dirs</td></tr>
-    <tr><td>Contract (protocol)</td><td>모든 엔드포인트 응답이 zod 스키마 통과, 원격 쓰기 403, <code>/v1</code> 하위호환 스냅샷</td><td><code>bun test</code></td></tr>
+    <tr><td>Unit (core)</td><td>무시 규칙 합성, meta/title 추출 fallback, 슬러그·이름 검증, ArtifactId 안정성, Journal day 분류(로컬 날짜), path escape 방지</td><td><code>cargo test</code></td></tr>
+    <tr><td>Integration (core)</td><td>임시 Home에 파일 쓰기/수정/삭제/이름변경 → 이벤트·색인 일치, 색인 삭제 후 백필 복구, linked 폴더 무쓰기 검증</td><td><code>cargo test</code> + tempfile</td></tr>
+    <tr><td>Contract (protocol)</td><td>모든 엔드포인트 응답이 JSON Schema 통과, 원격 리스너에 쓰기 경로 없음, 생성 TS 타입 = 커밋본, <code>/v1</code> 하위호환 스냅샷</td><td><code>cargo test</code> + insta</td></tr>
     <tr><td>UI (desktop/web)</td><td>사이드바 만들기·이름 편집 자동 저장, 접기(⌘B), 확대 → 새 탭</td><td>Playwright (web 빌드 기준)</td></tr>
     <tr><td>E2E (manual)</td><td>§8 시나리오 + 제3자 클라이언트 흉내(curl로 /v1만 사용)</td><td>manual-test.html</td></tr>
   </tbody>
@@ -758,7 +759,7 @@ type RoomsEvent = { seq: number } & (
 <table>
   <thead><tr><th>#</th><th>말할 것</th><th>가리킬 곳</th></tr></thead>
   <tbody>
-    <tr><td>1. 진입점</td><td>"입구는 세 개뿐이다. 들어오는 입구는 <strong>폴더</strong>(HTML을 쓰면 끝), UI의 입구는 <strong>Rooms 프로토콜 <code>/v1</code></strong>, 코어 안의 입구는 <strong><code>openRooms()</code></strong>. 데스크탑 앱조차 <code>/v1</code>만 안다."</td><td>§4 Cluster Facades</td></tr>
+    <tr><td>1. 진입점</td><td>"입구는 세 개뿐이다. 들어오는 입구는 <strong>폴더</strong>(HTML을 쓰면 끝), UI의 입구는 <strong>Rooms 프로토콜 <code>/v1</code></strong>, 코어 안의 입구는 <strong><code>RoomsCore::open()</code></strong>. 데스크탑 앱조차 <code>/v1</code>만 안다."</td><td>§4 Cluster Facades</td></tr>
     <tr><td>2. 분리(seam)</td><td>"S1은 파일 한 장, S2는 값 타입과 이벤트, S3는 JSON과 SSE, S4(v2)는 맥락 꾸러미 — 결과는 다시 S1으로 돌아온다. 코어는 AI·UI를 모르고, UI는 코어 내부를 모른다."</td><td>§5</td></tr>
     <tr><td>3. 동작(흐름)</td><td>"파일이 써지면 무시 규칙 → 메타 → 인덱스 → SSE 순으로 2초 안에 카드가 된다. 방 만들기·이름 바꾸기만 쓰기이고, Journal은 날짜로 조회한다."</td><td>§7, §8</td></tr>
     <tr><td>4. 계약(보장)</td><td>"아티팩트 정렬은 createdAt 오름차순, linked 폴더엔 절대 쓰지 않음, 원격은 읽기 전용, /v1은 필드 추가만."</td><td>§6</td></tr>
@@ -777,7 +778,7 @@ type RoomsEvent = { seq: number } & (
 <h3>10.2 Senior Q&amp;A</h3>
 <p class="meta">senior engineer 페르소나 subagent 리뷰 결과를 아래에 덧붙인다.</p>
 <div class="qa"><p class="q">Q1. Journal 방의 id는 어디서 얻나</p><p class="a"><strong>A.</strong> Journal의 roomId는 고정 상수 <code>"journal"</code>이고 <code>GET /v1/info</code>의 <code>journalRoomId</code>로 알린다. <code>listRooms</code>에는 넣지 않는다(사이드바에서 Journal은 방 목록 위 별도 항목). <code>GET /v1/rooms/journal/artifacts</code>는 모든 날짜의 <code>journal/*/*.html</code>을 createdAt 오름차순으로 돌려주고, 날짜별 보기는 <code>/v1/journal/:date</code>를 쓴다. §5 S3·§6에 반영.</p></div>
-<div class="qa"><p class="q">Q2. day 불변은 재시작 후에도 지켜지나</p><p class="a"><strong>A.</strong> 지킨다. 아티팩트를 처음 발견할 때 정한 <code>createdAt</code>을 <code>~/rooms/.rooms/index.json</code>에 ArtifactId 기준으로 저장하고, 이후 재시작·임시파일 rename·동기화로 birthtime이 바뀌어도 저장값을 쓴다. 우선순위는 <code>rooms:created</code> 메타 → 저장된 첫 발견 시각 → (첫 발견 때만) birthtime → mtime. 이 파일은 Rooms 자체 상태라 linked 폴더를 더럽히지 않는다. §2에 반영, §11의 birthtime 질문은 해소.</p></div>
+<div class="qa"><p class="q">Q2. day 불변은 재시작 후에도 지켜지나</p><p class="a"><strong>A.</strong> 지킨다. 아티팩트를 처음 발견할 때 정한 <code>createdAt</code>을 <code>~/rooms/.rooms/index.sqlite</code>에 ArtifactId 기준으로 저장하고, 이후 재시작·임시파일 rename·동기화로 birthtime이 바뀌어도 저장값을 쓴다. 우선순위는 <code>rooms:created</code> 메타 → 저장된 첫 발견 시각 → (첫 발견 때만) birthtime → mtime. 이 파일은 Rooms 자체 상태라 linked 폴더를 더럽히지 않는다. §2에 반영, §11의 birthtime 질문은 해소.</p></div>
 <div class="qa"><p class="q">Q3. Finder에서 바꾼 owned 폴더의 id</p><p class="a"><strong>A.</strong> state.json에 owned 방마다 폴더 inode(dev+ino)를 저장해 매칭한다. 감시자가 unlink+add를 보면 같은 inode의 새 경로로 판단해 같은 id를 유지하고 표시 이름을 새 폴더 이름으로 갱신하며 <code>room.updated</code> 1회를 낸다. inode를 못 찾으면 <code>room.removed</code>. 앱에서 한 rename은 core가 그 방의 감시 이벤트를 rename 동안 억제하고 <code>room.updated</code>만 1회 낸다(ArtifactId는 roomId 기준이라 바뀌지 않음).</p></div>
 <div class="qa"><p class="q">Q4. 삭제 이벤트가 없음</p><p class="a"><strong>A.</strong> <code>room.removed</code>, <code>note.removed</code>를 추가했고, linked 폴더가 사라지면 <code>room.updated</code>(status: unavailable)로 알린다. Journal day는 클라이언트가 날짜를 계산하지 않도록 core가 영향을 받은 날짜마다 <code>journal.changed {date}</code>를 내고, 클라이언트는 그 날짜를 보고 있으면 day를 다시 GET 한다. §6 RoomsEvent에 반영.</p></div>
 <div class="qa"><p class="q">Q5. 겹치는 방 경로에서 중복</p><p class="a"><strong>A.</strong> 거부한다. 연결 경로는 realpath 기준으로 Home·Home 상위·Home 하위, 그리고 기존 linked 방의 상위·하위가 될 수 없고, 위반하면 <code>overlapping_room</code>(409)이다. 그래서 한 파일은 정확히 한 방에만 속하고 ArtifactId 중복이 생기지 않는다. §6 Inputs·Errors에 반영.</p></div>
