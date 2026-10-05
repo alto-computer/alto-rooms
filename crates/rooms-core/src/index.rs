@@ -4,10 +4,22 @@ use crate::rules::{artifact_id, local_day, PathClass};
 use crate::walk::ScanEntry;
 use rooms_protocol::{Artifact, Author, Source};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
-pub struct Index { conn: Connection }
+pub struct Index {
+    conn: Connection,
+    /// Journal days whose contents changed since the last `take_touched_days` (old and new day on a move).
+    touched_days: BTreeSet<String>,
+}
+
+/// Journal day of an artifact. Files under `journal/YYYY-MM-DD/` belong to that folder's day
+/// (spec §2: journal/YYYY-MM-DD/*.html → that Journal day); everything else uses createdAt's local day.
+pub fn journal_folder_day(room_id: &str, rel_path: &str) -> Option<String> {
+    if room_id != rooms_protocol::JOURNAL_ROOM_ID { return None; }
+    let (first, _) = rel_path.split_once('/')?;
+    crate::rules::validate_iso_date(first).ok().map(|_| first.to_string())
+}
 
 #[derive(Debug, Clone)]
 pub enum Change {
@@ -51,7 +63,7 @@ impl Index {
             Ok(c)
         };
         match try_open() {
-            Ok(conn) => Ok(Index { conn }),
+            Ok(conn) => Ok(Index { conn, touched_days: BTreeSet::new() }),
             Err(_) => {
                 let _ = std::fs::remove_file(path);
                 for suffix in ["-wal", "-shm"] {
@@ -59,7 +71,7 @@ impl Index {
                     p.push(suffix);
                     let _ = std::fs::remove_file(p);
                 }
-                Ok(Index { conn: try_open().map_err(err)? })
+                Ok(Index { conn: try_open().map_err(err)?, touched_days: BTreeSet::new() })
             }
         }
     }
@@ -90,8 +102,9 @@ impl Index {
             .or_else(|| existing.as_ref().map(|x| x.0.clone()))
             .unwrap_or(file_created);
         let title = title_or_filename(&meta, &e.rel_path);
-        let day = match &existing {
-            Some(x) if x.0 == created => x.3.clone(),
+        let day = match (journal_folder_day(room_id, &e.rel_path), &existing) {
+            (Some(d), _) => d,
+            (None, Some(x)) if x.0 == created => x.3.clone(),
             _ => local_day(&created).unwrap_or_default(),
         };
         let ts = chrono::DateTime::parse_from_rfc3339(&created).map(|d| d.timestamp_millis()).unwrap_or(0);
@@ -105,15 +118,20 @@ impl Index {
         ).map_err(err)?;
         let a = Artifact { id, room_id: room_id.into(), rel_path: e.rel_path.clone(), title: title.clone(),
             created_at: created, updated_at: updated.clone(), author: Author::Agent, source: meta.source };
-        Ok(Some(match existing {
+        let change = match existing {
             None => Change::Added(a),
-            Some((_, old_title, old_updated, _)) if old_title == title && old_updated == updated => return Ok(None),
-            Some(_) => Change::Updated(a),
-        }))
+            Some((_, old_title, old_updated, old_day)) if old_title == title && old_updated == updated && old_day == day => return Ok(None),
+            Some((_, _, _, old_day)) => { self.touch(&old_day); Change::Updated(a) }
+        };
+        self.touch(&day);
+        Ok(Some(change))
     }
 
     pub fn remove_one(&mut self, room_id: &str, rel_path: &str) -> Result<Option<Change>, CoreError> {
         let id = artifact_id(room_id, rel_path);
+        let day: Option<String> = self.conn.query_row("SELECT created_day FROM artifacts WHERE id = ?1", params![id], |r| r.get(0))
+            .optional().map_err(err)?;
+        if let Some(d) = &day { self.touch(d); }
         let n = self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id]).map_err(err)?;
         Ok((n > 0).then(|| Change::Removed { room_id: room_id.into(), artifact_id: id }))
     }
@@ -157,12 +175,23 @@ impl Index {
         Ok(rows.filter_map(Result::ok).collect())
     }
 
+    fn touch(&mut self, day: &str) {
+        if !day.is_empty() { self.touched_days.insert(day.to_string()); }
+    }
+
+    /// Drains the journal days touched by upserts/removals since the last call (sorted).
+    pub fn take_touched_days(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.touched_days).into_iter().collect()
+    }
+
     pub fn drop_room(&mut self, room_id: &str) -> Result<Vec<Change>, CoreError> {
-        let ids: Vec<String> = {
-            let mut st = self.conn.prepare("SELECT id FROM artifacts WHERE room_id = ?1").map_err(err)?;
-            let rows = st.query_map(params![room_id], |r| r.get(0)).map_err(err)?;
+        let rows: Vec<(String, String)> = {
+            let mut st = self.conn.prepare("SELECT id, created_day FROM artifacts WHERE room_id = ?1").map_err(err)?;
+            let rows = st.query_map(params![room_id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
             rows.filter_map(Result::ok).collect()
         };
+        let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+        for (_, d) in &rows { self.touch(d); }
         self.conn.execute("DELETE FROM artifacts WHERE room_id = ?1", params![room_id]).map_err(err)?;
         Ok(ids.into_iter().map(|id| Change::Removed { room_id: room_id.into(), artifact_id: id }).collect())
     }

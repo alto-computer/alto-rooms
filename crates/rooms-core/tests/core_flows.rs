@@ -351,3 +351,37 @@ fn linked_root_missing_at_startup_is_watched_once_it_returns() {
     fs::write(root.join("new.html"), "<title>N</title>").unwrap();
     wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.room_id == id), Duration::from_secs(3));
 }
+
+fn journal_dates(evs: &[RoomsEvent]) -> Vec<String> {
+    let mut v: Vec<String> = evs.iter().filter_map(|e| match &e.kind { EventKind::JournalChanged { date } => Some(date.clone()), _ => None }).collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn journal_folder_artifact_is_filed_by_folder_date_not_created_at() {
+    // spec example: journal/2026-10-05/dream.html written at 2026-10-06T00:30+09:00 belongs to 10-05.
+    // Use a created instant that is 10-07 in every local timezone so the test is TZ-independent.
+    let (d, core) = home();
+    let mut rx = core.subscribe();
+    fs::create_dir_all(d.path().join("journal/2026-10-05")).unwrap();
+    fs::write(d.path().join("journal/2026-10-05/dream.html"), r#"<meta name="rooms:created" content="2026-10-07T12:00:00+00:00">"#).unwrap();
+    core.rescan_room(&JOURNAL_ROOM_ID.to_string());
+    assert_eq!(core.journal_day(&"2026-10-05".to_string()).unwrap().artifacts.len(), 1);
+    assert!(core.journal_day(&"2026-10-07".to_string()).unwrap().artifacts.is_empty());
+    assert_eq!(journal_dates(&drain(&mut rx)), vec!["2026-10-05".to_string()]);
+}
+
+#[test]
+fn day_move_notifies_old_and_new_day() {
+    let (d, core) = home();
+    let r = core.create_room("a").unwrap();
+    let f = d.path().join("a/x.html");
+    fs::write(&f, r#"<meta name="rooms:created" content="2026-10-07T12:00:00+00:00">"#).unwrap();
+    core.rescan_room(&r.id);
+    let mut rx = core.subscribe();
+    fs::write(&f, r#"<meta name="rooms:created" content="2026-10-09T12:00:00+00:00"><title>moved</title>"#).unwrap();
+    core.rescan_room(&r.id);
+    assert_eq!(journal_dates(&drain(&mut rx)), vec!["2026-10-07".to_string(), "2026-10-09".to_string()]);
+    assert_eq!(core.journal_day(&"2026-10-09".to_string()).unwrap().artifacts.len(), 1);
+}

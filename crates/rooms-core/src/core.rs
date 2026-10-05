@@ -84,16 +84,16 @@ impl RoomsCore {
     }
 
     fn emit_changes(&self, inner: &mut Inner, changes: Vec<Change>) {
-        let mut days = HashSet::new();
         for c in changes {
             let kind = match c {
-                Change::Added(a) => { if let Some(d) = crate::rules::local_day(&a.created_at) { days.insert(d); } EventKind::ArtifactAdded { artifact: a } }
-                Change::Updated(a) => { if let Some(d) = crate::rules::local_day(&a.created_at) { days.insert(d); } EventKind::ArtifactUpdated { artifact: a } }
+                Change::Added(a) => EventKind::ArtifactAdded { artifact: a },
+                Change::Updated(a) => EventKind::ArtifactUpdated { artifact: a },
                 Change::Removed { room_id, artifact_id } => EventKind::ArtifactRemoved { room_id, artifact_id },
             };
             self.emit(inner, kind);
         }
-        for date in days { self.emit(inner, EventKind::JournalChanged { date }); }
+        // Stored created_day (old and new on a move, plus removed rows' days), not a recomputation.
+        for date in inner.index.take_touched_days() { self.emit(inner, EventKind::JournalChanged { date }); }
     }
 
     fn to_room(inner: &Inner, r: &RoomRecord) -> Room {
