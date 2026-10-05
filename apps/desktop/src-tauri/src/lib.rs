@@ -1,4 +1,5 @@
 mod daemon;
+mod drafts;
 mod flush;
 #[cfg(target_os = "macos")]
 mod terminate;
@@ -63,7 +64,14 @@ type InvokeHandler = Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send +
 
 #[cfg(not(feature = "flush-probe"))]
 fn invoke_handler() -> InvokeHandler {
-    Box::new(tauri::generate_handler![daemon::connect, daemon::viewer_initial, flush::flush_done])
+    Box::new(tauri::generate_handler![
+        daemon::connect,
+        daemon::viewer_initial,
+        flush::flush_done,
+        drafts::save_note_draft,
+        drafts::load_note_draft,
+        drafts::delete_note_draft
+    ])
 }
 
 /// Verification builds also expose the quit-flush probe.
@@ -73,6 +81,9 @@ fn invoke_handler() -> InvokeHandler {
         daemon::connect,
         daemon::viewer_initial,
         flush::flush_done,
+        drafts::save_note_draft,
+        drafts::load_note_draft,
+        drafts::delete_note_draft,
         flush::flush_probe,
         flush::flush_probe_armed
     ])

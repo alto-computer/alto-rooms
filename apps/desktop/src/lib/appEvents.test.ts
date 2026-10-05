@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onBeforeQuitFlush, runQuitFlush } from "./appEvents";
+import { setDraftStoreForTests, tauriDraftStore, textHash } from "./drafts";
 import { attachNoteSaver, createNoteSaver, flushAllNoteSaversAndWait, noteSaverKey, resetNoteSavers, type NoteSaver } from "./noteSaver";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => undefined) }));
@@ -94,26 +95,46 @@ describe("runQuitFlush", () => {
 
 describe("runQuitFlush drafts", () => {
   const KEY = "alto-rooms.note-draft.v1:2026-10-05/계획.md";
-  afterEach(() => localStorage.clear());
+  afterEach(() => {
+    localStorage.clear();
+    setDraftStoreForTests(null);
+  });
 
-  function target(save: (text: string) => Promise<{ updatedAt: string }>) {
+  function target(save: (text: string) => Promise<{ updatedAt: string }>, body = "") {
     const { saver } = attachNoteSaver(noteSaverKey("2026-10-05", "계획.md"), () => createNoteSaver({ save, warn: () => {} }), {
       date: "2026-10-05",
       name: "계획.md",
     });
-    saver.load("", null);
+    saver.load(body, null);
     return saver;
   }
 
-  it("keeps the text of a note that could not be saved as a local draft (text only)", async () => {
-    const saver = target(async () => Promise.reject(new Error("write_failed")));
+  it("keeps the text of a note that could not be saved as a draft with the hash of its last known disk body", async () => {
+    const saver = target(async () => Promise.reject(new Error("write_failed")), "디스크 본문");
     saver.edit("잃으면 안 되는 글");
     await vi.advanceTimersByTimeAsync(800 + 1000 + 2000); // now in error
     expect(saver.getState().status).toBe("error");
     const p = runQuitFlush(2000, async () => {});
     await vi.advanceTimersByTimeAsync(2000);
     await p;
-    expect(localStorage.getItem(KEY)).toBe("잃으면 안 되는 글");
+    expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ v: 1, text: "잃으면 안 되는 글", baseHash: textHash("디스크 본문") });
+  });
+
+  it("answers flush_done only after the draft write has finished, within the cap", async () => {
+    let finish!: () => void;
+    const save = vi.fn(() => new Promise<void>((r) => (finish = r)));
+    setDraftStoreForTests({ save, load: async () => null, remove: async () => {} });
+    const saver = target(async () => Promise.reject(new Error("write_failed")));
+    saver.edit("글");
+    await vi.advanceTimersByTimeAsync(800 + 1000 + 2000);
+    const done = vi.fn(async () => {});
+    const p = runQuitFlush(2000, done);
+    await vi.advanceTimersByTimeAsync(1700); // the notes' share of the cap
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(done).not.toHaveBeenCalled();
+    finish();
+    await p;
+    expect(done).toHaveBeenCalledTimes(1);
   });
 
   it("writes no draft when every note landed", async () => {
@@ -121,5 +142,20 @@ describe("runQuitFlush drafts", () => {
     saver.edit("저장됨");
     await runQuitFlush(2000, async () => {});
     expect(localStorage.getItem(KEY)).toBeNull();
+  });
+});
+
+describe("tauriDraftStore", () => {
+  it("goes through the Rust draft commands", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValueOnce(undefined).mockResolvedValueOnce("값").mockResolvedValueOnce(undefined);
+    await tauriDraftStore.save("k", "v");
+    expect(await tauriDraftStore.load("k")).toBe("값");
+    await tauriDraftStore.remove("k");
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["save_note_draft", { key: "k", value: "v" }],
+      ["load_note_draft", { key: "k" }],
+      ["delete_note_draft", { key: "k" }],
+    ]);
   });
 });

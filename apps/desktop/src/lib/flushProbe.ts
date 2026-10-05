@@ -6,11 +6,12 @@
  * Inert unless the app was launched with ALTO_ROOMS_FLUSH_PROBE=<date>/<note>.
  * Then it waits (up to 60 s) for that note to exist (created through roomsd's
  * API by whoever runs the check), loads it into a registered saver whose clock
- * never fires, and edits it: the edit can reach disk only through a quit flush, which is what a
+ * never fires, and edits it (or, if a draft from the last quit exists,
+ * restores and saves that instead): the edit can reach disk only through a quit flush, which is what a
  * bundle check of "quit → flush → exit" needs to observe without typing.
  */
 import { invoke } from "@tauri-apps/api/core";
-import { attachNoteSaver, createNoteSaver, noteSaverKey, type SaveNoteFn } from "./noteSaver";
+import { attachNoteSaver, checkNoteDraft, createNoteSaver, noteSaverKey, type SaveNoteFn } from "./noteSaver";
 
 const never = { setTimeout: () => 0, clearTimeout: () => {} };
 
@@ -33,6 +34,13 @@ export async function runFlushProbe(getNote: (date: string, name: string) => Pro
     return;
   }
   saver.load(body, null);
+  // A draft kept at the last quit: restore it the way a note view would, and save it now.
+  const draft = await checkNoteDraft(saver, date, name);
+  if (draft.kind !== "none") {
+    if (draft.kind === "restored") saver.flush();
+    await invoke("flush_probe_armed", { state: `draft ${draft.kind}` });
+    return;
+  }
   saver.edit(`${body}\nflushed at quit ${new Date().toISOString()}\n`);
-  await invoke("flush_probe_armed");
+  await invoke("flush_probe_armed", { state: "note is dirty; only a quit flush can save it" });
 }

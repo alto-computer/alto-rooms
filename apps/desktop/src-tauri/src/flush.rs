@@ -235,8 +235,8 @@ pub fn flush_probe() -> Option<FlushProbe> {
 
 #[cfg(feature = "flush-probe")]
 #[tauri::command]
-pub fn flush_probe_armed() {
-    eprintln!("flush probe: note is dirty; only a quit flush can save it");
+pub fn flush_probe_armed(state: String) {
+    eprintln!("flush probe: {state}");
 }
 
 #[cfg(test)]

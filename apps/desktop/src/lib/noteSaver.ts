@@ -12,6 +12,8 @@
  *   is logged through `warn`, as nobody is left to show it to.
  */
 
+import { decodeDraft, draftStore, encodeDraft, textHash, type NoteDraft } from "./drafts";
+
 export const DEBOUNCE_MS = 800;
 export const RETRY_DELAYS_MS = [1000, 2000, 4000] as const;
 /** Consecutive failures after which the status becomes "error". */
@@ -272,7 +274,8 @@ function releaseIfIdle(key: string, e: Entry) {
 /** A save landed and nothing is unsaved: any draft kept for this note is obsolete. */
 function clearDraftIfLanded(e: Entry) {
   const s = e.saver.getState();
-  if (e.target && s.status === "saved" && !s.inFlight && s.text === s.savedText) clearNoteDraft(e.target.date, e.target.name);
+  if (!e.target || s.status !== "saved" || s.inFlight || s.text !== s.savedText) return;
+  if (knownDrafts.has(noteDraftKey(e.target.date, e.target.name))) void clearNoteDraft(e.target.date, e.target.name);
 }
 
 /**
@@ -323,50 +326,94 @@ export function rebindNoteSavers(saveNote: SaveNoteFn): void {
 
 /*
  * Drafts: a note that still could not be saved when the app quits keeps its
- * text in localStorage (text only, never a token) until a later save lands.
+ * text (and the hash of the disk body it was based on) in the draft store
+ * until a later save lands. See `drafts.ts` for where they live.
  */
 const DRAFT_PREFIX = "alto-rooms.note-draft.v1:";
 /** `alto-rooms.note-draft.v1:${date}/${file}`, the file part folded like the registry key. */
 export const noteDraftKey = (date: string, fileName: string) => `${DRAFT_PREFIX}${noteSaverKey(date, fileName)}`;
 
-function storage(): Storage | null {
+/** Draft keys known to exist (kept this run, or read on open): only those are deleted when a save lands. */
+const knownDrafts = new Set<string>();
+
+export async function readNoteDraft(date: string, fileName: string): Promise<NoteDraft | null> {
+  const key = noteDraftKey(date, fileName);
   try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
+    const raw = await draftStore().load(key);
+    if (raw === null) return null;
+    knownDrafts.add(key);
+    return decodeDraft(raw);
+  } catch (err) {
+    console.warn("note: could not read a draft", err);
     return null;
   }
 }
 
-export function readNoteDraft(date: string, fileName: string): string | null {
+export async function clearNoteDraft(date: string, fileName: string): Promise<void> {
+  const key = noteDraftKey(date, fileName);
+  knownDrafts.delete(key);
   try {
-    return storage()?.getItem(noteDraftKey(date, fileName)) ?? null;
-  } catch {
-    return null;
+    await draftStore().remove(key);
+  } catch (err) {
+    console.warn("note: could not delete a draft", err);
   }
 }
 
-export function clearNoteDraft(date: string, fileName: string): void {
-  try {
-    storage()?.removeItem(noteDraftKey(date, fileName));
-  } catch {
-    // Storage unavailable: nothing was kept there either.
+export type DraftCheck = { kind: "none" } | { kind: "restored" } | { kind: "conflict"; draft: NoteDraft };
+
+/**
+ * On opening a note (its saver loaded): looks for a draft kept at an earlier quit.
+ * - Same text as now: the draft is obsolete and deleted.
+ * - Local edits already pending: they win; the draft stays until a save lands.
+ * - Disk body unchanged since the draft was kept (`baseHash` matches): the draft
+ *   becomes unsaved local text, so autosave sends it ("restored").
+ * - Otherwise the disk changed meanwhile: nothing is touched ("conflict"), and
+ *   the caller offers to restore or discard it.
+ */
+export async function checkNoteDraft(saver: NoteSaver, date: string, fileName: string): Promise<DraftCheck> {
+  const draft = await readNoteDraft(date, fileName);
+  if (!draft) return { kind: "none" };
+  const s = saver.getState();
+  if (draft.text === s.text) {
+    await clearNoteDraft(date, fileName);
+    return { kind: "none" };
   }
+  if (!s.ready || s.inFlight || s.text !== s.savedText) return { kind: "none" };
+  if (draft.baseHash !== null && draft.baseHash === textHash(s.savedText)) {
+    saver.edit(draft.text);
+    return { kind: "restored" };
+  }
+  return { kind: "conflict", draft };
 }
 
-/** Keeps the text of every note that has not landed (in error, or still unsaved) as a draft. Returns how many. */
-export function keepUnsavedNoteDrafts(): number {
-  let kept = 0;
+/**
+ * Keeps the text of every note that has not landed (in error, or still
+ * unsaved) as a draft, with the hash of the last disk body its saver knew.
+ * Resolves once every write has finished (or failed). Returns how many were kept.
+ */
+export async function keepUnsavedNoteDrafts(): Promise<number> {
+  const writes: Promise<boolean>[] = [];
   for (const e of registry.values()) {
     const s = e.saver.getState();
     if (!e.target || !s.ready || (s.text === s.savedText && !s.inFlight)) continue;
-    try {
-      storage()?.setItem(noteDraftKey(e.target.date, e.target.name), s.text);
-      kept++;
-    } catch (err) {
-      console.warn("note: could not keep a draft", err);
-    }
+    const key = noteDraftKey(e.target.date, e.target.name);
+    const value = encodeDraft({ text: s.text, baseHash: textHash(s.savedText) });
+    writes.push(
+      draftStore()
+        .save(key, value)
+        .then(
+          () => {
+            knownDrafts.add(key);
+            return true;
+          },
+          (err) => {
+            console.warn("note: could not keep a draft", err);
+            return false;
+          },
+        ),
+    );
   }
-  return kept;
+  return (await Promise.all(writes)).filter(Boolean).length;
 }
 
 /** Saves every dirty note now (the app is quitting or hiding). */
@@ -421,6 +468,7 @@ export function noteSaverKeys(): string[] {
 
 /** Tests only: stops and forgets every saver without saving. */
 export function resetNoteSavers(): void {
+  knownDrafts.clear();
   for (const e of registry.values()) {
     e.unsubscribe();
     e.saver.stop();

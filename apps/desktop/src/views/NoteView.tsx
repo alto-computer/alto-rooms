@@ -3,15 +3,16 @@ import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
 import { useClient, useJournalDay, useReadOnly, useRooms, useRoomsStore } from "@/data/hooks";
 import { GENERIC_ERROR, SAVE_FAILED } from "@/lib/errors";
+import type { NoteDraft } from "@/lib/drafts";
 import { useBriefError } from "./briefError";
 import { openInEditor } from "@/lib/native";
 import {
   attachNoteSaver,
+  checkNoteDraft,
   clearNoteDraft,
   createNoteSaver,
   detachNoteSaver,
   noteSaverKey,
-  readNoteDraft,
   type NoteSaver,
   type NoteSaverState,
 } from "@/lib/noteSaver";
@@ -108,18 +109,19 @@ export function NoteView({ date, name }: { date: string; name: string }) {
     };
   }, [saver, attempt, client, store, date, name]);
 
-  // Text that could not be saved before the app last quit was kept as a draft:
-  // it comes back as unsaved local text (so autosave sends it) unless it matches
-  // what is there. The registry deletes the draft once a save lands.
+  // Text that could not be saved before the app last quit was kept as a draft
+  // (see checkNoteDraft): restored as unsaved text if the disk hasn't changed
+  // since, otherwise offered in a quiet bar. The registry deletes the draft
+  // once a save lands.
   const draftChecked = useRef<NoteSaver | null>(null);
+  const [offer, setOffer] = useState<NoteDraft | null>(null);
   useEffect(() => {
     if (!saver || load !== "ready" || readOnly || draftChecked.current === saver) return;
     draftChecked.current = saver;
-    const draft = readNoteDraft(date, name);
-    if (draft === null) return;
-    const s = saver.getState();
-    if (draft === s.text) clearNoteDraft(date, name);
-    else if (s.text === s.savedText && !s.inFlight) saver.edit(draft);
+    // Checked once per saver (no cleanup: a StrictMode re-run must not drop the answer).
+    void checkNoteDraft(saver, date, name).then((r) => {
+      if (r.kind === "conflict" && draftChecked.current === saver) setOffer(r.draft);
+    });
   }, [saver, load, readOnly, date, name]);
 
   // External changes.
@@ -192,6 +194,31 @@ export function NoteView({ date, name }: { date: string; name: string }) {
         <p role="status" className="flex items-center gap-2 text-[14px] text-[#c13515]">
           <CircleAlert size={16} aria-hidden />
           {GENERIC_ERROR}
+        </p>
+      ) : null}
+      {offer ? (
+        <p role="status" className="flex items-center gap-3 text-[14px] text-ink-2">
+          저장되지 않았던 글이 있어요
+          <button
+            type="button"
+            onClick={() => {
+              saver?.edit(offer.text);
+              setOffer(null);
+            }}
+            className="rounded-md px-1.5 text-ink underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ink"
+          >
+            되살리기
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOffer(null);
+              void clearNoteDraft(date, name);
+            }}
+            className="rounded-md px-1.5 text-ink-2 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ink"
+          >
+            버리기
+          </button>
         </p>
       ) : null}
       {st.status === "error" ? (

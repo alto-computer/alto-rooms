@@ -8,7 +8,8 @@
  * - Before the window closes or the app quits, Rust emits `app://flush` and
  *   holds the close until we invoke `flush_done` (it gives up after 2.5s).
  *   We run the registered sync hooks, flush every note (capped at 2s), keep
- *   any note that still did not land as a localStorage draft, then answer.
+ *   any note that still did not land as a draft (awaited, see drafts.ts),
+ *   then answer.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -23,6 +24,8 @@ export const APP_FLUSH = "app://flush";
 export const DAEMON_EXITED = "daemon://exited";
 /** How long the webview waits for notes to land before letting the window close. */
 export const FLUSH_CAP_MS = 2000;
+/** Part of the cap kept for writing drafts of notes that did not land. */
+export const DRAFT_BUDGET_MS = 400;
 
 /** Subscribes to native events; returns a disposer that also covers listeners still registering. */
 export function listenAll(handlers: Record<string, () => void>): () => void {
@@ -62,9 +65,15 @@ export async function runQuitFlush(cap = FLUSH_CAP_MS, done: () => Promise<unkno
       console.error("quit flush step failed:", err);
     }
   }
-  const landed = await flushAllNoteSaversAndWait(cap);
-  // Whatever did not land is kept locally and restored the next time its note opens.
-  if (!landed) keepUnsavedNoteDrafts();
+  // Notes get most of the cap; the rest is for writing drafts of whatever did not land.
+  const landed = await flushAllNoteSaversAndWait(Math.max(0, cap - DRAFT_BUDGET_MS));
+  if (!landed) {
+    // Awaited, so the drafts are on disk before Rust is told it may exit.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<void>((r) => (timer = setTimeout(r, DRAFT_BUDGET_MS)));
+    await Promise.race([keepUnsavedNoteDrafts(), budget]);
+    clearTimeout(timer);
+  }
   try {
     await done();
   } catch (err) {

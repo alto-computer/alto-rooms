@@ -3,6 +3,7 @@ import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openInEditor } from "@/lib/native";
+import { textHash } from "@/lib/drafts";
 import { noteSaverKeys, resetNoteSavers } from "@/lib/noteSaver";
 import { StoresProvider } from "@/data/hooks";
 import { renderWithStores } from "@/test/fakes";
@@ -351,37 +352,75 @@ describe("NoteView: other editor and read-only", () => {
 
 describe("NoteView: drafts kept at quit", () => {
   const DRAFT = `alto-rooms.note-draft.v1:${DATE}/계획.md`;
+  const keep = (text: string, base: string) => localStorage.setItem(DRAFT, JSON.stringify({ v: 1, text, baseHash: textHash(base) }));
   afterEach(() => localStorage.clear());
 
-  it("opens a draft that differs from the disk as unsaved text, saves it, then deletes the draft", async () => {
-    localStorage.setItem(DRAFT, "종료 전에 못 저장한 글");
+  it("disk unchanged since the draft: restores it as unsaved text, saves it, then deletes the draft", async () => {
+    keep("종료 전에 못 저장한 글", "원래 내용");
     const fake = await renderNote();
+    await advance(0);
     expect(textarea()).toHaveValue("종료 전에 못 저장한 글");
-    expect(fake.client.saveNote).not.toHaveBeenCalled();
-    expect(localStorage.getItem(DRAFT)).toBe("종료 전에 못 저장한 글"); // kept until it lands
+    expect(screen.queryByText("저장되지 않았던 글이 있어요")).toBeNull();
+    expect(localStorage.getItem(DRAFT)).not.toBeNull(); // kept until it lands
     await advance(800);
     expect(fake.client.saveNote).toHaveBeenCalledWith(DATE, "계획.md", "종료 전에 못 저장한 글");
     expect(fake.state.notes[`${DATE}/계획.md`]).toBe("종료 전에 못 저장한 글");
+    await advance(0);
     expect(localStorage.getItem(DRAFT)).toBeNull();
   });
 
-  it("drops a draft that matches the disk without saving", async () => {
-    localStorage.setItem(DRAFT, "원래 내용");
+  it("disk changed since the draft: keeps the disk text and offers 되살리기 / 버리기", async () => {
+    keep("옛 초안", "그때의 디스크 본문");
     const fake = await renderNote();
+    await advance(0);
+    expect(textarea()).toHaveValue("원래 내용");
+    expect(screen.getByText("저장되지 않았던 글이 있어요")).toBeInTheDocument();
+    await advance(5000);
+    expect(fake.client.saveNote).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "되살리기" }));
+    expect(textarea()).toHaveValue("옛 초안");
+    expect(screen.queryByText("저장되지 않았던 글이 있어요")).toBeNull();
+    await advance(800);
+    expect(fake.state.notes[`${DATE}/계획.md`]).toBe("옛 초안");
+    await advance(0);
+    expect(localStorage.getItem(DRAFT)).toBeNull();
+  });
+
+  it("버리기 deletes the draft and leaves the text alone", async () => {
+    keep("옛 초안", "그때의 디스크 본문");
+    const fake = await renderNote();
+    await advance(0);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "버리기" }));
+    });
+    expect(screen.queryByText("저장되지 않았던 글이 있어요")).toBeNull();
+    expect(textarea()).toHaveValue("원래 내용");
+    expect(localStorage.getItem(DRAFT)).toBeNull();
+    await advance(5000);
+    expect(fake.client.saveNote).not.toHaveBeenCalled();
+  });
+
+  it("drops a draft that matches the disk without saving", async () => {
+    keep("원래 내용", "아무거나");
+    const fake = await renderNote();
+    await advance(0);
     expect(textarea()).toHaveValue("원래 내용");
     await advance(5000);
     expect(fake.client.saveNote).not.toHaveBeenCalled();
     expect(localStorage.getItem(DRAFT)).toBeNull();
   });
 
-  it("keeps a failing draft until a save lands", async () => {
-    localStorage.setItem(DRAFT, "초안");
+  it("keeps a failing restored draft until a save lands", async () => {
+    keep("초안", "원래 내용");
     const fake = await renderNote();
+    await advance(0);
     fake.client.saveNote.mockRejectedValueOnce(new RoomsApiError(500, "disk", "write_failed"));
     await advance(800);
-    expect(localStorage.getItem(DRAFT)).toBe("초안");
+    expect(localStorage.getItem(DRAFT)).not.toBeNull();
     await advance(1000);
     expect(fake.state.notes[`${DATE}/계획.md`]).toBe("초안");
+    await advance(0);
     expect(localStorage.getItem(DRAFT)).toBeNull();
   });
 });
