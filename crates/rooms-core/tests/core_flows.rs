@@ -149,3 +149,77 @@ fn resolve_file_rejects_dotfiles_and_directories() {
     assert_eq!(core.resolve_file(&r.id, ".git/config").unwrap_err(), CoreError::PathEscape);
     assert!(core.resolve_file(&r.id, "sub").is_err());
 }
+
+use std::time::{Duration, Instant};
+
+fn wait_for(rx: &mut tokio::sync::broadcast::Receiver<RoomsEvent>, pred: impl Fn(&EventKind) -> bool, max: Duration) -> Vec<RoomsEvent> {
+    let start = Instant::now();
+    let mut got = Vec::new();
+    while start.elapsed() < max {
+        match rx.try_recv() {
+            Ok(e) => { let hit = pred(&e.kind); got.push(e); if hit { return got; } }
+            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    panic!("timed out; got {got:?}");
+}
+
+#[test]
+fn new_file_emits_added_within_two_seconds() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::write(d.path().join("a/new.html"), "<title>N</title>").unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.room_id == r.id), Duration::from_secs(2));
+}
+
+#[test]
+fn atomic_rename_write_yields_single_add() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    core.create_room("a").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::write(d.path().join("a/x.html.tmp"), "<title>X</title>").unwrap();
+    fs::rename(d.path().join("a/x.html.tmp"), d.path().join("a/x.html")).unwrap();
+    let evs = wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { .. }), Duration::from_secs(2));
+    std::thread::sleep(Duration::from_millis(600));
+    let mut all = evs;
+    while let Ok(e) = rx.try_recv() { all.push(e); }
+    let adds = all.iter().filter(|e| matches!(e.kind, EventKind::ArtifactAdded { .. })).count();
+    let removes = all.iter().filter(|e| matches!(e.kind, EventKind::ArtifactRemoved { .. })).count();
+    assert_eq!((adds, removes), (1, 0), "{all:?}");
+}
+
+#[test]
+fn open_returns_before_backfill_completes_for_big_room() {
+    let d = tempfile::tempdir().unwrap();
+    let big = d.path().join("big");
+    fs::create_dir_all(&big).unwrap();
+    for i in 0..3000 { fs::write(big.join(format!("{i}.html")), "").unwrap(); }
+    let t = Instant::now();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    assert!(t.elapsed() < Duration::from_millis(500), "open must not wait for backfill");
+    assert!(!core.list_rooms().is_empty());
+}
+
+#[test]
+fn dropping_watch_handle_stops_watching() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    core.create_room("a").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    drop(w);
+    std::thread::sleep(Duration::from_millis(100));
+    let mut rx = core.subscribe();
+    fs::write(d.path().join("a/after.html"), "<title>A</title>").unwrap();
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(1200) {
+        if let Ok(e) = rx.try_recv() {
+            assert!(!matches!(e.kind, EventKind::ArtifactAdded { .. }), "got event after drop: {e:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
