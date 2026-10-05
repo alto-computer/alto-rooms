@@ -22,7 +22,9 @@ export const COMPACT_PROMPT = "rooms 정리해줘";
 /**
  * Hands the user one line to paste into an agent. Full form on first run (no
  * rooms besides inbox), compact at the top of the New tab when opened from
- * the sidebar's "에이전트로 정리하기". Renders nothing before the first sync.
+ * the sidebar's "에이전트로 정리하기": there it offers both the ONBOARD prompt
+ * (first time, or another agent without the skill) and the short re-run line.
+ * Renders nothing before the first sync.
  */
 export function OnboardingCard({ compact = false }: { compact?: boolean }) {
   const { info } = useRooms();
@@ -35,7 +37,14 @@ export function OnboardingCard({ compact = false }: { compact?: boolean }) {
         className="flex flex-col items-start gap-2 rounded-[14px] border border-[#ddd] bg-white px-5 py-[18px]"
       >
         <p className="text-[15px] font-medium text-ink">에이전트로 다시 정리하기</p>
-        <CopyChip text={COMPACT_PROMPT} />
+        <div className="flex max-w-full flex-col items-start gap-1">
+          <p className="text-[13px] text-[#929292]">처음이거나 다른 에이전트라면</p>
+          <CopyChip text={onboardPrompt(info.home)} />
+        </div>
+        <div className="flex max-w-full flex-col items-start gap-1">
+          <p className="text-[13px] text-[#929292]">스킬이 이미 있으면</p>
+          <CopyChip text={COMPACT_PROMPT} />
+        </div>
       </section>
     );
   }
