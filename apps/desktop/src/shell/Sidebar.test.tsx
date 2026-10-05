@@ -1,7 +1,8 @@
 import { RoomsApiError, type Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderWithStores, room } from "@/test/fakes";
+import { memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { ViewerStore } from "@/data/viewerStore";
 import { ARTIFACT_DRAG_TYPE } from "@/lib/drag";
 import { AppShell } from "./AppShell";
 
@@ -143,23 +144,41 @@ describe("Sidebar: drag to move", () => {
 
 describe("Sidebar: reorder rooms", () => {
   // A fresh list per test: the fake moveRoom reorders the array it was given.
-  const four = () => [room("inbox", "Inbox"), room("a", "A"), room("b", "B"), room("c", "C")];
+  const four = () => [room("inbox", "Inbox", { artifactCount: 1 }), room("a", "A"), room("b", "B"), room("c", "C")];
   const names = () => within(screen.getByRole("list", { name: "Rooms" })).getAllByRole("button").map((b) => b.textContent);
 
   it("rooms below the inbox are sortable; the inbox stays put", async () => {
-    await renderWithStores(<AppShell />, { rooms: four() });
+    await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] } });
     expect(sidebarRow("Inbox")).not.toHaveAttribute("aria-roledescription", "sortable");
     for (const n of ["A", "B", "C"]) expect(sidebarRow(n)).toHaveAttribute("aria-roledescription", "sortable");
   });
 
   it("follows rooms.reordered from the core", async () => {
-    const h = await renderWithStores(<AppShell />, { rooms: four() });
+    const h = await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] } });
     act(() => h.emit({ type: "rooms.reordered", roomIds: ["inbox", "c", "a", "b"] }));
     expect(names()).toEqual(["Inbox", "C", "A", "B"]);
   });
 
   it("is off when read-only", async () => {
-    await renderWithStores(<AppShell />, { rooms: four(), readOnly: true });
+    await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] }, readOnly: true });
     expect(sidebarRow("A")).not.toHaveAttribute("aria-roledescription", "sortable");
+  });
+});
+
+describe("Sidebar: inbox", () => {
+  const rows = () => within(screen.getByRole("list", { name: "Rooms" })).getAllByRole("button").map((b) => b.textContent);
+
+  it("hides the inbox while it is empty and shows it once a doc waits there", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox", { artifactCount: 0 }), room("a", "A")] });
+    expect(rows()).toEqual(["A"]);
+    act(() => h.emit({ type: "artifact.added", artifact: doc("x1", "inbox", "떠도는 문서") }));
+    expect(rows()).toEqual(["Inbox", "A"]);
+  });
+
+  it("keeps an empty inbox listed while its tab is the one being viewed", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "room", roomId: "inbox" });
+    await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox", { artifactCount: 0 }), room("a", "A")], viewer });
+    expect(rows()).toEqual(["Inbox", "A"]);
   });
 });

@@ -100,6 +100,8 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
 
   const active = tabs.find((t) => t.id === activeId);
   const activeRoomId = active?.kind === "room" ? active.roomId : null;
+  // The empty inbox stays out of the sidebar, unless it is the room being viewed.
+  const listed = shown.filter((r) => r.id !== INBOX_ID || r.artifactCount > 0 || r.id === activeRoomId);
 
   return (
     <ShadcnSidebar
@@ -158,7 +160,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
           {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
           <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[verticalOnly]} onDragEnd={onDragEnd}>
             <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-              {shown.map((room) => (
+              {listed.map((room) => (
                 <RoomRow
                   key={room.id}
                   room={room}

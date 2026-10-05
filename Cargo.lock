@@ -1169,7 +1169,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rooms-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "hex",
@@ -1191,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-protocol"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "insta",
  "schemars",
@@ -1202,7 +1202,7 @@ dependencies = [
 
 [[package]]
 name = "roomsd"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "axum",
  "dirs",

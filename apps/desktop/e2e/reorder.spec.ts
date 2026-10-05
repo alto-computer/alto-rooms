@@ -18,11 +18,11 @@ async function drag(page: Page, from: string, to: string, half: "top" | "bottom"
 test("dragging a sidebar room reorders the rooms and the core keeps the order", async ({ page, daemon }) => {
   for (const n of ["Alpha", "Beta", "Gamma"]) await daemon.createRoom(n);
   await page.goto("/");
-  await expect.poll(() => names(page)).toEqual(["inbox", "Alpha", "Beta", "Gamma"]);
+  await expect.poll(() => names(page)).toEqual(["Alpha", "Beta", "Gamma"]); // the empty inbox is hidden
 
   await drag(page, "Gamma", "Alpha", "top");
-  await expect.poll(() => names(page)).toEqual(["inbox", "Gamma", "Alpha", "Beta"]);
+  await expect.poll(() => names(page)).toEqual(["Gamma", "Alpha", "Beta"]);
   await drag(page, "Gamma", "Beta", "bottom");
-  await expect.poll(() => names(page)).toEqual(["inbox", "Alpha", "Beta", "Gamma"]);
+  await expect.poll(() => names(page)).toEqual(["Alpha", "Beta", "Gamma"]);
   expect((await daemon.listRooms()).map((r) => r.name)).toEqual(["inbox", "Alpha", "Beta", "Gamma"]);
 });
