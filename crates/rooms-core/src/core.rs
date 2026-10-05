@@ -228,7 +228,8 @@ impl RoomsCore {
             name: r.name.clone(),
             kind: r.kind,
             path: r.path.to_string_lossy().to_string(),
-            status: if inner.unavailable.contains(&r.id) || !r.path.is_dir() { RoomStatus::Unavailable } else { RoomStatus::Ok },
+            // No stat under `Inner`: rescans (watcher, retry tick, rescan_unavailable) keep `unavailable` current.
+            status: if inner.unavailable.contains(&r.id) { RoomStatus::Unavailable } else { RoomStatus::Ok },
             artifact_count: count,
             updated_at,
         }
@@ -288,6 +289,14 @@ impl RoomsCore {
         // reading (root moved) → our entries describe the old root; the rename's follow-up rescan
         // does the work.
         if room != JOURNAL_ROOM_ID && inner.state.find(room).map(|r| &r.path) != Some(&root) { return Ok(()); }
+        // Root vanished mid-walk: the entries may be partial, so applying could wipe rows. Take the
+        // unavailable path instead (flag + one room.updated). A stat under `Inner`, on purpose.
+        if !root_available(&root) {
+            if inner.state.find(room).is_some() && inner.unavailable.insert(room.clone()) {
+                self.emit_room_updated(&mut inner, room);
+            }
+            return Ok(());
+        }
         let ch = inner.index.apply(room, &facts, &present)?;
         self.emit_changes(&mut inner, ch);
         if inner.unavailable.remove(room) { self.emit_room_updated(&mut inner, room); }
@@ -577,6 +586,33 @@ mod tests {
 
     fn rels(core: &RoomsCore, room: &RoomId) -> Vec<String> {
         core.list_artifacts(room).unwrap().into_iter().map(|a| a.rel_path).collect()
+    }
+
+    #[test]
+    fn root_vanishing_before_apply_flags_unavailable_and_keeps_rows() {
+        let _g = HOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let team = tempfile::tempdir().unwrap();
+        let root = team.path().join("research");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.html"), "<title>a</title>").unwrap();
+        let r = core.link_folder(&root, None).unwrap(); // scans: one row
+        assert_eq!(rels(&core, &r.id), vec!["a.html".to_string()]);
+        let (id, from, to) = (r.id.clone(), root.clone(), team.path().join("moved"));
+        let once = Mutex::new(true);
+        *BEFORE_APPLY_HOOK.lock().unwrap() = Some(Arc::new(move |room: &str| {
+            if room == id && std::mem::take(&mut *once.lock().unwrap()) { std::fs::rename(&from, &to).unwrap(); }
+        }));
+        let mut rx = core.subscribe();
+        core.rescan_room(&r.id);
+        clear_hook();
+        assert_eq!(rels(&core, &r.id), vec!["a.html".to_string()], "rows must be kept");
+        let st = core.list_rooms().into_iter().find(|x| x.id == r.id).unwrap().status;
+        assert_eq!(st, RoomStatus::Unavailable);
+        let updates = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter(|e| matches!(&e.kind, EventKind::RoomUpdated { room } if room.id == r.id)).count();
+        assert_eq!(updates, 1, "exactly one room.updated");
     }
 
     fn room_ids(core: &RoomsCore) -> Vec<RoomId> { core.list_rooms().into_iter().map(|r| r.id).collect() }
