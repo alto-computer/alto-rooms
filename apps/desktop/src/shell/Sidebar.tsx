@@ -1,4 +1,16 @@
-import { useState, type DragEvent } from "react";
+import { useEffect, useState, type DragEvent } from "react";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type Modifier,
+} from "@dnd-kit/core";
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { Room } from "@alto-rooms/protocol-ts";
 import { Calendar, CircleAlert, Folder, PanelLeft, Plus, Search } from "lucide-react";
 import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
@@ -6,19 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useClient, useReadOnly, useRooms, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { localDate } from "@/lib/dates";
-import {
-  carriesArtifact,
-  carriesRoom,
-  draggingFromRoom,
-  draggingRoom,
-  endArtifactDrag,
-  endRoomDrag,
-  INBOX_ID,
-  readArtifactPayload,
-  ROOM_DRAG_TYPE,
-  roomDragSource,
-  type ArtifactDragPayload,
-} from "@/lib/drag";
+import { carriesArtifact, draggingFromRoom, endArtifactDrag, INBOX_ID, readArtifactPayload, type ArtifactDragPayload } from "@/lib/drag";
 import { moveErrorCopy } from "@/lib/errors";
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
@@ -66,17 +66,32 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
     );
   };
 
-  // Dropping room `id` on `side` of `targetId`: `to` counts the rooms below the pinned inbox, without the dragged one.
-  const reorder = (id: string, targetId: string, side: DropSide) => {
-    if (id === targetId) return;
-    const listed = rooms.filter((r) => r.id !== INBOX_ID);
-    const others = listed.filter((r) => r.id !== id);
-    const to = targetId === INBOX_ID ? 0 : others.findIndex((r) => r.id === targetId) + (side === "after" ? 1 : 0);
-    if (to < 0 || to === listed.findIndex((r) => r.id === id)) return;
+  // Reordering: rooms below the pinned inbox are sortable. After a drop the new order shows at
+  // once (`pending`) and stays until the core's `rooms.reordered` brings the same order.
+  const [pending, setPending] = useState<string[] | null>(null);
+  const shown = inOrder(rooms, pending);
+  useEffect(() => {
+    if (pending && rooms.map((r) => r.id).join("\n") === pending.join("\n")) setPending(null);
+  }, [rooms, pending]);
+  const sortableIds = shown.filter((r) => r.id !== INBOX_ID).map((r) => r.id);
+  const sensors = useSensors(
+    // A few pixels of movement before a drag starts, so a click still opens the room.
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    // Space picks a room up, ↑/↓ move it, Space drops; Enter keeps opening the room.
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: KEYBOARD_CODES }),
+  );
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    const id = String(active.id);
+    const from = sortableIds.indexOf(id);
+    const to = over ? sortableIds.indexOf(String(over.id)) : -1;
+    if (from < 0 || to < 0 || from === to) return;
+    const pinned = shown.some((r) => r.id === INBOX_ID) ? [INBOX_ID] : [];
+    setPending([...pinned, ...arrayMove(sortableIds, from, to)]);
     client.moveRoom(id, to).then(
       () => moveFailed.clear(),
       (e: unknown) => {
         console.warn("could not move the room", e);
+        setPending(null);
         setMoveError(moveErrorCopy(e));
         moveFailed.flash();
       },
@@ -141,16 +156,20 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
 
         <ul aria-label="Rooms" className="no-scrollbar mt-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
           {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
-          {rooms.map((room) => (
-            <RoomRow
-              key={room.id}
-              room={room}
-              active={room.id === activeRoomId}
-              readOnly={readOnly}
-              onMove={readOnly || !isDropTarget(room) ? undefined : move}
-              onDropRoom={readOnly ? undefined : reorder}
-            />
-          ))}
+          <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[verticalOnly]} onDragEnd={onDragEnd}>
+            <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+              {shown.map((room) => (
+                <RoomRow
+                  key={room.id}
+                  room={room}
+                  active={room.id === activeRoomId}
+                  readOnly={readOnly}
+                  sortable={!readOnly && room.id !== INBOX_ID}
+                  onMove={readOnly || !isDropTarget(room) ? undefined : move}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
         </ul>
         {moveFailed.shown ? (
           <p role="status" className="mt-2 flex items-center gap-1.5 px-2.5 text-[13px] text-[#c13515]">
@@ -199,79 +218,41 @@ function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomI
   };
 }
 
-type DropSide = "before" | "after";
-type DropHandlers = Partial<Record<"onDragEnter" | "onDragOver" | "onDragLeave" | "onDrop", (e: DragEvent<HTMLElement>) => void>>;
+const KEYBOARD_CODES = { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] };
 
-/**
- * Drop handlers for reordering: a room dragged over this row lands before or after it,
- * by which half the pointer is in. The inbox is pinned first, so dropping on it means "after".
- */
-function useRoomDrop(roomId: string, onDropRoom: ((id: string, targetId: string, side: DropSide) => void) | undefined) {
-  const [side, setSide] = useState<DropSide | null>(null);
-  if (!onDropRoom) return { side: null, handlers: {} as DropHandlers };
-  const over = (e: DragEvent<HTMLElement>) => {
-    if (!carriesRoom(e.dataTransfer) || draggingRoom() === roomId) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const r = e.currentTarget.getBoundingClientRect();
-    setSide(roomId === INBOX_ID || e.clientY >= r.top + r.height / 2 ? "after" : "before");
-  };
-  const handlers: DropHandlers = {
-    onDragEnter: over,
-    onDragOver: over,
-    onDragLeave: (e) => {
-      if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
-      setSide(null);
-    },
-    onDrop: (e) => {
-      const at = side;
-      setSide(null);
-      const id = carriesRoom(e.dataTransfer) ? e.dataTransfer.getData(ROOM_DRAG_TYPE) : "";
-      if (!id || !at) return;
-      e.preventDefault();
-      endRoomDrag();
-      onDropRoom(id, roomId, at);
-    },
-  };
-  return { side, handlers };
-}
+/** Rooms only move up and down. */
+const verticalOnly: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 
-/** Runs both sets of drag handlers; each one ignores drags of the other kind. */
-function bothHandlers(a: DropHandlers, b: DropHandlers): DropHandlers {
-  const keys = ["onDragEnter", "onDragOver", "onDragLeave", "onDrop"] as const;
-  return Object.fromEntries(
-    keys.map((k) => [
-      k,
-      (e: DragEvent<HTMLElement>) => {
-        a[k]?.(e);
-        b[k]?.(e);
-      },
-    ]),
-  );
+/** `rooms` in the `order` of ids (rooms it doesn't list keep their place at the end); `rooms` when there is none. */
+function inOrder(rooms: Room[], order: string[] | null): Room[] {
+  if (!order) return rooms;
+  const byId = new Map(rooms.map((r) => [r.id, r]));
+  const listed = new Set(order);
+  return [...order.flatMap((id) => byId.get(id) ?? []), ...rooms.filter((r) => !listed.has(r.id))];
 }
 
 function RoomRow({
   room,
   active,
   readOnly,
+  sortable,
   onMove,
-  onDropRoom,
 }: {
   room: Room;
   active: boolean;
   readOnly: boolean;
+  /** The row can be dragged up and down to reorder the rooms. */
+  sortable: boolean;
   /** Set when the row is a drop target for artifacts. */
   onMove?: (p: ArtifactDragPayload, toRoomId: string) => void;
-  /** Set when rooms can be reordered: a room was dropped on `side` of this row. */
-  onDropRoom?: (id: string, targetId: string, side: DropSide) => void;
 }) {
   const viewer = useViewerStore();
   const client = useClient();
   const [editing, setEditing] = useState(false);
   const unavailable = room.status === "unavailable";
   const drop = useDropTarget(room.id, onMove);
-  const roomDrop = useRoomDrop(room.id, onDropRoom);
-  const draggable = !!onDropRoom && room.id !== INBOX_ID;
+  const sort = useSortable({ id: room.id, disabled: !sortable });
+  const style = { transform: CSS.Translate.toString(sort.transform), transition: sort.transition };
 
   if (editing && !readOnly) {
     return (
@@ -302,13 +283,14 @@ function RoomRow({
       onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))}
       onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "room", roomId: room.id })}
       onDoubleClick={readOnly ? undefined : () => setEditing(true)}
-      {...(draggable ? roomDragSource(room.id) : {})}
-      {...bothHandlers(drop.handlers as DropHandlers, roomDrop.handlers)}
+      {...(sortable ? { ...sort.attributes, ...sort.listeners } : {})}
+      {...drop.handlers}
       className={cn(
         ITEM,
         ITEM_INTERACTIVE,
         active && "bg-[#ebebeb] hover:bg-[#ebebeb]",
         drop.over && "bg-[#ebebeb] outline-1 outline-ink outline-solid hover:bg-[#ebebeb]",
+        sort.isDragging && "cursor-grabbing bg-white shadow-float hover:bg-white",
       )}
     >
       <Folder {...ICON} className={cn("shrink-0", active ? "fill-[#fff0f3]" : "fill-none")} />
@@ -317,13 +299,7 @@ function RoomRow({
   );
 
   return (
-    <li className="relative" data-drop={roomDrop.side ?? undefined}>
-      {roomDrop.side ? (
-        <span
-          aria-hidden
-          className={cn("pointer-events-none absolute inset-x-2 h-0.5 rounded-full bg-ink", roomDrop.side === "before" ? "-top-[2px]" : "-bottom-[2px]")}
-        />
-      ) : null}
+    <li ref={sort.setNodeRef} style={style} className={cn("relative", sort.isDragging && "z-10")}>
       {unavailable ? (
         <Tooltip>
           <TooltipTrigger asChild>{row}</TooltipTrigger>
