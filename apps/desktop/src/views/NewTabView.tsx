@@ -15,6 +15,10 @@ import { OnboardingCard } from "./OnboardingCard";
  * only those are loaded (and watched while the tab is open); the rest count 0.
  * The inbox is always watched, for "방을 기다리는 문서".
  *
+ * When no doc is new by createdAt but some rooms (inbox aside) have never been
+ * visited, the subtitle counts those as "새로 정리된 방": an agent's links keep
+ * the originals' (old) createdAt, so after onboarding nothing reads as new.
+ *
  * First run (synced, and no rooms besides inbox): the onboarding card takes
  * the place of the grid. Before the first sync nothing is shown.
  */
@@ -65,6 +69,8 @@ export function NewTabView() {
   // Only say anything once every room that needs loading has loaded (or failed to).
   const settled = info !== null && changed.every((id) => artifacts[id] !== undefined || errors[`room:${id}`] !== undefined);
   const roomsWithNew = cards.filter((c) => c.newCount > 0).length;
+  // Rooms an agent organized since: never visited (no lastVisit entry), inbox aside.
+  const neverVisited = rooms.filter((r) => r.id !== INBOX_ID && baselines.current!.lastVisit[r.id] === undefined).length;
 
   const inbox = useMemo(() => [...(artifacts[INBOX_ID] ?? [])].reverse(), [artifacts]);
 
@@ -96,7 +102,11 @@ export function NewTabView() {
         <h1 className="text-[32px] font-medium text-ink">지난 방문 이후</h1>
         {settled ? (
           <p className="text-[17px] text-ink-2">
-            {roomsWithNew > 0 ? `방 ${roomsWithNew}곳에 새 문서가 들어왔어요.` : "새로 들어온 문서가 없어요."}
+            {roomsWithNew > 0
+              ? `방 ${roomsWithNew}곳에 새 문서가 들어왔어요.`
+              : neverVisited > 0
+                ? `새로 정리된 방 ${neverVisited}곳이 있어요.`
+                : "새로 들어온 문서가 없어요."}
           </p>
         ) : null}
       </header>

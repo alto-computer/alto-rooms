@@ -24,11 +24,11 @@ const artifact = (id: string, roomId: string, createdAt: string): Artifact => ({
 const OLD = "2026-01-02T03:00:00Z";
 const NEW = "2026-06-02T03:00:00Z";
 
-function viewer() {
+function viewer(lastVisit: Record<string, string> = {}) {
   const storage = memoryStorage();
   storage.setItem(
     "alto-rooms.viewer.v1",
-    JSON.stringify({ tabs: [], sidebarOpen: true, lastVisit: {}, firstRunAt: "2026-03-01T00:00:00Z" }),
+    JSON.stringify({ tabs: [], sidebarOpen: true, lastVisit, firstRunAt: "2026-03-01T00:00:00Z" }),
   );
   return new ViewerStore(storage);
 }
@@ -63,7 +63,7 @@ describe("NewTabView", () => {
 
   it("says nothing is new when nothing is", async () => {
     await renderWithStores(<NewTabView />, {
-      viewer: viewer(),
+      viewer: viewer({ a: "2026-03-02T00:00:00Z" }),
       rooms: [room("a", "가", { artifactCount: 1 })],
       artifacts: { a: [artifact("a1", "a", OLD)] },
     });
@@ -94,6 +94,41 @@ describe("NewTabView", () => {
       fireEvent.click(card);
     });
     expect(v.getState().tabs.some((t) => t.kind === "room" && t.roomId === "a")).toBe(true);
+  });
+});
+
+describe("NewTabView: rooms organized since", () => {
+  it("never-visited rooms other than inbox count as 새로 정리된 방 when no doc is new by createdAt", async () => {
+    await renderWithStores(<NewTabView />, {
+      viewer: viewer({ c: "2026-03-02T00:00:00Z" }),
+      rooms: [
+        room("inbox", "Inbox", { artifactCount: 1 }),
+        room("a", "가", { artifactCount: 1 }),
+        room("b", "나", { artifactCount: 2 }),
+        room("c", "다", { artifactCount: 1 }), // visited
+      ],
+      artifacts: { inbox: [artifact("i1", "inbox", OLD)], a: [artifact("a1", "a", OLD)] },
+    });
+    expect(await screen.findByText("새로 정리된 방 2곳이 있어요.")).toBeInTheDocument();
+    expect(screen.queryByText("새로 들어온 문서가 없어요.")).toBeNull();
+  });
+
+  it("new docs by createdAt still win the subtitle", async () => {
+    await renderWithStores(<NewTabView />, {
+      viewer: viewer(),
+      rooms: [room("a", "가", { updatedAt: NEW }), room("b", "나")],
+      artifacts: { a: [artifact("a1", "a", NEW)] },
+    });
+    expect(await screen.findByText("방 1곳에 새 문서가 들어왔어요.")).toBeInTheDocument();
+    expect(screen.queryByText(/새로 정리된 방/)).toBeNull();
+  });
+
+  it("an inbox that was never visited does not count", async () => {
+    await renderWithStores(<NewTabView />, {
+      viewer: viewer({ a: "2026-03-02T00:00:00Z" }),
+      rooms: [room("inbox", "Inbox"), room("a", "가")],
+    });
+    expect(await screen.findByText("새로 들어온 문서가 없어요.")).toBeInTheDocument();
   });
 });
 
