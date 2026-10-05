@@ -9,6 +9,20 @@ use rooms_core::RoomsCore;
 use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 
+/// Takes an exclusive, non-blocking lock on `<home>/.rooms/lock` (one daemon per home).
+/// Keep the returned file alive for the daemon's lifetime; the OS releases the lock on exit.
+/// Touches nothing else in `.rooms` (no state.json, no token).
+pub fn acquire_home_lock(home: &std::path::Path) -> std::io::Result<std::fs::File> {
+    let dir = home.join(".rooms");
+    std::fs::create_dir_all(&dir)?;
+    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(dir.join("lock"))?;
+    match f.try_lock() {
+        Ok(()) => Ok(f),
+        Err(std::fs::TryLockError::WouldBlock) => Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "another roomsd holds the lock")),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
 /// Writes a fresh 32-char token to `<home>/.rooms/token` (file 0600, dir 0700).
 pub fn write_token(home: &std::path::Path) -> std::io::Result<String> {
     use std::io::Write;
@@ -66,7 +80,19 @@ pub fn build_files_router(state: AppState) -> Router {
 
 #[cfg(test)]
 mod tests {
-    use super::write_token;
+    use super::{acquire_home_lock, write_token};
+
+    #[test]
+    fn second_home_lock_fails_until_first_is_dropped() {
+        let d = tempfile::tempdir().unwrap();
+        let first = acquire_home_lock(d.path()).unwrap();
+        assert!(d.path().join(".rooms/lock").is_file());
+        assert!(acquire_home_lock(d.path()).is_err(), "second daemon must not get the lock");
+        assert!(!d.path().join(".rooms/token").exists() && !d.path().join(".rooms/state.json").exists());
+        drop(first);
+        assert!(acquire_home_lock(d.path()).is_ok());
+    }
+
     use std::os::unix::fs::PermissionsExt;
 
     fn mode(p: &std::path::Path) -> u32 { std::fs::metadata(p).unwrap().permissions().mode() & 0o777 }
