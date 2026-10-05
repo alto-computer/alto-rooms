@@ -1,1 +1,4 @@
-// placeholder module; real content arrives in later tasks
+pub mod error;
+pub mod rules;
+
+pub use error::CoreError;
