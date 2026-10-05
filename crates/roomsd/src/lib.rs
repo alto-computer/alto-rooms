@@ -7,6 +7,7 @@ use axum::routing::{get, patch, post, put};
 use axum::Router;
 use rooms_core::RoomsCore;
 use tower_http::cors::CorsLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -41,5 +42,9 @@ pub fn build_files_router(state: AppState) -> Router {
     Router::new()
         .route("/{room_id}/{*rel}", get(routes::file))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::files_host_guard))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("sandbox allow-scripts allow-popups"),
+        ))
         .with_state(state)
 }

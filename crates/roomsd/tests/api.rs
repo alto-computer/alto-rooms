@@ -84,8 +84,10 @@ async fn create_room_requires_token_host_and_loopback() {
     assert_eq!(ok.status(), StatusCode::OK);
     let no_token = app.clone().oneshot(post("/v1/rooms", r#"{"name":"b"}"#, None, "127.0.0.1:4317")).await.unwrap();
     assert_eq!(no_token.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(no_token).await["error"], "read_only");
     let rebinding = app.clone().oneshot(post("/v1/rooms", r#"{"name":"c"}"#, Some("t0k"), "evil.example:4317")).await.unwrap();
     assert_eq!(rebinding.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(rebinding).await["error"], "forbidden_host");
     let dup = app.oneshot(post("/v1/rooms", r#"{"name":"연구-도구"}"#, Some("t0k"), "localhost:4317")).await.unwrap();
     assert_eq!(dup.status(), StatusCode::CONFLICT);
     assert_eq!(body_json(dup).await["error"], "room_exists");
@@ -104,7 +106,9 @@ async fn foreign_origin_is_rejected() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
     let mut req = post("/v1/rooms", r#"{"name":"x"}"#, Some("t0k"), "127.0.0.1:4317");
     req.headers_mut().insert("origin", "https://evil.example".parse().unwrap());
-    assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let r = app.oneshot(req).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(r).await["error"], "read_only");
 }
 
 #[tokio::test]
@@ -138,6 +142,26 @@ async fn files_router_sets_sandbox_csp_and_blocks_escape() {
     assert_eq!(r.headers()["content-security-policy"], "sandbox allow-scripts allow-popups");
     let r = files.clone().oneshot(get(&format!("/{}/..%2Fjournal", room.id), "localhost:4318")).await.unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(r.headers()["content-security-policy"], "sandbox allow-scripts allow-popups");
     let r = files.oneshot(get(&format!("/{}/x.html", room.id), "evil.example:4318")).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn files_content_types_and_forbidden_csp() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/s.css"), "p{}").unwrap();
+    std::fs::write(d.path().join("a/m.JS"), "export{}").unwrap();
+    std::fs::write(d.path().join("a/z.xyz"), "?").unwrap();
+    let files = build_files_router(st);
+    for (f, ct) in [("s.css", "text/css; charset=utf-8"), ("m.JS", "text/javascript; charset=utf-8"), ("z.xyz", "application/octet-stream")] {
+        let r = files.clone().oneshot(get(&format!("/{}/{f}", room.id), FILES_HOST)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK, "{f}");
+        assert_eq!(r.headers()["content-type"], ct, "{f}");
+        assert_eq!(r.headers()["x-content-type-options"], "nosniff");
+    }
+    let r = files.oneshot(get(&format!("/{}/s.css", room.id), "evil.example:4318")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert_eq!(r.headers()["content-security-policy"], "sandbox allow-scripts allow-popups");
 }

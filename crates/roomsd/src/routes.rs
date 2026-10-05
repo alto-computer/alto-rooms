@@ -60,6 +60,25 @@ pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String
     let path = st.core.resolve_file(&room_id, &rel)?;
     // CoreError has no read/not-found variant besides RoomNotFound (misleading here); WriteFailed (500) is the closest fit.
     let bytes = tokio::fs::read(&path).await.map_err(|e| ApiErr(CoreError::WriteFailed(e.to_string())))?;
-    let ct = if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("md")).unwrap_or(false) { "text/markdown; charset=utf-8" } else { "text/html; charset=utf-8" };
-    Ok(([("content-type", ct), ("content-security-policy", "sandbox allow-scripts allow-popups")], bytes).into_response())
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let ct = content_type(&ext);
+    Ok(([("content-type", ct), ("x-content-type-options", "nosniff")], bytes).into_response())
+}
+
+fn content_type(ext: &str) -> &'static str {
+    match ext {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "md" => "text/markdown; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
 }
