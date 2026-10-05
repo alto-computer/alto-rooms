@@ -1,6 +1,8 @@
 /*
  * Verification hook for the quit flush (see `flush_probe` in src-tauri/flush.rs).
  *
+ * Compiled in only for verification builds (Vite define __FLUSH_PROBE__, set by
+ * ALTO_FLUSH_PROBE=1, with the Rust feature `flush-probe`); absent otherwise.
  * Inert unless the app was launched with ALTO_ROOMS_FLUSH_PROBE=<date>/<note>.
  * Then it waits (up to 60 s) for that note to exist (created through roomsd's
  * API by whoever runs the check), loads it into a registered saver whose clock

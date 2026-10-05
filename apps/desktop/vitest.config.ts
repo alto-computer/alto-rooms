@@ -5,6 +5,7 @@ import path from "node:path";
 export default defineConfig({
   plugins: [react()],
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "./src") } },
+  define: { __FLUSH_PROBE__: "false" },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],

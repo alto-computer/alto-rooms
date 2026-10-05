@@ -59,6 +59,25 @@ fn emit(app: &AppHandle, event: &str) {
     }
 }
 
+type InvokeHandler = Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync>;
+
+#[cfg(not(feature = "flush-probe"))]
+fn invoke_handler() -> InvokeHandler {
+    Box::new(tauri::generate_handler![daemon::connect, daemon::viewer_initial, flush::flush_done])
+}
+
+/// Verification builds also expose the quit-flush probe.
+#[cfg(feature = "flush-probe")]
+fn invoke_handler() -> InvokeHandler {
+    Box::new(tauri::generate_handler![
+        daemon::connect,
+        daemon::viewer_initial,
+        flush::flush_done,
+        flush::flush_probe,
+        flush::flush_probe_armed
+    ])
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -85,13 +104,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            daemon::connect,
-            daemon::viewer_initial,
-            flush::flush_done,
-            flush::flush_probe,
-            flush::flush_probe_armed
-        ])
+        .invoke_handler(invoke_handler())
         .build(tauri::generate_context!())
         .expect("error while building Alto Rooms");
 

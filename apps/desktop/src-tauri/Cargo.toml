@@ -12,6 +12,11 @@ edition = "2021"
 name = "alto_rooms_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Quit-flush verification probe (flush::flush_probe*). Off by default; only for
+# bundle checks: `tauri build --features flush-probe` with ALTO_FLUSH_PROBE=1.
+flush-probe = []
+
 [build-dependencies]
 tauri-build = { version = "2.7.1", features = [] }
 

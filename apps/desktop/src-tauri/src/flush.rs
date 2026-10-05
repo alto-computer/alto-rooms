@@ -205,17 +205,20 @@ pub fn intercept_exit(app: &AppHandle, code: Option<i32>) -> bool {
     intercept
 }
 
-/// Verification hook for the quit flush, inert unless `ALTO_ROOMS_FLUSH_PROBE` is set
+/// Verification hook for the quit flush (cargo feature `flush-probe`), inert unless `ALTO_ROOMS_FLUSH_PROBE` is set
 /// (`<YYYY-MM-DD>/<note file>`): the webview then makes that note dirty with a saver
 /// that never saves on its own, so its text can only reach disk through a quit flush.
+#[cfg(feature = "flush-probe")]
 pub const FLUSH_PROBE_ENV: &str = "ALTO_ROOMS_FLUSH_PROBE";
 
+#[cfg(feature = "flush-probe")]
 #[derive(Debug, PartialEq, Eq, serde::Serialize)]
 pub struct FlushProbe {
     pub date: String,
     pub name: String,
 }
 
+#[cfg(feature = "flush-probe")]
 /// Parses `<YYYY-MM-DD>/<name>.md`; anything else disables the probe.
 pub fn parse_flush_probe(raw: &str) -> Option<FlushProbe> {
     let (date, name) = raw.trim().split_once('/')?;
@@ -224,11 +227,13 @@ pub fn parse_flush_probe(raw: &str) -> Option<FlushProbe> {
     (date_ok && name_ok).then(|| FlushProbe { date: date.to_string(), name: name.to_string() })
 }
 
+#[cfg(feature = "flush-probe")]
 #[tauri::command]
 pub fn flush_probe() -> Option<FlushProbe> {
     parse_flush_probe(&std::env::var(FLUSH_PROBE_ENV).ok()?)
 }
 
+#[cfg(feature = "flush-probe")]
 #[tauri::command]
 pub fn flush_probe_armed() {
     eprintln!("flush probe: note is dirty; only a quit flush can save it");
@@ -238,6 +243,7 @@ pub fn flush_probe_armed() {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "flush-probe")]
     #[test]
     fn flush_probe_accepts_only_date_slash_note() {
         assert_eq!(

@@ -61,7 +61,7 @@ export default function App() {
         cur.stores.rooms.start();
         setStores(cur.stores);
         setPhase("ready");
-        if (isTauri() && !probed.current) {
+        if (__FLUSH_PROBE__ && isTauri() && !probed.current) {
           probed.current = true;
           const { client } = cur.stores;
           runFlushProbe(client.getNote, client.saveNote).catch((err) => console.error("flush probe failed:", err));
