@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Alto Rooms v1 — Spec</title>
+<style>
+  :root {
+    --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --border: #e7e5e4;
+    --accent: #2563eb; --accent-bg: #eff6ff;
+    --ok: #16a34a; --warn: #ca8a04; --bad: #dc2626;
+    --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+    --sans: -apple-system, 'Inter', 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.65; font-size: 15px; }
+  .layout { display: grid; grid-template-columns: 240px 1fr; max-width: 1400px; margin: 0 auto; min-height: 100vh; }
+  nav.toc { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 32px 20px; border-right: 1px solid var(--border); background: white; font-size: 13px; }
+  nav.toc h4 { margin: 0 0 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  nav.toc a { display: block; padding: 6px 8px; color: var(--fg); text-decoration: none; border-radius: 4px; margin-bottom: 2px; }
+  nav.toc a:hover { background: var(--accent-bg); color: var(--accent); }
+  nav.toc .badge { float: right; font-size: 11px; }
+  main { padding: 48px 64px; max-width: 900px; }
+  h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 22px; margin: 56px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  h2 .num { color: var(--muted); font-variant-numeric: tabular-nums; }
+  h2 .badge { margin-left: auto; font-size: 14px; padding: 4px 10px; border-radius: 999px; font-weight: 500; }
+  .badge-ok { background: #dcfce7; color: #166534; }
+  .badge-warn { background: #fef3c7; color: #92400e; }
+  .badge-bad { background: #fee2e2; color: #991b1b; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  p, li { color: var(--fg); }
+  code { font-family: var(--mono); font-size: 0.9em; background: #f4f4f5; padding: 2px 6px; border-radius: 3px; }
+  pre { background: #1c1917; color: #fafaf9; padding: 16px 20px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.55; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: #f4f4f5; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+  mark.ambiguous { background: #fef08a; padding: 2px 6px; border-radius: 3px; font-weight: 500; }
+  mark.ambiguous::before { content: "❓ "; }
+  .review-box { background: var(--accent-bg); border-left: 4px solid var(--accent); padding: 14px 18px; margin: 20px 0; border-radius: 0 6px 6px 0; }
+  .review-box h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); }
+  .qa { border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 16px 0; background: white; }
+  .qa .q { font-weight: 600; margin: 0 0 8px; color: var(--accent); }
+  .qa .a { margin: 0; color: var(--fg); }
+  svg.diagram { display: block; max-width: 100%; height: auto; margin: 20px auto; background: white; border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 32px; }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { padding: 6px 0 6px 28px; position: relative; }
+  .checklist li::before { content: "☐"; position: absolute; left: 0; color: var(--muted); font-size: 18px; }
+  .checklist li.done::before { content: "☑"; color: var(--ok); }
+  .seam { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 16px 20px; margin: 20px 0; background: white; }
+  .seam .seam-title { font-weight: 700; margin: 0 0 4px; font-family: var(--mono); font-size: 14px; color: var(--accent); }
+  .seam .seam-sub { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+  .seam h5 { margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .seam pre { margin: 6px 0; }
+  .seam table { margin: 6px 0 0; }
+  .contract-row th { width: 160px; white-space: nowrap; }
+  .flow { border: 1px solid var(--border); border-top: 4px solid var(--accent); border-radius: 8px; padding: 8px 24px 20px; margin: 24px 0; background: white; }
+  .flow > h3 { color: var(--accent); }
+  .flow .slot { margin: 18px 0; padding-left: 14px; border-left: 3px solid var(--border); }
+  .flow .slot > h4 { margin: 0 0 6px; font-size: 13px; }
+  .flow .slot .hint { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <h4>Spec Sections</h4>
+  <a href="#s0">0. Overview <span class="badge badge-warn">🟡</span></a>
+  <a href="#s1">1. Requirements <span class="badge badge-warn">🟡</span></a>
+  <a href="#s2">2. Business Logic & Policy <span class="badge badge-warn">🟡</span></a>
+  <a href="#s3">3. Error Handling <span class="badge badge-warn">🟡</span></a>
+  <a href="#s4">4. Architecture (macro) <span class="badge badge-warn">🟡</span></a>
+  <a href="#s5">5. Seams (edge) <span class="badge badge-warn">🟡</span></a>
+  <a href="#s6">6. Contracts (node) <span class="badge badge-warn">🟡</span></a>
+  <a href="#s7">7. Core Flows <span class="badge badge-warn">🟡</span></a>
+  <a href="#s8">8. End-to-End Scenario <span class="badge badge-warn">🟡</span></a>
+  <a href="#s9">9. Testing <span class="badge badge-warn">🟡</span></a>
+  <a href="#s10">10. Senior Review <span class="badge badge-ok">🟢</span></a>
+  <a href="#s11">11. Open Questions <span class="badge badge-warn">🟡</span></a>
+  <h4 style="margin-top:24px">Legend</h4>
+  <div style="font-size:12px; line-height:1.7;">
+    🟢 done · 🟡 draft · 🔴 blocked<br>
+    <mark class="ambiguous">text</mark> = open ambiguity
+  </div>
+  <h4 style="margin-top:24px">Links</h4>
+  <div style="font-size:12px; line-height:1.7;">
+    디자인 최종안: claude.ai/artifact/FfR98TmrrEeqtLECUB5RHy
+  </div>
+</nav>
+
+<main>
+
+<h1>Alto Rooms v1</h1>
+<div class="meta">Spec · 2026-10-05 · author: jun-hash (with Claude Code) · repo: ~/personal/alto-rooms</div>
+
+<!-- ============================================== -->
+<h2 id="s0"><span class="num">0.</span> Overview <span class="badge badge-warn">🟡</span></h2>
+
+<h3>Problem</h3>
+<p>코딩 에이전트와 브라우저 에이전트가 만든 HTML 아티팩트가 claude.ai, 로컬 폴더, 세션마다 흩어져서 <strong>누락되고, 너무 많고, 한곳에서 보기 어렵다</strong>. 직접 만든 결과물 대시보드는 66개 중 56개가 "기타"로 빠질 만큼 종류별 정리가 맞지 않았다. Television은 모아 보여주긴 하지만 등록 과정(CLI·스킬·경로 등록)이 불편했고 그룹핑 이상을 주지 못했다. Claude Artifacts는 결과물만 모아서 <strong>사람을 위한 이해 공간</strong>이 없다.</p>
+
+<h3>Goal (1줄)</h3>
+<p><strong>어디서 만든 HTML 아티팩트든 폴더에 넣기만 하면 방별로 훑어보고, Journal에서 하루를 이해할 수 있다 — 코어는 어떤 에이전트·스킬·UI와도 결합하지 않는다.</strong></p>
+
+<h3>원칙 (모든 결정의 기준)</h3>
+<ol>
+  <li><strong>Rooms = HTML 아티팩트 저장소 + 나를 위한 이해 공간(Journal).</strong> 아티팩트를 만들지 않고, 에이전트를 돌리지 않는다.</li>
+  <li><strong>Rooms는 AI 일을 직접 하지 않는다.</strong> 미래 기능(묻기, 관계 시각화, 설명 채우기)도 맥락을 꾸려 사용자의 메인 에이전트에게 넘기고(또는 만든 세션을 이어 열고), 결과는 파일로 다시 받는다.</li>
+  <li><strong>접점은 세 개뿐이고 모두 버전 붙은 고정 계약이다:</strong> 폴더 규칙(들어옴) · Rooms 프로토콜(코어↔UI) · 넘기기(나감, v2).</li>
+  <li><strong>UI도 갈아끼울 수 있다.</strong> 데스크탑 앱은 프로토콜만 쓰는 참고 클라이언트다 (Codex CLI의 코어/UI 분리 수준).</li>
+  <li><strong>모든 단어·요소·배치에는 이유가 있어야 한다.</strong> 이유가 약하면 뺀다.</li>
+</ol>
+
+<h3>Out of scope (v1)</h3>
+<ul>
+  <li>묻기 (아티팩트에서 질문 → 만든 대화로 전달) — <strong>v2</strong>. 단, 만든 곳 메타데이터는 v1부터 읽어 둔다.</li>
+  <li>방 안 아티팩트 사이 관계·한 줄 설명 시각화 — 후속 이슈.</li>
+  <li>방 삭제, 방 안의 내 노트, HTML 외 파일, 휴대폰에서 쓰기(묻기·노트).</li>
+  <li>동기화(Drive·Dropbox·git이 담당), 다중 사용자·인증, 에디터 기능(서식·블록).</li>
+  <li>아티팩트 생성 스킬·Dream 루틴의 내장 — 둘 다 Rooms 바깥(어떤 스킬이든).</li>
+  <li>배경 사진·장식적 "편안함" 처리 (시도 후 기각).</li>
+</ul>
+
+<h3>Glossary</h3>
+<table>
+  <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+  <tbody>
+    <tr><td><code>Home</code></td><td>Rooms 루트 폴더. 기본 <code>~/rooms/</code>. Rooms 자체 상태는 <code>~/rooms/.rooms/</code>에만.</td></tr>
+    <tr><td><code>Room</code></td><td>주제 축의 단위. 폴더 하나 = 방 하나. <code>owned</code>(Rooms가 만든 Home 하위 폴더) 또는 <code>linked</code>(사용자가 연결한 기존 폴더, 예: 팀 폴더).</td></tr>
+    <tr><td><code>Artifact</code></td><td>방 폴더(하위 포함) 안의 <code>.html</code>/<code>.htm</code> 파일 하나. 무시 규칙에 걸리지 않은 것.</td></tr>
+    <tr><td><code>Journal day</code></td><td>시간 축의 단위. 날짜로 된 방. <code>~/rooms/journal/YYYY-MM-DD/</code> 폴더 + 그날 모든 방에서 생긴 아티팩트 조회.</td></tr>
+    <tr><td><code>Note</code></td><td>사람이 쓴 <code>.md</code>. v1에서는 Journal day 폴더 안에만 존재 (계획·회고 등).</td></tr>
+    <tr><td><code>Producer</code></td><td>아티팩트를 폴더에 쓰는 모든 것 — Claude Code, Codex, 브라우저 에이전트, 스크립트, 사람.</td></tr>
+    <tr><td><code>roomsd</code></td><td>머리 없는(headless) 코어 데몬. 인덱스·감시·방·노트 관리, Rooms 프로토콜 제공.</td></tr>
+    <tr><td><code>Rooms Protocol</code></td><td>roomsd ↔ 클라이언트 사이 버전 붙은 HTTP+JSON API와 SSE 이벤트 스트림. <code>/v1/…</code></td></tr>
+    <tr><td><code>Client</code></td><td>프로토콜을 쓰는 UI. 참고 구현 = Tauri 데스크탑 앱. 원격 웹 보기, 제3자 UI도 같은 지위.</td></tr>
+    <tr><td><code>Handoff</code></td><td>(v2) 맥락 꾸러미를 사용자가 설정한 에이전트 명령으로 넘기는 출구.</td></tr>
+  </tbody>
+</table>
+
+<div class="review-box">
+  <h4>리뷰 시 확인할 점</h4>
+  Problem(흩어짐·등록 불편·사람 공간 없음)과 Goal(폴더에 넣기만 · Journal · 무결합)이 1:1로 맞는가? 원칙 2·3이 v2 이후 기능까지 막지 않고 열어 두는가?
+</div>
+
+<!-- ============================================== -->
+<h2 id="s1"><span class="num">1.</span> Requirements (User Stories) <span class="badge badge-warn">🟡</span></h2>
+
+<h3>User Stories</h3>
+<ul>
+  <li><strong>US-1.</strong> As a <em>사용자</em>, I want <em>어떤 에이전트가 방 폴더에 HTML을 쓰기만 하면 앱에 바로 뜨기를</em>, so that <em>등록·설치 없이 모든 결과물이 한곳에 모인다</em>.</li>
+  <li><strong>US-2.</strong> As a <em>사용자</em>, I want <em>사이드바 +로 방을 만들고, 방 제목을 눌러 이름을 바꾸기를(자동 저장)</em>, so that <em>주제를 내 방식대로 나눈다</em>.</li>
+  <li><strong>US-3.</strong> As a <em>사용자</em>, I want <em>이미 쌓아 둔 폴더(팀 폴더 포함)를 방으로 연결하기를</em>, so that <em>파일을 옮기지 않고 그대로 본다</em>.</li>
+  <li><strong>US-4.</strong> As a <em>사용자</em>, I want <em>방의 아티팩트를 큰 미리보기 가로 띠로 훑고, 확대하면 새 탭으로 열기를</em>, so that <em>무엇이 있는지 빠르게 파악하고 궁금한 것만 깊이 본다</em>.</li>
+  <li><strong>US-5.</strong> As a <em>사용자</em>, I want <em>Journal에서 그날 생긴 아티팩트(Dream 포함)와 내 계획·회고를 함께 보기를</em>, so that <em>하루를 이해하고 정리한다</em>.</li>
+  <li><strong>US-6.</strong> As a <em>사용자</em>, I want <em>다른 기기에서 Tailscale로 같은 화면을 읽기 전용으로 보기를</em>, so that <em>맥 앞에 없어도 확인한다</em>.</li>
+  <li><strong>US-7.</strong> As a <em>제3자 개발자</em>, I want <em>Rooms 프로토콜만으로 내 UI를 만들기를</em>, so that <em>코어를 건드리지 않고 다른 경험을 붙인다</em>.</li>
+</ul>
+
+<h3>Acceptance Criteria</h3>
+<table>
+  <thead><tr><th>#</th><th>Given</th><th>When</th><th>Then</th></tr></thead>
+  <tbody>
+    <tr><td>AC-1</td><td>방 <code>브라우저-하네스</code>가 열려 있음</td><td>아무 프로세스가 그 폴더(하위 포함)에 <code>a.html</code>을 씀</td><td>2초 안에 띠 끝에 카드가 생기고 새 문서 점이 붙음. 별도 명령 없음</td></tr>
+    <tr><td>AC-2</td><td>같은 방</td><td><code>node_modules/x.html</code>, <code>.git/</code> 안, <code>.gitignore</code>/<code>.roomsignore</code>에 걸린 HTML을 씀</td><td>카드가 생기지 않음</td></tr>
+    <tr><td>AC-3</td><td>방 폴더에 <code>notes.md</code>, <code>img.png</code>를 씀</td><td>—</td><td>카드가 생기지 않음 (v1은 HTML만)</td></tr>
+    <tr><td>AC-4</td><td><code>&lt;title&gt;</code>이 없는 HTML</td><td>카드가 생김</td><td>제목 = 파일 이름(확장자 제외), 날짜 = 파일 생성/수정 시각</td></tr>
+    <tr><td>AC-5</td><td>사이드바</td><td><code>+</code> → 이름 "연구 도구" 입력 → Enter</td><td><code>~/rooms/연구-도구/</code>가 생기고 그 방 탭이 열림</td></tr>
+    <tr><td>AC-6</td><td>owned 방 탭</td><td>제목 클릭 → 이름 수정 → Enter 또는 바깥 클릭</td><td>폴더 이름이 바뀌고 저장 버튼 없이 반영. 열린 탭·사이드바 즉시 갱신</td></tr>
+    <tr><td>AC-7</td><td>사이드바</td><td><code>+</code> → 기존 폴더 연결 → <code>~/Google Drive/team/research</code> 선택</td><td>linked 방이 생기고 원래 폴더 안에는 어떤 파일도 쓰이지 않음</td></tr>
+    <tr><td>AC-8</td><td>linked 방</td><td>제목 이름을 바꿈</td><td>표시 이름만 바뀜. 실제 폴더 이름은 그대로</td></tr>
+    <tr><td>AC-9</td><td>방 탭</td><td>카드에 마우스를 올리고 우상단 확대 버튼을 누름</td><td>그 아티팩트가 새 문서 탭으로 열림</td></tr>
+    <tr><td>AC-10</td><td>오늘 두 방에서 아티팩트가 각각 생기고, 외부 루틴이 <code>journal/2026-10-05/dream.html</code>을 씀</td><td>Journal → 오늘</td><td>에이전트 줄에 Dream + 두 아티팩트(출처 방 이름 표시), 나 줄에 계획·회고 노트</td></tr>
+    <tr><td>AC-11</td><td>Journal 오늘</td><td>계획 노트를 열어 텍스트 상자에 씀</td><td>입력 멈춤 후 자동 저장되어 <code>journal/2026-10-05/계획.md</code>에 반영. 다른 편집기로 열기 가능</td></tr>
+    <tr><td>AC-12</td><td>원격 기기가 Tailscale 주소로 접속</td><td>방 만들기·이름 바꾸기·노트 저장 시도</td><td>403, UI에는 쓰기 버튼이 보이지 않음</td></tr>
+    <tr><td>AC-13</td><td>roomsd 실행 중</td><td>제3자 클라이언트가 <code>GET /v1/rooms</code>, <code>GET /v1/events</code>만 사용</td><td>데스크탑 앱과 같은 목록·같은 실시간 변경을 받음</td></tr>
+    <tr><td>AC-14</td><td>사이드바</td><td><code>⌘B</code> 또는 탭 바 맨 앞 버튼</td><td>사이드바가 완전히 숨겨지고(아이콘 레일 없음), 다시 누르면 펼쳐짐</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s2"><span class="num">2.</span> Business Logic &amp; Policy <span class="badge badge-warn">🟡</span></h2>
+
+<h3>Core Rules</h3>
+<ol>
+  <li><strong>폴더 규칙(들어옴):</strong> 방 폴더(하위 포함)의 <code>.html</code>/<code>.htm</code> = 아티팩트. 그 외 확장자는 무시. 예외: Journal day 폴더의 <code>.md</code> = 노트.</li>
+  <li><strong>무시 규칙:</strong> 숨김 파일·폴더(<code>.</code>로 시작), <code>node_modules</code>, <code>dist</code>, <code>build</code>, <code>.next</code>, <code>coverage</code>. linked 방은 폴더 안 <code>.gitignore</code>를 따른다. 사용자가 직접 둔 <code>.roomsignore</code>(gitignore 문법)를 따른다. Rooms는 <code>.roomsignore</code>를 스스로 쓰지 않는다.</li>
+  <li><strong>메타데이터는 선택:</strong> 제목 = <code>&lt;meta name="rooms:title"&gt;</code> → <code>&lt;title&gt;</code> → 파일 이름. 시각 = <code>rooms:created</code> → <strong>처음 본 시각 기록</strong>(<code>.rooms/index.json</code>, 첫 발견 때 파일 생성 시각 → 수정 시각으로 정하고 이후 고정). 만든 곳 = <code>rooms:agent</code>, <code>rooms:session</code>, <code>rooms:cwd</code>, <code>rooms:machine</code> (없으면 비움, v2 묻기용).</li>
+  <li><strong>owned vs linked:</strong> owned = Home 하위 실제 폴더, 이름 바꾸기 = 폴더 이름 변경. linked = 경로 참조, 이름 바꾸기 = 표시 이름만. Rooms는 linked 폴더 안에 어떤 파일도 쓰지 않는다.</li>
+  <li><strong>Rooms 상태 위치:</strong> 방 id·표시 이름(owned 포함)·연결 경로·owned 폴더 inode·방 순서는 <code>~/rooms/.rooms/state.json</code>, 아티팩트 첫 발견 시각은 <code>~/rooms/.rooms/index.json</code>. 보는 사람 상태(지난 방문, 사이드바 접힘, 탭)는 <strong>클라이언트</strong>가 가진다 — 코어는 보는 사람을 모른다.</li>
+  <li><strong>Journal:</strong> <code>journal</code>은 예약된 방 이름. Journal day = <code>journal/YYYY-MM-DD/</code> 폴더(없으면 노트 저장 시 생성) + 그날 생긴 다른 방 아티팩트 조회(복사 안 함).</li>
+  <li><strong>쓰는 주체:</strong> 아티팩트 = <code>agent</code>, Journal 노트 = <code>me</code>. 데이터 모델에 <code>author</code> 칸을 두어 나중에 방에도 내 노트를 넣을 수 있게 열어 둔다.</li>
+  <li><strong>방 삭제는 없다.</strong> 연결 해제도 v1에 없음 (필요해지면 추가).</li>
+  <li><strong>원격(Tailscale) = 읽기 전용.</strong> 쓰기 엔드포인트는 loopback에서만 허용.</li>
+  <li><strong>코어에는 모델·프롬프트·API 키·UI가 없다.</strong></li>
+</ol>
+
+<h3>Cross-field &amp; Temporal Invariants</h3>
+<table>
+  <thead><tr><th>종류</th><th>불변식</th><th>근거</th></tr></thead>
+  <tbody>
+    <tr><td>관계형</td><td><code>room.kind == "linked"</code>이면 <code>room.path</code>는 Home 밖일 수 있고, Rooms는 그 경로에 쓰기 연산을 하지 않는다</td><td>팀 폴더를 더럽히지 않음</td></tr>
+    <tr><td>관계형</td><td><code>author == "me"</code>인 항목은 Journal day 폴더의 <code>.md</code>뿐 (v1)</td><td>나를 위한 공간은 Journal에 모은다</td></tr>
+    <tr><td>관계형</td><td>owned 방: 폴더 이름 = <code>slug(name)</code> (NFC 정규화, 공백→<code>-</code>), 표시 이름 원문은 state.json. 충돌 판정은 slug를 NFC·대소문자 무시로 비교 ("연구 도구" == "연구-도구"). linked 방: 표시 이름만 state.json</td><td>재시작 후에도 원문 이름 유지, APFS 대소문자 무시와 일치 (Q8)</td></tr>
+    <tr><td>시간</td><td>아티팩트의 Journal day = <code>createdAt</code>의 로컬 날짜. <code>createdAt</code>은 첫 발견 시 <code>.rooms/index.json</code>에 저장되어 재시작·임시파일 rename·동기화 후에도 바뀌지 않음 (<code>rooms:created</code> 메타가 있으면 그것이 우선)</td><td>"그날 생긴 것"의 정의 고정 (Q2)</td></tr>
+    <tr><td>시간</td><td>파일 이벤트 → 프로토콜 이벤트 지연 ≤ 2초 (디바운스 300ms)</td><td>AC-1</td></tr>
+    <tr><td>시간</td><td>Room <code>id</code>는 생성 후 불변. owned 방은 폴더 inode(dev+ino)로 추적하므로 Finder에서 이름을 바꿔도 같은 id (표시 이름은 새 폴더 이름으로 갱신). inode를 못 찾으면 <code>room.removed</code></td><td>열린 탭·클라이언트 상태가 깨지지 않게 (Q3)</td></tr>
+  </tbody>
+</table>
+
+<h3>State Diagram — 아티팩트 수명</h3>
+<svg class="diagram" viewBox="0 0 640 170">
+  <defs><marker id="a1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c1917"/></marker></defs>
+  <circle cx="30" cy="80" r="7" fill="#1c1917"/>
+  <rect x="70" y="58" width="120" height="44" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="130" y="85" text-anchor="middle" font-size="13">indexed</text>
+  <rect x="270" y="58" width="120" height="44" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="330" y="85" text-anchor="middle" font-size="13">updated</text>
+  <rect x="470" y="58" width="120" height="44" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/><text x="530" y="85" text-anchor="middle" font-size="13">removed</text>
+  <line x1="37" y1="80" x2="68" y2="80" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a1)"/><text x="52" y="70" text-anchor="middle" font-size="11" fill="#78716c">add</text>
+  <line x1="190" y1="80" x2="268" y2="80" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a1)"/><text x="229" y="70" text-anchor="middle" font-size="11" fill="#78716c">change</text>
+  <path d="M330 102 C 330 140, 300 140, 300 104" fill="none" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a1)"/><text x="345" y="140" font-size="11" fill="#78716c">change</text>
+  <line x1="390" y1="80" x2="468" y2="80" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a1)"/><text x="429" y="70" text-anchor="middle" font-size="11" fill="#78716c">unlink</text>
+  <path d="M130 58 C 130 20, 530 20, 530 56" fill="none" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a1)"/><text x="330" y="28" text-anchor="middle" font-size="11" fill="#78716c">unlink / ignore 규칙에 걸림</text>
+</svg>
+
+<h3>Decision Table — 파일 이벤트 분류</h3>
+<table>
+  <thead><tr><th>조건</th><th>결과</th></tr></thead>
+  <tbody>
+    <tr><td>무시 규칙에 걸림</td><td>무시 (이미 인덱스에 있으면 removed)</td></tr>
+    <tr><td><code>.html</code>/<code>.htm</code>, 방 폴더 하위</td><td>artifact add/change/remove</td></tr>
+    <tr><td><code>.md</code>, <code>journal/YYYY-MM-DD/</code> 바로 아래</td><td>note add/change/remove</td></tr>
+    <tr><td><code>journal/YYYY-MM-DD/*.html</code></td><td>artifact (그 날짜 Journal day의 에이전트 줄; Dream 포함)</td></tr>
+    <tr><td>그 외 확장자</td><td>무시</td></tr>
+    <tr><td>Home 바로 아래 새 폴더</td><td>owned room add (사용자가 Finder에서 만들어도 방이 됨)</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s3"><span class="num">3.</span> Error Handling <span class="badge badge-warn">🟡</span></h2>
+
+<h3>Error Matrix</h3>
+<table>
+  <thead><tr><th>조건</th><th>처리</th><th>사용자 메시지</th><th>로깅</th></tr></thead>
+  <tbody>
+    <tr><td>방 이름이 비었거나 <code>/</code>·<code>..</code>·예약어 <code>journal</code></td><td>400 <code>invalid_room_name</code>, 편집 상태 유지</td><td>"쓸 수 없는 이름이에요"</td><td>info</td></tr>
+    <tr><td>같은 이름의 방이 이미 있음</td><td>409 <code>room_exists</code></td><td>"같은 이름의 방이 있어요"</td><td>info</td></tr>
+    <tr><td>연결한 폴더가 없음/읽기 권한 없음</td><td>방은 유지, <code>room.status = "unavailable"</code>, 이벤트 발행</td><td>사이드바 방 이름 흐리게 + "폴더를 찾을 수 없어요"</td><td>warn <code>linked_unavailable</code></td></tr>
+    <tr><td>HTML 읽기/파싱 실패</td><td>아티팩트는 유지, 제목 = 파일 이름</td><td>없음</td><td>debug</td></tr>
+    <tr><td>파일 감시 이벤트 유실(오버플로)</td><td>해당 방 전체 재스캔</td><td>없음</td><td>warn <code>watch_overflow</code></td></tr>
+    <tr><td>원격에서 쓰기 요청</td><td>403 <code>read_only</code></td><td>(UI에 쓰기 버튼 없음)</td><td>info</td></tr>
+    <tr><td>클라이언트가 지원 안 하는 프로토콜 버전</td><td>400 <code>unsupported_version</code> + 지원 목록</td><td>"앱을 업데이트해 주세요"</td><td>warn</td></tr>
+    <tr><td>roomsd 포트 사용 중</td><td>시작 실패, 종료 코드 2</td><td>앱: "Rooms 코어를 시작하지 못했어요"</td><td>error</td></tr>
+    <tr><td>노트 저장 중 디스크 오류</td><td>500 <code>write_failed</code>, 클라이언트는 편집 내용 유지 후 재시도</td><td>"저장하지 못했어요. 다시 시도할게요"</td><td>error</td></tr>
+  </tbody>
+</table>
+
+<h3>Recovery / Retry Policy</h3>
+<p>파일 시스템이 진실이므로 코어 인덱스는 언제든 재스캔으로 복구된다. 시작 시 전체 스캔, 실행 중 감시, 오버플로 시 방 단위 재스캔. 노트 저장 실패는 클라이언트가 지수 백오프(1s·2s·4s, 최대 3회) 후 사용자에게 알림. SSE 연결이 끊기면 클라이언트는 재연결 후 <code>GET</code>으로 스냅샷을 다시 받는다(이벤트 재생 없음).</p>
+
+<!-- ============================================== -->
+<h2 id="s4"><span class="num">4.</span> Architecture (macro) <span class="badge badge-warn">🟡</span></h2>
+<p class="meta">① 관심사를 옳은 축으로 갈랐나 ② 허리가 좁은가 ③ 의존이 한쪽으로만 흐르나 ④ 덩어리마다 진입점이 하나인가.</p>
+
+<h3>Package Map</h3>
+<table>
+  <thead><tr><th>Package</th><th>Responsibility</th><th>Depends on</th></tr></thead>
+  <tbody>
+    <tr><td><code>packages/protocol</code></td><td>Rooms 프로토콜 타입·스키마(zod)·버전. 코어와 모든 클라이언트가 공유하는 유일한 코드</td><td>없음</td></tr>
+    <tr><td><code>packages/core</code></td><td>폴더 규칙 구현: 스캔·감시·무시 규칙·메타 추출·방/Journal/노트 연산. 라이브러리 facade <code>RoomsCore</code></td><td>protocol</td></tr>
+    <tr><td><code>apps/roomsd</code></td><td>Bun HTTP 서버. <code>RoomsCore</code>를 Rooms 프로토콜(HTTP+SSE)로 노출, 아티팩트 파일 제공, 원격 읽기 전용 가드</td><td>core, protocol</td></tr>
+    <tr><td><code>apps/desktop</code></td><td>Tauri + React + shadcn/ui 참고 클라이언트. roomsd를 사이드카로 띄우고 프로토콜만 사용</td><td>protocol (런타임: roomsd)</td></tr>
+    <tr><td><code>apps/web</code></td><td>desktop과 같은 React UI를 원격 읽기 전용으로 빌드해 roomsd가 제공</td><td>protocol</td></tr>
+  </tbody>
+</table>
+
+<h3>Dependency Diagram</h3>
+<svg class="diagram" viewBox="0 0 760 300">
+  <defs><marker id="a2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c1917"/></marker></defs>
+  <rect x="20" y="40" width="150" height="54" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="95" y="63" text-anchor="middle" font-size="13">Producers</text><text x="95" y="81" text-anchor="middle" font-size="11" fill="#78716c">Claude Code · Codex · …</text>
+  <rect x="20" y="190" width="150" height="54" rx="6" fill="#fef3c7" stroke="#ca8a04" stroke-width="1.5"/><text x="95" y="213" text-anchor="middle" font-size="13">Folders</text><text x="95" y="231" text-anchor="middle" font-size="11" fill="#78716c">~/rooms · linked</text>
+  <rect x="250" y="190" width="150" height="54" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="325" y="213" text-anchor="middle" font-size="13">core</text><text x="325" y="231" text-anchor="middle" font-size="11" fill="#78716c">RoomsCore</text>
+  <rect x="440" y="190" width="130" height="54" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="505" y="213" text-anchor="middle" font-size="13">roomsd</text><text x="505" y="231" text-anchor="middle" font-size="11" fill="#78716c">/v1 HTTP + SSE</text>
+  <rect x="610" y="120" width="130" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="675" y="147" text-anchor="middle" font-size="13">desktop (Tauri)</text>
+  <rect x="610" y="190" width="130" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="675" y="217" text-anchor="middle" font-size="13">web (원격)</text>
+  <rect x="610" y="260" width="130" height="34" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5" stroke-dasharray="4 3"/><text x="675" y="282" text-anchor="middle" font-size="12">제3자 UI</text>
+  <rect x="440" y="40" width="130" height="44" rx="6" fill="white" stroke="#78716c" stroke-width="1.5" stroke-dasharray="4 3"/><text x="505" y="61" text-anchor="middle" font-size="12">사용자 에이전트</text><text x="505" y="77" text-anchor="middle" font-size="11" fill="#78716c">(v2 handoff)</text>
+  <line x1="95" y1="94" x2="95" y2="188" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a2)"/><text x="102" y="145" font-size="11" fill="#78716c">S1</text>
+  <line x1="170" y1="217" x2="248" y2="217" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a2)"/><text x="209" y="208" text-anchor="middle" font-size="11" fill="#78716c">S2</text>
+  <line x1="400" y1="217" x2="438" y2="217" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="570" y1="210" x2="608" y2="146" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="570" y1="217" x2="608" y2="212" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="570" y1="230" x2="608" y2="274" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a2)"/><text x="588" y="252" font-size="11" fill="#78716c">S3</text>
+  <line x1="340" y1="188" x2="460" y2="86" stroke="#78716c" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a2)"/><text x="385" y="128" font-size="11" fill="#78716c">S4 (v2)</text>
+</svg>
+
+<h3>Cluster Facades</h3>
+<table>
+  <thead><tr><th>덩어리</th><th>단일 facade</th><th>호출자가 몰라도 되는 내부</th></tr></thead>
+  <tbody>
+    <tr><td>폴더 해석</td><td><code>RoomsCore</code> (<code>openRooms(home)</code>)</td><td>chokidar/FSEvents 감시, 무시 규칙 합성, HTML 메타 추출, id 생성, 재스캔</td></tr>
+    <tr><td>프로토콜</td><td>roomsd <code>/v1</code></td><td>Bun 서버, SSE 팬아웃, 원격 가드, 정적 파일 제공</td></tr>
+    <tr><td>클라이언트</td><td><code>RoomsClient</code> (packages/protocol의 얇은 fetch 래퍼)</td><td>재연결, 스냅샷 재동기화</td></tr>
+  </tbody>
+</table>
+
+<h3>응집도 / 결합도 자가진단</h3>
+<table>
+  <thead><tr><th>모듈</th><th>응집도</th><th>결합도</th><th>근거</th></tr></thead>
+  <tbody>
+    <tr><td>protocol</td><td>high</td><td>low</td><td>타입·스키마만. 런타임 의존 없음</td></tr>
+    <tr><td>core</td><td>high</td><td>low</td><td>파일 시스템만 안다. HTTP·UI·AI를 모른다</td></tr>
+    <tr><td>roomsd</td><td>high</td><td>low</td><td>core를 프로토콜로 번역만 한다. 비즈니스 규칙 없음</td></tr>
+    <tr><td>desktop</td><td>high</td><td>low</td><td>프로토콜만 쓴다. core를 import하지 않는다(린트로 강제)</td></tr>
+  </tbody>
+</table>
+
+<h3>명명 규칙</h3>
+<table>
+  <thead><tr><th>종류</th><th>패턴</th><th>예시</th></tr></thead>
+  <tbody>
+    <tr><td>함수</td><td>verb-noun, 도메인 동사</td><td><code>listRooms</code>, <code>createRoom</code>, <code>linkFolder</code>, <code>renameRoom</code>, <code>saveNote</code></td></tr>
+    <tr><td>타입</td><td>PascalCase 도메인 어휘</td><td><code>Room</code>, <code>Artifact</code>, <code>JournalDay</code>, <code>Note</code>, <code>RoomsEvent</code></td></tr>
+    <tr><td>엔드포인트</td><td><code>/v1/</code> + 복수 명사</td><td><code>/v1/rooms/:roomId/artifacts</code></td></tr>
+    <tr><td>메타 태그</td><td><code>rooms:</code> 접두</td><td><code>rooms:title</code>, <code>rooms:session</code></td></tr>
+  </tbody>
+</table>
+
+<div class="review-box">
+  <h4>리뷰 시 확인할 점</h4>
+  desktop이 core를 직접 import하는 순간 "UI 교체 가능"이 깨진다 — 의존이 protocol 쪽으로만 흐르는가? core가 HTTP·AI·UI 어휘를 하나도 모르는가? 허리(S3)가 순수 값 타입(JSON)만 주고받는가?
+</div>
+
+<!-- ============================================== -->
+<h2 id="s5"><span class="num">5.</span> Seams (edge — 경계 계약) <span class="badge badge-warn">🟡</span></h2>
+<p class="meta">§4 화살표 하나 = seam 하나. call-site 먼저 → frozen signature → 3줄 계약.</p>
+
+<h3>Seam Index</h3>
+<svg class="diagram" viewBox="0 0 700 120">
+  <defs><marker id="a3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c1917"/></marker></defs>
+  <rect x="10" y="40" width="100" height="40" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="60" y="65" text-anchor="middle" font-size="12">Producer</text>
+  <rect x="170" y="40" width="100" height="40" rx="6" fill="#fef3c7" stroke="#ca8a04" stroke-width="1.5"/><text x="220" y="65" text-anchor="middle" font-size="12">Folder</text>
+  <rect x="330" y="40" width="100" height="40" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="380" y="65" text-anchor="middle" font-size="12">core/roomsd</text>
+  <rect x="490" y="10" width="100" height="40" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="540" y="35" text-anchor="middle" font-size="12">Client</text>
+  <rect x="490" y="72" width="100" height="40" rx="6" fill="white" stroke="#78716c" stroke-width="1.5" stroke-dasharray="4 3"/><text x="540" y="97" text-anchor="middle" font-size="12">Agent (v2)</text>
+  <line x1="110" y1="60" x2="168" y2="60" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a3)"/><text x="139" y="52" text-anchor="middle" font-size="11">S1</text>
+  <line x1="270" y1="60" x2="328" y2="60" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a3)"/><text x="299" y="52" text-anchor="middle" font-size="11">S2</text>
+  <line x1="430" y1="52" x2="488" y2="32" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a3)"/><text x="455" y="34" text-anchor="middle" font-size="11">S3</text>
+  <line x1="430" y1="68" x2="488" y2="90" stroke="#78716c" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a3)"/><text x="455" y="96" text-anchor="middle" font-size="11">S4</text>
+</svg>
+
+<div class="seam">
+  <p class="seam-title">S1: Producer → Folder (폴더 규칙)</p>
+  <p class="seam-sub">아무 에이전트·스크립트·사람이 Rooms에 아티팩트를 넣는 유일한 방법. 설치·등록·전용 스킬 없음.</p>
+  <h5>Call-site</h5>
+  <pre><code># 어떤 producer든 — 쓰기만 하면 끝
+cp benchmark.html ~/rooms/브라우저-하네스/
+# 또는 에이전트에게: "결과 HTML을 ~/rooms/브라우저-하네스/ 에 저장해"
+# Dream: 아무 스킬이 밤에
+write ~/rooms/journal/2026-10-05/dream.html</code></pre>
+  <h5>Frozen signature (파일 규칙 v1)</h5>
+  <pre><code>path:   &lt;room-folder&gt;/**/&lt;name&gt;.html|.htm      # 무시 규칙 밖
+        ~/rooms/journal/YYYY-MM-DD/&lt;name&gt;.html # Journal day 아티팩트
+optional &lt;head&gt; meta (모두 생략 가능):
+  &lt;meta name="rooms:title"   content="…"&gt;
+  &lt;meta name="rooms:created" content="2026-10-05T10:02:00+09:00"&gt;
+  &lt;meta name="rooms:agent"   content="claude-code|codex|…"&gt;
+  &lt;meta name="rooms:session" content="&lt;session id&gt;"&gt;   # v2 묻기용
+  &lt;meta name="rooms:cwd"     content="/abs/path"&gt;
+  &lt;meta name="rooms:machine" content="mac-mini"&gt;</code></pre>
+  <h5>경계 계약</h5>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ HTML 파일 하나(선택적 meta). ↑ 없음 (producer는 Rooms를 모른다)</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>producer가 파일을 소유. Rooms는 읽기만 (owned 방 폴더 생성·이름 변경 제외, linked는 절대 쓰지 않음)</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>파일이 HTML 확장자를 가지고 무시 경로 밖에 있으면 Rooms가 2초 안에 보여준다. 메타가 틀리거나 없어도 fallback으로 반드시 보인다</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S2: Folder → RoomsCore (해석)</p>
+  <p class="seam-sub">파일 시스템을 도메인 값(Room/Artifact/JournalDay)과 변경 이벤트로 번역.</p>
+  <h5>Call-site (roomsd 안)</h5>
+  <pre><code>const core = await openRooms({ home: "~/rooms" });
+const rooms = core.listRooms();                 // Room[]
+const items = core.listArtifacts(room.id);      // Artifact[]
+const day   = core.getJournalDay("2026-10-05"); // JournalDay
+const off   = core.onChange((e) =&gt; sse.broadcast(e)); // RoomsEvent</code></pre>
+  <h5>Frozen signature</h5>
+  <pre><code>export function openRooms(opts: { home: string }): Promise&lt;RoomsCore&gt;;
+
+export interface RoomsCore {
+  listRooms(): Room[];
+  listArtifacts(roomId: RoomId): Artifact[];          // createdAt 오름차순
+  getJournalDay(date: IsoDate): JournalDay;
+  createRoom(name: string): Promise&lt;Room&gt;;            // owned
+  linkFolder(path: string, name?: string): Promise&lt;Room&gt;;
+  renameRoom(roomId: RoomId, name: string): Promise&lt;Room&gt;;
+  saveNote(date: IsoDate, name: NoteName, body: string): Promise&lt;Note&gt;;
+  resolveFile(roomId: RoomId, relPath: string): string; // 절대경로, 방 밖이면 throw
+  onChange(listener: (e: RoomsEvent) =&gt; void): () =&gt; void;
+  close(): Promise&lt;void&gt;;
+}</code></pre>
+  <h5>경계 계약</h5>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ Home 경로 / 이름·경로·노트 본문. ↑ 순수 값 타입(protocol 패키지의 타입)과 <code>RoomsEvent</code></td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>core가 인덱스(메모리)와 <code>.rooms/state.json</code>을 소유. 파일 시스템이 진실, 인덱스는 언제든 재구성 가능</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>모든 반환값은 protocol 스키마를 통과한다. <code>resolveFile</code>은 방 밖 경로(<code>..</code>, 심볼릭 링크 탈출)를 절대 반환하지 않는다</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S3: roomsd → Client (Rooms Protocol v1)</p>
+  <p class="seam-sub">UI를 갈아끼울 수 있게 하는 허리. 데스크탑 앱도 이것만 쓴다.</p>
+  <h5>Call-site (아무 클라이언트)</h5>
+  <pre><code>const rooms = createRoomsClient("http://127.0.0.1:4317");
+const list  = await rooms.listRooms();
+const strip = await rooms.listArtifacts(list[0].id);
+rooms.subscribe((e) =&gt; { if (e.type === "artifact.added") refresh(e.roomId); });
+await rooms.renameRoom(id, "연구 도구");          // 로컬만, 원격은 403
+iframe.src = rooms.fileUrl(artifact);            // /v1/files/:roomId/:relPath</code></pre>
+  <h5>Frozen signature (HTTP)</h5>
+  <pre><code>GET    /v1/info                         → { version: "1", readOnly: boolean, home: string,
+                                            journalRoomId: "journal", filesOrigin: string }
+GET    /v1/rooms                        → Room[]
+POST   /v1/rooms        {name}          → Room            (owned)
+POST   /v1/rooms/link   {path, name?}   → Room            (linked)
+PATCH  /v1/rooms/:roomId {name}         → Room
+GET    /v1/rooms/:roomId/artifacts      → Artifact[]
+GET    /v1/journal/:date                → JournalDay      (date = YYYY-MM-DD)
+PUT    /v1/journal/:date/notes/:name    text/markdown → Note
+GET    /v1/rooms/journal/artifacts      → 모든 날짜의 journal/*/*.html (createdAt 오름차순)
+GET    {filesOrigin}/:roomId/*relPath    → 파일 원본. 별도 포트(4318) = 별도 origin
+                                           CSP: sandbox allow-scripts allow-popups (allow-same-origin 없음)
+GET    /v1/events                       → text/event-stream of RoomsEvent (각 이벤트에 seq)
+모든 스냅샷 GET 응답 헤더: X-Rooms-Seq: &lt;그 시점 seq&gt;
+쓰기(POST/PATCH/PUT) 조건 = loopback 요청 AND Host ∈ {127.0.0.1:4317, localhost:4317}
+  AND Origin ∈ 허용 목록(데스크탑 앱 origin) AND Authorization: Bearer &lt;실행마다 새 토큰&gt;
+  (토큰은 roomsd가 ~/rooms/.rooms/token(0600)에 쓰고 Tauri가 읽어 전달) — 아니면 403</code></pre>
+  <h5>경계 계약</h5>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ 방 이름·경로·노트 본문. ↑ JSON 값(Room/Artifact/JournalDay/Note)과 SSE 이벤트, 아티팩트 파일 바이트</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>roomsd가 서버 상태(인덱스) 소유. 보는 사람 상태(지난 방문·탭·사이드바 접힘·토글)는 클라이언트 소유. 방향: 클라이언트 → roomsd 요청, roomsd → 클라이언트 이벤트</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td><code>/v1</code> 안에서는 필드 추가만 하고 삭제·의미 변경 없음. 모든 이벤트는 단조 증가 <code>seq</code>를 가진다. <strong>클라이언트 규칙:</strong> ① SSE 먼저 연결해 이벤트를 버퍼 ② 스냅샷 GET(<code>X-Rooms-Seq</code>) ③ 버퍼에서 seq ≤ 스냅샷 seq는 버리고 나머지 적용 ④ 적용은 항상 id 기준 upsert/delete(멱등). 재연결도 같은 순서. 아티팩트 HTML은 API와 다른 origin에서 sandbox로만 실행되어 API를 호출할 수 없다 (Q6, Q7)</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S4: core → 사용자 에이전트 (Handoff, v2 — 예약만)</p>
+  <p class="seam-sub">v1에서는 구현하지 않음. 형태만 고정해 v2가 데이터 변경 없이 붙게 한다.</p>
+  <h5>Call-site (v2)</h5>
+  <pre><code>await handoff.run({ kind: "ask", artifact, question: "Pi랑 비교하면?" });
+// 설정: agentCommand = 'claude --resume {session} -p {prompt}' (session 없으면 새 세션 템플릿)</code></pre>
+  <h5>Frozen signature (예약)</h5>
+  <pre><code>type HandoffRequest = { kind: "ask"|"describe"|"relate"; roomId: RoomId;
+  artifactIds: ArtifactId[]; prompt: string };
+// 결과는 반환하지 않는다. 에이전트가 S1(폴더)로 HTML/meta를 다시 쓴다.</code></pre>
+  <h5>경계 계약</h5>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ 맥락 꾸러미(파일 경로·메타·질문). ↑ 없음 (결과는 S1으로 돌아옴)</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>사용자가 에이전트 명령 템플릿을 소유. Rooms는 명령을 실행만 하고 AI 상태를 갖지 않는다</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>에이전트는 결과를 폴더 규칙(S1)대로 쓴다 — 그래서 Rooms는 출력 형식을 알 필요가 없다</td></tr>
+  </tbody></table>
+</div>
+
+<div class="review-box">
+  <h4>리뷰 시 확인할 점 (seam 스멜)</h4>
+  S1에 Rooms 전용 명령·스킬이 끼어 있지 않은가(결합도 0)? S3 call-site가 core 내부(인덱스, 감시)를 몰라도 되는가? S4가 결과를 직접 받지 않고 S1으로 돌려받는 구조인가?
+</div>
+
+<!-- ============================================== -->
+<h2 id="s6"><span class="num">6.</span> Contracts (node — Design by Contract) <span class="badge badge-warn">🟡</span></h2>
+
+<h3>Value types (packages/protocol)</h3>
+<pre><code>type RoomId = string;      // 생성 시 발급(nanoid 12), 이름 바꿔도 불변
+type ArtifactId = string;  // sha1(roomId + ":" + relPath) 앞 16자 — 이동하면 새 id
+type IsoDate = `${number}-${number}-${number}`; // 로컬 날짜
+
+interface Room { id: RoomId; name: string; kind: "owned"|"linked"|"journal";
+  path: string; status: "ok"|"unavailable"; artifactCount: number; updatedAt: string | null }
+
+interface Artifact { id: ArtifactId; roomId: RoomId; relPath: string; title: string;
+  createdAt: string; updatedAt: string; author: "agent";
+  source: { agent?: string; session?: string; cwd?: string; machine?: string } }
+
+interface Note { date: IsoDate; name: string; relPath: string; updatedAt: string; author: "me" }
+
+interface JournalDay { date: IsoDate; artifacts: Artifact[]; notes: Note[] }
+  // artifacts = journal/date/*.html + 모든 방에서 createdAt 로컬 날짜 == date
+
+type RoomsEvent = { seq: number } & (
+  | { type: "room.added"|"room.updated"; room: Room }      // status: unavailable 포함
+  | { type: "room.removed"; roomId: RoomId }               // owned 폴더가 바깥에서 지워짐
+  | { type: "artifact.added"|"artifact.updated"; artifact: Artifact }
+  | { type: "artifact.removed"; roomId: RoomId; artifactId: ArtifactId }
+  | { type: "note.saved"; note: Note }
+  | { type: "note.removed"; date: IsoDate; name: string }
+  | { type: "journal.changed"; date: IsoDate }             // 그 날짜 day 구성이 바뀜 → 클라이언트는 day를 다시 GET
+  | { type: "resync"; roomId?: RoomId } );                 // 클라이언트는 해당 범위 스냅샷 재요청</code></pre>
+
+<h3>Inputs</h3>
+<table>
+  <thead><tr><th>이름</th><th>타입</th><th>Invariants / Validation</th></tr></thead>
+  <tbody>
+    <tr><td><code>name</code> (방)</td><td><code>string</code></td><td>trim 후 1–80자, <code>/ \ :</code> 및 <code>..</code> 금지, 대소문자 무시 <code>journal</code> 금지. roomsd 진입에서 zod</td></tr>
+    <tr><td><code>path</code> (연결)</td><td><code>string</code></td><td>절대경로(realpath), 존재하는 디렉터리, 읽기 가능. Home·Home 상위·Home 하위 금지, 기존 linked 방의 상위·하위 금지(한 파일은 한 방에만). core에서 검증</td></tr>
+    <tr><td><code>roomId</code></td><td><code>RoomId</code></td><td>존재해야 함. roomsd 라우트</td></tr>
+    <tr><td><code>date</code></td><td><code>IsoDate</code></td><td><code>YYYY-MM-DD</code>, 실재 날짜. zod</td></tr>
+    <tr><td><code>name</code> (노트)</td><td><code>NoteName</code></td><td>1–60자 + <code>.md</code> 자동 부착, 경로 문자 금지</td></tr>
+    <tr><td><code>body</code></td><td><code>string</code></td><td>UTF-8, ≤ 1MB</td></tr>
+    <tr><td><code>relPath</code></td><td><code>string</code></td><td>정규화 후 방 루트 안. 심볼릭 링크 해석 후에도 방 안</td></tr>
+  </tbody>
+</table>
+
+<h3>Outputs</h3>
+<table>
+  <thead><tr><th>이름</th><th>타입</th><th>Guarantees</th></tr></thead>
+  <tbody>
+    <tr><td><code>listRooms</code></td><td><code>Room[]</code></td><td>Journal 제외(Journal id는 <code>/v1/info.journalRoomId</code> = 고정 상수 <code>"journal"</code>), state.json 순서(없으면 생성 순). 빈 배열 가능, null 없음</td></tr>
+    <tr><td><code>listArtifacts</code></td><td><code>Artifact[]</code></td><td><code>createdAt</code> 오름차순(띠 왼→오), 무시 규칙 적용 완료, 중복 없음</td></tr>
+    <tr><td><code>getJournalDay</code></td><td><code>JournalDay</code></td><td>폴더가 없어도 빈 day 반환(에러 아님). artifacts는 createdAt 오름차순</td></tr>
+    <tr><td><code>createRoom</code>·<code>renameRoom</code></td><td><code>Room</code></td><td>반환 시점에 디스크 반영 완료 + <code>room.added/updated</code> 이벤트 정확히 1회. rename 동안 core는 그 방의 감시 이벤트를 억제하고, ArtifactId는 roomId 기준이라 바뀌지 않으므로 artifact 이벤트를 내지 않음</td></tr>
+    <tr><td><code>saveNote</code></td><td><code>Note</code></td><td>원자적 쓰기(임시 파일 → rename). 같은 본문 반복 = 같은 결과(멱등)</td></tr>
+  </tbody>
+</table>
+
+<h3>Errors</h3>
+<table>
+  <thead><tr><th>입력 조건</th><th>Error type</th><th>HTTP</th></tr></thead>
+  <tbody>
+    <tr><td>방 이름 규칙 위반</td><td><code>invalid_room_name</code></td><td>400</td></tr>
+    <tr><td>같은 이름 방 존재</td><td><code>room_exists</code></td><td>409</td></tr>
+    <tr><td>연결 경로 없음·권한 없음·Home 관련</td><td><code>invalid_link_path</code></td><td>400</td></tr>
+    <tr><td>연결 경로가 기존 방과 겹침(상위/하위)</td><td><code>overlapping_room</code></td><td>409</td></tr>
+    <tr><td>roomId 없음</td><td><code>room_not_found</code></td><td>404</td></tr>
+    <tr><td>날짜·노트 이름 형식 오류</td><td><code>invalid_input</code></td><td>400</td></tr>
+    <tr><td>relPath 방 밖</td><td><code>path_escape</code></td><td>400</td></tr>
+    <tr><td>원격 쓰기</td><td><code>read_only</code></td><td>403</td></tr>
+    <tr><td>디스크 쓰기 실패</td><td><code>write_failed</code></td><td>500</td></tr>
+  </tbody>
+</table>
+
+<h3>Preconditions / Postconditions</h3>
+<ul>
+  <li><strong>Pre:</strong> Home이 존재하거나 생성 가능. roomsd가 loopback(+ 선택 Tailscale)에 바인딩됨.</li>
+  <li><strong>Post:</strong> 모든 쓰기 성공 후 디스크와 인덱스 일치 + 해당 이벤트 1회 발행. linked 폴더 내부에는 어떤 쓰기도 일어나지 않음.</li>
+</ul>
+
+<!-- ============================================== -->
+<h2 id="s7"><span class="num">7.</span> Core Flows (핵심 흐름) <span class="badge badge-warn">🟡</span></h2>
+
+<h3>Flow Index</h3>
+<table>
+  <thead><tr><th>#</th><th>핵심 흐름</th><th>한 줄 책임</th><th>진입점</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>아티팩트 수집</td><td>파일 쓰기 → 띠에 카드</td><td><code>RoomsCore.onChange</code> → <code>GET /v1/events</code></td></tr>
+    <tr><td>2</td><td>방 만들기·연결·이름 바꾸기</td><td>사용자 조작 → 폴더/state 반영</td><td><code>POST /v1/rooms</code>, <code>/link</code>, <code>PATCH</code></td></tr>
+    <tr><td>3</td><td>Journal 하루</td><td>날짜 → 그날 아티팩트 + 내 노트</td><td><code>GET /v1/journal/:date</code>, <code>PUT …/notes/:name</code></td></tr>
+    <tr><td>4</td><td>원격 보기</td><td>다른 기기 → 읽기 전용 같은 화면</td><td>roomsd(Tailscale 바인딩) + apps/web</td></tr>
+  </tbody>
+</table>
+
+<div class="flow">
+  <h3>핵심 흐름 1: 아티팩트 수집</h3>
+  <div class="slot"><h4>① 트리거 &amp; 타이밍</h4><p>시작 시 전체 스캔 1회, 이후 파일 시스템 이벤트마다(300ms 디바운스). 앱이 꺼져 있던 동안 생긴 파일도 시작 스캔으로 잡힌다 — 등록 단계가 없기 때문에 누락이 없다.</p></div>
+  <div class="slot"><h4>② 워크플로우</h4>
+    <svg class="diagram" viewBox="0 0 700 120">
+      <defs><marker id="a4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c1917"/></marker></defs>
+      <rect x="10" y="40" width="110" height="40" rx="6" fill="#fef3c7" stroke="#ca8a04" stroke-width="1.5"/><text x="65" y="65" text-anchor="middle" font-size="12">파일 이벤트</text>
+      <rect x="150" y="40" width="110" height="40" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="205" y="65" text-anchor="middle" font-size="12">무시 규칙</text>
+      <rect x="290" y="40" width="110" height="40" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="345" y="65" text-anchor="middle" font-size="12">메타 추출</text>
+      <rect x="430" y="40" width="110" height="40" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="485" y="65" text-anchor="middle" font-size="12">인덱스 갱신</text>
+      <rect x="570" y="40" width="120" height="40" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="630" y="65" text-anchor="middle" font-size="12">SSE → 클라이언트</text>
+      <line x1="120" y1="60" x2="148" y2="60" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a4)"/>
+      <line x1="260" y1="60" x2="288" y2="60" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a4)"/>
+      <line x1="400" y1="60" x2="428" y2="60" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a4)"/>
+      <line x1="540" y1="60" x2="568" y2="60" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a4)"/>
+    </svg>
+  </div>
+  <div class="slot"><h4>③ 입력 &amp; 출처</h4>
+    <table><thead><tr><th>입력</th><th>출처</th><th>전제 / 대기</th><th>가공</th></tr></thead>
+    <tbody><tr><td>HTML 파일</td><td>방 폴더(하위 포함)</td><td>쓰기 완료(크기 안정 300ms)</td><td><code>&lt;head&gt;</code> 앞 64KB만 읽어 meta/title 추출</td></tr>
+    <tr><td>무시 규칙</td><td>기본 목록 + <code>.gitignore</code>(linked) + <code>.roomsignore</code></td><td>규칙 파일 변경 시 방 재스캔</td><td>합성</td></tr></tbody></table>
+  </div>
+  <div class="slot"><h4>④ 주요 결정</h4>
+    <table><thead><tr><th>결정 지점</th><th>방식</th><th>근거</th></tr></thead>
+    <tbody><tr><td>아티팩트인가</td><td>결정론: 확장자 + 무시 규칙</td><td>결합도 0, 설명 가능("왜 안 보이지?"에 답할 수 있음)</td></tr>
+    <tr><td>제목·시각</td><td>결정론: meta → title → 파일 정보</td><td>producer에 요구 사항 없음</td></tr>
+    <tr><td>AI 판단</td><td>없음</td><td>원칙 2</td></tr></tbody></table>
+  </div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4>
+    <table><thead><tr><th>실패</th><th>내부 처리</th><th>호출자에게</th></tr></thead>
+    <tbody><tr><td>HTML 파싱 실패</td><td>제목 = 파일 이름</td><td>카드 정상 표시</td></tr>
+    <tr><td>감시 오버플로</td><td>방 재스캔</td><td><code>resync</code> 이벤트</td></tr></tbody></table>
+  </div>
+  <div class="slot"><h4>⑥ 동작 결과</h4><p>띠 끝(가장 최근)에 카드가 붙고 새 문서 점 표시. Journal 오늘에도 그 아티팩트가 출처 방 이름과 함께 보인다.</p></div>
+  <div class="slot"><h4>⑦ 연결</h4>
+    <table><thead><tr><th>닿는 곳</th><th>메커니즘</th><th>방향</th></tr></thead>
+    <tbody><tr><td>Producer</td><td>S1 파일</td><td>들어옴</td></tr><tr><td>클라이언트</td><td>S3 <code>artifact.added</code></td><td>나감</td></tr></tbody></table>
+  </div>
+</div>
+
+<div class="flow">
+  <h3>핵심 흐름 2: 방 만들기 · 연결 · 이름 바꾸기</h3>
+  <div class="slot"><h4>① 트리거 &amp; 타이밍</h4><p>사이드바 <code>+</code> → 이름 입력 Enter(만들기) 또는 "기존 폴더 연결". 방 제목 클릭 → 편집 → Enter/바깥 클릭(이름 바꾸기, 저장 버튼 없음). 사이드바 더블클릭도 같은 편집.</p></div>
+  <div class="slot"><h4>② 워크플로우</h4><p>만들기: 이름 검증 → <code>mkdir ~/rooms/&lt;slug&gt;</code> → state.json에 id 기록 → <code>room.added</code>. 연결: 경로 검증 → state.json에 {id, path, name} 기록 → 스캔 → <code>room.added</code>. 이름 바꾸기: owned면 폴더 rename(원자적), linked면 state.json의 표시 이름만 → <code>room.updated</code>.</p></div>
+  <div class="slot"><h4>③ 입력 &amp; 출처</h4><table><thead><tr><th>입력</th><th>출처</th><th>전제</th><th>가공</th></tr></thead><tbody><tr><td><code>name</code></td><td>사용자 입력</td><td>§6 규칙</td><td>폴더 이름 = 공백→<code>-</code> 슬러그, 표시 이름은 원문</td></tr><tr><td><code>path</code></td><td>Tauri 폴더 선택 대화상자</td><td>읽기 권한</td><td>realpath</td></tr></tbody></table></div>
+  <div class="slot"><h4>④ 주요 결정</h4><table><thead><tr><th>결정</th><th>방식</th><th>근거</th></tr></thead><tbody><tr><td>linked 이름 바꾸기</td><td>표시 이름만</td><td>팀 폴더를 바꾸면 다른 사람에게 영향</td></tr><tr><td>삭제</td><td>제공 안 함</td><td>사용자 결정</td></tr></tbody></table></div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4><p>이름 오류·중복 → 편집 상태 유지 + 짧은 안내. 연결 폴더가 나중에 사라짐 → <code>status: unavailable</code>, 방은 유지.</p></div>
+  <div class="slot"><h4>⑥ 동작 결과</h4><p>사이드바와 열린 탭 제목이 즉시 갱신. owned 방은 Finder에서도 같은 이름.</p></div>
+  <div class="slot"><h4>⑦ 연결</h4><p>S3 쓰기 엔드포인트(로컬만) → S2 <code>createRoom/linkFolder/renameRoom</code>.</p></div>
+</div>
+
+<div class="flow">
+  <h3>핵심 흐름 3: Journal 하루</h3>
+  <div class="slot"><h4>① 트리거 &amp; 타이밍</h4><p>사이드바 Journal → 오늘. 주간 띠로 날짜 이동. 외부 루틴(예: 사용자의 dreaming-for-human 스킬을 cron/launchd로)이 언제든 <code>journal/&lt;date&gt;/</code>에 HTML을 쓰면 실시간 반영.</p></div>
+  <div class="slot"><h4>② 워크플로우</h4><p>day 조회 = <code>journal/date/*.html</code> + 모든 방에서 createdAt 날짜가 같은 아티팩트(복사 없음) + <code>journal/date/*.md</code> 노트. 노트 편집: 텍스트 상자 입력 → 800ms 무입력 또는 바깥 클릭 시 <code>PUT</code> → 원자적 저장 → <code>note.saved</code>.</p></div>
+  <div class="slot"><h4>③ 입력 &amp; 출처</h4><table><thead><tr><th>입력</th><th>출처</th><th>전제</th><th>가공</th></tr></thead><tbody><tr><td>Dream 등 HTML</td><td>바깥 루틴</td><td>없어도 됨</td><td>에이전트 줄 맨 앞(파일 이름 dream.html 우선)</td></tr><tr><td>계획·회고</td><td>사용자</td><td>폴더 없으면 첫 저장 시 생성</td><td>마크다운 그대로</td></tr></tbody></table></div>
+  <div class="slot"><h4>④ 주요 결정</h4><table><thead><tr><th>결정</th><th>방식</th><th>근거</th></tr></thead><tbody><tr><td>Dream 생성</td><td>Rooms 밖 (어떤 스킬이든)</td><td>결합도 0</td></tr><tr><td>에디터</td><td>텍스트 상자 하나 + "다른 편집기로 열기"</td><td>에디터를 제품으로 만들지 않음</td></tr></tbody></table></div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4><p>저장 실패 → 편집 내용 보존, 백오프 재시도, 3회 실패 시 안내. 외부 편집기와 동시 수정 → 마지막 쓰기 우선, 파일 변경 이벤트로 텍스트 상자 갱신(편집 중이 아닐 때만).</p></div>
+  <div class="slot"><h4>⑥ 동작 결과</h4><p>Journal 하루 = 🦦 에이전트 줄(Dream + 그날 아티팩트, 날짜 자리에 출처 방) / (J) 나 줄(+ 새 노트, 계획, 회고).</p></div>
+  <div class="slot"><h4>⑦ 연결</h4><p>S1(바깥 루틴의 HTML) → S2 <code>getJournalDay/saveNote</code> → S3.</p></div>
+</div>
+
+<div class="flow">
+  <h3>핵심 흐름 4: 원격 보기 (읽기 전용)</h3>
+  <div class="slot"><h4>① 트리거 &amp; 타이밍</h4><p>설정에서 "다른 기기에서 보기" 켜기 → roomsd가 Tailscale 인터페이스에도 바인딩.</p></div>
+  <div class="slot"><h4>② 워크플로우</h4><p>다른 기기 브라우저 → roomsd가 apps/web 정적 번들 제공 → 같은 프로토콜 GET/SSE. <code>/v1/info</code>의 <code>readOnly: true</code>를 보고 UI가 쓰기 버튼을 숨김.</p></div>
+  <div class="slot"><h4>③ 입력 &amp; 출처</h4><p>요청 원격 주소. loopback이 아니면 원격.</p></div>
+  <div class="slot"><h4>④ 주요 결정</h4><p>쓰기 허용 여부 = 결정론(loopback 여부). 인증은 Tailscale 네트워크 경계에 위임.</p></div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4><p>원격 쓰기 → 403 <code>read_only</code>.</p></div>
+  <div class="slot"><h4>⑥ 동작 결과</h4><p>휴대폰·다른 컴퓨터에서 방 띠·문서·Journal을 볼 수 있음. 맥이 켜져 있어야 함.</p></div>
+  <div class="slot"><h4>⑦ 연결</h4><p>S3만 사용 — 원격 웹도 제3자 UI와 같은 지위.</p></div>
+</div>
+
+<!-- ============================================== -->
+<h2 id="s8"><span class="num">8.</span> End-to-End Scenario <span class="badge badge-warn">🟡</span></h2>
+<div style="background:white;border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin:16px 0;">
+  <strong>입력:</strong> 팀 리서치 폴더(<code>~/Google Drive/team/research</code>)를 연결해 둔 상태. 오전에 Codex가 그 폴더 하위 <code>harness/benchmark.html</code>을 쓰고, 오후에 Claude Code가 <code>~/rooms/브라우저-하네스/pi-plan.html</code>을 쓴다. 밤에 사용자의 dreaming-for-human 스킬(cron)이 <code>~/rooms/journal/2026-10-05/dream.html</code>을 쓴다.
+</div>
+<svg class="diagram" viewBox="0 0 800 220">
+  <defs><marker id="a5" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c1917"/></marker></defs>
+  <rect x="10" y="20" width="170" height="44" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="95" y="47" text-anchor="middle" font-size="12">Codex → team/…/benchmark.html</text>
+  <rect x="10" y="88" width="170" height="44" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="95" y="115" text-anchor="middle" font-size="12">Claude Code → pi-plan.html</text>
+  <rect x="10" y="156" width="170" height="44" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="95" y="183" text-anchor="middle" font-size="12">dream 스킬 → dream.html</text>
+  <rect x="250" y="88" width="140" height="44" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="320" y="115" text-anchor="middle" font-size="12">core 인덱스 (S2)</text>
+  <rect x="460" y="20" width="150" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="535" y="47" text-anchor="middle" font-size="12">팀-리서치 방 띠</text>
+  <rect x="460" y="88" width="150" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="535" y="115" text-anchor="middle" font-size="12">브라우저-하네스 방 띠</text>
+  <rect x="460" y="156" width="150" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="535" y="183" text-anchor="middle" font-size="12">Journal 10/5</text>
+  <rect x="660" y="88" width="130" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="725" y="115" text-anchor="middle" font-size="12">확대 → 문서 탭</text>
+  <line x1="180" y1="42" x2="248" y2="100" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a5)"/>
+  <line x1="180" y1="110" x2="248" y2="110" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a5)"/>
+  <line x1="180" y1="178" x2="248" y2="120" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a5)"/>
+  <line x1="390" y1="100" x2="458" y2="42" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a5)"/>
+  <line x1="390" y1="110" x2="458" y2="110" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a5)"/>
+  <line x1="390" y1="120" x2="458" y2="178" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a5)"/>
+  <line x1="610" y1="110" x2="658" y2="110" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a5)"/>
+</svg>
+<table>
+  <thead><tr><th>From</th><th>Event</th><th>To</th><th>Side effect</th></tr></thead>
+  <tbody>
+    <tr><td>팀-리서치 띠 (n개)</td><td><code>artifact.added</code> (하위 경로 harness/)</td><td>n+1개</td><td>팀 폴더엔 아무것도 안 씀</td></tr>
+    <tr><td>브라우저-하네스 띠</td><td><code>artifact.added</code></td><td>+1, 새 점</td><td>—</td></tr>
+    <tr><td>Journal 10/5</td><td>위 두 add + dream.html add</td><td>에이전트 줄: Dream, benchmark(팀-리서치), pi-plan(브라우저-하네스)</td><td>—</td></tr>
+    <tr><td>Journal 10/5 나 줄</td><td>사용자가 회고 작성</td><td><code>회고.md</code> 저장</td><td><code>note.saved</code></td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s9"><span class="num">9.</span> Testing Strategy <span class="badge badge-warn">🟡</span></h2>
+<table>
+  <thead><tr><th>Layer</th><th>What</th><th>Tool</th></tr></thead>
+  <tbody>
+    <tr><td>Unit (core)</td><td>무시 규칙 합성, meta/title 추출 fallback, 슬러그·이름 검증, ArtifactId 안정성, Journal day 분류(로컬 날짜), path escape 방지</td><td><code>bun test</code></td></tr>
+    <tr><td>Integration (core)</td><td>임시 Home에 파일 쓰기/수정/삭제/이름변경 → 이벤트·인덱스 일치, linked 폴더 무쓰기 검증(쓰기 감시)</td><td><code>bun test</code> + tmp dirs</td></tr>
+    <tr><td>Contract (protocol)</td><td>모든 엔드포인트 응답이 zod 스키마 통과, 원격 쓰기 403, <code>/v1</code> 하위호환 스냅샷</td><td><code>bun test</code></td></tr>
+    <tr><td>UI (desktop/web)</td><td>사이드바 만들기·이름 편집 자동 저장, 접기(⌘B), 확대 → 새 탭</td><td>Playwright (web 빌드 기준)</td></tr>
+    <tr><td>E2E (manual)</td><td>§8 시나리오 + 제3자 클라이언트 흉내(curl로 /v1만 사용)</td><td>manual-test.html</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s10"><span class="num">10.</span> Senior Review (워크스루 + Q&amp;A) <span class="badge badge-ok">🟢</span></h2>
+
+<h3>10.1 진입점-우선 워크스루</h3>
+<table>
+  <thead><tr><th>#</th><th>말할 것</th><th>가리킬 곳</th></tr></thead>
+  <tbody>
+    <tr><td>1. 진입점</td><td>"입구는 세 개뿐이다. 들어오는 입구는 <strong>폴더</strong>(HTML을 쓰면 끝), UI의 입구는 <strong>Rooms 프로토콜 <code>/v1</code></strong>, 코어 안의 입구는 <strong><code>openRooms()</code></strong>. 데스크탑 앱조차 <code>/v1</code>만 안다."</td><td>§4 Cluster Facades</td></tr>
+    <tr><td>2. 분리(seam)</td><td>"S1은 파일 한 장, S2는 값 타입과 이벤트, S3는 JSON과 SSE, S4(v2)는 맥락 꾸러미 — 결과는 다시 S1으로 돌아온다. 코어는 AI·UI를 모르고, UI는 코어 내부를 모른다."</td><td>§5</td></tr>
+    <tr><td>3. 동작(흐름)</td><td>"파일이 써지면 무시 규칙 → 메타 → 인덱스 → SSE 순으로 2초 안에 카드가 된다. 방 만들기·이름 바꾸기만 쓰기이고, Journal은 날짜로 조회한다."</td><td>§7, §8</td></tr>
+    <tr><td>4. 계약(보장)</td><td>"아티팩트 정렬은 createdAt 오름차순, linked 폴더엔 절대 쓰지 않음, 원격은 읽기 전용, /v1은 필드 추가만."</td><td>§6</td></tr>
+  </tbody>
+</table>
+
+<div class="review-box">
+  <h4>성공 기준</h4>
+  <ul class="checklist">
+    <li><strong>인터페이스</strong> — producer는 경로만, 클라이언트는 /v1만 알면 된다.</li>
+    <li><strong>데이터 흐름</strong> — 파일 시스템 → core → roomsd → client 단방향. 보는 사람 상태는 client.</li>
+    <li><strong>동작</strong> — 진입점과 seam만으로 예측 가능. 숨은 AI 단계 없음.</li>
+  </ul>
+</div>
+
+<h3>10.2 Senior Q&amp;A</h3>
+<p class="meta">senior engineer 페르소나 subagent 리뷰 결과를 아래에 덧붙인다.</p>
+<div class="qa"><p class="q">Q1. Journal 방의 id는 어디서 얻나</p><p class="a"><strong>A.</strong> Journal의 roomId는 고정 상수 <code>"journal"</code>이고 <code>GET /v1/info</code>의 <code>journalRoomId</code>로 알린다. <code>listRooms</code>에는 넣지 않는다(사이드바에서 Journal은 방 목록 위 별도 항목). <code>GET /v1/rooms/journal/artifacts</code>는 모든 날짜의 <code>journal/*/*.html</code>을 createdAt 오름차순으로 돌려주고, 날짜별 보기는 <code>/v1/journal/:date</code>를 쓴다. §5 S3·§6에 반영.</p></div>
+<div class="qa"><p class="q">Q2. day 불변은 재시작 후에도 지켜지나</p><p class="a"><strong>A.</strong> 지킨다. 아티팩트를 처음 발견할 때 정한 <code>createdAt</code>을 <code>~/rooms/.rooms/index.json</code>에 ArtifactId 기준으로 저장하고, 이후 재시작·임시파일 rename·동기화로 birthtime이 바뀌어도 저장값을 쓴다. 우선순위는 <code>rooms:created</code> 메타 → 저장된 첫 발견 시각 → (첫 발견 때만) birthtime → mtime. 이 파일은 Rooms 자체 상태라 linked 폴더를 더럽히지 않는다. §2에 반영, §11의 birthtime 질문은 해소.</p></div>
+<div class="qa"><p class="q">Q3. Finder에서 바꾼 owned 폴더의 id</p><p class="a"><strong>A.</strong> state.json에 owned 방마다 폴더 inode(dev+ino)를 저장해 매칭한다. 감시자가 unlink+add를 보면 같은 inode의 새 경로로 판단해 같은 id를 유지하고 표시 이름을 새 폴더 이름으로 갱신하며 <code>room.updated</code> 1회를 낸다. inode를 못 찾으면 <code>room.removed</code>. 앱에서 한 rename은 core가 그 방의 감시 이벤트를 rename 동안 억제하고 <code>room.updated</code>만 1회 낸다(ArtifactId는 roomId 기준이라 바뀌지 않음).</p></div>
+<div class="qa"><p class="q">Q4. 삭제 이벤트가 없음</p><p class="a"><strong>A.</strong> <code>room.removed</code>, <code>note.removed</code>를 추가했고, linked 폴더가 사라지면 <code>room.updated</code>(status: unavailable)로 알린다. Journal day는 클라이언트가 날짜를 계산하지 않도록 core가 영향을 받은 날짜마다 <code>journal.changed {date}</code>를 내고, 클라이언트는 그 날짜를 보고 있으면 day를 다시 GET 한다. §6 RoomsEvent에 반영.</p></div>
+<div class="qa"><p class="q">Q5. 겹치는 방 경로에서 중복</p><p class="a"><strong>A.</strong> 거부한다. 연결 경로는 realpath 기준으로 Home·Home 상위·Home 하위, 그리고 기존 linked 방의 상위·하위가 될 수 없고, 위반하면 <code>overlapping_room</code>(409)이다. 그래서 한 파일은 정확히 한 방에만 속하고 ArtifactId 중복이 생기지 않는다. §6 Inputs·Errors에 반영.</p></div>
+<div class="qa"><p class="q">Q6. loopback 쓰기와 아티팩트 origin</p><p class="a"><strong>A.</strong> 아티팩트 파일은 API와 다른 포트(4318) = 다른 origin에서 <code>CSP: sandbox allow-scripts allow-popups</code>(allow-same-origin 없음)로 제공해, 아티팩트 JS는 불투명 origin이라 API를 부를 수 없다. 쓰기는 loopback + Host 헤더가 <code>127.0.0.1:4317</code>/<code>localhost:4317</code>(DNS rebinding 차단) + Origin 허용 목록 + 실행마다 새로 만드는 Bearer 토큰(<code>.rooms/token</code>, 0600, Tauri가 전달)을 모두 만족해야 한다. 브라우저의 아무 웹페이지는 토큰을 모르므로 CSRF가 막힌다. §5 S3에 반영.</p></div>
+<div class="qa"><p class="q">Q7. SSE 재연결과 스냅샷 사이 유실</p><p class="a"><strong>A.</strong> 모든 이벤트에 단조 증가 <code>seq</code>를 붙이고, 스냅샷 GET은 <code>X-Rooms-Seq</code> 헤더로 그 시점 seq를 준다. 클라이언트는 SSE를 먼저 연결해 버퍼링 → 스냅샷 GET → 버퍼에서 seq ≤ 스냅샷 seq는 버리고 나머지 적용, 적용은 항상 id 기준 upsert/delete라 두 번 와도 안전하다. 재연결도 같은 순서. S3 상대편 보장에 클라이언트 규칙으로 명시.</p></div>
+<div class="qa"><p class="q">Q8. owned 방 이름과 slug 왕복</p><p class="a"><strong>A.</strong> 표시 이름 원문은 owned 방도 state.json에 저장하므로 재시작 후에도 "연구 도구"로 보인다. 폴더 이름은 NFC 정규화 후 공백을 <code>-</code>로 바꾼 slug이고, 충돌은 slug를 NFC·대소문자 무시로 비교해 판정하므로 "연구 도구"와 "연구-도구"는 같은 이름으로 보고 409를 낸다(APFS 기본 대소문자 무시와 일치). §2 불변식에 반영.</p></div>
+
+<!-- ============================================== -->
+<h2 id="s11"><span class="num">11.</span> Open Questions <span class="badge badge-warn">🟡</span></h2>
+<ul>
+  <li><mark class="ambiguous">에이전트가 <code>rooms:session</code>을 어떻게 채우나? (Claude Code는 hook으로 세션 ID를 받을 수 있는 것으로 알고 있으나 미확인. v1은 "있으면 읽기"만 하므로 v2 전에 실험)</mark></li>
+    <li><mark class="ambiguous">roomsd 실행 방식: Tauri가 사이드카로 띄우고 앱과 함께 종료할지, 로그인 시 상주하는 서비스(launchd)로 둘지? (원격 보기·외부 클라이언트를 생각하면 상주가 유리)</mark></li>
+  <li><mark class="ambiguous">기본 Home 위치 <code>~/rooms/</code>를 설정에서 바꿀 수 있게 할지?</mark></li>
+  <li><mark class="ambiguous">카드 제목 옆 새 문서 점(지난 방문 이후 표시)을 유지할지? (디자인에선 유지, 사용자 확인 대기)</mark></li>
+  <li><mark class="ambiguous">linked 폴더가 다른 경로로 옮겨졌을 때 다시 연결하는 UI가 필요한지?</mark></li>
+</ul>
+
+</main>
+</div>
+
+<script>
+  const links = document.querySelectorAll('nav.toc a');
+  const sections = Array.from(links).map(a => document.querySelector(a.getAttribute('href')));
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.style.background = '');
+        const active = document.querySelector(`nav.toc a[href="#${e.target.id}"]`);
+        if (active) { active.style.background = 'var(--accent-bg)'; active.style.color = 'var(--accent)'; }
+      }
+    });
+  }, { rootMargin: '-40% 0px -55% 0px' });
+  sections.forEach(s => s && io.observe(s));
+</script>
+</body>
+</html>
