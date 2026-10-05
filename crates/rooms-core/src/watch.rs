@@ -4,8 +4,8 @@ use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, Recom
 use rooms_protocol::{EventKind, RoomKind, RoomStatus};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
 
 type Deb = Debouncer<notify::RecommendedWatcher, RecommendedCache>;
@@ -46,17 +46,50 @@ fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<Has
     }
 }
 
+/// Minimum gap between watcher-triggered resyncs, so a persistent watcher error can't cause a
+/// refetch storm.
+const RESYNC_MIN_GAP: Duration = Duration::from_secs(2);
+
+/// Runs `run` on its own worker thread, coalescing requests (sent on the returned channel): at most
+/// one run at a time; every request that arrives during a run or its min-gap wait collapses into
+/// exactly one more run; runs start at least `min_gap` after the previous one ended. The only
+/// state is the channel and the last-run `Instant` (no core lock is involved). The worker ends
+/// when every sender is dropped or `run` returns false.
+fn spawn_coalescer(min_gap: Duration, mut run: impl FnMut() -> bool + Send + 'static) -> mpsc::Sender<()> {
+    let (tx, rx) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let mut last: Option<Instant> = None;
+        while rx.recv().is_ok() {
+            if let Some(t) = last { std::thread::sleep(min_gap.saturating_sub(t.elapsed())); }
+            while rx.try_recv().is_ok() {} // everything queued so far is served by this run
+            if !run() { break; }
+            last = Some(Instant::now());
+        }
+    });
+    tx
+}
+
 pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     let c2 = core.clone();
     let rooms_dir = core.home().join(".rooms");
     let home = core.home().to_path_buf();
+    // Watcher-triggered full resyncs run coalesced on a worker that holds only a weak core; it ends
+    // when the debouncer (owner of `resync`) is dropped or the core is gone.
+    let wresync = core.downgrade();
+    let resync = spawn_coalescer(RESYNC_MIN_GAP, move || match wresync.upgrade() {
+        Some(core) => { core.resync_all(); true }
+        None => false,
+    });
     let debouncer = new_debouncer(Duration::from_millis(300), None, move |res: DebounceEventResult| {
         match res {
             // Overflow (events were dropped) or a watcher error: per-room rescans can't be trusted.
-            Ok(events) if events.iter().any(|ev| ev.need_rescan()) => c2.resync_all(),
+            Ok(events) if events.iter().any(|ev| ev.need_rescan()) => {
+                eprintln!("rooms-core: watch_overflow: the watcher dropped events; resyncing everything");
+                let _ = resync.send(());
+            }
             Err(errs) => {
                 for e in errs { eprintln!("rooms-core: watcher error: {e}"); }
-                c2.resync_all();
+                let _ = resync.send(());
             }
             Ok(events) => {
                 let paths: Vec<PathBuf> = events.iter().flat_map(|ev| ev.paths.iter())
@@ -124,4 +157,53 @@ pub fn open_and_watch(home: &Path) -> Result<(RoomsCore, WatchHandle), CoreError
         if let Err(e) = c.backfill_all() { eprintln!("rooms-core: background backfill failed: {e}"); }
     });
     Ok((core, handle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    const T: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn requests_during_a_run_coalesce_into_exactly_one_more_run() {
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let (done_tx, done) = mpsc::channel();
+        let mut n = 0;
+        let req = spawn_coalescer(Duration::ZERO, move || {
+            n += 1;
+            if n == 1 { entered_tx.send(()).unwrap(); release_rx.recv().unwrap(); }
+            done_tx.send(n).unwrap();
+            true
+        });
+        req.send(()).unwrap();
+        entered.recv_timeout(T).unwrap(); // run 1 is in progress
+        for _ in 0..5 { req.send(()).unwrap(); }
+        release.send(()).unwrap();
+        assert_eq!(done.recv_timeout(T).unwrap(), 1);
+        assert_eq!(done.recv_timeout(T).unwrap(), 2);
+        assert!(done.recv_timeout(Duration::from_millis(300)).is_err(), "more than one extra run");
+    }
+
+    #[test]
+    fn runs_keep_the_minimum_gap() {
+        let (done_tx, done) = mpsc::channel();
+        let req = spawn_coalescer(Duration::from_millis(300), move || { done_tx.send(Instant::now()).unwrap(); true });
+        req.send(()).unwrap();
+        let first = done.recv_timeout(T).unwrap();
+        req.send(()).unwrap();
+        let second = done.recv_timeout(T).unwrap();
+        assert!(second - first >= Duration::from_millis(300), "{:?}", second - first);
+    }
+
+    #[test]
+    fn worker_ends_when_requests_are_dropped() {
+        let (alive_tx, alive) = mpsc::channel::<()>();
+        let req = spawn_coalescer(Duration::ZERO, move || { let _ = &alive_tx; true });
+        drop(req);
+        assert_eq!(alive.recv_timeout(T), Err(mpsc::RecvTimeoutError::Disconnected));
+    }
 }
