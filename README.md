@@ -19,6 +19,7 @@ Agents like Claude Code and Codex write specs, reports, and reviews as HTML. The
 - Any `.html` file in a room shows up in the app within two seconds.
 - To add a file without moving it, put a symlink to it in a room.
 - You can also link an existing folder as a room. Rooms never writes into it.
+- Drag rooms in the sidebar to reorder them.
 - **Journal** shows everything created on a given day, plus your own notes for that day.
 
 Rooms does not run agents or call any AI model. It only reads folders.
