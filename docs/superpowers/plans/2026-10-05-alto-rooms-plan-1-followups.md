@@ -4,17 +4,10 @@ Do these before Plan 2 depends on live updates. Each item came out of a task rev
 
 ## Live updates and correctness
 - Note filesystem events: add, change and remove `.md` files under `journal/<date>/`, then emit `note.saved` and `note.removed` (AC-11, Flow 3).
-- Watcher overflow and `Flag::Rescan`: rescan the room and emit `resync{roomId}` (spec §3 `watch_overflow`).
-- Per-room scan generation, so a stale scan cannot overwrite a newer one or re-insert rows for a removed room.
-- `watch.rs` RoomAdded/RoomUpdated thread captures a `RoomsCore` clone, which leaks one thread and core per dropped `WatchHandle`. Hold a `Weak` instead.
-- Journal folder date check is loose: chrono accepts `" 2026-10-5"`. Re-format the date and compare it to the folder name.
-- An inbox rename in Finder follows the inbox record live, and the next start inserts a duplicate `"inbox"`. Exclude the inbox from inode matching.
 - `ArtifactRemoved` / lag resync seq ordering. A lag resync reuses `current_seq` (M3).
 
 ## Performance
-- Move scan and meta IO out of the core lock, and apply per-path updates for watcher batches instead of a whole-room rescan (I4, rest).
-- SSE `current_seq()` takes the core lock on an async worker.
-- Retry log spam when a linked root is available but cannot be watched.
+- (none open — see Resolved in Plan 1.5)
 
 ## Security and API polish
 - `resolve_file` ignores `.gitignore`/`.roomsignore`/`node_modules`. Consider `Sec-Fetch-*` filtering. Fixed ids (`inbox`, `journal`) allow existence probing.
@@ -31,3 +24,13 @@ Do these before Plan 2 depends on live updates. Each item came out of a task rev
 ## Product notes for Plan 2
 - Stray top-level folders in home, such as `node_modules`, become owned rooms automatically. This follows the spec, but the UI or onboarding may want to tell the user.
 - Owned rooms whose folders disappear while the daemon is down are removed at startup.
+
+## Resolved in Plan 1.5 (`docs/superpowers/plans/2026-10-05-alto-rooms-plan-1-5-concurrency.md`)
+- Scan and meta IO now run outside the core lock, scans of one room are serialized, and a removed or renamed room is never written by an in-flight scan (Task 2). Covered by a deterministic scan-order test.
+- Unchanged files are skipped by fingerprint (target + mtime). This replaces per-path watcher updates and avoids a second copy of the ignore rules. Measured in a debug build: a 3,000-file room adds one new file in 381–431 ms, and the API's worst latency during a big backfill is 72–92 ms (Task 1 + Task 2).
+- `seq` is an atomic, so `current_seq()` never waits on the lock (Task 2).
+- Journal folder dates are strict and canonical (Task 1). A Finder rename of `inbox` no longer moves the inbox (Task 2).
+- Concurrent `save_note` calls are serialized, and each uses a unique temp file (Task 2 review fix).
+- Watcher helper threads hold weak references, so dropping the handle and the core closes the channel (Task 3).
+- Watcher overflow or error runs `resync_all`: home folders, then every room, then `resync` (Task 3).
+- A failed linked watch is logged once (Task 3).
