@@ -49,4 +49,21 @@ Do these before Plan 2 depends on live updates. Each item came out of a task rev
 - Journal artifacts are not searchable in ⌘K; QuickFind only iterates rooms.
 - Raw SIGTERM to a possibly-reaped sidecar pid (tiny window); Ctrl-C in `tauri dev` kills roomsd via the process group (dev only).
 - WKWebView `allow-popups` / `target=_blank` behavior inside artifacts: verify manually.
-- Manual-test doc test counts drift (now 237 vitest / 23 src-tauri).
+- Manual-test doc test counts drift. Updated in Plan 3 Task 5 to the measured 279 vitest / 13 e2e / 23 src-tauri / 157 workspace / 24 find_html.py; they will drift again.
+
+## Plan 3 (onboarding) — parked during review
+Source: `.superpowers/sdd/2026-10-05-alto-rooms-plan-3-onboarding/progress.md` ("minor (deferred)" lines and the cost of accepted rulings).
+
+- Onboarding files (Task 3):
+  - The temp file used to write `ONBOARD.md` and the skill is opened without `O_NOFOLLOW`.
+  - If `.rooms/onboarding` is itself a symlink, the chmod goes through it.
+  - A non-UTF-8 file at an onboarding path logs a warning on every open.
+  - No tests for a symlink or a directory sitting at a destination path.
+- Moving artifacts (Task 1):
+  - Rename-plus-recreate window: `move_artifact` renames, then (for a relative link) recreates it absolutely. An external writer that creates a file at the destination in that millisecond window can be overwritten. The stale-index-row replace is accepted for the same reason.
+  - When the old relative link cannot be removed after the absolute one is created, the failure is only logged.
+- Desktop (Task 4):
+  - Releasing the New tab's inbox watch (unwatch on unmount) is untested.
+  - Inbox rows are `draggable` `<button>`s. That works in Chromium/WebKit (Tauri) but not Firefox, which is fine only while the app is Tauri-only.
+- `find_html.py` (Task 2 ruling): Codex shell matches count only with a write hint (`>`, `tee`, `cp`, `write_text`, …), and `/tmp`-style noise rules exempt paths under `$HOME`. Cost if wrong: a few missed Codex shell writes.
+- Dry run (Task 5): `crates/rooms-core/assets/onboarding/skill/rooms/scripts/dry_run.sh` is dev-only and not in CI; run it by hand after changing `find_html.py`, the skill or move/index code.

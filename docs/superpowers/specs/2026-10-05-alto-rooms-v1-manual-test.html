@@ -56,11 +56,13 @@
 <div class="done-section">
   <h2>✅ Done (자동 테스트, Claude가 완료)</h2>
   <ul class="done-list">
-    <li><code>bun run --cwd apps/desktop test</code> — Vitest 24 files / 229 tests 통과. 스토어(snapshot+seq, 재연결 gap, artifactCount 동기화, 참조 카운트 watch/unwatch, 연속 sync 실패 수), 셸 단축키(입력 중 ⌘B/⌘T/⌘W 무시, 노트 본문 ⌘W 허용, Tauri에서 ⌘W/⌘T/⌘K/⌘B 메뉴 이벤트), 노트 자동 저장/재시도, 저장 레지스트리(대소문자 무시 키, 새 연결로 rebind, 종료 시 못 저장한 글의 초안 보관·복원), 종료 시 flush(2초 상한), 코어 연결 끊김 화면과 "다시 시도", 각 화면 컴포넌트.</li>
-    <li><code>bun run --cwd apps/desktop e2e</code> — Playwright 10 tests 통과. 실제 <code>roomsd</code>(임시 홈, 포트 14317/14318)와 웹 빌드(Vite preview 4173)로 AC-5, AC-1, AC-6, AC-9, AC-14, AC-10, AC-11, Review Focus 2(디스크에서 폴더 이름 변경), Review Focus 4(악성 아티팩트: 이동 안 됨, 쓰기 실패, postMessage 무시). 화면별 1440×900 스크린샷은 <code>apps/desktop/e2e/__screens__/</code>.</li>
+    <li><code>bun run --cwd apps/desktop test</code> — Vitest 27 files / 279 tests 통과. 스토어(snapshot+seq, 재연결 gap, artifactCount 동기화, 참조 카운트 watch/unwatch, 연속 sync 실패 수), 셸 단축키(입력 중 ⌘B/⌘T/⌘W 무시, 노트 본문 ⌘W 허용, Tauri에서 ⌘W/⌘T/⌘K/⌘B 메뉴 이벤트), 노트 자동 저장/재시도, 저장 레지스트리(대소문자 무시 키, 새 연결로 rebind, 종료 시 못 저장한 글의 초안 보관·복원), 종료 시 flush(2초 상한), 코어 연결 끊김 화면과 "다시 시도", 각 화면 컴포넌트, 온보딩 카드(<code>~/rooms</code> 홈일 때만 <code>~</code>, 그 밖엔 절대 경로), 방을 기다리는 문서와 사이드바 방으로 끌어 옮기기.</li>
+    <li><code>bun run --cwd apps/desktop e2e</code> — Playwright 13 tests 통과. 실제 <code>roomsd</code>(임시 홈, 포트 14317/14318)와 웹 빌드(Vite preview 4173)로 AC-5, AC-1, AC-6, AC-9, AC-14, AC-10, AC-11, Review Focus 2(디스크에서 폴더 이름 변경), Review Focus 4(악성 아티팩트: 이동 안 됨, 쓰기 실패, postMessage 무시), 온보딩(새 홈에서 "이 한 줄을 에이전트에게 붙여넣으세요" 카드, <code>ONBOARD.md</code> 첫 줄 마커, 칩 클릭 시 클립보드 복사; inbox 링크를 사이드바 방 a로 끌어다 놓으면 <code>a/x.html</code> 링크로 옮겨지고 원본 바이트·inode와 Journal 날짜가 그대로). Playwright <code>dragTo</code>로 HTML5 드래그를 그대로 수행. 화면별 1440×900 스크린샷은 <code>apps/desktop/e2e/__screens__/</code>.</li>
     <li><code>bun run --cwd apps/desktop build</code> — <code>tsc -b</code>(e2e 포함) + Vite 빌드 통과.</li>
-    <li><code>cargo test</code> / <code>cargo clippy --all-targets</code> (apps/desktop/src-tauri) — 21 tests 통과, 경고 없음. 닫기/종료 flush 상태 기계(<code>FlushGate</code>), 토큰 읽기(O_NOFOLLOW, fstat, 64바이트 상한), roomsd 종료(SIGTERM 후 1초 뒤 강제 종료), terminate 훅 panic 처리 단위 테스트 포함.</li>
-    <li><code>cargo test --workspace -- --test-threads=1</code> (repo root) — 127 tests 통과 (Plan 1 동작 유지).</li>
+    <li><code>cargo test</code> / <code>cargo clippy --all-targets</code> (apps/desktop/src-tauri) — 23 tests 통과, 경고 없음. 닫기/종료 flush 상태 기계(<code>FlushGate</code>), 토큰 읽기(O_NOFOLLOW, fstat, 64바이트 상한), roomsd 종료(SIGTERM 후 1초 뒤 강제 종료), terminate 훅 panic 처리 단위 테스트 포함.</li>
+    <li><code>cargo test --workspace -- --test-threads=1</code> (repo root) — 157 tests 통과 (Plan 1 동작 유지, 방 사이 이동 <code>POST /v1/artifacts/move</code>와 온보딩 파일 쓰기 포함).</li>
+    <li><code>python3 -m unittest discover -s crates/rooms-core/assets/onboarding/skill/rooms/scripts -p 'test_*.py'</code> — <code>find_html.py</code> 24 tests 통과 (가짜 Claude Code/Codex 로그를 임시 폴더에 만들어 확인).</li>
+    <li><code>bash crates/rooms-core/assets/onboarding/skill/rooms/scripts/dry_run.sh</code> — 에이전트 없이 스킬 흐름 재현: 가짜 로그로 원본 3개 → <code>find_html.py</code> → 방 1개에 링크 2개, inbox에 1개 → 테스트 포트 24317/24318의 roomsd에서 방·문서 수와 Journal 날짜(원본 생성일) 확인 → 다시 돌리면 3개 모두 <code>linked: true</code>, 원본 그대로. <code>PASS</code>. 사용자 Home에는 쓰지 않는 개발용 스크립트.</li>
     <li>번들 스모크 — <code>bun run --cwd apps/desktop sidecar &amp;&amp; bun run --cwd apps/desktop tauri build --bundles app</code>로 <code>Alto Rooms.app</code> 생성. 임시 <code>ROOMS_HOME</code>으로 실행 → <code>:4317</code>에서 roomsd 응답, 웹뷰가 연결해 새 탭 화면 표시. <code>osascript -e 'quit app "Alto Rooms"'</code>, 메뉴 Quit, 메뉴 "창 닫기", 빨간 닫기 버튼 모두 1초 안에 종료되고 roomsd도 사라짐. <code>osascript</code> 종료는 최종 수정 후 다시 확인: <code>ALTO_ROOMS_FLUSH_PROBE=&lt;오늘&gt;/probe.md</code>로 실행해 API로 만든 노트를 저장 안 된 상태로 둔 뒤 종료 → 로그 <code>applicationShouldTerminate</code> → <code>round 1 (Terminate)</code> → <code>flush_done</code> → <code>exiting</code>, 0.34초에 종료, 노트의 새 글이 디스크에 있음, roomsd 사라짐. 메뉴 "탭 닫기"/"새 탭"이 웹뷰의 탭을 닫고 엶.</li>
   </ul>
 </div>
@@ -313,6 +315,60 @@
       <p class="step-expect">종료 전에 쓴 글이 보이고, 0.8초 뒤 저장됨</p>
     </li>
   </ol>
+</div>
+
+<!-- ============================================== -->
+<div class="scenario">
+  <h3><span class="scenario-tag tag-golden">Scenario 10 · Golden Path</span> 온보딩 — 에이전트로 처음 정리하기</h3>
+
+  <p><strong>전제:</strong> 최근 14일 안에 Claude Code로 HTML 파일을 몇 개 만든 적이 있음. 방이 <code>inbox</code>뿐인 새 홈(<code>open --env ROOMS_HOME=$(mktemp -d) "/Applications/Alto Rooms.app"</code>)으로 실행. 실험 전 원본 몇 개의 <code>ls -li</code>와 <code>shasum</code> 결과를 적어 둠.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action">새 탭 화면 확인</p>
+      <p class="step-expect">"이 한 줄을 에이전트에게 붙여넣으세요" 카드와 한 줄 칩(<code>&lt;홈&gt;/ONBOARD.md 를 읽고 따라 해줘</code>, 홈이 <code>~/rooms</code>면 <code>~/rooms/ONBOARD.md 를 읽고 따라 해줘</code>). 홈에 <code>ONBOARD.md</code>(첫 줄 <code>&lt;!-- rooms-onboarding v1 --&gt;</code>)와 <code>.rooms/onboarding/skill/rooms/</code>가 생김</p>
+      <p class="step-if-different">카드 대신 "지난 방문 이후"가 보이면 홈에 이미 방이 있는 것. 빈 홈으로 다시 실행</p>
+    </li>
+    <li>
+      <p class="step-action">칩 클릭 → Claude Code를 열고 붙여넣기 → Enter</p>
+      <p class="step-expect">"복사했어요". 에이전트가 <code>ONBOARD.md</code>를 읽고 스킬을 설치한 뒤 <code>find_html.py</code>를 돌려, 후보 표와 제안 표(방, 새로/기존, 파일)를 한 번에 보여 주고 "이대로 만들까요?"라고 한 번 물음 (아직 아무 폴더도 만들지 않음)</p>
+      <p class="step-if-different">확인 없이 바로 폴더를 만들면 <code>SKILL.md</code>의 확인 단계를 건너뛴 것. 에이전트 출력을 저장해 두기</p>
+    </li>
+    <li>
+      <p class="step-action">제안된 표를 확인하고 "예" (필요하면 방 이름을 고쳐 달라고 요청)</p>
+      <p class="step-expect">2초 안에 사이드바에 새 방들이 생기고, 각 방에 카드가 보임. 어느 방에도 맞지 않는 문서는 <code>inbox</code>에. 에이전트가 만든 방, 방별 링크 개수, inbox 개수와 "원본 파일은 옮기지 않았어요. 링크만 만들었어요."를 알림. Finder에서 방 폴더의 파일은 모두 심볼릭 링크(<code>ls -l</code>에 <code>-&gt;</code>)이고 원본 경로를 가리킴</p>
+      <p class="step-if-different">방이 안 보이면 <code>curl -s 127.0.0.1:4317/v1/rooms</code>로 확인. 링크가 아니라 복사본이면 스킬 규칙 위반</p>
+    </li>
+    <li>
+      <p class="step-action">적어 둔 원본의 <code>ls -li</code>와 <code>shasum</code>을 다시 실행</p>
+      <p class="step-expect">inode, 크기, 해시가 모두 같음. 원본 위치에 그대로 있음</p>
+      <p class="step-if-different">다르면 즉시 중단하고 에이전트 대화와 <code>ls -l</code> 결과를 보관 (원본은 절대 바뀌면 안 됨)</p>
+    </li>
+    <li>
+      <p class="step-action">Journal에서 오늘이 아닌, 원본을 만든 날짜로 이동</p>
+      <p class="step-expect">링크된 문서가 원본을 만든 날에 보임 (링크를 만든 오늘이 아님)</p>
+    </li>
+    <li>
+      <p class="step-action">같은 에이전트 세션(또는 새 세션)에서 <code>rooms 정리해줘</code></p>
+      <p class="step-expect">이미 링크된 문서(<code>linked: true</code>)는 다시 제안하지 않음. 그 사이 새 HTML이 없으면 새로 만들 것이 없다고 답함. 방과 링크가 중복으로 생기지 않음</p>
+      <p class="step-if-different">같은 문서의 링크가 두 번 생기면 <code>find_html.py</code>의 <code>linked</code> 판정 문제: <code>python3 &lt;홈&gt;/.rooms/onboarding/skill/rooms/scripts/find_html.py --home &lt;홈&gt;</code> 출력 확인</p>
+    </li>
+    <li>
+      <p class="step-action">새 탭의 "방을 기다리는 문서"에서 한 줄을 끌어 사이드바의 방에 놓기</p>
+      <p class="step-expect">놓는 동안 방이 테두리로 강조되고, 놓으면 목록에서 사라져 그 방에 카드로 나타남. 링크가 <code>inbox/</code>에서 그 방 폴더로 옮겨지고, 원본과 Journal 날짜는 그대로</p>
+      <p class="step-if-different">"옮길 수 없는 문서예요"가 뜨면 원본 방이나 대상 방이 연결된 방(linked)인지 확인. 줄을 끌 수 없으면 읽기 전용(다른 데몬에 연결) 상태인지 확인</p>
+    </li>
+    <li>
+      <p class="step-action">첫 정리(3단계) 대화의 끝부분을 다시 확인</p>
+      <p class="step-expect">에이전트가 <code>~/.claude/CLAUDE.md</code>(Codex면 <code>~/.codex/AGENTS.md</code>)에 <code>- HTML 아티팩트를 만들면 rooms 스킬로 알맞은 방에 링크한다.</code> 한 줄을 넣을지 <strong>한 번 물어봄</strong>. "예"일 때만 파일 끝에 한 번 추가</p>
+      <p class="step-if-different">묻지 않고 넣었거나 아예 묻지 않으면 <code>SKILL.md</code>의 마지막 단계 문제</p>
+    </li>
+  </ol>
+
+  <p><strong>완료 체크</strong></p>
+  <div class="check">방 폴더에는 심볼릭 링크만 있고, 원본은 inode·해시가 그대로</div>
+  <div class="check">두 번째 "rooms 정리해줘"에서 중복 방·링크가 없음</div>
+  <div class="check">inbox에서 끌어 옮긴 문서의 Journal 날짜가 그대로</div>
 </div>
 
 </main>
