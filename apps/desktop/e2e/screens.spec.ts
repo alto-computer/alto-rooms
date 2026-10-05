@@ -9,16 +9,10 @@ import { artifactHtml, expect, MOD, test, today } from "./fixtures";
 const SCREENS = path.join(import.meta.dirname, "__screens__");
 const shot = (page: Page, name: string) => page.screenshot({ path: path.join(SCREENS, `${name}.png`) });
 
-/**
- * Moves the pointer off the cards and lets previews paint and transitions finish.
- * Waits for every frame's `load` rather than page-wide "networkidle": preview
- * iframes recreated when a tab is re-opened (its artifacts are reloaded) never
- * report networkidle to Playwright, though their documents have loaded.
- */
+/** Moves the pointer off the cards and lets previews paint and transitions finish. */
 async function settle(page: Page) {
   await page.mouse.move(720, 880);
-  await page.waitForLoadState("load");
-  await Promise.all(page.frames().map((f) => f.waitForLoadState("load")));
+  await page.waitForLoadState("networkidle");
   await page.waitForTimeout(500);
 }
 
@@ -78,8 +72,6 @@ test("screens for visual review", async ({ page, daemon }) => {
 
   // Collapsed sidebar (on a room, so the strip shows at full width).
   await rooms.getByRole("button", { name: "벤치마크" }).click();
-  // Leaving the room let go of its artifacts; coming back loads them again.
-  await expect(page.getByTestId("artifact-card")).toHaveCount(4);
   await page.keyboard.press(`${MOD}+b`);
   await expect(page.getByRole("button", { name: "사이드바 펼치기 (⌘B)" })).toBeVisible();
   await settle(page);

@@ -20,9 +20,24 @@ export type RoomsState = {
   syncFailures: number;
 };
 
+export type StoreTimers = {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+};
+
 export type RoomsStoreOptions = {
   /** Non-fatal problems (one scope failed to refetch). Defaults to console.warn. */
   warn?: (...args: unknown[]) => void;
+  /** Clock for the unwatch linger (tests). Defaults to the global timers, looked up at call time. */
+  timers?: StoreTimers;
+};
+
+/** How long a scope stays watched after its last watcher leaves (e.g. a tab switch and back). */
+export const UNWATCH_LINGER_MS = 45_000;
+
+const globalTimers: StoreTimers = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
 };
 
 const DAY_DEBOUNCE_MS = 150;
@@ -56,7 +71,9 @@ type RoomFetch = { token: number; queue: RoomsEvent[]; promise: Promise<void> };
  *
  * Artifact and day scopes are ref-counted: every `loadArtifacts` / `loadDay`
  * is paired with an `unwatchArtifacts` / `unwatchDay`. When the last watcher
- * lets go, the scope's data is dropped and it is no longer refetched. A watched
+ * lets go, the scope lingers, still fully watched, for UNWATCH_LINGER_MS; a
+ * new watcher in that window keeps it as is. After that its data is dropped
+ * and it is no longer refetched. A watched
  * room that disappears from the room list goes dormant (data dropped, not
  * fetched) and reloads by itself when it comes back.
  */
@@ -82,7 +99,9 @@ export class RoomsStore {
   private roomsSeq = 0;
 
   // Artifact scopes: watchers per room, and watched rooms currently absent from the list.
+  // A key with count 0 is lingering (still watched until its timer fires).
   private roomRefs = new Map<string, number>();
+  private roomLinger = new Map<string, unknown>();
   private dormantRooms = new Set<string>();
   private artifactsSeq = new Map<string, number>();
   private roomTokens = new Map<string, number>();
@@ -90,6 +109,7 @@ export class RoomsStore {
 
   // Days (refetch-only): watchers per date.
   private dayRefs = new Map<string, number>();
+  private dayLinger = new Map<string, unknown>();
   private dayTokens = new Map<string, number>();
   private dayFetches = new Map<string, Promise<void>>();
   private dayTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -99,7 +119,10 @@ export class RoomsStore {
     opts: RoomsStoreOptions = {},
   ) {
     this.warn = opts.warn ?? ((...args) => console.warn(...args));
+    this.timers = opts.timers ?? globalTimers;
   }
+
+  private readonly timers: StoreTimers;
 
   // ---------------------------------------------------------------- public
 
@@ -142,6 +165,9 @@ export class RoomsStore {
     this.roomFetches.clear();
     for (const date of this.dayFetches.keys()) this.bump(this.dayTokens, date);
     this.dayFetches.clear();
+    // Nobody is coming back to a stopped store's lingering scopes.
+    for (const id of [...this.roomLinger.keys()]) this.endRoomLinger(id);
+    for (const date of [...this.dayLinger.keys()]) this.endDayLinger(date);
   }
 
   /**
@@ -150,6 +176,7 @@ export class RoomsStore {
    */
   loadArtifacts(roomId: string): Promise<void> {
     this.roomRefs.set(roomId, (this.roomRefs.get(roomId) ?? 0) + 1);
+    this.cancelLinger(this.roomLinger, roomId);
     if (this.dormantRooms.has(roomId)) return Promise.resolve();
     const inflight = this.roomFetches.get(roomId);
     if (inflight) return inflight.promise;
@@ -157,16 +184,30 @@ export class RoomsStore {
     return this.fetchRoom(roomId);
   }
 
-  /** Removes a watcher; the last one out drops the room's artifacts and stops refetching them. */
+  /** Removes a watcher; UNWATCH_LINGER_MS after the last one leaves, the room's artifacts are dropped. */
   unwatchArtifacts(roomId: string): void {
-    const n = (this.roomRefs.get(roomId) ?? 0) - 1;
-    if (n > 0) {
-      this.roomRefs.set(roomId, n);
-      return;
-    }
+    const n = this.roomRefs.get(roomId);
+    if (n === undefined || n === 0) return;
+    this.roomRefs.set(roomId, n - 1);
+    if (n - 1 > 0) return;
+    this.roomLinger.set(
+      roomId,
+      this.timers.setTimeout(() => this.endRoomLinger(roomId), UNWATCH_LINGER_MS),
+    );
+  }
+
+  private endRoomLinger(roomId: string) {
+    this.cancelLinger(this.roomLinger, roomId);
+    if (this.roomRefs.get(roomId) !== 0) return;
     this.roomRefs.delete(roomId);
     this.dormantRooms.delete(roomId);
     this.batch(() => this.dropRoom(roomId));
+  }
+
+  private cancelLinger(timers: Map<string, unknown>, key: string) {
+    if (!timers.has(key)) return;
+    this.timers.clearTimeout(timers.get(key));
+    timers.delete(key);
   }
 
   /**
@@ -175,19 +216,28 @@ export class RoomsStore {
    */
   loadDay(date: string): Promise<void> {
     this.dayRefs.set(date, (this.dayRefs.get(date) ?? 0) + 1);
+    this.cancelLinger(this.dayLinger, date);
     const inflight = this.dayFetches.get(date);
     if (inflight) return inflight;
     if (this.state.days[date] !== undefined) return Promise.resolve();
     return this.fetchDay(date);
   }
 
-  /** Removes a watcher; the last one out drops the day and stops refetching it. */
+  /** Removes a watcher; UNWATCH_LINGER_MS after the last one leaves, the day is dropped. */
   unwatchDay(date: string): void {
-    const n = (this.dayRefs.get(date) ?? 0) - 1;
-    if (n > 0) {
-      this.dayRefs.set(date, n);
-      return;
-    }
+    const n = this.dayRefs.get(date);
+    if (n === undefined || n === 0) return;
+    this.dayRefs.set(date, n - 1);
+    if (n - 1 > 0) return;
+    this.dayLinger.set(
+      date,
+      this.timers.setTimeout(() => this.endDayLinger(date), UNWATCH_LINGER_MS),
+    );
+  }
+
+  private endDayLinger(date: string) {
+    this.cancelLinger(this.dayLinger, date);
+    if (this.dayRefs.get(date) !== 0) return;
     this.dayRefs.delete(date);
     const timer = this.dayTimers.get(date);
     if (timer) clearTimeout(timer);
@@ -203,13 +253,13 @@ export class RoomsStore {
     });
   }
 
-  /** Watched and present in the room list (or not yet known to be absent). */
+  /** Watched (or lingering) and present in the room list (or not yet known to be absent). */
   private isWatchedRoom(roomId: string): boolean {
-    return (this.roomRefs.get(roomId) ?? 0) > 0 && !this.dormantRooms.has(roomId);
+    return this.roomRefs.has(roomId) && !this.dormantRooms.has(roomId);
   }
 
   private isWatchedDay(date: string): boolean {
-    return (this.dayRefs.get(date) ?? 0) > 0;
+    return this.dayRefs.has(date);
   }
 
   // ---------------------------------------------------------------- state

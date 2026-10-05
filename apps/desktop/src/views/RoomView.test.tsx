@@ -136,9 +136,9 @@ describe("RoomView", () => {
       viewer.open({ kind: "new" }); // leaves r1: records lastVisit, unmounts RoomView
     });
     expect(screen.queryAllByTestId("artifact-card")).toHaveLength(0);
-    // Leaving let go of the room's artifacts; coming back loads them again.
-    await act(async () => viewer.activate(roomTab));
-    expect(await screen.findAllByTestId("artifact-card")).toHaveLength(1);
+    // Coming back within the unwatch linger: the artifacts are still there, no reload.
+    act(() => viewer.activate(roomTab));
+    expect(cards()).toHaveLength(1);
     expect(within(cards()[0]).queryByLabelText("새 문서 표시")).toBeNull();
   });
 

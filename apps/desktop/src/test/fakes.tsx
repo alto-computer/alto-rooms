@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { vi } from "vitest";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { StoresProvider, type RoomsClient } from "@/data/hooks";
-import { RoomsStore } from "@/data/roomsStore";
+import { RoomsStore, type StoreTimers } from "@/data/roomsStore";
 import { ViewerStore } from "@/data/viewerStore";
 
 /** roomsd's note file name: one trailing ".md" (any case) stripped, NFC, then ".md". */
@@ -100,10 +100,36 @@ export function fakeClient(
   };
 }
 
+/** Timers fired by hand: `run()` fires everything pending (e.g. the store's unwatch linger). */
+export function manualTimers() {
+  const pending = new Map<number, () => void>();
+  let next = 1;
+  const timers: StoreTimers = {
+    setTimeout: (fn) => {
+      const id = next++;
+      pending.set(id, fn);
+      return id;
+    },
+    clearTimeout: (h) => void pending.delete(h as number),
+  };
+  return {
+    timers,
+    run() {
+      for (const [id, fn] of [...pending]) {
+        pending.delete(id);
+        fn();
+      }
+    },
+  };
+}
+
 /** Renders `ui` with real stores on a fake client, started and synced. */
-export async function renderWithStores(ui: ReactNode, opts: Parameters<typeof fakeClient>[0] & { viewer?: ViewerStore } = {}) {
+export async function renderWithStores(
+  ui: ReactNode,
+  opts: Parameters<typeof fakeClient>[0] & { viewer?: ViewerStore; storeTimers?: StoreTimers } = {},
+) {
   const fake = fakeClient(opts);
-  const rooms = new RoomsStore(fake.client, { warn: () => {} });
+  const rooms = new RoomsStore(fake.client, { warn: () => {}, timers: opts.storeTimers });
   const viewer = opts.viewer ?? new ViewerStore(memoryStorage());
   const utils = render(
     <StoresProvider rooms={rooms} viewer={viewer} client={fake.client}>

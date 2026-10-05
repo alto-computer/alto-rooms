@@ -2,7 +2,7 @@ import type { Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StoresProvider } from "@/data/hooks";
-import { renderWithStores, room } from "@/test/fakes";
+import { manualTimers, renderWithStores, room } from "@/test/fakes";
 import { QuickFind } from "./QuickFind";
 
 afterEach(cleanup);
@@ -18,8 +18,9 @@ const artifact = (id: string, roomId: string, title: string): Artifact => ({
   source: { agent: null, session: null, cwd: null, machine: null },
 });
 
-const setup = (onClose = vi.fn()) =>
+const setup = (onClose = vi.fn(), storeTimers?: ReturnType<typeof manualTimers>["timers"]) =>
   renderWithStores(<QuickFind open onClose={onClose} />, {
+    storeTimers,
     rooms: [room("r1", "벤치마크"), room("r2", "디자인")],
     artifacts: { r1: [artifact("d1", "r1", "벤치마크 현황")], r2: [artifact("d2", "r2", "색 정리")] },
   });
@@ -66,8 +67,9 @@ describe("QuickFind", () => {
 });
 
 describe("QuickFind watching", () => {
-  it("lets go of every room once closed: resync {null} no longer refetches them", async () => {
-    const h = await setup();
+  it("lets go of every room once closed: after the linger, resync {null} no longer refetches them", async () => {
+    const linger = manualTimers();
+    const h = await setup(vi.fn(), linger.timers);
     await waitFor(() => expect(h.rooms.getState().artifacts.r2).toBeDefined());
     await act(async () => {
       h.rerender(
@@ -76,6 +78,7 @@ describe("QuickFind watching", () => {
         </StoresProvider>,
       );
     });
+    act(() => linger.run()); // the 45 s linger ends
     const spy = vi.spyOn(h.client, "listArtifacts");
     await act(async () => {
       h.emit({ type: "resync", roomId: null });

@@ -2,7 +2,7 @@ import type { Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
-import { memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { manualTimers, memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { NewTabView } from "./NewTabView";
 
 afterEach(cleanup);
@@ -113,8 +113,10 @@ describe("NewTabView loading", () => {
     spy.mockRestore();
   });
 
-  it("a closed New tab lets go of its rooms: resync {null} no longer refetches them", async () => {
+  it("a closed New tab lets go of its rooms: after the linger, resync {null} no longer refetches them", async () => {
+    const linger = manualTimers();
     const h = await renderWithStores(<NewTabView />, {
+      storeTimers: linger.timers,
       viewer: viewer(),
       rooms: [room("a", "가", { updatedAt: NEW }), room("b", "나", { updatedAt: NEW })],
       artifacts: { a: [artifact("a1", "a", NEW)], b: [] },
@@ -122,6 +124,7 @@ describe("NewTabView loading", () => {
     await screen.findByText("방 1곳에 새 문서가 들어왔어요.");
     const spy = vi.spyOn(h.client, "listArtifacts");
     h.unmount();
+    act(() => linger.run()); // the 45 s linger ends
     await act(async () => {
       h.emit({ type: "resync", roomId: null });
     });

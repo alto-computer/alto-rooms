@@ -678,12 +678,43 @@ describe("RoomsStore errors", () => {
   });
 });
 
+/** Timers driven by hand (the store's linger clock). */
+function manualTimers() {
+  let now = 0;
+  let next = 1;
+  const pending = new Map<number, { fn: () => void; at: number }>();
+  return {
+    timers: {
+      setTimeout: (fn: () => void, ms: number) => {
+        const id = next++;
+        pending.set(id, { fn, at: now + ms });
+        return id;
+      },
+      clearTimeout: (h: unknown) => {
+        pending.delete(h as number);
+      },
+    },
+    advance(ms: number) {
+      now += ms;
+      for (const [id, t] of [...pending]) {
+        if (t.at <= now) {
+          pending.delete(id);
+          t.fn();
+        }
+      }
+    },
+  };
+}
+
+const LINGER = 45_000;
+
 describe("RoomsStore watch ref-counting", () => {
-  it("a room stays watched until its last watcher lets go; then it is dropped and never refetched", async () => {
+  it("a room stays watched until its last watcher lets go; 45 s later it is dropped and never refetched", async () => {
+    const t = manualTimers();
     const c = new FakeClient();
     c.rooms = { data: [{ ...room("r1"), artifactCount: 1 }], seq: 1 };
     c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
-    const s = await liveStore(c);
+    const s = await liveStore(c, { timers: t.timers });
     await s.loadArtifacts("r1");
     await s.loadArtifacts("r1");
     s.unwatchArtifacts("r1");
@@ -694,6 +725,7 @@ describe("RoomsStore watch ref-counting", () => {
     expect(ids(s)).toEqual(["a1"]);
 
     s.unwatchArtifacts("r1");
+    t.advance(LINGER);
     expect("r1" in s.getState().artifacts).toBe(false);
     c.calls.listArtifacts = [];
     c.connect(1);
@@ -706,55 +738,108 @@ describe("RoomsStore watch ref-counting", () => {
     s.stop();
   });
 
-  it("letting go during the first load cancels it", async () => {
+  it("leaving and coming back within 45 s keeps the data and refetches nothing", async () => {
+    const t = manualTimers();
     const c = new FakeClient();
     c.rooms = { data: [room("r1")], seq: 1 };
     c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
-    const s = await liveStore(c);
+    const s = await liveStore(c, { timers: t.timers });
+    await s.loadArtifacts("r1");
+    s.unwatchArtifacts("r1");
+    t.advance(LINGER - 1);
+    c.calls.listArtifacts = [];
+    await s.loadArtifacts("r1");
+    expect(c.calls.listArtifacts).toEqual([]);
+    expect(ids(s)).toEqual(["a1"]);
+    t.advance(LINGER); // the cancelled linger never fires
+    expect(ids(s)).toEqual(["a1"]);
+    s.stop();
+  });
+
+  it("while lingering the scope stays fully watched: events apply and resync refetches it", async () => {
+    const t = manualTimers();
+    const c = new FakeClient();
+    c.rooms = { data: [room("r1")], seq: 1 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
+    const s = await liveStore(c, { timers: t.timers });
+    await s.loadArtifacts("r1");
+    s.unwatchArtifacts("r1");
+    c.emit({ seq: 2, type: "artifact.added", artifact: art("a2") });
+    expect(ids(s)).toEqual(["a1", "a2"]);
+    c.calls.listArtifacts = [];
+    c.connect(2);
+    await flush();
+    expect(c.calls.listArtifacts).toEqual(["r1"]);
+    t.advance(LINGER);
+    expect("r1" in s.getState().artifacts).toBe(false);
+    s.stop();
+  });
+
+  it("letting go during the first load: it lands, lingers, and is dropped after 45 s", async () => {
+    const t = manualTimers();
+    const c = new FakeClient();
+    c.rooms = { data: [room("r1")], seq: 1 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
+    const s = await liveStore(c, { timers: t.timers });
     c.hold();
     const p = s.loadArtifacts("r1");
     s.unwatchArtifacts("r1");
     c.releaseAll();
     await p;
     await flush();
+    expect(ids(s)).toEqual(["a1"]);
+    t.advance(LINGER);
     expect("r1" in s.getState().artifacts).toBe(false);
     s.stop();
   });
 
   it("a watched room that vanished is reloaded when it comes back, without a new watch", async () => {
+    const t = manualTimers();
     const c = new FakeClient();
     c.rooms = { data: [room("r1")], seq: 1 };
     c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
-    const s = await liveStore(c);
+    const s = await liveStore(c, { timers: t.timers });
     await s.loadArtifacts("r1");
     c.emit({ seq: 2, type: "room.removed", roomId: "r1" });
     expect(s.getState().artifacts.r1).toBeUndefined();
     c.emit({ seq: 3, type: "room.added", room: room("r1") });
     await flush();
     expect(ids(s)).toEqual(["a1"]);
-    // Still one watcher: letting go drops it.
+    // Still one watcher: letting go drops it once the linger ends.
     s.unwatchArtifacts("r1");
+    t.advance(LINGER);
     expect(s.getState().artifacts.r1).toBeUndefined();
     s.stop();
   });
 
-  it("days are ref-counted too: an unwatched day is dropped and not refetched", async () => {
+  it("days linger too: back within 45 s keeps the day; after 45 s it is dropped and not refetched", async () => {
     vi.useFakeTimers();
+    const t = manualTimers();
     const c = new FakeClient();
     c.days.set("2026-10-05", { data: day("2026-10-05", 1), seq: 1 });
-    const s = new RoomsStore(c);
+    const s = new RoomsStore(c, { timers: t.timers });
     s.start();
     c.connect(0);
     await vi.advanceTimersByTimeAsync(0);
     await s.loadDay("2026-10-05");
     await s.loadDay("2026-10-05");
     s.unwatchDay("2026-10-05");
+    s.unwatchDay("2026-10-05");
+    t.advance(LINGER - 1);
+    c.calls.journalDay = [];
+    await s.loadDay("2026-10-05");
+    expect(c.calls.journalDay).toEqual([]);
     expect(s.getState().days["2026-10-05"]).toBeDefined();
     s.unwatchDay("2026-10-05");
+    // Lingering: still refetched on journal events.
+    c.emit({ seq: 2, type: "journal.changed", date: "2026-10-05" });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(c.calls.journalDay).toEqual(["2026-10-05"]);
+    t.advance(LINGER);
     expect("2026-10-05" in s.getState().days).toBe(false);
     c.calls.journalDay = [];
     c.connect(0);
-    c.emit({ seq: 2, type: "journal.changed", date: "2026-10-05" });
+    c.emit({ seq: 3, type: "journal.changed", date: "2026-10-05" });
     await vi.advanceTimersByTimeAsync(500);
     expect(c.calls.journalDay).toEqual([]);
     s.stop();
