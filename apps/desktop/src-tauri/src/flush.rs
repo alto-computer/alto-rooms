@@ -21,20 +21,39 @@ pub const FLUSH_EVENT: &str = "app://flush";
 pub const MAIN_WINDOW: &str = "main";
 
 /// What to do once the webview has flushed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Intent {
     CloseWindow,
+    /// Our own exit (menu Quit, or an exit request we held).
     Exit,
+    /// AppKit asked `applicationShouldTerminate:` (Dock, Apple Event, logout) and is
+    /// waiting for `replyToApplicationShouldTerminate:`.
+    Terminate,
 }
 
 impl Intent {
-    /// Exit wins: quitting while a close is pending must still quit.
+    /// The stronger intent wins: Terminate > Exit > CloseWindow. Quitting while a
+    /// close is pending still quits, and a pending AppKit terminate always gets its reply.
     fn merge(self, other: Intent) -> Intent {
-        if self == Intent::Exit || other == Intent::Exit {
-            Intent::Exit
-        } else {
-            Intent::CloseWindow
-        }
+        self.max(other)
+    }
+}
+
+/// The answer to `applicationShouldTerminate:`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminateReply {
+    /// NSTerminateNow: a flush round has completed; let AppKit quit.
+    Now,
+    /// NSTerminateLater: flush first, then reply.
+    Later,
+}
+
+/// Pure decision for `applicationShouldTerminate:`.
+pub fn terminate_reply(gate: &FlushGate) -> TerminateReply {
+    if gate.completed {
+        TerminateReply::Now
+    } else {
+        TerminateReply::Later
     }
 }
 
@@ -43,6 +62,16 @@ impl Intent {
 pub struct FlushGate {
     pending: Option<(u64, Intent)>,
     next: u64,
+    /// A round has ended (answered or timed out): the app is on its way out.
+    completed: bool,
+}
+
+/// Whether an exit request must be held and routed through a flush round.
+/// `code` is `None` for a quit the user or the system asked for; `Some` is our
+/// own `app.exit(n)`, which always goes through. Once a round has completed, the
+/// exit that follows (window destroyed, or `app.exit`) goes through too.
+pub fn should_intercept_exit(code: Option<i32>, gate: &FlushGate) -> bool {
+    code.is_none() && !gate.completed
 }
 
 impl FlushGate {
@@ -61,7 +90,9 @@ impl FlushGate {
 
     /// The webview answered: ends the pending round, if any.
     pub fn done(&mut self) -> Option<Intent> {
-        self.pending.take().map(|(_, intent)| intent)
+        let intent = self.pending.take().map(|(_, intent)| intent);
+        self.completed |= intent.is_some();
+        intent
     }
 
     /// The timeout of round `token` fired: ends it only if it is still the pending round.
@@ -69,6 +100,7 @@ impl FlushGate {
         match self.pending {
             Some((t, intent)) if t == token => {
                 self.pending = None;
+                self.completed = true;
                 Some(intent)
             }
             _ => None,
@@ -93,6 +125,12 @@ fn perform(app: &AppHandle, intent: Intent) {
             None => app.exit(0),
         },
         Intent::Exit => app.exit(0),
+        Intent::Terminate => {
+            #[cfg(target_os = "macos")]
+            crate::terminate::reply(app);
+            #[cfg(not(target_os = "macos"))]
+            app.exit(0);
+        }
     }
 }
 
@@ -104,6 +142,7 @@ pub fn request(app: &AppHandle, intent: Intent) {
         gate.request(intent)
     };
     let Some(token) = token else { return };
+    eprintln!("flush: round {token} ({intent:?}): emitting {FLUSH_EVENT}");
     if let Err(e) = app.emit(FLUSH_EVENT, ()) {
         eprintln!("could not ask the webview to flush: {e}");
     }
@@ -131,8 +170,39 @@ pub fn flush_done(app: AppHandle) {
         gate.done()
     };
     if let Some(intent) = intent {
+        eprintln!("flush: flush_done received; {intent:?}");
         perform(&app, intent);
     }
+}
+
+/// `applicationShouldTerminate:` (macOS): answers now after a completed round,
+/// otherwise starts (or joins) a Terminate round and answers later.
+pub fn on_should_terminate(app: &AppHandle) -> TerminateReply {
+    let reply = {
+        let state = app.state::<Flush>();
+        let gate = state.0.lock().unwrap_or_else(|p| p.into_inner());
+        terminate_reply(&gate)
+    };
+    if reply == TerminateReply::Later {
+        eprintln!("flush: applicationShouldTerminate; flushing first");
+        request(app, Intent::Terminate);
+    }
+    reply
+}
+
+/// `RunEvent::ExitRequested`: holds a user/system quit until a flush round has run.
+/// Returns true when the exit was intercepted (the caller must prevent it).
+pub fn intercept_exit(app: &AppHandle, code: Option<i32>) -> bool {
+    let intercept = {
+        let state = app.state::<Flush>();
+        let gate = state.0.lock().unwrap_or_else(|p| p.into_inner());
+        should_intercept_exit(code, &gate)
+    };
+    if intercept {
+        eprintln!("flush: exit requested (code {code:?}); flushing first");
+        request(app, Intent::Exit);
+    }
+    intercept
 }
 
 #[cfg(test)]
@@ -177,6 +247,58 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(g.timeout(first), None);
         assert_eq!(g.timeout(second), Some(Intent::Exit));
+    }
+
+    #[test]
+    fn exit_requests_are_held_until_a_flush_round_completes() {
+        let mut g = FlushGate::default();
+        // A user/system quit request (no code) before any flush: hold it.
+        assert!(should_intercept_exit(None, &g));
+        // Our own app.exit(n) always goes through.
+        assert!(!should_intercept_exit(Some(0), &g));
+        // Still held while a round is pending (the request joins it).
+        let t = g.request(Intent::CloseWindow).unwrap();
+        assert!(should_intercept_exit(None, &g));
+        // Once the round has completed (answer or timeout), the exit that follows passes.
+        assert_eq!(g.done(), Some(Intent::CloseWindow));
+        assert!(!should_intercept_exit(None, &g));
+        assert_eq!(g.timeout(t), None);
+        assert!(!should_intercept_exit(None, &g));
+    }
+
+    #[test]
+    fn a_timed_out_round_also_lets_the_exit_through() {
+        let mut g = FlushGate::default();
+        let t = g.request(Intent::Exit).unwrap();
+        assert_eq!(g.timeout(t), Some(Intent::Exit));
+        assert!(!should_intercept_exit(None, &g));
+    }
+
+    #[test]
+    fn terminate_is_answered_later_until_a_round_completes() {
+        let mut g = FlushGate::default();
+        // Dock / Apple Event / logout quit: answer NSTerminateLater and flush first.
+        assert_eq!(terminate_reply(&g), TerminateReply::Later);
+        let t = g.request(Intent::Terminate).unwrap();
+        assert_eq!(terminate_reply(&g), TerminateReply::Later);
+        assert_eq!(g.timeout(t), Some(Intent::Terminate));
+        // After a completed round (e.g. our own exit calling terminate:), quit now.
+        assert_eq!(terminate_reply(&g), TerminateReply::Now);
+    }
+
+    #[test]
+    fn terminate_wins_every_merge_so_appkit_always_gets_its_reply() {
+        let mut g = FlushGate::default();
+        g.request(Intent::CloseWindow).unwrap();
+        assert_eq!(g.request(Intent::Terminate), None);
+        assert_eq!(g.request(Intent::Exit), None);
+        assert_eq!(g.request(Intent::CloseWindow), None);
+        assert_eq!(g.done(), Some(Intent::Terminate));
+
+        let mut g = FlushGate::default();
+        g.request(Intent::Exit).unwrap();
+        assert_eq!(g.request(Intent::Terminate), None);
+        assert_eq!(g.done(), Some(Intent::Terminate));
     }
 
     #[test]

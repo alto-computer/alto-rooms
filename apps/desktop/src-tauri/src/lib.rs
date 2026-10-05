@@ -1,5 +1,7 @@
 mod daemon;
 mod flush;
+#[cfg(target_os = "macos")]
+mod terminate;
 
 use flush::Intent;
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
@@ -79,6 +81,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Alto Rooms");
 
+    // Dock "Quit", `quit app` Apple Events and logout go through AppKit's terminate:, which
+    // tao never reports as ExitRequested; hook it so they flush too.
+    #[cfg(target_os = "macos")]
+    terminate::install(app.handle());
+
     // SIGINT/SIGTERM bypass RunEvent::Exit, which would orphan the sidecar; route them through it.
     let handle = app.handle().clone();
     if let Err(e) = ctrlc::set_handler(move || {
@@ -88,10 +95,26 @@ pub fn run() {
         eprintln!("could not install signal handler: {e}");
     }
 
-    // Every way out (window closed after the flush, menu Quit, Dock/Apple Event quit) ends here.
-    app.run(|handle, event| {
-        if let RunEvent::Exit = event {
+    // Paths that flush notes first (one round through flush::FlushGate, 2.5 s fallback):
+    // - window close: red button, 파일 → 창 닫기 (⇧⌘W)  — CloseRequested
+    // - app menu Quit (⌘Q)                              — on_menu_event
+    // - Dock "Quit", `quit app` Apple Event, logout      — applicationShouldTerminate: (terminate.rs)
+    // - a code-less ExitRequested before any round      — below
+    // Paths that don't: SIGINT/SIGTERM (ctrlc handler above) and SIGKILL. Every exit except
+    // SIGKILL reaches RunEvent::Exit, which kills the sidecar.
+    app.run(|handle, event| match event {
+        // A code-less exit request (e.g. the last window was destroyed) is held until a round
+        // has run; our own app.exit(n) (code Some) and the exit after a completed round pass.
+        RunEvent::ExitRequested { code, api, .. } => {
+            if flush::intercept_exit(handle, code) {
+                api.prevent_exit();
+            }
+        }
+        // Every way out except SIGKILL ends here, flushed or not: the sidecar always dies.
+        RunEvent::Exit => {
+            eprintln!("flush: exiting");
             handle.state::<daemon::Daemon>().kill_spawned();
         }
+        _ => {}
     });
 }
