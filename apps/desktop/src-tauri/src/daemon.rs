@@ -33,17 +33,53 @@ struct Inner {
     conn: Option<Connection>,
 }
 
+/// How long the sidecar gets to exit after SIGTERM before it is killed.
+const STOP_GRACE: Duration = Duration::from_secs(1);
+
 impl Daemon {
-    /// Kill the sidecar if (and only if) this app spawned it.
+    /// Stop the sidecar if (and only if) this app spawned it: SIGTERM, up to
+    /// [`STOP_GRACE`] to exit, then SIGKILL.
     pub fn kill_spawned(&self) {
         // Called from the main thread on exit, outside the async runtime. If a connect is
         // mid-flight this waits for it (bounded by its 5 s startup deadline).
         let mut inner = self.inner.blocking_lock();
         if let Some(child) = inner.child.take() {
-            let _ = child.kill();
+            let pid = child.pid();
+            // The shell plugin reaps the child as soon as it exits, so "alive" is "the pid exists".
+            let alive = |pid: u32| {
+                // SAFETY: signal 0 only checks that the process exists and may be signalled.
+                unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+            };
+            if !stop_gracefully(pid, STOP_GRACE, alive, || {
+                let _ = child.kill();
+            }) {
+                eprintln!("roomsd did not exit within {STOP_GRACE:?} of SIGTERM; killed");
+            }
         }
         inner.conn = None;
     }
+}
+
+/// Sends SIGTERM to `pid` and waits up to `grace` for `alive(pid)` to turn false;
+/// otherwise calls `kill`. Returns whether the process exited on its own.
+fn stop_gracefully(pid: u32, grace: Duration, alive: impl Fn(u32) -> bool, kill: impl FnOnce()) -> bool {
+    // SAFETY: plain kill(2) on a pid we spawned and still own (not yet reaped by us).
+    if unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } != 0 {
+        // Already gone (ESRCH): nothing to wait for.
+        return true;
+    }
+    let deadline = Instant::now() + grace;
+    while Instant::now() < deadline {
+        if !alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if !alive(pid) {
+        return true;
+    }
+    kill();
+    false
 }
 
 #[derive(Deserialize)]
@@ -392,6 +428,39 @@ mod tests {
         std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o640)).unwrap();
         assert!(read_token_file(&ok, uid).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stop_gracefully_sends_sigterm_and_skips_the_kill_when_the_child_exits() {
+        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id();
+        let child = std::sync::Mutex::new(&mut child);
+        let alive = |_: u32| matches!(child.lock().unwrap().try_wait(), Ok(None));
+        let killed = std::cell::Cell::new(false);
+        let started = Instant::now();
+        let graceful = stop_gracefully(pid, Duration::from_secs(1), alive, || killed.set(true));
+        assert!(graceful);
+        assert!(!killed.get());
+        assert!(started.elapsed() < Duration::from_millis(900));
+    }
+
+    #[test]
+    fn stop_gracefully_kills_after_the_grace_period_when_sigterm_is_ignored() {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "trap '' TERM; exec sleep 30"])
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100)); // let the trap install
+        let pid = child.id();
+        let child = std::sync::Mutex::new(&mut child);
+        let alive = |_: u32| matches!(child.lock().unwrap().try_wait(), Ok(None));
+        let started = Instant::now();
+        let graceful = stop_gracefully(pid, Duration::from_millis(300), alive, || {
+            let _ = child.lock().unwrap().kill();
+        });
+        assert!(!graceful);
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        let _ = child.lock().unwrap().wait();
     }
 
     #[test]

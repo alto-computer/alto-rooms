@@ -94,11 +94,12 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     terminate::install(app.handle());
 
-    // SIGINT/SIGTERM bypass RunEvent::Exit, which would orphan the sidecar; route them through it.
+    // SIGINT/SIGTERM would bypass RunEvent::Exit (orphaning the sidecar) and skip the note
+    // flush; route them through a flush round like menu Quit (2.5 s cap, then exit).
     let handle = app.handle().clone();
     if let Err(e) = ctrlc::set_handler(move || {
-        handle.state::<daemon::Daemon>().kill_spawned();
-        handle.exit(0);
+        eprintln!("flush: SIGINT/SIGTERM received");
+        flush::request(&handle, Intent::Exit);
     }) {
         eprintln!("could not install signal handler: {e}");
     }
@@ -108,8 +109,9 @@ pub fn run() {
     // - app menu Quit (⌘Q)                              — on_menu_event
     // - Dock "Quit", `quit app` Apple Event, logout      — applicationShouldTerminate: (terminate.rs)
     // - a code-less ExitRequested before any round      — below
-    // Paths that don't: SIGINT/SIGTERM (ctrlc handler above) and SIGKILL. Every exit except
-    // SIGKILL reaches RunEvent::Exit, which kills the sidecar.
+    // - SIGINT/SIGTERM                                   — ctrlc handler above
+    // Only SIGKILL skips the flush. Every exit except SIGKILL reaches RunEvent::Exit, which
+    // stops the sidecar (SIGTERM, 1 s grace, then SIGKILL).
     app.run(|handle, event| match event {
         // A code-less exit request (e.g. the last window was destroyed) is held until a round
         // has run; our own app.exit(n) (code Some) and the exit after a completed round pass.
@@ -118,7 +120,7 @@ pub fn run() {
                 api.prevent_exit();
             }
         }
-        // Every way out except SIGKILL ends here, flushed or not: the sidecar always dies.
+        // Every way out except SIGKILL ends here, flushed or not: the sidecar always stops.
         RunEvent::Exit => {
             eprintln!("flush: exiting");
             handle.state::<daemon::Daemon>().kill_spawned();
