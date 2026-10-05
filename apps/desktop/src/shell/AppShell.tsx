@@ -3,8 +3,11 @@ import { Command, CommandDialog, CommandInput, CommandList } from "@/components/
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useViewer, useViewerStore } from "@/data/hooks";
-import type { ViewerStore } from "@/data/viewerStore";
+import type { Tab, ViewerStore } from "@/data/viewerStore";
 import { cn } from "@/lib/utils";
+import { DocView } from "@/views/DocView";
+import { JournalView } from "@/views/JournalView";
+import { NoteView } from "@/views/NoteView";
 import { TabPlaceholder } from "@/views/Placeholder";
 import { RoomView } from "@/views/RoomView";
 import { Sidebar } from "./Sidebar";
@@ -61,6 +64,22 @@ function QuickFindStub({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** The active tab's view. Mounted per tab id, so mount = activation. */
+function TabView({ tab }: { tab: Tab }) {
+  switch (tab.kind) {
+    case "room":
+      return <RoomView roomId={tab.roomId} />;
+    case "doc":
+      return <DocView roomId={tab.roomId} artifactId={tab.artifactId} />;
+    case "journal":
+      return <JournalView tabId={tab.id} date={tab.date} />;
+    case "note":
+      return <NoteView date={tab.date} name={tab.name} />;
+    case "new":
+      return <TabPlaceholder tab={tab} />;
+  }
+}
+
 const SIDEBAR_STYLE = { "--sidebar-width": "232px" } as CSSProperties;
 
 export function AppShell() {
@@ -90,11 +109,7 @@ export function AppShell() {
             aria-labelledby={active ? tabDomId(active.id) : undefined}
             className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-[#ddd] bg-white"
           >
-            {active?.kind === "room" ? (
-              <RoomView key={active.id} roomId={active.roomId} />
-            ) : active ? (
-              <TabPlaceholder key={active.id} tab={active} />
-            ) : null}
+            {active ? <TabView key={active.id} tab={active} /> : null}
           </main>
         </div>
         {findOpen ? <QuickFindStub onClose={() => setFindOpen(false)} /> : null}

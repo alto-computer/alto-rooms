@@ -1,4 +1,4 @@
-import type { Artifact, Info, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type { Artifact, Info, JournalDay, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
@@ -32,11 +32,20 @@ export function memoryStorage() {
  * and `emit` delivers SSE events to the store.
  */
 export function fakeClient(
-  opts: { rooms?: Room[]; artifacts?: Record<string, Artifact[]>; artifactErrors?: Record<string, Error>; readOnly?: boolean } = {},
+  opts: {
+    rooms?: Room[];
+    artifacts?: Record<string, Artifact[]>;
+    artifactErrors?: Record<string, Error>;
+    days?: Record<string, Partial<JournalDay>>;
+    dayErrors?: Record<string, Error>;
+    /** Note bodies (or the error getNote throws), keyed `${date}/${name}`; absent = "". */
+    notes?: Record<string, string | Error>;
+    readOnly?: boolean;
+  } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
   let seq = 1;
-  const state = { rooms: opts.rooms ?? [], artifacts: opts.artifacts ?? {} };
+  const state = { rooms: opts.rooms ?? [], artifacts: opts.artifacts ?? {}, days: opts.days ?? {}, notes: opts.notes ?? {} };
   const info: Info = {
     version: "0",
     readOnly: opts.readOnly ?? false,
@@ -52,12 +61,26 @@ export function fakeClient(
       if (err) throw err;
       return { data: state.artifacts[roomId] ?? [], seq };
     },
-    journalDay: async (date: string) => ({ data: { date, artifacts: [], notes: [] }, seq }),
-    getNote: vi.fn(async () => ""),
+    journalDay: async (date: string) => {
+      const err = opts.dayErrors?.[date];
+      if (err) throw err;
+      return { data: { date, artifacts: [], notes: [], ...state.days[date] } as JournalDay, seq };
+    },
+    getNote: vi.fn(async (date: string, name: string): Promise<string> => {
+      const v = state.notes[`${date}/${name}`];
+      if (v instanceof Error) throw v;
+      return v ?? "";
+    }),
     createRoom: vi.fn(async (name: string) => room(`new-${name}`, name)),
     linkFolder: vi.fn(async (path: string, name?: string) => room(`linked-${path}`, name ?? path, { kind: "linked", path })),
     renameRoom: vi.fn(async (id: string, name: string) => room(id, name)),
-    saveNote: vi.fn(async (date: string, name: string) => ({ date, name, relPath: `${date}/${name}.md`, updatedAt: "", author: "me" as const })),
+    saveNote: vi.fn(async (date: string, name: string, _body?: string) => ({
+      date,
+      name: `${name}.md`,
+      relPath: `${date}/${name}.md`,
+      updatedAt: new Date().toISOString(),
+      author: "me" as const,
+    })),
     fileUrl: (i: Info, a: Artifact) => `${i.filesOrigin}/${a.roomId}/${a.relPath}`,
     subscribe: (cb: (e: RoomsEvent) => void) => {
       onEvent = cb;

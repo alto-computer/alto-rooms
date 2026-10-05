@@ -30,3 +30,51 @@ export function isNewSince(createdAt: string, baseline: string): boolean {
   if (Number.isNaN(created) || Number.isNaN(since)) return false;
   return created > since;
 }
+
+/*
+ * Calendar-date math on `YYYY-MM-DD` strings. These are local calendar dates
+ * with no time of day, so the arithmetic runs on a UTC timestamp of the date:
+ * UTC has no DST, so adding days never lands on 23:00 or 01:00 of the wrong day.
+ */
+
+/** Weekday letters, Sunday first (weeks run Sunday → Saturday). */
+export const WEEKDAY_LETTERS = ["일", "월", "화", "수", "목", "금", "토"] as const;
+
+function parts(date: string): [number, number, number] {
+  const [y, m, d] = date.split("-").map(Number);
+  return [y, m, d];
+}
+
+const utcOf = (date: string) => {
+  const [y, m, d] = parts(date);
+  return new Date(Date.UTC(y, m - 1, d));
+};
+
+const fromUtc = (t: Date) => `${String(t.getUTCFullYear()).padStart(4, "0")}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
+
+/** `date` shifted by `n` calendar days (negative goes back). */
+export function addDays(date: string, n: number): string {
+  const [y, m, d] = parts(date);
+  return fromUtc(new Date(Date.UTC(y, m - 1, d + n)));
+}
+
+/** 0 = Sunday … 6 = Saturday. */
+export function weekdayIndex(date: string): number {
+  return utcOf(date).getUTCDay();
+}
+
+/** The seven dates (Sunday → Saturday) of the week containing `date`. */
+export function weekOf(date: string): string[] {
+  const sunday = addDays(date, -weekdayIndex(date));
+  return Array.from({ length: 7 }, (_, i) => addDays(sunday, i));
+}
+
+/** Day of the month as a number. */
+export function dayOfMonth(date: string): number {
+  return parts(date)[2];
+}
+
+/** Journal heading: `{M}월 {D}일 {요일}요일`, e.g. `10월 5일 월요일`. */
+export function journalTitle(date: string): string {
+  return `${monthDay(date)} ${WEEKDAY_LETTERS[weekdayIndex(date)]}요일`;
+}

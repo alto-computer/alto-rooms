@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { dateLabel, isNewSince } from "./dates";
+import { afterEach, describe, expect, it } from "vitest";
+import { addDays, dateLabel, isNewSince, journalTitle, localDate, weekdayIndex, weekOf, WEEKDAY_LETTERS } from "./dates";
 
 const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
 
@@ -64,5 +64,62 @@ describe("isNewSince", () => {
   it("is false when either time is unparseable", () => {
     expect(isNewSince("bad", "2026-10-05T10:00:00Z")).toBe(false);
     expect(isNewSince("2026-10-05T10:00:00Z", "bad")).toBe(false);
+  });
+});
+
+describe("calendar-date math (YYYY-MM-DD, local calendar)", () => {
+  const origTZ = process.env.TZ;
+  afterEach(() => {
+    if (origTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = origTZ;
+  });
+
+  it("adds and subtracts days across month and year boundaries", () => {
+    expect(addDays("2026-10-05", 7)).toBe("2026-10-12");
+    expect(addDays("2026-10-05", -7)).toBe("2026-09-28");
+    expect(addDays("2026-01-31", 1)).toBe("2026-02-01");
+    expect(addDays("2026-03-01", -1)).toBe("2026-02-28");
+    expect(addDays("2024-03-01", -1)).toBe("2024-02-29"); // leap year
+    expect(addDays("2026-12-31", 1)).toBe("2027-01-01");
+    expect(addDays("2027-01-03", -7)).toBe("2026-12-27");
+    expect(addDays("2026-12-29", 7)).toBe("2027-01-05");
+    expect(addDays("2026-10-05", 0)).toBe("2026-10-05");
+  });
+
+  it("is unaffected by DST transitions in any time zone", () => {
+    for (const tz of ["America/New_York", "Europe/Berlin", "Australia/Sydney", "Asia/Seoul", "Pacific/Chatham"]) {
+      process.env.TZ = tz;
+      // US 2026: DST starts 03-08, ends 11-01. EU: 03-29 / 10-25. AU: ends 04-05, starts 10-04.
+      expect(addDays("2026-03-07", 1)).toBe("2026-03-08");
+      expect(addDays("2026-03-08", 1)).toBe("2026-03-09");
+      expect(addDays("2026-03-28", 7)).toBe("2026-04-04");
+      expect(addDays("2026-10-31", 1)).toBe("2026-11-01");
+      expect(addDays("2026-11-01", 1)).toBe("2026-11-02");
+      expect(addDays("2026-10-25", -1)).toBe("2026-10-24");
+      expect(addDays("2026-10-04", 7)).toBe("2026-10-11");
+      expect(weekOf("2026-03-10")).toEqual(["2026-03-08", "2026-03-09", "2026-03-10", "2026-03-11", "2026-03-12", "2026-03-13", "2026-03-14"]);
+      expect(weekdayIndex("2026-11-01")).toBe(0);
+      // Local midnight on a DST day is still that local date.
+      expect(localDate(new Date(2026, 2, 8, 0, 0, 0))).toBe("2026-03-08");
+      expect(localDate(new Date(2026, 10, 1, 23, 59, 59))).toBe("2026-11-01");
+    }
+  });
+
+  it("weeks run Sunday → Saturday", () => {
+    expect(WEEKDAY_LETTERS).toEqual(["일", "월", "화", "수", "목", "금", "토"]);
+    expect(weekdayIndex("2026-10-05")).toBe(1); // Monday
+    expect(weekdayIndex("2026-10-04")).toBe(0); // Sunday
+    expect(weekOf("2026-10-05")).toEqual(["2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10"]);
+    expect(weekOf("2026-10-04")[0]).toBe("2026-10-04");
+    expect(weekOf("2026-10-10")[0]).toBe("2026-10-04");
+    // Spans a month and a year boundary.
+    expect(weekOf("2026-12-31")).toEqual(["2026-12-27", "2026-12-28", "2026-12-29", "2026-12-30", "2026-12-31", "2027-01-01", "2027-01-02"]);
+    expect(weekOf("2026-07-01")[0]).toBe("2026-06-28");
+  });
+
+  it("titles a day as {M}월 {D}일 {요일}요일", () => {
+    expect(journalTitle("2026-10-05")).toBe("10월 5일 월요일");
+    expect(journalTitle("2026-10-04")).toBe("10월 4일 일요일");
+    expect(journalTitle("2027-01-02")).toBe("1월 2일 토요일");
   });
 });
