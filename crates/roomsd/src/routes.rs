@@ -3,7 +3,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use rooms_core::CoreError;
+use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
 use serde::Deserialize;
 
@@ -16,10 +16,38 @@ impl IntoResponse for ApiErr {
 }
 impl From<CoreError> for ApiErr { fn from(e: CoreError) -> Self { ApiErr(e) } }
 
-fn with_seq<T: serde::Serialize>(st: &AppState, v: T) -> Response {
+/// Runs a core call on the blocking pool: core does filesystem/SQLite IO under a std Mutex,
+/// which must not stall the async workers. A panicked/cancelled task maps to 500 `internal`.
+pub async fn blocking<T, F>(st: &AppState, f: F) -> Result<T, ApiErr>
+where
+    T: Send + 'static,
+    F: FnOnce(&RoomsCore) -> Result<T, CoreError> + Send + 'static,
+{
+    let core = st.core.clone();
+    tokio::task::spawn_blocking(move || f(&core))
+        .await
+        .map_err(|e| ApiErr(CoreError::Internal(e.to_string())))?
+        .map_err(ApiErr)
+}
+
+/// Snapshot GET with `X-Rooms-Seq`. Spec §5 S3 rule ③: the client discards buffered events with
+/// seq ≤ the snapshot seq, so the seq MUST be read BEFORE the data is computed. Reading it after
+/// could cover an event the data does not contain yet (lost update); reading it before at worst
+/// re-applies an event, which is idempotent (rule ④).
+pub async fn snapshot<T, F>(st: &AppState, f: F) -> Result<Response, ApiErr>
+where
+    T: serde::Serialize + Send + 'static,
+    F: FnOnce(&RoomsCore) -> Result<T, CoreError> + Send + 'static,
+{
+    let (seq, v) = blocking(st, move |core| {
+        let seq = core.current_seq(); // ① seq first
+        let v = f(core)?; // ② then data
+        Ok((seq, v))
+    })
+    .await?;
     let mut h = HeaderMap::new();
-    h.insert("x-rooms-seq", HeaderValue::from_str(&st.core.current_seq().to_string()).unwrap());
-    (h, Json(v)).into_response()
+    h.insert("x-rooms-seq", HeaderValue::from_str(&seq.to_string()).unwrap());
+    Ok((h, Json(v)).into_response())
 }
 
 pub async fn info(State(st): State<AppState>) -> Json<Info> {
@@ -27,37 +55,39 @@ pub async fn info(State(st): State<AppState>) -> Json<Info> {
         journal_room_id: JOURNAL_ROOM_ID.into(), files_origin: st.files_origin.clone() })
 }
 
-pub async fn list_rooms(State(st): State<AppState>) -> Response { with_seq(&st, st.core.list_rooms()) }
+pub async fn list_rooms(State(st): State<AppState>) -> Response {
+    snapshot(&st, |c| Ok(c.list_rooms())).await.into_response()
+}
 
 pub async fn list_artifacts(State(st): State<AppState>, Path(room_id): Path<String>) -> Result<Response, ApiErr> {
-    Ok(with_seq(&st, st.core.list_artifacts(&room_id)?))
+    snapshot(&st, move |c| c.list_artifacts(&room_id)).await
 }
 
 pub async fn journal_day(State(st): State<AppState>, Path(date): Path<String>) -> Result<Response, ApiErr> {
-    Ok(with_seq(&st, st.core.journal_day(&date)?))
+    snapshot(&st, move |c| c.journal_day(&date)).await
 }
 
 #[derive(Deserialize)] pub struct CreateBody { name: String }
 pub async fn create_room(State(st): State<AppState>, Json(b): Json<CreateBody>) -> Result<Json<Room>, ApiErr> {
-    Ok(Json(st.core.create_room(&b.name)?))
+    Ok(Json(blocking(&st, move |c| c.create_room(&b.name)).await?))
 }
 
 #[derive(Deserialize)] pub struct LinkBody { path: String, name: Option<String> }
 pub async fn link_room(State(st): State<AppState>, Json(b): Json<LinkBody>) -> Result<Json<Room>, ApiErr> {
-    Ok(Json(st.core.link_folder(std::path::Path::new(&b.path), b.name.as_deref())?))
+    Ok(Json(blocking(&st, move |c| c.link_folder(std::path::Path::new(&b.path), b.name.as_deref())).await?))
 }
 
 #[derive(Deserialize)] pub struct RenameBody { name: String }
 pub async fn rename_room(State(st): State<AppState>, Path(room_id): Path<String>, Json(b): Json<RenameBody>) -> Result<Json<Room>, ApiErr> {
-    Ok(Json(st.core.rename_room(&room_id, &b.name)?))
+    Ok(Json(blocking(&st, move |c| c.rename_room(&room_id, &b.name)).await?))
 }
 
 pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>, body: String) -> Result<Json<Note>, ApiErr> {
-    Ok(Json(st.core.save_note(&date, &name, &body)?))
+    Ok(Json(blocking(&st, move |c| c.save_note(&date, &name, &body)).await?))
 }
 
 pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>) -> Result<Response, ApiErr> {
-    let path = st.core.resolve_file(&room_id, &rel)?;
+    let path = blocking(&st, move |c| c.resolve_file(&room_id, &rel)).await?;
     // CoreError has no read/not-found variant besides RoomNotFound (misleading here); WriteFailed (500) is the closest fit.
     let bytes = tokio::fs::read(&path).await.map_err(|e| ApiErr(CoreError::WriteFailed(e.to_string())))?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -80,5 +110,36 @@ fn content_type(ext: &str) -> &'static str {
         "woff" => "font/woff",
         "woff2" => "font/woff2",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rooms_core::RoomsCore;
+
+    fn state() -> (tempfile::TempDir, AppState) {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        (d, AppState { core, token: "t".into(), read_only: false, files_origin: String::new() })
+    }
+
+    /// Spec §5 S3 rule ③: the client drops buffered events with seq ≤ snapshot seq, so the header
+    /// must be read before the data. An event emitted while computing the data must NOT be covered.
+    #[tokio::test]
+    async fn snapshot_reads_seq_before_data() {
+        let (_d, st) = state();
+        let s0 = st.core.current_seq();
+        let r = snapshot(&st, |core: &RoomsCore| core.create_room("during")).await.unwrap_or_else(|_| panic!("snapshot failed"));
+        assert_eq!(st.core.current_seq(), s0 + 1);
+        assert_eq!(r.headers()["x-rooms-seq"], s0.to_string().as_str());
+    }
+
+    #[tokio::test]
+    async fn blocking_maps_panic_to_internal_error() {
+        let (_d, st) = state();
+        let e = blocking(&st, |_core: &RoomsCore| -> Result<(), CoreError> { panic!("boom") }).await.err().expect("must fail");
+        assert_eq!(e.0.code(), "internal");
+        assert_eq!(e.0.status(), 500);
     }
 }

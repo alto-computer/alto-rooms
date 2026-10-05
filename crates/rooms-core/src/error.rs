@@ -8,6 +8,7 @@ pub enum CoreError {
     #[error("invalid input: {0}")] InvalidInput(String),
     #[error("path escape")] PathEscape,
     #[error("write failed: {0}")] WriteFailed(String),
+    #[error("internal error: {0}")] Internal(String),
 }
 
 impl CoreError {
@@ -21,13 +22,14 @@ impl CoreError {
             CoreError::InvalidInput(_) => "invalid_input",
             CoreError::PathEscape => "path_escape",
             CoreError::WriteFailed(_) => "write_failed",
+            CoreError::Internal(_) => "internal",
         }
     }
     pub fn status(&self) -> u16 {
         match self {
             CoreError::RoomExists | CoreError::OverlappingRoom => 409,
             CoreError::RoomNotFound => 404,
-            CoreError::WriteFailed(_) => 500,
+            CoreError::WriteFailed(_) | CoreError::Internal(_) => 500,
             _ => 400,
         }
     }
