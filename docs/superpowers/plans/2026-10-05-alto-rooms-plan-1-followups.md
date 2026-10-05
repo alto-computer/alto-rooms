@@ -67,3 +67,11 @@ Source: `.superpowers/sdd/2026-10-05-alto-rooms-plan-3-onboarding/progress.md` (
   - Inbox rows are `draggable` `<button>`s. That works in Chromium/WebKit (Tauri) but not Firefox, which is fine only while the app is Tauri-only.
 - `find_html.py` (Task 2 ruling): Codex shell matches count only with a write hint (`>`, `tee`, `cp`, `write_text`, …), and `/tmp`-style noise rules exempt paths under `$HOME`. Cost if wrong: a few missed Codex shell writes.
 - Dry run (Task 5): `crates/rooms-core/assets/onboarding/skill/rooms/scripts/dry_run.sh` is dev-only and not in CI; run it by hand after changing `find_html.py`, the skill or move/index code.
+
+## Plan 3 (onboarding) — parked at final review
+- When everything went to inbox, the full first-run card keeps showing (the waiting list appears below it).
+- Agent-created rooms show their slug as the display name (`브라우저-하네스`); folder adoption has no display-name channel.
+- Codex user-skill path `~/.codex/skills/<name>` assumed; verify against current Codex.
+- `in_worktree` also flags git submodules (nearest `.git` file).
+- New tab counts any never-visited room as "새로 정리된 방" until visited.
+- `cargo test -p rooms-core` is only reliable with `--test-threads=1` (timing tests).
