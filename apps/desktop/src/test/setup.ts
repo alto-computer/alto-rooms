@@ -22,5 +22,22 @@ if (typeof window !== "undefined") {
       disconnect() {}
     };
   }
+  if (!("IntersectionObserver" in window)) {
+    // Everything is "near the viewport" in jsdom: report each target as intersecting once observed.
+    (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = class {
+      private cb: IntersectionObserverCallback;
+      constructor(cb: IntersectionObserverCallback) {
+        this.cb = cb;
+      }
+      observe(target: Element) {
+        this.cb([{ isIntersecting: true, target } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+      }
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    };
+  }
   if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
 }

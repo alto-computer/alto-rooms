@@ -31,7 +31,9 @@ export function memoryStorage() {
  * A fake roomsd client: reads come from in-memory lists, writes are vi.fn()s,
  * and `emit` delivers SSE events to the store.
  */
-export function fakeClient(opts: { rooms?: Room[]; artifacts?: Record<string, Artifact[]>; readOnly?: boolean } = {}) {
+export function fakeClient(
+  opts: { rooms?: Room[]; artifacts?: Record<string, Artifact[]>; artifactErrors?: Record<string, Error>; readOnly?: boolean } = {},
+) {
   let onEvent: (e: RoomsEvent) => void = () => {};
   let seq = 1;
   const state = { rooms: opts.rooms ?? [], artifacts: opts.artifacts ?? {} };
@@ -45,7 +47,11 @@ export function fakeClient(opts: { rooms?: Room[]; artifacts?: Record<string, Ar
   const client = {
     info: async () => info,
     listRooms: async () => ({ data: state.rooms, seq }),
-    listArtifacts: async (roomId: string) => ({ data: state.artifacts[roomId] ?? [], seq }),
+    listArtifacts: async (roomId: string) => {
+      const err = opts.artifactErrors?.[roomId];
+      if (err) throw err;
+      return { data: state.artifacts[roomId] ?? [], seq };
+    },
     journalDay: async (date: string) => ({ data: { date, artifacts: [], notes: [] }, seq }),
     getNote: vi.fn(async () => ""),
     createRoom: vi.fn(async (name: string) => room(`new-${name}`, name)),

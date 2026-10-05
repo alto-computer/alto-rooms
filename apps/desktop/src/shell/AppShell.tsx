@@ -6,6 +6,7 @@ import { useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { cn } from "@/lib/utils";
 import { TabPlaceholder } from "@/views/Placeholder";
+import { RoomView } from "@/views/RoomView";
 import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
 
@@ -89,7 +90,11 @@ export function AppShell() {
             aria-labelledby={active ? tabDomId(active.id) : undefined}
             className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-[#ddd] bg-white"
           >
-            {active ? <TabPlaceholder key={active.id} tab={active} /> : null}
+            {active?.kind === "room" ? (
+              <RoomView key={active.id} roomId={active.roomId} />
+            ) : active ? (
+              <TabPlaceholder key={active.id} tab={active} />
+            ) : null}
           </main>
         </div>
         {findOpen ? <QuickFindStub onClose={() => setFindOpen(false)} /> : null}
