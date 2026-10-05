@@ -109,12 +109,12 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         ensure(d.path()).unwrap();
         let onboard = std::fs::read_to_string(d.path().join(ONBOARD)).unwrap();
-        assert!(onboard.starts_with("<!-- rooms-onboarding v1 -->\n"));
+        assert!(onboard.starts_with("<!-- rooms-onboarding v2 -->\n"));
         let skill = std::fs::read_to_string(d.path().join(SKILL)).unwrap();
         assert!(skill.starts_with("---\nname: rooms\n"));
-        assert!(skill.contains("\n<!-- rooms-onboarding v1 -->\n"));
+        assert!(skill.contains("\n<!-- rooms-onboarding v2 -->\n"));
         let script = std::fs::read_to_string(d.path().join(SCRIPT)).unwrap();
-        assert!(script.starts_with("#!/usr/bin/env python3\n# rooms-onboarding v1\n"));
+        assert!(script.starts_with("#!/usr/bin/env python3\n# rooms-onboarding v2\n"));
         assert_eq!(mode(&d.path().join(ONBOARD)), 0o644);
         assert_eq!(mode(&d.path().join(SKILL)), 0o644);
         assert_eq!(mode(&d.path().join(SCRIPT)), 0o755);
@@ -143,10 +143,25 @@ mod tests {
     }
 
     #[test]
+    fn v1_files_are_upgraded_to_v2() {
+        let d = tempfile::tempdir().unwrap();
+        ensure(d.path()).unwrap();
+        std::fs::write(d.path().join(ONBOARD), "<!-- rooms-onboarding v1 -->\n# old onboarding\n").unwrap();
+        std::fs::write(d.path().join(SKILL), "---\nname: rooms\ndescription: x\n---\n<!-- rooms-onboarding v1 -->\nold\n").unwrap();
+        std::fs::write(d.path().join(SCRIPT), "#!/usr/bin/env python3\n# rooms-onboarding v1\nold\n").unwrap();
+        ensure(d.path()).unwrap();
+        for (rel, body) in [(ONBOARD, ONBOARD_MD), (SKILL, SKILL_MD), (SCRIPT, FIND_HTML_PY)] {
+            let now = std::fs::read_to_string(d.path().join(rel)).unwrap();
+            assert_eq!(now, body, "{rel}");
+            assert_eq!(marker_version(&now), Some(2), "{rel}");
+        }
+    }
+
+    #[test]
     fn same_or_newer_marker_is_left_alone() {
         let d = tempfile::tempdir().unwrap();
         ensure(d.path()).unwrap();
-        let same = "<!-- rooms-onboarding v1 -->\nlocally tweaked\n";
+        let same = "<!-- rooms-onboarding v2 -->\nlocally tweaked\n";
         std::fs::write(d.path().join(ONBOARD), same).unwrap();
         let newer = "#!/usr/bin/env python3\n# rooms-onboarding v9\nnewer\n";
         std::fs::write(d.path().join(SCRIPT), newer).unwrap();
@@ -190,9 +205,9 @@ mod tests {
         assert_eq!(marker_version("hello\n<!-- rooms-onboarding v2 -->\n"), None);
         assert_eq!(marker_version("<!-- rooms-onboarding vx -->"), None);
         assert_eq!(marker_version(""), None);
-        assert_eq!(marker_version(ONBOARD_MD), Some(1));
-        assert_eq!(marker_version(SKILL_MD), Some(1));
-        assert_eq!(marker_version(FIND_HTML_PY), Some(1));
+        assert_eq!(marker_version(ONBOARD_MD), Some(2));
+        assert_eq!(marker_version(SKILL_MD), Some(2));
+        assert_eq!(marker_version(FIND_HTML_PY), Some(2));
     }
 
     #[test]

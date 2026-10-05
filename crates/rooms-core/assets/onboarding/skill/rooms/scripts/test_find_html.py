@@ -101,7 +101,6 @@ class FindHtmlTest(unittest.TestCase):
         self.assertEqual(c["title"], "T proj/w.html")
         self.assertFalse(c["linked"])
         self.assertEqual(c["linked_at"], [])
-        self.assertEqual(out["version"], 1)
 
     def test_title_falls_back_to_basename(self):
         p = self.e.html("proj/notitle.html", body="<html></html>")
@@ -303,6 +302,74 @@ class FindHtmlTest(unittest.TestCase):
                           cx_exec('tools.exec_command({cmd:"echo > ghost.html"})')])
         out = self.e.run()
         self.assertEqual(out["skipped"]["missing"], 1)
+
+    # ---- final fix wave: linked-folder rooms and worktrees ----
+    def write_state(self, body):
+        d = os.path.join(self.e.home, ".rooms")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "state.json"), "w") as f:
+            f.write(body if isinstance(body, str) else json.dumps(body))
+
+    def test_in_linked_room(self):
+        inside = self.e.html("docs/site/deep/a.html")
+        outside = self.e.html("docs/other/b.html")
+        sibling = self.e.html("docs/site-2/c.html")
+        # the room's path is given through a symlink: realpaths are compared
+        os.symlink(os.path.join(self.e.root, "docs", "site"), os.path.join(self.e.root, "alias"))
+        self.write_state({"rooms": [
+            {"id": "r1", "name": "사이트", "kind": "linked", "path": os.path.join(self.e.root, "alias"),
+             "dev": None, "ino": None},
+            {"id": "r2", "name": "owned", "kind": "owned", "path": os.path.join(self.e.root, "docs", "other"),
+             "dev": None, "ino": None},
+        ]})
+        self.e.claude_log([cc("Write", p) for p in (inside, outside, sibling)])
+        by = {c["path"]: c for c in self.e.run()["candidates"]}
+        self.assertEqual(by[inside]["in_linked_room"], "사이트")
+        self.assertIsNone(by[outside]["in_linked_room"])
+        self.assertIsNone(by[sibling]["in_linked_room"])
+
+    def test_state_json_missing_or_malformed_means_no_linked_rooms(self):
+        a = self.e.html("docs/site/a.html")
+        self.e.claude_log([cc("Write", a)])
+        self.assertIsNone(self.e.run()["candidates"][0]["in_linked_room"])  # missing
+        for body in ("{not json", "[]", '{"rooms": 3}', '{"rooms": [1, {"kind": "linked"}, '
+                     '{"kind": "linked", "path": 5, "name": "x"}]}'):
+            self.write_state(body)
+            self.assertIsNone(self.e.run()["candidates"][0]["in_linked_room"], body)
+
+    def test_state_json_is_not_written(self):
+        a = self.e.html("docs/site/a.html")
+        self.e.claude_log([cc("Write", a)])
+        body = json.dumps({"rooms": [{"id": "r", "name": "n", "kind": "linked",
+                                      "path": os.path.join(self.e.root, "docs", "site")}]})
+        self.write_state(body)
+        p = os.path.join(self.e.home, ".rooms", "state.json")
+        before = os.stat(p).st_mtime_ns
+        self.assertEqual(self.e.run()["candidates"][0]["in_linked_room"], "n")
+        with open(p) as f:
+            self.assertEqual(f.read(), body)
+        self.assertEqual(os.stat(p).st_mtime_ns, before)
+
+    def test_in_worktree(self):
+        wt = os.path.join(self.e.root, "wt3", "br")
+        os.makedirs(wt)
+        with open(os.path.join(wt, ".git"), "w") as f:
+            f.write("gitdir: /r/main/.git/worktrees/br\n")
+        main = os.path.join(self.e.root, "main")
+        os.makedirs(os.path.join(main, ".git"))
+        w = self.e.html("wt3/br/sub/w.html")
+        m = self.e.html("main/sub/m.html")
+        plain = self.e.html("plain/p.html")
+        self.e.claude_log([cc("Write", p) for p in (w, m, plain)])
+        by = {c["path"]: c for c in self.e.run()["candidates"]}
+        self.assertTrue(by[w]["in_worktree"])
+        self.assertFalse(by[m]["in_worktree"])
+        self.assertFalse(by[plain]["in_worktree"])
+
+    def test_output_version_2(self):
+        a = self.e.html("proj/v.html")
+        self.e.claude_log([cc("Write", a)])
+        self.assertEqual(self.e.run()["version"], 2)
 
 
 if __name__ == "__main__":

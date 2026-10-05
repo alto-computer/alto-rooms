@@ -10,7 +10,7 @@ import { APP_ORIGIN, artifactHtml, expect, test, today } from "./fixtures";
 
 const SCREENS = path.join(import.meta.dirname, "__screens__");
 const HEADING = "이 한 줄을 에이전트에게 붙여넣으세요";
-const MARKER = "<!-- rooms-onboarding v1 -->";
+const MARKER = "<!-- rooms-onboarding v2 -->";
 
 const waitingList = (page: Page) => page.getByRole("region", { name: "방을 기다리는 문서" });
 

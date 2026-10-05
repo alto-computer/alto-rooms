@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# rooms-onboarding v1
+# rooms-onboarding v2
 """List existing .html files that an AI agent wrote recently.
 
-Reads Claude Code and Codex session logs (read-only), prints JSON to stdout.
+Reads Claude Code and Codex session logs and <home>/.rooms/state.json (all
+read-only), prints JSON to stdout.
 Python 3.9+ standard library only. This script never writes anything.
 """
 import argparse
@@ -292,6 +293,7 @@ def is_noise(raw, real, home_dir, rooms_home):
 
 
 def repo_info(real):
+    """(repo_key, repo_root, in_worktree). in_worktree: the nearest `.git` above is a file."""
     d = os.path.dirname(real)
     while True:
         g = os.path.join(d, ".git")
@@ -304,18 +306,49 @@ def repo_info(real):
                     repo = os.path.basename(first[7:].strip().split("/.git/worktrees/")[0])
             except OSError:
                 pass
-            return repo or os.path.basename(os.path.dirname(d)) or os.path.basename(d), d
+            return repo or os.path.basename(os.path.dirname(d)) or os.path.basename(d), d, True
         if os.path.isdir(g):
-            return os.path.basename(d), d
+            return os.path.basename(d), d, False
         nd = os.path.dirname(d)
         if nd == d:
             break
         d = nd
     m = ORCA_RE.search(real)
     if m:
-        return m.group(1), real[:m.start(2)] + m.group(2)
+        return m.group(1), real[:m.start(2)] + m.group(2), False
     pd = os.path.dirname(real)
-    return os.path.basename(pd) or "/", pd
+    return os.path.basename(pd) or "/", pd, False
+
+
+def linked_rooms(home):
+    """[(realpath, name)] of the linked-folder rooms in <home>/.rooms/state.json (read-only).
+
+    A missing, unreadable or malformed file means no linked rooms.
+    """
+    try:
+        with open(os.path.join(home, ".rooms", "state.json"), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, RecursionError):
+        return []
+    rooms = data.get("rooms") if isinstance(data, dict) else None
+    out = []
+    for r in rooms if isinstance(rooms, list) else []:
+        if not isinstance(r, dict) or r.get("kind") != "linked":
+            continue
+        path, name = r.get("path"), r.get("name")
+        if not isinstance(path, str) or not path or not isinstance(name, str):
+            continue
+        out.append((os.path.realpath(os.path.expanduser(path)), name))
+    # deepest first, so a nested linked room wins over its parent
+    out.sort(key=lambda x: len(x[0]), reverse=True)
+    return out
+
+
+def in_linked_room(real, rooms):
+    for root, name in rooms:
+        if under(real, root):
+            return name
+    return None
 
 
 def read_title(path):
@@ -392,11 +425,12 @@ def main(argv=None):
         m.extend(h["writes"])
 
     links = find_links(rooms_home, set(merged))
+    linked_roots = linked_rooms(rooms_home)
     cands = []
     for real, writes in sorted(merged.items()):
         writes.sort(key=lambda w: w[0])
         first, last = writes[0], writes[-1]
-        key, root = repo_info(real)
+        key, root, worktree = repo_info(real)
         sessions = []
         for w in writes:
             if w[2] and w[2] not in sessions:
@@ -413,10 +447,12 @@ def main(argv=None):
             "rel_in_repo": os.path.relpath(real, root),
             "linked": real in links,
             "linked_at": links.get(real, []),
+            "in_linked_room": in_linked_room(real, linked_roots),
+            "in_worktree": worktree,
         })
     cands.sort(key=lambda c: c["last_written"], reverse=True)
     json.dump({
-        "version": 1, "days": a.days, "generated_at": fmt(now), "candidates": cands,
+        "version": 2, "days": a.days, "generated_at": fmt(now), "candidates": cands,
         "skipped": {"noise": noise, "missing": missing, "read_errors": col.read_errors},
     }, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")

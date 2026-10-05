@@ -14,6 +14,10 @@
 #      their artifacts and the Journal day of each artifact (the original's
 #      birthtime day).
 #   5. Re-runs find_html.py: every candidate must be linked: true.
+#   6. Links a folder room "site" through the API, writes one original inside it
+#      and one inside a git worktree of the demo repo, and re-runs find_html.py:
+#      in_linked_room / in_worktree must be set. Also runs SKILL.md's habit
+#      duplicate check (find + realpath) against an already-linked original.
 #
 # Never touches ~/rooms, ~/.claude or ~/.codex, and never uses 4317/4318.
 # Usage: bash dry_run.sh   (from anywhere; builds roomsd with cargo first)
@@ -105,6 +109,8 @@ c = out["candidates"]
 assert len(c) == 3, f"want 3 candidates, got {len(c)}: {c}"
 assert all(not x["linked"] for x in c), "fresh home: nothing should be linked yet"
 assert {x["repo_key"] for x in c} == {"demo-repo"}, [x["repo_key"] for x in c]
+assert all(x["in_linked_room"] is None and x["in_worktree"] is False for x in c), c
+assert out["version"] == 2, out["version"]
 slug = re.sub(r"[^a-z0-9]+", "-", c[0]["repo_key"].lower()).strip("-")
 room, inbox = os.path.join(home, slug), os.path.join(home, "inbox")
 os.makedirs(room, exist_ok=True)
@@ -189,6 +195,55 @@ for x in c:
     assert len(x["linked_at"]) == 1 and x["linked_at"][0].startswith(home + "/"), x["linked_at"]
 PY
 
+# --- 6. linked-folder room + worktree ----------------------------------------
+SITE="$USER_HOME/code/site"
+WT="$USER_HOME/code/demo-wt"
+mkdir -p "$SITE/pages" "$WT/out"
+printf 'gitdir: %s/.git/worktrees/demo-wt\n' "$REPO" >"$WT/.git"
+TOKEN_FILE="$HOME_DIR/.rooms/token"
+LINK_STATUS="$(curl -s -o "$ROOT/link.json" -w '%{http_code}' -X POST -H "$HOSTH" \
+  -H "Authorization: Bearer $(cat "$TOKEN_FILE")" -H 'content-type: application/json' \
+  --data "{\"path\": \"$SITE\", \"name\": \"site\"}" "$BASE/v1/rooms/link")"
+[ "$LINK_STATUS" = 200 ] || fail "link folder room: HTTP $LINK_STATUS $(cat "$ROOT/link.json")"
+
+python3 - "$SITE/pages/delta.html" "$WT/out/eps.html" "$CLAUDE_DIR/-demo-repo/s1.jsonl" <<'PY'
+import json, sys
+from datetime import datetime, timezone
+*files, log = sys.argv[1:]
+ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+with open(log, "a") as f:
+    for p in files:
+        with open(p, "w") as h:
+            h.write("<!doctype html><title>Dry extra</title>")
+        f.write(json.dumps({"type": "assistant", "timestamp": ts, "cwd": "/x", "sessionId": "dry-run",
+                            "message": {"content": [{"type": "tool_use", "name": "Write",
+                                                     "input": {"file_path": p}}]}}) + "\n")
+PY
+
+OUT3="$ROOT/find3.json"
+find_html >"$OUT3"
+python3 - "$OUT3" "$SITE/pages/delta.html" "$WT/out/eps.html" <<'PY' || fail "find_html.py after linking a folder"
+import json, sys
+out, delta, eps = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
+by = {x["path"]: x for x in out["candidates"]}
+assert len(by) == 5, sorted(by)
+assert by[delta]["in_linked_room"] == "site" and by[delta]["linked"] is False, by[delta]
+assert by[delta]["in_worktree"] is False, by[delta]
+assert by[eps]["in_worktree"] is True and by[eps]["in_linked_room"] is None, by[eps]
+assert by[eps]["repo_key"] == "demo-repo" and by[eps]["rel_in_repo"] == "out/eps.html", by[eps]
+for p, x in by.items():
+    if p not in (delta, eps):
+        assert x["linked"] and x["in_linked_room"] is None and x["in_worktree"] is False, x
+PY
+
+# SKILL.md "만들 때마다" duplicate check, verbatim apart from the placeholders.
+dup_check() {
+  find "$HOME_DIR" -path "$HOME_DIR/.rooms" -prune -o -type l -exec sh -c '[ "$(realpath "$1")" = "$(realpath "$2")" ] && echo "$1"' _ {} "$1" \;
+}
+ALPHA_LINKS="$(dup_check "$REPO/out/alpha.html")"
+[ "$ALPHA_LINKS" = "$HOME_DIR/demo-repo/alpha.html" ] || fail "dup check for alpha: '$ALPHA_LINKS'"
+[ -z "$(dup_check "$WT/out/eps.html")" ] || fail "dup check for eps should be empty"
+
 [ "$(fingerprint)" = "$BEFORE" ] || fail "originals changed"
 
-echo "PASS: find_html -> 3 candidates; rooms demo-repo(2) + inbox(1); Journal days match birthtime; re-run all linked; originals untouched"
+echo "PASS: find_html -> 3 candidates; rooms demo-repo(2) + inbox(1); Journal days match birthtime; re-run all linked; linked-folder + worktree flags; dup check; originals untouched"
