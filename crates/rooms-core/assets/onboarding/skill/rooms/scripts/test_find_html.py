@@ -230,6 +230,80 @@ class FindHtmlTest(unittest.TestCase):
         self.assertEqual(sorted(cs[0]["sessions"]), ["s1", "s2"])
         self.assertLess(cs[0]["first_written"], cs[0]["last_written"])
 
+    # ---- fix round 1 ----
+    def test_non_utf8_bytes_tolerated(self):
+        a = self.e.html("proj/u.html")
+        p = self.e.claude_log([cc("Write", a)])
+        with open(p, "ab") as f:
+            f.write(b'\xff\xfe broken .html bytes\n')
+        self.assertEqual(self.paths(self.e.run()), [a])
+
+    def test_unreadable_codex_day_dir(self):
+        a = self.e.html("proj/ok2.html")
+        p = self.e.codex_log([cx_meta("/x")])
+        day = os.path.dirname(p)
+        self.e.claude_log([cc("Write", a)])
+        os.chmod(day, 0)
+        self.addCleanup(os.chmod, day, 0o755)
+        out = self.e.run()
+        self.assertEqual(self.paths(out), [a])
+        self.assertGreaterEqual(out["skipped"]["read_errors"], 1)
+
+    def test_broken_symlink_in_home(self):
+        a = self.e.html("proj/bs.html")
+        os.symlink(os.path.join(self.e.root, "nope.html"), os.path.join(self.e.home, "dead.html"))
+        self.e.claude_log([cc("Write", a)])
+        c = self.e.run()["candidates"][0]
+        self.assertFalse(c["linked"])
+
+    def test_dot_rooms_pruned_in_link_scan(self):
+        a = self.e.html("proj/dr.html")
+        d = os.path.join(self.e.home, ".rooms", "x")
+        os.makedirs(d)
+        os.symlink(a, os.path.join(d, "l.html"))
+        self.e.claude_log([cc("Write", a)])
+        self.assertFalse(self.e.run()["candidates"][0]["linked"])
+
+    def test_malformed_gitdir(self):
+        wt = os.path.join(self.e.root, "wt2", "br")
+        os.makedirs(wt)
+        with open(os.path.join(wt, ".git"), "wb") as f:
+            f.write(b"gitdir: \xff\xfe /.git/worktrees/\n")
+        a = self.e.html("wt2/br/z.html")
+        self.e.claude_log([cc("Write", a)])
+        c = self.e.run()["candidates"][0]
+        self.assertEqual(c["rel_in_repo"], "z.html")
+
+    def test_codex_cwd_isolated_between_files(self):
+        self.e.html("proj/rel.html")
+        self.e.codex_log([cx_meta(os.path.join(self.e.root, "proj"), sid="one")], name="rollout-a.jsonl")
+        self.e.codex_log([cx_exec('tools.exec_command({cmd:"echo > rel.html"})')], name="rollout-b.jsonl")
+        self.assertEqual(self.e.run()["candidates"], [])
+
+    def test_title_after_64kb_not_found(self):
+        body = "<html><head>" + "x" * 70000 + "<title>Late</title></head></html>"
+        p = self.e.html("proj/late.html", body=body)
+        self.e.claude_log([cc("Write", p)])
+        self.assertEqual(self.e.run()["candidates"][0]["title"], "late.html")
+
+    def test_offset_timestamps(self):
+        out_w = self.e.html("proj/out.html")
+        in_w = self.e.html("proj/in.html")
+        now = datetime.now(timezone.utc)
+        t_out = (now - timedelta(days=14.2) + timedelta(hours=9)).strftime("%Y-%m-%dT%H:%M:%S+09:00")
+        t_in = (now - timedelta(days=13.9) - timedelta(hours=9)).strftime("%Y-%m-%dT%H:%M:%S-09:00")
+        r1 = cc("Write", out_w); r1["timestamp"] = t_out
+        r2 = cc("Write", in_w); r2["timestamp"] = t_in
+        self.e.claude_log([r1, r2])
+        self.assertEqual(self.paths(self.e.run()), [in_w])
+
+    def test_codex_missing_patch_counted_loose_not(self):
+        self.e.codex_log([cx_meta(self.e.root),
+                          cx_exec('tools.apply_patch("*** Add File: %s/gone.html\\n")' % self.e.root),
+                          cx_exec('tools.exec_command({cmd:"echo > ghost.html"})')])
+        out = self.e.run()
+        self.assertEqual(out["skipped"]["missing"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

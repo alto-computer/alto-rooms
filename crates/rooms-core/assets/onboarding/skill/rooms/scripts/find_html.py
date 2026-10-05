@@ -20,6 +20,7 @@ WRITE_HINT_RE = re.compile(
     r"(>|write_text|write_file|writeFile|writeFileSync|\.write\(|open\(|\btee\b|\bcp\b|\bmv\b|sed\s+-i)")
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 TS_RE = re.compile(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)")
+TZ_RE = re.compile(r"^(?:\.\d+)?\s*(Z|[+-]\d\d(?::?\d\d)?)?")
 ORCA_RE = re.compile(r"/orca/workspaces/([^/]+)/([^/]+)(?:/|$)")
 
 
@@ -30,8 +31,14 @@ def parse_ts(s):
     if not m:
         return None
     try:
-        return datetime(*map(int, m.groups()), tzinfo=timezone.utc)
-    except ValueError:
+        dt = datetime(*map(int, m.groups()), tzinfo=timezone.utc)
+        z = TZ_RE.match(s[m.end():]).group(1)
+        if z and z != "Z":
+            digits = z[1:].replace(":", "")
+            off = timedelta(hours=int(digits[:2]), minutes=int(digits[2:4] or 0))
+            dt = dt - off if z[0] == "+" else dt + off
+        return dt
+    except (ValueError, OverflowError):
         return None
 
 
@@ -49,7 +56,7 @@ class Collector:
         self.hits = {}  # abs path -> dict
         self.read_errors = 0
 
-    def add(self, path, ts, agent, session, cwd, cwd_base=None):
+    def add(self, path, ts, agent, session, cwd, cwd_base=None, explicit=False):
         if not path or ts is None or ts < self.cutoff:
             return
         if path.startswith("~"):
@@ -61,7 +68,20 @@ class Collector:
             path = os.path.join(base, path)
         path = os.path.normpath(path)
         h = self.hits.setdefault(path, {"writes": []})
-        h["writes"].append((ts, agent, session, cwd))
+        h["writes"].append((ts, agent, session, cwd, explicit))
+
+
+def safe_lines(f, col):
+    """Yield lines; a mid-read failure is counted and ends that file."""
+    it = iter(f)
+    while True:
+        try:
+            yield next(it)
+        except StopIteration:
+            return
+        except (OSError, ValueError):
+            col.read_errors += 1
+            return
 
 
 def scan_claude_file(path, col):
@@ -72,12 +92,12 @@ def scan_claude_file(path, col):
         col.read_errors += 1
         return
     with f:
-        for line in f:
+        for line in safe_lines(f, col):
             if ".htm" not in line and ".HTM" not in line:
                 continue
             try:
                 rec = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 col.read_errors += 1
                 continue
             try:
@@ -97,7 +117,7 @@ def scan_claude_file(path, col):
                     inp = it.get("input") or {}
                     p = inp.get("file_path") or inp.get("notebook_path")
                     if is_html(p):
-                        col.add(p, ts, "claude-code", sid, cwd)
+                        col.add(p, ts, "claude-code", sid, cwd, explicit=True)
             except (AttributeError, TypeError):
                 col.read_errors += 1
 
@@ -128,7 +148,7 @@ def scan_codex_file(path, col):
         col.read_errors += 1
         return
     with f:
-        for line in f:
+        for line in safe_lines(f, col):
             has_html = ".htm" in line or ".HTM" in line
             is_meta = '"session_meta"' in line
             is_turn = '"turn_context"' in line and '"cwd"' in line
@@ -136,7 +156,7 @@ def scan_codex_file(path, col):
                 continue
             try:
                 rec = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 col.read_errors += 1
                 continue
             try:
@@ -162,7 +182,7 @@ def scan_codex_file(path, col):
                 found = PATCH_RE.findall(text)
                 if found:
                     for p in found:
-                        col.add(p, ts, "codex", sid, cwd)
+                        col.add(p, ts, "codex", sid, cwd, explicit=True)
                     continue
                 if not WRITE_HINT_RE.search(text):
                     continue
@@ -190,7 +210,7 @@ def claude_files(root, cutoff_epoch):
             yield p
 
 
-def codex_files(root, cutoff_dt, cutoff_epoch):
+def codex_files(root, cutoff_dt, cutoff_epoch, col):
     floor = (cutoff_dt - timedelta(days=1)).date()
     if os.path.isdir(root):
         for y in sorted(_dirs(root)):
@@ -212,12 +232,22 @@ def codex_files(root, cutoff_dt, cutoff_epoch):
                     except ValueError:
                         continue
                     dd = os.path.join(root, y, m, d)
-                    for n in sorted(os.listdir(dd)):
+                    try:
+                        names = sorted(os.listdir(dd))
+                    except OSError:
+                        col.read_errors += 1
+                        continue
+                    for n in names:
                         if n.endswith(".jsonl"):
                             yield os.path.join(dd, n)
     arch = os.path.join(os.path.dirname(os.path.normpath(root)), "archived_sessions")
     if os.path.isdir(arch):
-        for n in sorted(os.listdir(arch)):
+        try:
+            arch_names = sorted(os.listdir(arch))
+        except OSError:
+            col.read_errors += 1
+            arch_names = []
+        for n in arch_names:
             p = os.path.join(arch, n)
             if n.startswith("rollout-") and n.endswith(".jsonl"):
                 try:
@@ -309,6 +339,8 @@ def find_links(home, wanted):
     if not os.path.isdir(home):
         return out
     for dp, dn, fn in os.walk(home, followlinks=False):
+        if dp == home:
+            dn[:] = [d for d in dn if d != ".rooms"]
         for n in dn + fn:
             p = os.path.join(dp, n)
             if os.path.islink(p):
@@ -338,7 +370,7 @@ def main(argv=None):
     col = Collector(cutoff)
     for p in claude_files(os.path.expanduser(a.claude_dir), cutoff_epoch):
         scan_claude_file(p, col)
-    for p in codex_files(os.path.expanduser(a.codex_dir), cutoff, cutoff_epoch):
+    for p in codex_files(os.path.expanduser(a.codex_dir), cutoff, cutoff_epoch, col):
         scan_codex_file(p, col)
 
     noise = missing = 0
@@ -352,8 +384,8 @@ def main(argv=None):
             noise += 1
             continue
         if real is None:
-            # Codex shell matches are loose guesses; only Claude Code misses are counted
-            if any(w[1] == "claude-code" for w in h["writes"]):
+            # Codex shell matches are loose guesses; only explicit writes count
+            if any(w[4] for w in h["writes"]):
                 missing += 1
             continue
         m = merged.setdefault(real, [])
