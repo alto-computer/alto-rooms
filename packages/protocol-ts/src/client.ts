@@ -1,3 +1,4 @@
+import type { ApiError } from "./generated/ApiError";
 import type { Artifact } from "./generated/Artifact";
 import type { Info } from "./generated/Info";
 import type { JournalDay } from "./generated/JournalDay";
@@ -7,10 +8,31 @@ import type { RoomsEvent } from "./generated/RoomsEvent";
 
 export type Snapshot<T> = { data: T; seq: number };
 
+export class RoomsApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.name = "RoomsApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function failure(r: Response): Promise<RoomsApiError> {
+  const fallback = r.statusText || `HTTP ${r.status}`;
+  try {
+    const e = (await r.json()) as Partial<ApiError>;
+    return new RoomsApiError(r.status, e.message ?? fallback, e.error);
+  } catch {
+    return new RoomsApiError(r.status, fallback);
+  }
+}
+
 export function createRoomsClient(baseUrl: string, token?: string) {
   const get = async <T>(path: string): Promise<Snapshot<T>> => {
     const r = await fetch(baseUrl + path);
-    if (!r.ok) throw await r.json();
+    if (!r.ok) throw await failure(r);
     return { data: (await r.json()) as T, seq: Number(r.headers.get("x-rooms-seq") ?? 0) };
   };
   const write = async <T>(method: string, path: string, body: string, type = "application/json"): Promise<T> => {
@@ -19,7 +41,7 @@ export function createRoomsClient(baseUrl: string, token?: string) {
       headers: { "content-type": type, ...(token ? { authorization: `Bearer ${token}` } : {}) },
       body,
     });
-    if (!r.ok) throw await r.json();
+    if (!r.ok) throw await failure(r);
     return (await r.json()) as T;
   };
   return {

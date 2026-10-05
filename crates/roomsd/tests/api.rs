@@ -175,16 +175,23 @@ async fn events_stream_delivers_room_added_with_seq() {
     st.core.create_room("x").unwrap();
     let frame = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            if let Some(Ok(f)) = body.frame().await {
-                if let Ok(d) = f.into_data() {
-                    let s = String::from_utf8_lossy(&d).to_string();
-                    if s.contains("room.added") { return s; }
+            match body.frame().await {
+                None => panic!("event stream ended"),
+                Some(Ok(f)) => {
+                    if let Ok(d) = f.into_data() {
+                        let s = String::from_utf8_lossy(&d).to_string();
+                        if s.contains("room.added") { return s; }
+                    }
                 }
+                Some(Err(e)) => panic!("stream error: {e}"),
             }
         }
     })
     .await
     .unwrap();
-    assert!(frame.contains("\"seq\":"));
-    assert!(frame.contains("id:"));
+    let id = frame.lines().find_map(|l| l.strip_prefix("id:")).expect("id line").trim().to_string();
+    let data = frame.lines().find_map(|l| l.strip_prefix("data:")).expect("data line").trim();
+    let v: serde_json::Value = serde_json::from_str(data).unwrap();
+    assert_eq!(v["type"], "room.added");
+    assert_eq!(v["seq"].as_u64().unwrap().to_string(), id);
 }

@@ -16,5 +16,14 @@ async fn main() {
     eprintln!("roomsd: home={} api=http://127.0.0.1:4317 files=http://127.0.0.1:4318", home.display());
     let a = tokio::spawn(async move { axum::serve(api_l, api).await });
     let f = tokio::spawn(async move { axum::serve(files_l, files).await });
-    let _ = tokio::join!(a, f);
+    let (name, res) = tokio::select! {
+        r = a => ("api", r),
+        r = f => ("files", r),
+    };
+    match res {
+        Ok(Ok(())) => eprintln!("roomsd: {name} server stopped unexpectedly"),
+        Ok(Err(e)) => eprintln!("roomsd: {name} server failed: {e}"),
+        Err(e) => eprintln!("roomsd: {name} server task died: {e}"),
+    }
+    std::process::exit(1);
 }
