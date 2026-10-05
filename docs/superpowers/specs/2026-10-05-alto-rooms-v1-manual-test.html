@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Alto Rooms v1 — Manual Test Guide</title>
+<style>
+  :root {
+    --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --border: #e7e5e4;
+    --accent: #2563eb; --accent-bg: #eff6ff;
+    --ok: #16a34a; --ok-bg: #dcfce7;
+    --warn: #ca8a04; --warn-bg: #fef3c7;
+    --bad: #dc2626; --bad-bg: #fee2e2;
+    --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+    --sans: -apple-system, 'Inter', 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.65; }
+  main { max-width: 980px; margin: 0 auto; padding: 48px 32px 80px; }
+  h1 { font-size: 32px; margin: 0 0 8px; }
+  h2 { font-size: 22px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  h3 { font-size: 17px; margin: 20px 0 10px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 32px; }
+  code { font-family: var(--mono); font-size: 0.9em; background: #f4f4f5; padding: 2px 6px; border-radius: 3px; }
+  pre { background: #1c1917; color: #fafaf9; padding: 14px 18px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 13px; }
+  .done-section { background: var(--ok-bg); border: 1px solid var(--ok); border-radius: 10px; padding: 20px 24px; }
+  .done-section h2 { border: none; padding: 0; margin: 0 0 12px; }
+  .done-list { list-style: none; padding: 0; margin: 0; }
+  .done-list li { padding: 6px 0 6px 28px; position: relative; }
+  .done-list li::before { content: "✅"; position: absolute; left: 0; }
+  .scenario { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 24px 28px; margin: 20px 0; }
+  .scenario h3 { margin-top: 0; display: flex; align-items: center; gap: 8px; }
+  .scenario-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .tag-golden { background: var(--accent-bg); color: var(--accent); }
+  .tag-edge { background: var(--warn-bg); color: var(--warn); }
+  .tag-regression { background: var(--bad-bg); color: var(--bad); }
+  ol.steps { counter-reset: step; list-style: none; padding: 0; }
+  ol.steps > li { counter-increment: step; padding: 12px 0 12px 40px; position: relative; border-bottom: 1px dashed var(--border); }
+  ol.steps > li:last-child { border-bottom: none; }
+  ol.steps > li::before { content: counter(step); position: absolute; left: 0; top: 12px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: white; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .step-action { font-weight: 500; margin: 0 0 6px; }
+  .step-expect { color: var(--muted); margin: 4px 0; font-size: 14px; }
+  .step-expect::before { content: "→ 기대: "; color: var(--ok); font-weight: 600; }
+  .step-if-different { color: var(--bad); margin: 4px 0; font-size: 13px; }
+  .step-if-different::before { content: "⚠️ 다르면: "; font-weight: 600; }
+  .check { padding: 4px 0 4px 24px; position: relative; }
+  .check::before { content: "☐"; position: absolute; left: 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Alto Rooms v1 — Manual E2E Test Guide</h1>
+<div class="meta">Manual test · 2026-10-05 · spec: <a href="./2026-10-05-alto-rooms-v1-spec.html">2026-10-05-alto-rooms-v1-spec</a> · plan: <a href="../plans/2026-10-05-alto-rooms-plan-2-desktop.md">2026-10-05-alto-rooms-plan-2-desktop</a></div>
+
+<!-- ============================================== -->
+<div class="done-section">
+  <h2>✅ Done (자동 테스트, Claude가 완료)</h2>
+  <ul class="done-list">
+    <li><code>bun run --cwd apps/desktop test</code> — Vitest 22 files / 198 tests 통과. 스토어(snapshot+seq, 재연결 gap, artifactCount 동기화), 셸 단축키(입력 중 ⌘B/⌘T/⌘W 무시, 노트 본문 ⌘W 허용, Tauri에서 메뉴 이벤트), 노트 자동 저장/재시도, 종료 시 flush(2초 상한), 각 화면 컴포넌트.</li>
+    <li><code>bun run --cwd apps/desktop e2e</code> — Playwright 10 tests 통과. 실제 <code>roomsd</code>(임시 홈, 포트 14317/14318)와 웹 빌드(Vite preview 4173)로 AC-5, AC-1, AC-6, AC-9, AC-14, AC-10, AC-11, Review Focus 2(디스크에서 폴더 이름 변경), Review Focus 4(악성 아티팩트: 이동 안 됨, 쓰기 실패, postMessage 무시). 화면별 1440×900 스크린샷은 <code>apps/desktop/e2e/__screens__/</code>.</li>
+    <li><code>bun run --cwd apps/desktop build</code> — <code>tsc -b</code>(e2e 포함) + Vite 빌드 통과.</li>
+    <li><code>cargo test</code> / <code>cargo clippy --all-targets</code> (apps/desktop/src-tauri) — 12 tests 통과, 경고 없음. 닫기/종료 flush 상태 기계(<code>FlushGate</code>) 단위 테스트 포함.</li>
+    <li><code>cargo test --workspace -- --test-threads=1</code> (repo root) — 127 tests 통과 (Plan 1 동작 유지).</li>
+    <li>번들 스모크 — <code>bun run --cwd apps/desktop sidecar &amp;&amp; bun run --cwd apps/desktop tauri build --bundles app</code>로 <code>Alto Rooms.app</code> 생성. 임시 <code>ROOMS_HOME</code>으로 실행 → <code>:4317</code>에서 roomsd 응답, 웹뷰가 연결해 새 탭 화면 표시. <code>osascript -e 'quit app "Alto Rooms"'</code>, 메뉴 Quit, 메뉴 "창 닫기", 빨간 닫기 버튼 모두 1초 안에 종료되고 roomsd도 사라짐. 메뉴 "탭 닫기"/"새 탭"이 웹뷰의 탭을 닫고 엶.</li>
+  </ul>
+</div>
+
+<!-- ============================================== -->
+<h2>🧪 To do (사용자 수동 테스트)</h2>
+<p class="meta">아래 시나리오 순서대로 진행. 단계별 "기대 결과"와 실제가 다르면 ⚠️ 항목 따라 진단. 실제 홈(<code>~/rooms</code>)을 건드리지 않으려면 터미널에서 <code>open --env ROOMS_HOME=$(mktemp -d) "/Applications/Alto Rooms.app"</code>로 실행하고, 아래의 <code>~/rooms</code>를 그 경로로 바꿔 읽으세요.</p>
+
+<!-- ============================================== -->
+<div class="scenario">
+  <h3><span class="scenario-tag tag-golden">Scenario 1 · Golden Path</span> 설치부터 Journal 노트까지</h3>
+
+  <p><strong>전제:</strong> macOS, repo 체크아웃, Rust와 Bun 설치됨. 4317/4318 포트를 쓰는 다른 프로그램 없음(<code>lsof -i :4317 -i :4318</code>이 비어 있음).</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action"><code>bun run --cwd apps/desktop sidecar &amp;&amp; bun run --cwd apps/desktop tauri build --bundles app</code> 후, <code>apps/desktop/src-tauri/target/release/bundle/macos/Alto Rooms.app</code>을 <code>/Applications/Alto Rooms.app</code>로 복사</p>
+      <p class="step-expect">빌드가 <code>Finished 1 bundle</code>로 끝나고, 앱 안에 <code>Contents/MacOS/roomsd</code>가 들어 있음</p>
+      <p class="step-if-different"><code>binaries/roomsd-&lt;triple&gt;</code>가 없다는 오류면 sidecar 단계를 먼저 실행. 서명하지 않은 앱이므로 처음 열 때 Finder에서 우클릭 → 열기</p>
+    </li>
+    <li>
+      <p class="step-action">Alto Rooms를 처음 실행</p>
+      <p class="step-expect">1~2초 안에 사이드바(Rooms, 찾기, Journal, 방 목록에 <code>inbox</code>)와 "지난 방문 이후" 새 탭이 보임. <code>~/rooms</code>에 <code>inbox</code>, <code>journal</code>, <code>.rooms/token</code>(권한 600)이 생김</p>
+      <p class="step-if-different">"Rooms 코어를 시작하지 못했어요"가 보이면 <code>lsof -i :4317</code>로 포트를 누가 잡고 있는지 확인 (Scenario 6 참고)</p>
+    </li>
+    <li>
+      <p class="step-action">사이드바 "방" 옆 <code>+</code>(새 방) → <code>연구 도구</code> 입력 → Enter</p>
+      <p class="step-expect">"연구 도구" 탭이 열리고 활성화됨. Clew 일러스트, "아직 아티팩트가 없어요", 폴더 경로 칩 <code>~/rooms/연구-도구</code>가 보임. Finder에 <code>~/rooms/연구-도구</code> 폴더가 생김</p>
+      <p class="step-if-different">"같은 이름의 방이 있어요" / "쓸 수 없는 이름이에요"가 뜨면 다른 이름으로. 아무 반응이 없으면 개발 빌드(<code>bun run --cwd apps/desktop tauri dev</code>)로 같은 단계를 재현하고 창에서 우클릭 → Inspect의 Console/Network 탭을 확인</p>
+    </li>
+    <li>
+      <p class="step-action">경로 칩을 클릭</p>
+      <p class="step-expect">"복사했어요"가 1.5초 보이고, 클립보드에 절대 경로가 들어 있음</p>
+    </li>
+    <li>
+      <p class="step-action">에이전트(예: Claude Code)에게 "<code>~/rooms/연구-도구</code>에 오늘 조사한 내용을 HTML로 저장해 줘"라고 요청 (또는 터미널에서 <code>echo '&lt;title&gt;첫 문서&lt;/title&gt;&lt;h1&gt;안녕&lt;/h1&gt;' &gt; ~/rooms/연구-도구/a.html</code>)</p>
+      <p class="step-expect">2초 안에 카드가 나타남: 미리보기, 제목, 검은 점(새 문서), 오른쪽에 <code>오늘</code>. 제목 아래 숫자가 <code>문서 1</code>로 바뀜</p>
+      <p class="step-if-different">카드가 안 보이면 <code>curl -s 127.0.0.1:4317/v1/rooms</code>에서 해당 방의 <code>artifactCount</code>를 확인. 숫자만 안 바뀌면 앱 쪽 문제, 목록에도 없으면 roomsd 감시 문제</p>
+    </li>
+    <li>
+      <p class="step-action">카드에 마우스를 올리고 오른쪽 위 확대 버튼(새 탭에서 크게 보기)을 클릭</p>
+      <p class="step-expect">문서 제목으로 된 탭이 열리고 문서가 패널 전체에 표시됨</p>
+    </li>
+    <li>
+      <p class="step-action">사이드바 Journal 클릭 → "새 노트" 카드 클릭</p>
+      <p class="step-expect">입력칸에 기본값 <code>계획</code>이 선택된 상태</p>
+    </li>
+    <li>
+      <p class="step-action">Enter → 본문에 <code>- 할 일</code> 입력 → 1초 기다림</p>
+      <p class="step-expect">"계획" 노트 탭이 열림. <code>~/rooms/journal/&lt;오늘&gt;/계획.md</code>에 <code>- 할 일</code>이 저장됨</p>
+      <p class="step-if-different">"저장하지 못했어요. 다시 시도할게요"가 보이면 <code>journal/&lt;오늘&gt;</code> 폴더 권한 확인</p>
+    </li>
+    <li>
+      <p class="step-action">본문에 <code>마지막 줄</code>을 입력하고 <strong>바로</strong> ⌘Q</p>
+      <p class="step-expect">앱이 1초 안팎으로 종료되고, <code>계획.md</code>에 <code>마지막 줄</code>까지 들어 있음. <code>lsof -i :4317</code>이 비어 있음 (roomsd도 종료)</p>
+      <p class="step-if-different">내용이 빠지면 종료 flush(<code>app://flush</code> → <code>flush_done</code>)가 동작하지 않은 것. 2.5초 뒤에야 닫히면 웹뷰가 응답하지 않은 것</p>
+    </li>
+  </ol>
+
+  <p><strong>완료 체크</strong></p>
+  <div class="check">최종 화면과 파일이 spec AC-1, AC-5, AC-9, AC-11과 일치</div>
+  <div class="check">종료 후 roomsd 프로세스가 남지 않음 (<code>pgrep -fl roomsd</code> 비어 있음)</div>
+</div>
+
+<!-- ============================================== -->
+<div class="scenario">
+  <h3><span class="scenario-tag tag-golden">Scenario 2 · Golden Path</span> 메뉴와 단축키</h3>
+
+  <p><strong>전제:</strong> Scenario 1을 마친 상태에서 앱을 다시 실행.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action">메뉴 막대 확인</p>
+      <p class="step-expect"><code>Alto Rooms</code>(About, Hide, Quit ⌘Q), <code>Edit</code>(Undo, Redo, Cut, Copy, Paste, Select All), <code>파일</code>(새 탭 ⌘T, 탭 닫기 ⌘W, 창 닫기 ⇧⌘W)</p>
+    </li>
+    <li>
+      <p class="step-action">방 탭이 열린 상태에서 ⌘W, ⌘T, ⌘B, ⌘K를 차례로</p>
+      <p class="step-expect">⌘W는 탭 하나만 닫음(두 개가 닫히지 않음), ⌘T는 새 탭, ⌘B는 사이드바 접기/펼치기, ⌘K는 "방이나 문서 찾기" 창</p>
+      <p class="step-if-different">⌘W가 창 전체를 닫으면 메뉴가 기본 메뉴로 뜬 것. 탭이 두 개 닫히면 페이지와 메뉴가 둘 다 처리한 것</p>
+    </li>
+    <li>
+      <p class="step-action">방 제목(h1)을 클릭해 이름을 고치는 중에 ⌘W, ⌘T, ⌘B</p>
+      <p class="step-expect">아무 일도 일어나지 않고, 입력 중인 이름이 그대로 남음. ⌘K는 찾기 창을 엶</p>
+    </li>
+    <li>
+      <p class="step-action">노트 본문에 입력하는 중에 ⌘W</p>
+      <p class="step-expect">노트 탭이 닫힘. 다시 열면 방금 입력한 내용이 있음</p>
+    </li>
+    <li>
+      <p class="step-action">입력칸에서 ⌘A, ⌘C, ⌘V, ⌘Z</p>
+      <p class="step-expect">모두 평소처럼 동작 (Edit 메뉴)</p>
+    </li>
+    <li>
+      <p class="step-action">⇧⌘W (창 닫기), 또는 빨간 닫기 버튼</p>
+      <p class="step-expect">창이 닫히고 앱이 종료되며 roomsd도 사라짐</p>
+    </li>
+  </ol>
+</div>
+
+<!-- ============================================== -->
+<div class="scenario">
+  <h3><span class="scenario-tag tag-edge">Scenario 3 · Edge Case</span> Review Focus 1 — 재연결 중 변경</h3>
+
+  <p><strong>전제:</strong> 앱이 이미 실행 중인 roomsd를 재사용하므로, roomsd를 직접 띄워 끊었다 다시 켤 수 있음. 방 <code>연구-도구</code>에 <code>a.html</code>, <code>b.html</code>이 있음.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action">터미널 A: <code>"/Applications/Alto Rooms.app/Contents/MacOS/roomsd"</code> 실행 → 앱 실행 → "연구 도구" 탭 열기</p>
+      <p class="step-expect">카드 a, b가 보임. <code>pgrep -fl roomsd</code>에 roomsd가 하나만 있음 (앱이 새로 띄우지 않고 재사용)</p>
+    </li>
+    <li>
+      <p class="step-action">터미널 A에서 Ctrl-C로 roomsd 종료 → <code>echo '&lt;title&gt;c&lt;/title&gt;' &gt; ~/rooms/연구-도구/c.html; rm ~/rooms/연구-도구/a.html</code></p>
+      <p class="step-expect">앱 화면은 그대로 (변화 없음)</p>
+    </li>
+    <li>
+      <p class="step-action">터미널 A에서 roomsd를 다시 실행하고 5초 기다림</p>
+      <p class="step-expect">카드가 정확히 b, c — c는 한 번만, a는 사라짐. 제목 아래 <code>문서 2</code></p>
+      <p class="step-if-different">c가 두 번 보이거나 a가 남으면 snapshot+seq 규칙 문제: 개발 빌드(<code>bun run --cwd apps/desktop tauri dev</code>)로 같은 단계를 재현하고 창에서 우클릭 → Inspect의 Console/Network 탭을 확인하고 <code>/v1/events</code> 재연결 뒤 <code>/v1/rooms/&lt;id&gt;/artifacts</code> 재요청이 있는지 확인</p>
+    </li>
+  </ol>
+
+  <p><strong>완료 체크</strong></p>
+  <div class="check">이 상태에서 방 이름 변경 같은 쓰기는 토큰이 바뀌어 실패할 수 있음 — 앱을 재시작하면 정상 (알려진 제한)</div>
+</div>
+
+<div class="scenario">
+  <h3><span class="scenario-tag tag-edge">Scenario 4 · Edge Case</span> Review Focus 2 — 탭이 열린 채 방 이름 변경</h3>
+
+  <p><strong>전제:</strong> "연구 도구" 탭이 열려 있고 카드가 하나 이상 있음.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action">제목(h1) 클릭 → <code>연구</code>로 바꾸고 Enter</p>
+      <p class="step-expect">탭 이름, 사이드바, 제목이 모두 "연구"로 바뀌고 <code>~/rooms/연구</code> 폴더가 됨. 카드는 그대로</p>
+    </li>
+    <li>
+      <p class="step-action">Finder에서 그 폴더 이름을 <code>연구 노트</code>로 변경</p>
+      <p class="step-expect">2초 안에 같은 탭(새 탭이 생기지 않음)의 이름이 "연구 노트"로 바뀌고 카드도 그대로</p>
+      <p class="step-if-different">탭에 "이 방은 더 이상 없어요"가 나오면 roomsd가 이름 변경을 삭제+추가로 처리한 것: <code>curl -s 127.0.0.1:4317/v1/rooms</code>에서 id가 유지되는지 확인</p>
+    </li>
+    <li>
+      <p class="step-action">같은 이름의 방이 이미 있는 이름으로 변경 시도</p>
+      <p class="step-expect">입력칸이 그대로 남고 아래에 "같은 이름의 방이 있어요" (빨간색, 아이콘)</p>
+    </li>
+  </ol>
+</div>
+
+<div class="scenario">
+  <h3><span class="scenario-tag tag-edge">Scenario 5 · Edge Case</span> Review Focus 3 — 저장이 실패하는 동안의 노트</h3>
+
+  <p><strong>전제:</strong> 오늘 Journal에 "계획" 노트가 열려 있음.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action">터미널: <code>chmod 555 ~/rooms/journal/&lt;오늘&gt;</code> (폴더 쓰기 금지) → 노트에 <code>실패 중 입력</code>을 씀</p>
+      <p class="step-expect">입력을 멈춘 뒤 0.8초에 첫 저장, 1초·2초 뒤 재시도. 세 번째 실패(약 4초)에서 "저장하지 못했어요. 다시 시도할게요"가 보임. 이후 4초, 그 다음부터 10초마다 재시도. 입력한 글은 그대로</p>
+    </li>
+    <li>
+      <p class="step-action"><code>chmod 755 ~/rooms/journal/&lt;오늘&gt;</code>로 되돌리고 최대 10초 기다림</p>
+      <p class="step-expect">메시지가 사라지고 <code>계획.md</code>에 <code>실패 중 입력</code>이 들어 있음</p>
+      <p class="step-if-different">글이 사라졌거나 파일이 안 바뀌면 개발 빌드(<code>bun run --cwd apps/desktop tauri dev</code>)로 같은 단계를 재현하고 창에서 우클릭 → Inspect의 Console/Network 탭을 확인하고 <code>PUT /v1/journal/…/notes/…</code> 응답 확인</p>
+    </li>
+    <li>
+      <p class="step-action">실패 상태(chmod 555)에서 노트 탭을 닫았다가 다시 열기</p>
+      <p class="step-expect">입력한 글이 그대로 보임 (디스크의 옛 내용으로 덮이지 않음)</p>
+    </li>
+  </ol>
+</div>
+
+<div class="scenario">
+  <h3><span class="scenario-tag tag-edge">Scenario 6 · Edge Case</span> Review Focus 4 — 악성 아티팩트 HTML</h3>
+
+  <p><strong>전제:</strong> 방 <code>보안</code>이 있음.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action"><code>~/rooms/보안/evil.html</code>에 다음을 저장: <code>&lt;title&gt;수상한 문서&lt;/title&gt;&lt;script&gt;top.location='https://example.com'; fetch('http://127.0.0.1:4317/v1/rooms',{method:'POST',headers:{'content-type':'application/json'},body:'{"name":"x"}'}); parent.postMessage({type:'open'},'*')&lt;/script&gt;</code></p>
+      <p class="step-expect">"수상한 문서" 카드가 생김. 앱 화면이 다른 곳으로 이동하지 않음</p>
+    </li>
+    <li>
+      <p class="step-action">카드를 크게 보기로 열고 1초 기다림</p>
+      <p class="step-expect">앱은 그대로이고, 사이드바에 방 "x"가 생기지 않으며 <code>~/rooms/x</code>도 없음. 탭이나 화면이 바뀌지 않음 (메시지 무시)</p>
+      <p class="step-if-different">"x"가 생겼다면 roomsd의 Origin/토큰 검사 문제. 앱이 이동했다면 iframe <code>sandbox</code>에 <code>allow-top-navigation</code>이나 <code>allow-same-origin</code>이 들어간 것</p>
+    </li>
+  </ol>
+</div>
+
+<div class="scenario">
+  <h3><span class="scenario-tag tag-edge">Scenario 7 · Edge Case</span> Review Focus 5 — 이미 실행 중인 데몬 / 포트 점유</h3>
+
+  <p><strong>전제:</strong> 앱이 꺼져 있음.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action">roomsd를 직접 실행한 뒤 앱 실행</p>
+      <p class="step-expect">앱이 정상 동작하고 roomsd 프로세스는 하나뿐. 앱을 종료해도 직접 띄운 roomsd는 계속 실행 (앱이 띄운 것만 종료)</p>
+    </li>
+    <li>
+      <p class="step-action">roomsd를 끄고 <code>python3 -m http.server 4317 --bind 127.0.0.1</code>로 포트를 점유한 뒤 앱 실행</p>
+      <p class="step-expect">약 5초 안에 "Rooms 코어를 시작하지 못했어요"와 "다시 시도" 버튼 (멈추지 않음)</p>
+      <p class="step-if-different">계속 빈 화면이면 시작 대기(5초 제한)가 동작하지 않은 것</p>
+    </li>
+    <li>
+      <p class="step-action">python 서버를 끄고 "다시 시도"</p>
+      <p class="step-expect">앱이 roomsd를 띄우고 정상 화면으로 바뀜</p>
+    </li>
+  </ol>
+</div>
+
+<!-- ============================================== -->
+<div class="scenario">
+  <h3><span class="scenario-tag tag-regression">Scenario 8 · Regression</span> 인접 기능 영향 확인</h3>
+
+  <p><strong>왜:</strong> 이번 작업이 단축키 처리, 종료 과정, 방의 문서 수 계산을 바꿨기 때문.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action">빠른 찾기(⌘K)에서 없는 단어 입력</p>
+      <p class="step-expect">"결과가 없어요"</p>
+    </li>
+    <li>
+      <p class="step-action">새 탭 화면</p>
+      <p class="step-expect">"지난 방문 이후"와 방 카드. 방금 문서가 들어온 방은 "새 문서 n"과 함께 위쪽에. 각 카드의 <code>문서 n</code>이 실제 개수와 같음</p>
+    </li>
+    <li>
+      <p class="step-action">"기존 폴더 연결…"로 홈 밖의 폴더 연결</p>
+      <p class="step-expect">네이티브 폴더 선택 창이 열리고, 선택한 폴더가 방으로 추가되어 탭이 열림</p>
+    </li>
+  </ol>
+</div>
+
+</main>
+</body>
+</html>

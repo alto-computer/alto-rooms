@@ -14,6 +14,7 @@ Do these before Plan 2 depends on live updates. Each item came out of a task rev
 - Notes listing: require regular files, and no symlinked `.md`.
 - Error codes:
   - Add `internal` (500) to the spec §3 table.
+  - Add `not_found` (404, note GET for a missing note; added in Plan 2 Task 0) to the spec §3 table.
   - A missing file returns `room_not_found`.
   - An unreadable file returns `write_failed`.
 - Constant-time token compare. The risk is low because the API is loopback-only.
@@ -24,6 +25,8 @@ Do these before Plan 2 depends on live updates. Each item came out of a task rev
 ## Product notes for Plan 2
 - Stray top-level folders in home, such as `node_modules`, become owned rooms automatically. This follows the spec, but the UI or onboarding may want to tell the user.
 - Owned rooms whose folders disappear while the daemon is down are removed at startup.
+- QuickFind's empty state "결과가 없어요" was added in Plan 2 (Task 7). It isn't in the plan's copy list, so add it to the spec's copy.
+- roomsd sends no `room.updated` when a room's documents change, so `artifactCount` in a room snapshot goes stale. The desktop app now counts `artifact.added`/`artifact.removed` itself (Plan 2 Task 8); emitting `room.updated` from the daemon would make that unnecessary.
 
 ## Resolved in Plan 1.5 (`docs/superpowers/plans/2026-10-05-alto-rooms-plan-1-5-concurrency.md`)
 - Scan and meta IO now run outside the core lock, scans of one room are serialized, and a removed or renamed room is never written by an in-flight scan (Task 2). Covered by a deterministic scan-order test.
