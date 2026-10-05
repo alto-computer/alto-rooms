@@ -161,6 +161,7 @@ export function NoteView({ date, name }: { date: string; name: string }) {
       ) : null}
       <textarea
         aria-label="노트"
+        data-note-editor=""
         value={st.text}
         disabled={load !== "ready"}
         readOnly={readOnly}

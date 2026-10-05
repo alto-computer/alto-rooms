@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { createRoomsClient } from "@alto-rooms/protocol-ts";
+import { installQuitFlushResponder, onBeforeQuitFlush } from "@/lib/appEvents";
 import { resolveConnection, type Connection } from "@/lib/connection";
+import { isTauri } from "@/lib/tauri";
 import { StoresProvider } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
 import { ViewerStore } from "@/data/viewerStore";
@@ -29,6 +31,9 @@ export default function App() {
   useEffect(() => {
     connect();
   }, [connect]);
+
+  // Answer the native close/quit hook on every screen, so closing never waits for its timeout.
+  useEffect(() => (isTauri() ? installQuitFlushResponder() : undefined), []);
 
   if (state.status === "pending") {
     return <main className="h-screen bg-surface" aria-busy="true" />;
@@ -71,9 +76,11 @@ function Connected({ connection }: { connection: Connection }) {
     const flush = () => stores.viewer.flush();
     window.addEventListener("pagehide", flush);
     window.addEventListener("beforeunload", flush);
+    const offQuit = onBeforeQuitFlush(flush);
     return () => {
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("beforeunload", flush);
+      offQuit();
     };
   }, [stores]);
 

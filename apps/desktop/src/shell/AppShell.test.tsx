@@ -247,3 +247,58 @@ describe("AppShell: tabs", () => {
     expect(h.client.renameRoom).toHaveBeenCalledWith("r1", "벤치");
   });
 });
+
+describe("AppShell: shortcuts while typing", () => {
+  const keyOn = (el: Element, k: string) => {
+    const ev = new KeyboardEvent("keydown", { key: k, code: `Key${k.toUpperCase()}`, metaKey: true, cancelable: true, bubbles: true });
+    act(() => {
+      el.dispatchEvent(ev);
+    });
+    return ev;
+  };
+
+  it("⌘B, ⌘T and ⌘W do nothing in the new room input, and keep its draft", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
+    fireEvent.click(screen.getByRole("button", { name: "새 방" }));
+    const input = screen.getByLabelText("새 방 이름");
+    fireEvent.change(input, { target: { value: "초안" } });
+    const before = h.viewer.getState();
+    for (const k of ["b", "t", "w"]) expect(keyOn(input, k).defaultPrevented).toBe(false);
+    expect(h.viewer.getState().tabs).toEqual(before.tabs);
+    expect(h.viewer.getState().activeId).toBe(before.activeId);
+    expect(h.viewer.getState().sidebarOpen).toBe(true);
+    expect(screen.getByLabelText("새 방 이름")).toHaveValue("초안");
+  });
+
+  it("⌘W in the room title input keeps the tab and the draft", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "room", roomId: "r1" });
+    await renderWithStores(<AppShell />, { rooms: twoRooms, viewer });
+    fireEvent.click(screen.getByRole("heading", { level: 1, name: "벤치마크" }));
+    const input = screen.getByRole("textbox", { name: "방 이름" });
+    fireEvent.change(input, { target: { value: "벤치" } });
+    keyOn(input, "w");
+    expect(activeTab()).toHaveTextContent("벤치마크");
+    expect(screen.getByRole("textbox", { name: "방 이름" })).toHaveValue("벤치");
+  });
+
+  it("⌘K still opens quick find from an input", async () => {
+    await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "새 방" }));
+    expect(keyOn(screen.getByLabelText("새 방 이름"), "k").defaultPrevented).toBe(true);
+    expect(await screen.findByPlaceholderText("방이나 문서 찾기")).toBeInTheDocument();
+  });
+
+  it("⌘W in the note body still closes the note tab", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: twoRooms, notes: { "2026-10-05/계획.md": "내용" } });
+    act(() => {
+      h.viewer.open({ kind: "note", date: "2026-10-05", name: "계획.md" });
+    });
+    const body = await screen.findByRole("textbox", { name: "노트" });
+    expect(keyOn(body, "t").defaultPrevented).toBe(false); // ⌘T is ignored there
+    expect(activeTab()).toHaveTextContent("계획");
+    expect(keyOn(body, "w").defaultPrevented).toBe(true);
+    expect(h.viewer.getState().tabs.some((t) => t.kind === "note")).toBe(false);
+  });
+});

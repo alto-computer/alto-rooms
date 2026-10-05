@@ -3,6 +3,8 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab, ViewerStore } from "@/data/viewerStore";
+import { listenAll, MENU_CLOSE_TAB, MENU_NEW_TAB } from "@/lib/appEvents";
+import { isTauri } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { DocView } from "@/views/DocView";
 import { JournalView } from "@/views/JournalView";
@@ -10,45 +12,55 @@ import { NoteView } from "@/views/NoteView";
 import { NewTabView } from "@/views/NewTabView";
 import { QuickFind } from "@/views/QuickFind";
 import { RoomView } from "@/views/RoomView";
+import { allowedWithFocus, keyAction, type ShortcutAction } from "./shortcuts";
 import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
 
-const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-
-/** The letter of a shortcut: `key` when it's latin, else the physical key (Korean IME gives "ㅠ" for B). */
-function shortcutLetter(e: KeyboardEvent): string {
-  if (/^[a-z]$/i.test(e.key)) return e.key.toLowerCase();
-  return e.code.startsWith("Key") ? e.code.slice(3).toLowerCase() : "";
+/** Runs a shell action (callers check the focus rule first). */
+function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => void) {
+  const s = viewer.getState();
+  switch (action) {
+    case "toggle-sidebar":
+      viewer.setSidebarOpen(!s.sidebarOpen);
+      break;
+    case "close-tab":
+      if (s.activeId) viewer.close(s.activeId);
+      break;
+    case "new-tab":
+      viewer.open({ kind: "new" });
+      break;
+    case "find":
+      openFind();
+      break;
+  }
 }
 
-/** ⌘B sidebar, ⌘W close tab, ⌘T new tab, ⌘K quick find. Bound on window. */
+/**
+ * ⌘B sidebar, ⌘W close tab, ⌘T new tab, ⌘K quick find. Bound on window.
+ * In Tauri, ⌘W/⌘T belong to the native menu (which emits `menu://…`), so the
+ * page leaves them alone and they never fire twice.
+ */
 function useShortcuts(viewer: ViewerStore, openFind: () => void) {
   useEffect(() => {
+    const menuOwned = isTauri();
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || (!IS_MAC && e.ctrlKey);
-      if (!mod || e.shiftKey || e.altKey || e.isComposing) return;
-      const s = viewer.getState();
-      switch (shortcutLetter(e)) {
-        case "b":
-          e.preventDefault();
-          viewer.setSidebarOpen(!s.sidebarOpen);
-          break;
-        case "w":
-          e.preventDefault();
-          if (s.activeId) viewer.close(s.activeId);
-          break;
-        case "t":
-          e.preventDefault();
-          viewer.open({ kind: "new" });
-          break;
-        case "k":
-          e.preventDefault();
-          openFind();
-          break;
-      }
+      const action = keyAction(e);
+      if (!action) return;
+      if (menuOwned && (action === "close-tab" || action === "new-tab")) return;
+      if (!allowedWithFocus(action, e.target instanceof Element ? e.target : null)) return;
+      e.preventDefault();
+      runAction(action, viewer, openFind);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [viewer, openFind]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const fromMenu = (action: ShortcutAction) => () => {
+      if (allowedWithFocus(action, document.activeElement)) runAction(action, viewer, openFind);
+    };
+    return listenAll({ [MENU_NEW_TAB]: fromMenu("new-tab"), [MENU_CLOSE_TAB]: fromMenu("close-tab") });
   }, [viewer, openFind]);
 }
 

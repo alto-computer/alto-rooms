@@ -284,6 +284,38 @@ export function flushAllNoteSavers(): void {
   for (const e of registry.values()) e.saver.flush();
 }
 
+const settled = (s: NoteSaver) => {
+  const st = s.getState();
+  return !st.inFlight && st.text === st.savedText;
+};
+
+/**
+ * Flushes every dirty note and resolves once all of them have landed (nothing
+ * unsaved, nothing in flight) or after `timeoutMs`, whichever comes first.
+ * Resolves `true` when everything landed. Never rejects.
+ */
+export function flushAllNoteSaversAndWait(timeoutMs = 2000): Promise<boolean> {
+  const savers = [...registry.values()].map((e) => e.saver);
+  for (const s of savers) s.flush();
+  if (savers.every(settled)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const unsubs: (() => void)[] = [];
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      for (const u of unsubs) u();
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const check = () => {
+      if (savers.every(settled)) finish(true);
+    };
+    for (const s of savers) unsubs.push(s.subscribe(check));
+  });
+}
+
 let quitFlushInstalled = false;
 function installQuitFlush() {
   if (quitFlushInstalled || typeof window === "undefined") return;
