@@ -1,9 +1,22 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+
+/** jsdom has no EventSource; the stores only need something to subscribe to. */
+class FakeEventSource {
+  onopen: (() => void) | null = null;
+  onmessage: ((m: MessageEvent) => void) | null = null;
+  close() {}
+}
+
+beforeEach(() => {
+  vi.stubGlobal("EventSource", FakeEventSource);
+  vi.stubGlobal("fetch", () => new Promise(() => {})); // roomsd never answers in the smoke test
+});
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   delete window.__ROOMS_DEV__;
 });
 

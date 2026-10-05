@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
+import { createRoomsClient } from "@alto-rooms/protocol-ts";
 import { resolveConnection, type Connection } from "@/lib/connection";
+import { StoresProvider } from "@/data/hooks";
+import { RoomsStore } from "@/data/roomsStore";
+import { ViewerStore } from "@/data/viewerStore";
 
 type State =
   | { status: "pending" }
@@ -47,9 +51,26 @@ export default function App() {
     );
   }
 
+  return <Connected key={state.connection.baseUrl} connection={state.connection} />;
+}
+
+function Connected({ connection }: { connection: Connection }) {
+  const [stores] = useState(() => ({
+    rooms: new RoomsStore(createRoomsClient(connection.baseUrl, connection.token)),
+    viewer: new ViewerStore(),
+  }));
+
+  useEffect(() => {
+    stores.rooms.start();
+    return () => stores.rooms.stop();
+  }, [stores]);
+
   return (
-    <main className="flex h-screen items-center justify-center bg-surface text-ink">
-      <h1 className="text-[17px] font-medium">Rooms</h1>
-    </main>
+    <StoresProvider rooms={stores.rooms} viewer={stores.viewer}>
+      {/* Task 4 replaces this placeholder with the shell. */}
+      <main className="flex h-screen items-center justify-center bg-surface text-ink">
+        <h1 className="text-[17px] font-medium">Rooms</h1>
+      </main>
+    </StoresProvider>
   );
 }
