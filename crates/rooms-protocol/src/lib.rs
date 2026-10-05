@@ -106,6 +106,7 @@ pub enum EventKind {
 }
 
 wire!(pub struct RoomsEvent {
+    #[ts(type = "number")]
     pub seq: u64,
     #[serde(flatten)]
     #[ts(flatten)]
