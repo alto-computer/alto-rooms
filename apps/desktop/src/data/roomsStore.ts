@@ -196,6 +196,20 @@ export class RoomsStore {
 
   private setArtifacts(roomId: string, list: Artifact[]) {
     this.patch({ artifacts: { ...this.state.artifacts, [roomId]: list } });
+    this.syncCount(roomId);
+  }
+
+  /**
+   * roomsd sends no room.updated when a room's documents change, so a room
+   * whose artifacts are loaded takes its `artifactCount` from the list.
+   */
+  private syncCount(roomId: string) {
+    const list = this.state.artifacts[roomId];
+    if (list === undefined) return;
+    const rooms = this.state.rooms;
+    const i = rooms.findIndex((r) => r.id === roomId);
+    if (i < 0 || rooms[i].artifactCount === list.length) return;
+    this.patch({ rooms: rooms.map((r, j) => (j === i ? { ...r, artifactCount: list.length } : r)) });
   }
 
   private bump(tokens: Map<string, number>, key: string): number {
@@ -247,7 +261,10 @@ export class RoomsStore {
         if (e.seq <= this.roomsSeq) return;
         const rooms = this.state.rooms;
         const i = rooms.findIndex((r) => r.id === e.room.id);
-        this.patch({ rooms: i < 0 ? [...rooms, e.room] : rooms.map((r, j) => (j === i ? e.room : r)) });
+        this.batch(() => {
+          this.patch({ rooms: i < 0 ? [...rooms, e.room] : rooms.map((r, j) => (j === i ? e.room : r)) });
+          this.syncCount(e.room.id);
+        });
         return;
       }
       case "room.removed": {
@@ -262,13 +279,13 @@ export class RoomsStore {
       case "artifact.added":
       case "artifact.updated":
         this.batch(() => {
-          if (e.type === "artifact.added") this.countArtifact(e.artifact.roomId, e.artifact.id, 1, e.seq);
+          if (e.type === "artifact.added") this.countArtifact(e.artifact.roomId, 1, e.seq);
           this.applyArtifact(e.artifact.roomId, e);
         });
         return;
       case "artifact.removed":
         this.batch(() => {
-          this.countArtifact(e.roomId, e.artifactId, -1, e.seq);
+          this.countArtifact(e.roomId, -1, e.seq);
           this.applyArtifact(e.roomId, e);
         });
         return;
@@ -296,15 +313,12 @@ export class RoomsStore {
   }
 
   /**
-   * Keeps `room.artifactCount` in step with artifact events: roomsd does not
-   * send room.updated when a room's documents change. Events already covered
-   * by the rooms snapshot are skipped, and a loaded list (no fetch in flight)
-   * tells whether the artifact is really new or really gone.
+   * For a room whose artifacts are not loaded: moves `artifactCount` by one for
+   * an artifact event newer than the rooms snapshot. Loaded rooms take their
+   * count from the list instead (see `syncCount`).
    */
-  private countArtifact(roomId: string, artifactId: string, delta: 1 | -1, seq: number) {
-    if (seq <= this.roomsSeq) return;
-    const list = this.roomFetches.has(roomId) ? undefined : this.state.artifacts[roomId];
-    if (list && list.some((a) => a.id === artifactId) === (delta > 0)) return;
+  private countArtifact(roomId: string, delta: 1 | -1, seq: number) {
+    if (seq <= this.roomsSeq || this.state.artifacts[roomId] !== undefined) return;
     const rooms = this.state.rooms;
     const i = rooms.findIndex((r) => r.id === roomId);
     if (i < 0) return;
@@ -491,6 +505,7 @@ export class RoomsStore {
 
         this.patch({ status: "live", info: infoR.value, rooms: listR.value.data, artifacts, days, errors });
         for (const id of vanished) this.forgetRoom(id);
+        for (const r of listR.value.data) this.syncCount(r.id);
 
         // Drain in arrival order under the per-scope rule. Nothing here can restart
         // the sync (resync {null} is never queued), so the drain runs to completion.

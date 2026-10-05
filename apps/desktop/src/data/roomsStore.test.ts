@@ -394,6 +394,71 @@ describe("RoomsStore sync", () => {
   });
 });
 
+describe("RoomsStore artifactCount", () => {
+  const count = (s: RoomsStore, id: string) => s.getState().rooms.find((r) => r.id === id)?.artifactCount;
+
+  it("a loaded room's count is its list length, even after a late event older than the artifacts fetch", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [{ ...room("r1"), artifactCount: 0 }], seq: 5 }; // rooms snapshot older than the artifacts one
+    c.artifacts.set("r1", { data: [art("a1"), art("a2")], seq: 10 });
+    const s = await liveStore(c);
+    await s.loadArtifacts("r1");
+    expect(count(s, "r1")).toBe(2);
+    // seq 8 > roomsSeq 5 but already covered by the seq-10 artifacts snapshot.
+    c.emit({ seq: 8, type: "artifact.added", artifact: art("a2") });
+    c.emit({ seq: 8, type: "artifact.added", artifact: art("a3") });
+    expect(ids(s)).toEqual(["a1", "a2"]);
+    expect(count(s, "r1")).toBe(2);
+    c.emit({ seq: 11, type: "artifact.added", artifact: art("a4") });
+    expect(count(s, "r1")).toBe(3);
+    // room.updated carries the daemon's stale count; the loaded list wins.
+    c.emit({ seq: 12, type: "room.updated", room: { ...room("r1", "renamed"), artifactCount: 0 } });
+    expect(count(s, "r1")).toBe(3);
+    s.stop();
+  });
+
+  it("a per-room resync refetch updates the count", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [{ ...room("r1"), artifactCount: 1 }], seq: 1 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
+    const s = await liveStore(c);
+    await s.loadArtifacts("r1");
+    c.artifacts.set("r1", { data: [art("a1"), art("a2"), art("a3")], seq: 4 });
+    c.emit({ seq: 4, type: "resync", roomId: "r1" });
+    await flush();
+    expect(count(s, "r1")).toBe(3);
+    s.stop();
+  });
+
+  it("a full resync sets loaded rooms' counts from their lists", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [{ ...room("r1"), artifactCount: 0 }], seq: 1 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
+    const s = await liveStore(c);
+    await s.loadArtifacts("r1");
+    c.rooms = { data: [{ ...room("r1"), artifactCount: 7 }], seq: 3 };
+    c.artifacts.set("r1", { data: [art("a1"), art("a2")], seq: 3 });
+    c.connect(3);
+    await flush();
+    expect(count(s, "r1")).toBe(2);
+    s.stop();
+  });
+
+  it("an unloaded room moves by ±1 for events newer than the rooms snapshot", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [{ ...room("r2"), artifactCount: 2 }], seq: 5 };
+    const s = await liveStore(c);
+    c.emit({ seq: 4, type: "artifact.added", artifact: art("b0", "r2") }); // in the snapshot
+    expect(count(s, "r2")).toBe(2);
+    c.emit({ seq: 6, type: "artifact.added", artifact: art("b1", "r2") });
+    expect(count(s, "r2")).toBe(3);
+    c.emit({ seq: 7, type: "artifact.removed", roomId: "r2", artifactId: "b1" });
+    c.emit({ seq: 8, type: "artifact.removed", roomId: "r2", artifactId: "b0" });
+    expect(count(s, "r2")).toBe(1);
+    s.stop();
+  });
+});
+
 describe("RoomsStore rooms scope", () => {
   it("room.updated keeps array position and artifacts", async () => {
     const c = new FakeClient();
