@@ -3,6 +3,7 @@ import { AlertCircle } from "lucide-react";
 import { createRoomsClient } from "@alto-rooms/protocol-ts";
 import { DAEMON_EXITED, installQuitFlushResponder, listenAll, onBeforeQuitFlush } from "@/lib/appEvents";
 import { resolveConnection, type Connection } from "@/lib/connection";
+import { runFlushProbe } from "@/lib/flushProbe";
 import { rebindNoteSavers } from "@/lib/noteSaver";
 import { isTauri } from "@/lib/tauri";
 import { StoresProvider, type RoomsClient } from "@/data/hooks";
@@ -35,6 +36,7 @@ export default function App() {
   const [viewer] = useState(() => new ViewerStore());
   const current = useRef<{ connection: Connection; stores: Stores } | null>(null);
   const attempt = useRef(0);
+  const probed = useRef(false);
 
   const connect = useCallback(() => {
     const mine = ++attempt.current;
@@ -55,6 +57,11 @@ export default function App() {
         cur.stores.rooms.start();
         setStores(cur.stores);
         setPhase("ready");
+        if (isTauri() && !probed.current) {
+          probed.current = true;
+          const { client } = cur.stores;
+          runFlushProbe(client.getNote, client.saveNote).catch((err) => console.error("flush probe failed:", err));
+        }
       },
       (err) => {
         if (mine !== attempt.current) return;

@@ -205,9 +205,51 @@ pub fn intercept_exit(app: &AppHandle, code: Option<i32>) -> bool {
     intercept
 }
 
+/// Verification hook for the quit flush, inert unless `ALTO_ROOMS_FLUSH_PROBE` is set
+/// (`<YYYY-MM-DD>/<note file>`): the webview then makes that note dirty with a saver
+/// that never saves on its own, so its text can only reach disk through a quit flush.
+pub const FLUSH_PROBE_ENV: &str = "ALTO_ROOMS_FLUSH_PROBE";
+
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub struct FlushProbe {
+    pub date: String,
+    pub name: String,
+}
+
+/// Parses `<YYYY-MM-DD>/<name>.md`; anything else disables the probe.
+pub fn parse_flush_probe(raw: &str) -> Option<FlushProbe> {
+    let (date, name) = raw.trim().split_once('/')?;
+    let date_ok = date.len() == 10 && date.bytes().enumerate().all(|(i, b)| if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() });
+    let name_ok = name.ends_with(".md") && name.len() > 3 && !name.contains('/');
+    (date_ok && name_ok).then(|| FlushProbe { date: date.to_string(), name: name.to_string() })
+}
+
+#[tauri::command]
+pub fn flush_probe() -> Option<FlushProbe> {
+    parse_flush_probe(&std::env::var(FLUSH_PROBE_ENV).ok()?)
+}
+
+#[tauri::command]
+pub fn flush_probe_armed() {
+    eprintln!("flush probe: note is dirty; only a quit flush can save it");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flush_probe_accepts_only_date_slash_note() {
+        assert_eq!(
+            parse_flush_probe("2026-10-05/probe.md"),
+            Some(FlushProbe { date: "2026-10-05".into(), name: "probe.md".into() })
+        );
+        assert_eq!(parse_flush_probe(""), None);
+        assert_eq!(parse_flush_probe("2026-10-05/probe"), None);
+        assert_eq!(parse_flush_probe("2026-1-05/probe.md"), None);
+        assert_eq!(parse_flush_probe("2026-10-05/a/b.md"), None);
+        assert_eq!(parse_flush_probe("2026-10-05/.md"), None);
+    }
 
     #[test]
     fn first_request_starts_a_round_and_done_ends_it() {

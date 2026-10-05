@@ -85,7 +85,13 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![daemon::connect, daemon::viewer_initial, flush::flush_done])
+        .invoke_handler(tauri::generate_handler![
+            daemon::connect,
+            daemon::viewer_initial,
+            flush::flush_done,
+            flush::flush_probe,
+            flush::flush_probe_armed
+        ])
         .build(tauri::generate_context!())
         .expect("error while building Alto Rooms");
 
