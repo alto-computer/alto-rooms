@@ -292,3 +292,63 @@ async fn files_host_guard_uses_custom_port() {
     let ok = app.oneshot(get("/x/y.html", "127.0.0.1:14318")).await.unwrap();
     assert_ne!(ok.status(), StatusCode::FORBIDDEN);
 }
+
+fn put_note(app: &axum::Router, name: &str, body: &str) -> impl std::future::Future<Output = StatusCode> {
+    let req = Request::put(format!("/v1/journal/2026-10-05/notes/{name}"))
+        .header("host", API_HOST).header("authorization", "Bearer t0k")
+        .header("content-type", "text/markdown").body(Body::from(body.to_string())).unwrap();
+    let app = app.clone();
+    async move { app.oneshot(req).await.unwrap().status() }
+}
+
+#[tokio::test]
+async fn note_rename_returns_the_note_and_moves_the_body() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    assert_eq!(put_note(&app, "New%20Note", "본문").await, StatusCode::OK);
+    let r = app.clone().oneshot(post("/v1/journal/2026-10-05/notes/New%20Note/rename", r#"{"to":"회고"}"#, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!(v["name"], "회고.md");
+    assert_eq!(v["relPath"], "2026-10-05/회고.md");
+    let r = app.oneshot(get("/v1/journal/2026-10-05/notes/%ED%9A%8C%EA%B3%A0", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(&r.into_body().collect().await.unwrap().to_bytes()[..], "본문".as_bytes());
+}
+
+#[tokio::test]
+async fn note_rename_missing_is_404_and_taken_is_409() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let r = app.clone().oneshot(post("/v1/journal/2026-10-05/notes/none/rename", r#"{"to":"x"}"#, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    assert_eq!(body_json(r).await["error"], "not_found");
+    assert_eq!(put_note(&app, "a", "A").await, StatusCode::OK);
+    assert_eq!(put_note(&app, "b", "B").await, StatusCode::OK);
+    let r = app.oneshot(post("/v1/journal/2026-10-05/notes/a/rename", r#"{"to":"B"}"#, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::CONFLICT);
+    assert_eq!(body_json(r).await["error"], "note_exists");
+}
+
+#[tokio::test]
+async fn note_rename_is_behind_the_write_guard() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    st.core.save_note(&"2026-10-05".to_string(), "a", "A").unwrap();
+    let uri = "/v1/journal/2026-10-05/notes/a/rename";
+    let r = app.clone().oneshot(post(uri, r#"{"to":"b"}"#, None, API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(r).await["error"], "read_only");
+    let r = app.clone().oneshot(post(uri, r#"{"to":"b"}"#, Some("t0k"), "evil.example:4317")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    let (_d2, remote, st2) = self::app(false, "100.64.1.2:5000");
+    st2.core.save_note(&"2026-10-05".to_string(), "a", "A").unwrap();
+    let r = remote.oneshot(post(uri, r#"{"to":"b"}"#, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    let (_d3, ro, st3) = self::app(true, "100.64.1.2:5000");
+    st3.core.save_note(&"2026-10-05".to_string(), "a", "A").unwrap();
+    let r = ro.oneshot(post(uri, r#"{"to":"b"}"#, Some("t0k"), "100.64.1.1:4317")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert_eq!(st.core.read_note(&"2026-10-05".to_string(), "a").unwrap(), "A");
+    assert_eq!(st3.core.read_note(&"2026-10-05".to_string(), "a").unwrap(), "A");
+    // The same request passes once token, host and peer are all right.
+    let r = app.oneshot(post(uri, r#"{"to":"b"}"#, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+}

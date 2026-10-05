@@ -2,6 +2,7 @@
 pub enum CoreError {
     #[error("invalid room name")] InvalidRoomName,
     #[error("room exists")] RoomExists,
+    #[error("note exists")] NoteExists,
     #[error("invalid link path: {0}")] InvalidLinkPath(String),
     #[error("overlapping room")] OverlappingRoom,
     #[error("room not found")] RoomNotFound,
@@ -17,6 +18,7 @@ impl CoreError {
         match self {
             CoreError::InvalidRoomName => "invalid_room_name",
             CoreError::RoomExists => "room_exists",
+            CoreError::NoteExists => "note_exists",
             CoreError::InvalidLinkPath(_) => "invalid_link_path",
             CoreError::OverlappingRoom => "overlapping_room",
             CoreError::RoomNotFound => "room_not_found",
@@ -29,7 +31,7 @@ impl CoreError {
     }
     pub fn status(&self) -> u16 {
         match self {
-            CoreError::RoomExists | CoreError::OverlappingRoom => 409,
+            CoreError::RoomExists | CoreError::NoteExists | CoreError::OverlappingRoom => 409,
             CoreError::RoomNotFound | CoreError::NotFound => 404,
             CoreError::WriteFailed(_) | CoreError::Internal(_) => 500,
             _ => 400,

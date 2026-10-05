@@ -538,6 +538,42 @@ impl RoomsCore {
         Ok(note)
     }
 
+    /// Renames `journal/<date>/<from>` to `<to>` (both validated like `save_note`). Never
+    /// overwrites: a target that exists — compared case-insensitively, since the default macOS
+    /// volume is — is `NoteExists`, except the source itself (a case-only rename `a.md` → `A.md`).
+    /// Same locking as `save_note`: `notes_lock` across the checks, the rename and the emits;
+    /// `Inner` only to emit (lock order: notes_lock → Inner).
+    pub fn rename_note(&self, date: &IsoDate, from: &str, to: &str) -> Result<Note, CoreError> {
+        validate_iso_date(date)?;
+        let from = validate_note_name(from)?;
+        let to = validate_note_name(to)?;
+        let _notes = self.notes_lock.lock().unwrap();
+        let dir = self.home.join("journal").join(date);
+        let src = dir.join(&from);
+        if !std::fs::symlink_metadata(&src).map(|m| m.is_file()).unwrap_or(false) { return Err(CoreError::NotFound); }
+        let dst = dir.join(&to);
+        if from != to {
+            let fold = |s: &str| slug_key(s);
+            let to_key = fold(&to);
+            // Another entry folding to the target name (case-sensitive volumes), or the target
+            // path itself resolving to something other than the source (case-insensitive ones).
+            let clash = std::fs::read_dir(&dir)?.flatten().any(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                n != from && fold(&n) == to_key
+            });
+            if clash || (fold(&from) != to_key && std::fs::symlink_metadata(&dst).is_ok()) { return Err(CoreError::NoteExists); }
+            std::fs::rename(&src, &dst)?;
+        }
+        let (_, updated) = crate::meta::file_times(&dst);
+        let note = Note { date: date.clone(), name: to.clone(), rel_path: format!("{date}/{to}"), updated_at: updated, author: Author::Me };
+        if from != to {
+            let mut inner = self.inner.lock().unwrap();
+            self.emit(&mut inner, EventKind::NoteRemoved { date: date.clone(), name: from });
+            self.emit(&mut inner, EventKind::NoteSaved { note: note.clone() });
+        }
+        Ok(note)
+    }
+
     /// Reads `journal/<date>/<name>.md`. Holds only `notes_lock` (never `Inner`) so it cannot see a
     /// half-written file; saves are tmp + rename, so this is consistency rather than necessity.
     pub fn read_note(&self, date: &IsoDate, name: &str) -> Result<String, CoreError> {

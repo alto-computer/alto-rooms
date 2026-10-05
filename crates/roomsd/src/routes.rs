@@ -86,6 +86,11 @@ pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(Stri
     Ok(Json(blocking(&st, move |c| c.save_note(&date, &name, &body)).await?))
 }
 
+#[derive(Deserialize)] pub struct RenameNoteBody { to: String }
+pub async fn rename_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>, Json(b): Json<RenameNoteBody>) -> Result<Json<Note>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.rename_note(&date, &name, &b.to)).await?))
+}
+
 pub async fn get_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>) -> Result<Response, ApiErr> {
     let body = blocking(&st, move |c| c.read_note(&date, &name)).await?;
     Ok(([("content-type", "text/markdown; charset=utf-8"), ("x-content-type-options", "nosniff")], body).into_response())

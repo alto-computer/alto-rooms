@@ -592,3 +592,71 @@ fn read_note_roundtrip_and_not_found() {
     assert_eq!(core.read_note(&"2026-10-05".to_string(), "없음").unwrap_err(), CoreError::NotFound);
     assert!(core.read_note(&"2026-10-05".to_string(), "../x").is_err());
 }
+
+fn day() -> String { "2026-10-05".to_string() }
+
+#[test]
+fn rename_note_moves_file_keeps_body_and_emits_removed_then_saved() {
+    let (d, core) = home();
+    core.save_note(&day(), "New Note", "본문").unwrap();
+    let mut rx = core.subscribe();
+    let n = core.rename_note(&day(), "New Note", "회고").unwrap();
+    assert_eq!(n.name, "회고.md");
+    assert_eq!(n.rel_path, "2026-10-05/회고.md");
+    assert!(!d.path().join("journal/2026-10-05/New Note.md").exists());
+    assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/회고.md")).unwrap(), "본문");
+    match rx.try_recv().unwrap().kind {
+        EventKind::NoteRemoved { date, name } => { assert_eq!(date, day()); assert_eq!(name, "New Note.md"); }
+        k => panic!("expected note.removed, got {k:?}"),
+    }
+    match rx.try_recv().unwrap().kind {
+        EventKind::NoteSaved { note } => assert_eq!(note.name, "회고.md"),
+        k => panic!("expected note.saved, got {k:?}"),
+    }
+    let names: Vec<String> = core.journal_day(&day()).unwrap().notes.into_iter().map(|n| n.name).collect();
+    assert_eq!(names, vec!["회고.md".to_string()]);
+}
+
+#[test]
+fn rename_note_missing_source_is_not_found() {
+    let (_d, core) = home();
+    assert_eq!(core.rename_note(&day(), "없음", "x").unwrap_err(), CoreError::NotFound);
+}
+
+#[test]
+fn rename_note_never_overwrites_an_existing_target() {
+    let (d, core) = home();
+    core.save_note(&day(), "a", "A").unwrap();
+    core.save_note(&day(), "b", "B").unwrap();
+    assert_eq!(core.rename_note(&day(), "a", "b").unwrap_err(), CoreError::NoteExists);
+    assert_eq!(core.rename_note(&day(), "a", "B").unwrap_err(), CoreError::NoteExists);
+    assert_eq!(core.rename_note(&day(), "a", "b.md").unwrap_err(), CoreError::NoteExists);
+    assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/a.md")).unwrap(), "A");
+    assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/b.md")).unwrap(), "B");
+    assert_eq!(CoreError::NoteExists.code(), "note_exists");
+    assert_eq!(CoreError::NoteExists.status(), 409);
+}
+
+#[test]
+fn rename_note_allows_a_case_only_rename() {
+    let (d, core) = home();
+    core.save_note(&day(), "a", "A").unwrap();
+    let n = core.rename_note(&day(), "a", "A").unwrap();
+    assert_eq!(n.name, "A.md");
+    let names: Vec<String> = fs::read_dir(d.path().join("journal/2026-10-05")).unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    assert_eq!(names, vec!["A.md".to_string()]);
+    assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/A.md")).unwrap(), "A");
+}
+
+#[test]
+fn rename_note_rejects_invalid_names_and_traversal() {
+    let (d, core) = home();
+    core.save_note(&day(), "a", "A").unwrap();
+    for bad in ["../x", "a/b", "..", ".hidden", "", "x:y"] {
+        assert!(matches!(core.rename_note(&day(), "a", bad).unwrap_err(), CoreError::InvalidInput(_)), "to {bad:?}");
+        assert!(matches!(core.rename_note(&day(), bad, "z").unwrap_err(), CoreError::InvalidInput(_)), "from {bad:?}");
+    }
+    assert!(core.rename_note(&"2026-13-01".to_string(), "a", "b").is_err());
+    assert!(d.path().join("journal/2026-10-05/a.md").exists());
+}

@@ -15,6 +15,7 @@ Do these before Plan 2 depends on live updates. Each item came out of a task rev
 - Error codes:
   - Add `internal` (500) to the spec §3 table.
   - Add `not_found` (404, note GET for a missing note; added in Plan 2 Task 0) to the spec §3 table.
+  - Add `note_exists` (409, note rename target already taken, compared case-insensitively; added with `POST /v1/journal/{date}/notes/{name}/rename`) to the spec §3 table. Kept separate from `room_exists` so the app can say "같은 이름의 노트가 있어요".
   - A missing file returns `room_not_found`.
   - An unreadable file returns `write_failed`.
 - Constant-time token compare. The risk is low because the API is loopback-only.
