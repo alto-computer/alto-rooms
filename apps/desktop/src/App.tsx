@@ -14,7 +14,10 @@ export default function App() {
     setState({ status: "pending" });
     resolveConnection().then(
       (connection) => setState({ status: "ready", connection }),
-      () => setState({ status: "error" }),
+      (err) => {
+        console.error("connect failed:", err);
+        setState({ status: "error" });
+      },
     );
   }, []);
 

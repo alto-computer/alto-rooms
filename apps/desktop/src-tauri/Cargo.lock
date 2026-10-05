@@ -37,6 +37,7 @@ name = "alto-rooms-desktop"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
+ "libc",
  "serde",
  "serde_json",
  "tauri",

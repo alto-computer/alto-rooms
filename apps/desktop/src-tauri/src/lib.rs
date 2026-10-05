@@ -15,10 +15,12 @@ pub fn run() {
 
     // SIGINT/SIGTERM bypass RunEvent::Exit, which would orphan the sidecar; route them through it.
     let handle = app.handle().clone();
-    let _ = ctrlc::set_handler(move || {
+    if let Err(e) = ctrlc::set_handler(move || {
         handle.state::<daemon::Daemon>().kill_spawned();
         handle.exit(0);
-    });
+    }) {
+        eprintln!("could not install signal handler: {e}");
+    }
 
     app.run(|handle, event| {
         if let RunEvent::Exit = event {

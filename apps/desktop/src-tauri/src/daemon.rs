@@ -77,10 +77,64 @@ async fn probe() -> Option<String> {
         .flatten()
 }
 
+/// Facts about the token file, gathered with `symlink_metadata` (never following links).
+#[derive(Debug, Clone, Copy)]
+struct TokenMeta {
+    is_symlink: bool,
+    is_file: bool,
+    uid: u32,
+    mode: u32,
+    nlink: u64,
+    len: u64,
+}
+
+impl TokenMeta {
+    fn from_metadata(m: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        TokenMeta {
+            is_symlink: m.file_type().is_symlink(),
+            is_file: m.is_file(),
+            uid: m.uid(),
+            mode: m.mode(),
+            nlink: m.nlink(),
+            len: m.len(),
+        }
+    }
+}
+
+/// Pure policy: the token must be ours, private, unlinked elsewhere and small.
+fn check_token_meta(m: &TokenMeta, my_uid: u32) -> Result<(), &'static str> {
+    if m.is_symlink {
+        Err("token is a symlink")
+    } else if !m.is_file {
+        Err("token is not a regular file")
+    } else if m.uid != my_uid {
+        Err("token owned by another user")
+    } else if m.mode & 0o077 != 0 {
+        Err("token is accessible by group/other")
+    } else if m.nlink != 1 {
+        Err("token has multiple hard links")
+    } else if m.len > 64 {
+        Err("token file too large")
+    } else {
+        Ok(())
+    }
+}
+
 fn read_token(home: &str) -> Result<String, String> {
+    let fail = |reason: &str| {
+        eprintln!("roomsd token rejected: {reason}");
+        START_ERROR.to_string()
+    };
+    if !std::path::Path::new(home).is_absolute() {
+        return Err(fail("home is not absolute"));
+    }
     let path: PathBuf = [home, ".rooms", "token"].iter().collect();
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|e| format!("토큰 파일을 읽지 못했어요 ({:?})", e.kind()))?;
+    let meta = std::fs::symlink_metadata(&path).map_err(|e| fail(&format!("stat: {:?}", e.kind())))?;
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let my_uid = unsafe { libc::getuid() };
+    check_token_meta(&TokenMeta::from_metadata(&meta), my_uid).map_err(fail)?;
+    let raw = std::fs::read_to_string(&path).map_err(|e| fail(&format!("read: {:?}", e.kind())))?;
     Ok(raw.trim().to_string())
 }
 
@@ -89,29 +143,51 @@ fn connection(home: String) -> Result<Connection, String> {
     Ok(Connection { base_url: BASE_URL.to_string(), token, home })
 }
 
+/// Reuse an already-running daemon, refusing one whose home differs from `ROOMS_HOME`.
+fn reuse(home: String) -> Result<Connection, String> {
+    if let Ok(want) = std::env::var("ROOMS_HOME") {
+        let want_c = std::fs::canonicalize(&want).unwrap_or_else(|_| PathBuf::from(&want));
+        let got_c = std::fs::canonicalize(&home).unwrap_or_else(|_| PathBuf::from(&home));
+        if want_c != got_c {
+            return Err(format!(
+                "실행 중인 Rooms 코어의 홈({})이 ROOMS_HOME({})과 달라요",
+                got_c.display(),
+                want_c.display()
+            ));
+        }
+    }
+    connection(home)
+}
+
+/// A drain task for `drain_pid` may clear state only if that child still owns the slot.
+fn should_clear(current_pid: Option<u32>, drain_pid: u32) -> bool {
+    current_pid == Some(drain_pid)
+}
+
 #[tauri::command]
 pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connection, String> {
     // Holding the lock for the whole call serializes concurrent connects.
     let mut inner = daemon.inner.lock().await;
 
-    // Idempotent: our spawned child is alive and still healthy.
     if inner.child.is_some() {
-        if let (Some(conn), Some(_)) = (inner.conn.clone(), probe().await) {
-            return Ok(conn);
+        // Idempotent: our spawned child is alive and still healthy (re-probe once).
+        if probe().await.is_some() {
+            if let Some(conn) = inner.conn.clone() {
+                return Ok(conn);
+            }
         }
-    }
-
-    // Reuse a daemon that is already running (not ours).
-    if inner.child.is_none() {
-        if let Some(home) = probe().await {
-            return connection(home);
+        // Really stale: kill it and wait up to 2 s for the port to be released.
+        if let Some(old) = inner.child.take() {
+            let _ = old.kill();
         }
-    }
-
-    // Stale child (unhealthy): discard before respawning.
-    if let Some(old) = inner.child.take() {
-        let _ = old.kill();
         inner.conn = None;
+        let release = Instant::now() + Duration::from_secs(2);
+        while probe().await.is_some() && Instant::now() < release {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    } else if let Some(home) = probe().await {
+        // Reuse a daemon that is already running (not ours).
+        return reuse(home);
     }
 
     let mut cmd = app.shell().sidecar("roomsd").map_err(|_| START_ERROR.to_string())?;
@@ -122,15 +198,20 @@ pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connec
         cmd = cmd.env("ROOMS_DEV_ORIGIN", "http://localhost:1420");
     }
     let (mut rx, child) = cmd.spawn().map_err(|_| START_ERROR.to_string())?;
+    let pid = child.pid();
     inner.child = Some(child);
 
     let deadline = Instant::now() + Duration::from_secs(5);
     let home = loop {
-        // Exit code 2 (or any early exit) means startup failed.
+        // Early exit (exit code 2: busy port, lock held, bad config) means startup failed.
         while let Ok(ev) = rx.try_recv() {
             if let CommandEvent::Terminated(_) = ev {
                 inner.child = None;
-                return Err(START_ERROR.to_string());
+                // Another daemon may have won the race; reuse it if it is healthy.
+                return match probe().await {
+                    Some(home) => reuse(home),
+                    None => Err(START_ERROR.to_string()),
+                };
             }
         }
         if let Some(home) = probe().await {
@@ -156,15 +237,17 @@ pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connec
     };
     inner.conn = Some(conn.clone());
 
-    // Keep draining events; clear state if the daemon later dies.
+    // Keep draining events; clear state if THIS child later dies.
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(ev) = rx.recv().await {
             if let CommandEvent::Terminated(_) = ev {
                 let d = handle.state::<Daemon>();
                 let mut inner = d.inner.lock().await;
-                inner.child = None;
-                inner.conn = None;
+                if should_clear(inner.child.as_ref().map(|c| c.pid()), pid) {
+                    inner.child = None;
+                    inner.conn = None;
+                }
                 break;
             }
         }
@@ -187,6 +270,61 @@ pub fn viewer_initial() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn good() -> TokenMeta {
+        TokenMeta { is_symlink: false, is_file: true, uid: 501, mode: 0o100600, nlink: 1, len: 33 }
+    }
+
+    #[test]
+    fn token_meta_policy() {
+        assert_eq!(check_token_meta(&good(), 501), Ok(()));
+        assert!(check_token_meta(&TokenMeta { is_symlink: true, ..good() }, 501).is_err());
+        assert!(check_token_meta(&TokenMeta { is_file: false, ..good() }, 501).is_err());
+        assert!(check_token_meta(&good(), 502).is_err());
+        assert!(check_token_meta(&TokenMeta { mode: 0o100644, ..good() }, 501).is_err());
+        assert!(check_token_meta(&TokenMeta { nlink: 2, ..good() }, 501).is_err());
+        assert!(check_token_meta(&TokenMeta { len: 65, ..good() }, 501).is_err());
+    }
+
+    #[test]
+    fn token_files_on_disk() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = std::env::temp_dir().join(format!("rooms-tok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let uid = unsafe { libc::getuid() };
+        let meta = |p: &std::path::Path| TokenMeta::from_metadata(&std::fs::symlink_metadata(p).unwrap());
+
+        let f = dir.join("t");
+        std::fs::write(&f, "secret").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(check_token_meta(&meta(&f), uid), Ok(()));
+
+        let link = dir.join("l");
+        symlink(&f, &link).unwrap();
+        assert!(check_token_meta(&meta(&link), uid).is_err());
+
+        let hard = dir.join("h");
+        std::fs::hard_link(&f, &hard).unwrap();
+        assert!(check_token_meta(&meta(&f), uid).is_err());
+        std::fs::remove_file(&hard).unwrap();
+
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(check_token_meta(&meta(&f), uid).is_err());
+
+        let big = dir.join("b");
+        std::fs::write(&big, "x".repeat(65)).unwrap();
+        std::fs::set_permissions(&big, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(check_token_meta(&meta(&big), uid).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stale_drain_does_not_clear_respawned_child() {
+        assert!(should_clear(Some(7), 7));
+        assert!(!should_clear(Some(8), 7));
+        assert!(!should_clear(None, 7));
+    }
 
     #[test]
     fn initial_uppercases_or_falls_back() {

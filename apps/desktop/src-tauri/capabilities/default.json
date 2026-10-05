@@ -5,10 +5,6 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    {
-      "identifier": "shell:allow-spawn",
-      "allow": [{ "name": "binaries/roomsd", "sidecar": true }]
-    },
     "dialog:allow-open",
     {
       "identifier": "opener:allow-open-path",
