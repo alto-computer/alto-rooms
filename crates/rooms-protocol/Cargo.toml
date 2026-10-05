@@ -1,0 +1,13 @@
+[package]
+name = "rooms-protocol"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+ts-rs.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+insta = { version = "1", features = ["json"] }
