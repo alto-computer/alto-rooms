@@ -1,6 +1,6 @@
 import type { Artifact, Info } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
 import { AppShell } from "@/shell/AppShell";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
@@ -49,7 +49,7 @@ function viewerFor(lastVisit: string) {
 const cards = () => screen.getAllByTestId("artifact-card");
 
 describe("RoomView", () => {
-  it("renders the header and the cards oldest → newest", async () => {
+  it("renders the header and the cards newest → oldest", async () => {
     await renderWithStores(<RoomView roomId="r1" />, {
       rooms: [room("r1", "벤치마크", { artifactCount: 3 })],
       artifacts: {
@@ -58,7 +58,18 @@ describe("RoomView", () => {
     });
     expect(screen.getByRole("heading", { level: 1, name: "벤치마크" })).toBeInTheDocument();
     expect(screen.getByText("문서 3")).toBeInTheDocument();
-    expect(cards().map((c) => within(c).getByTestId("card-title").textContent)).toEqual(["첫 문서", "둘째", "셋째"]);
+    expect(cards().map((c) => within(c).getByTestId("card-title").textContent)).toEqual(["셋째", "둘째", "첫 문서"]);
+  });
+
+  it("lays the cards out in a wrapping grid that scrolls vertically", async () => {
+    await renderWithStores(<RoomView roomId="r1" />, {
+      rooms: [room("r1", "벤치마크")],
+      artifacts: { r1: [artifact("a", "첫 문서", longAgo), artifact("b", "둘째", ago(1000))] },
+    });
+    const grid = document.querySelector<HTMLElement>("[data-grid]")!;
+    expect(grid).toHaveClass("grid", "overflow-y-auto");
+    expect(grid).toHaveAttribute("data-scroll-root");
+    expect(cards().every((c) => c.parentElement === grid)).toBe(true);
   });
 
   it("labels a card created today 오늘 and older ones MM·DD", async () => {
@@ -66,7 +77,7 @@ describe("RoomView", () => {
       rooms: [room("r1", "벤치마크")],
       artifacts: { r1: [artifact("a", "옛날", new Date(2026, 2, 7, 12).toISOString()), artifact("b", "방금", ago(1000))] },
     });
-    const [old, fresh] = cards();
+    const [fresh, old] = cards();
     expect(within(old).getByText("03·07")).toBeInTheDocument();
     expect(within(fresh).getByText("오늘")).toBeInTheDocument();
   });
@@ -76,7 +87,7 @@ describe("RoomView", () => {
       rooms: [room("r1", "벤치마크")],
       artifacts: { r1: [artifact("a", "첫 문서", longAgo), artifact("b", "둘째", longAgo)] },
     });
-    const [first, second] = cards();
+    const [second, first] = cards();
     fireEvent.click(within(first).getByRole("button", { name: "새 탭에서 크게 보기" }));
     let active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
     expect(active).toEqual(expect.objectContaining({ kind: "doc", roomId: "r1", artifactId: "a" }));
@@ -104,7 +115,7 @@ describe("RoomView", () => {
       artifacts: { r1: [artifact("old", "옛 문서", "2026-04-01T00:00:00Z"), artifact("new", "새 문서", "2026-06-01T00:00:00Z")] },
       viewer,
     });
-    const [old, fresh] = cards();
+    const [fresh, old] = cards();
     expect(within(old).queryByLabelText("새 문서 표시")).toBeNull();
     expect(within(fresh).getByLabelText("새 문서 표시")).toBeInTheDocument();
   });
@@ -164,6 +175,7 @@ describe("RoomView", () => {
     expect(iframe).toHaveAttribute("tabindex", "-1");
     expect(iframe).toHaveAttribute("aria-hidden", "true");
     expect(iframe.style.pointerEvents).toBe("none");
+    expect(iframe).toHaveAttribute("scrolling", "no");
     expect(iframe.style.width).toBe("1280px");
     expect(iframe.style.transform).toMatch(/^scale\(/);
   });
@@ -190,59 +202,6 @@ describe("RoomView", () => {
     const h = await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [] } });
     act(() => h.emit({ type: "room.removed", roomId: "r1" }));
     expect(screen.getByText("이 방은 더 이상 없어요")).toBeInTheDocument();
-  });
-});
-
-describe("RoomView: auto-scroll", () => {
-  let widths: { scroll: number; client: number };
-  let scrollLefts: number[];
-
-  beforeEach(() => {
-    widths = { scroll: 2000, client: 800 };
-    scrollLefts = [];
-    let left = 0;
-    const isStrip = (el: Element) => el instanceof HTMLElement && el.dataset.strip !== undefined;
-    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
-      return isStrip(this) ? widths.scroll : 0;
-    });
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
-      return isStrip(this) ? widths.client : 0;
-    });
-    vi.spyOn(Element.prototype, "scrollLeft", "get").mockImplementation(function (this: Element) {
-      return isStrip(this) ? left : 0;
-    });
-    vi.spyOn(Element.prototype, "scrollLeft", "set").mockImplementation(function (this: Element, v: number) {
-      if (!isStrip(this)) return;
-      left = Math.max(0, Math.min(v, widths.scroll - widths.client));
-      scrollLefts.push(left);
-    });
-  });
-
-  const strip = () => document.querySelector("[data-strip]") as HTMLElement;
-
-  it("scrolls to the right end on first render and stays pinned when an artifact arrives", async () => {
-    const h = await renderWithStores(<RoomView roomId="r1" />, {
-      rooms: [room("r1", "벤치마크")],
-      artifacts: { r1: [artifact("a", "첫 문서", longAgo)] },
-    });
-    expect(strip().scrollLeft).toBe(1200);
-    widths.scroll = 2400;
-    act(() => h.emit({ type: "artifact.added", artifact: artifact("b", "둘째", ago(1000)) }));
-    expect(strip().scrollLeft).toBe(1600);
-  });
-
-  it("doesn't move the strip when the user has scrolled away from the right end", async () => {
-    const h = await renderWithStores(<RoomView roomId="r1" />, {
-      rooms: [room("r1", "벤치마크")],
-      artifacts: { r1: [artifact("a", "첫 문서", longAgo)] },
-    });
-    strip().scrollLeft = 300;
-    fireEvent.scroll(strip());
-    const before = scrollLefts.length;
-    widths.scroll = 2400;
-    act(() => h.emit({ type: "artifact.added", artifact: artifact("b", "둘째", ago(1000)) }));
-    expect(scrollLefts.length).toBe(before);
-    expect(strip().scrollLeft).toBe(300);
   });
 });
 

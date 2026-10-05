@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { CircleAlert } from "lucide-react";
 import { useArtifacts, useClient, useReadOnly, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
 import { dateLabel, isNewSince } from "@/lib/dates";
@@ -8,18 +8,13 @@ import { EditableTitle } from "./EditableTitle";
 import { EmptyRoom } from "./EmptyRoom";
 import { INBOX_ID } from "@/lib/drag";
 
-/** The strip counts as "at the right end" within this many pixels. */
-const PIN_SLACK = 8;
-
 function Centered({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center p-12 text-center text-[17px] text-ink-2">{children}</div>;
 }
 
-const atRightEnd = (el: HTMLElement) => el.scrollWidth - el.clientWidth - el.scrollLeft <= PIN_SLACK;
-
 /**
- * A room tab: editable name, `문서 {n}`, and a horizontal strip of artifact
- * cards (oldest left, newest right), or the empty state.
+ * A room tab: editable name, `문서 {n}`, and a grid of artifact cards that wraps
+ * to the window's width and scrolls vertically (newest first), or the empty state.
  *
  * AppShell mounts this per activation (keyed by tab id, active tab only), so
  * the new-doc baseline captured at mount is "the moment the tab became active".
@@ -40,31 +35,6 @@ export function RoomView({ roomId }: { roomId: string }) {
     baseline.current = v.lastVisit[roomId] ?? v.firstRunAt;
   }
 
-  // Auto-scroll: to the right end on the first render with artifacts; afterwards
-  // stay pinned there when artifacts change, but only if the user was at the end.
-  const stripRef = useRef<HTMLDivElement>(null);
-  const scrolledOnce = useRef(false);
-  const pinned = useRef(true);
-  const hasCards = (artifacts?.length ?? 0) > 0;
-  useLayoutEffect(() => {
-    const el = stripRef.current;
-    if (!el || !hasCards) return;
-    if (!scrolledOnce.current || pinned.current) {
-      el.scrollLeft = el.scrollWidth;
-      scrolledOnce.current = true;
-      pinned.current = true;
-    }
-  }, [artifacts, hasCards]);
-  useEffect(() => {
-    const el = stripRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      pinned.current = atRightEnd(el);
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, [hasCards]);
-
   if (!room) {
     // Before the first sync we can't tell; afterwards the room is gone.
     return info ? <Centered>이 방은 더 이상 없어요</Centered> : <div className="flex-1 bg-surface" />;
@@ -78,36 +48,35 @@ export function RoomView({ roomId }: { roomId: string }) {
   } else {
     const now = new Date();
     body = (
-      // overflow-x:auto forces overflow-y to clip, so the hover shadow (0 6px 16px)
-      // needs an inset: 10px on top (16 blur − 6 offset), cancelled by -mt so the
-      // layout gap stays 24. Below, the shadow falls inside the card (over its footer),
-      // so no bottom padding: the panel's pb-6 is the whole 24px bottom gap.
+      // The grid scrolls inside the panel: -mx-12/px-12 put its scrollbar on the panel's
+      // edge, and pt-2.5/-mt-2.5 leave room above the first row for the hover shadow.
       <div
-        ref={stripRef}
-        data-strip
+        data-grid
         data-scroll-root
-        className="group/strip -mx-12 -mt-2.5 flex flex-1 items-start gap-7 overflow-x-auto overflow-y-hidden px-12 pt-2.5"
+        className="-mx-12 -mt-2.5 grid min-h-0 flex-1 grid-cols-[repeat(auto-fill,300px)] content-start gap-x-7 gap-y-9 overflow-y-auto px-12 pt-2.5 pb-6 [scrollbar-color:#dddddd_transparent] [scrollbar-width:thin]"
       >
         {info
-          ? artifacts.map((a) => (
-              <ArtifactCard
-                key={a.id}
-                artifact={a}
-                info={info}
-                label={dateLabel(a.createdAt, now)}
-                isNew={isNewSince(a.createdAt, baseline.current!)}
-                size="strip"
-                draggable={roomId === INBOX_ID && !readOnly}
-                onExpand={() => viewer.open({ kind: "doc", roomId, artifactId: a.id }, { activate: true })}
-              />
-            ))
+          ? [...artifacts]
+              .reverse()
+              .map((a) => (
+                <ArtifactCard
+                  key={a.id}
+                  artifact={a}
+                  info={info}
+                  label={dateLabel(a.createdAt, now)}
+                  isNew={isNewSince(a.createdAt, baseline.current!)}
+                  size="strip"
+                  draggable={roomId === INBOX_ID && !readOnly}
+                  onExpand={() => viewer.open({ kind: "doc", roomId, artifactId: a.id }, { activate: true })}
+                />
+              ))
           : null}
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-surface px-12 pt-10 pb-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-surface px-12 pt-10">
       <header className="flex flex-col gap-1">
         <EditableTitle
           key={room.id}

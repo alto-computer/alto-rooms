@@ -9,10 +9,11 @@ import { cn } from "@/lib/utils";
 const LAYOUT_WIDTH = 1280;
 
 const SIZES = {
-  // Room strip: 300 wide with a 420 page; the hovered/focused card widens to 440 with a 560 page.
+  // Room grid: 300 wide with a 420 page. Hover only raises the hovered card (shadow and
+  // a darker hairline); it never resizes a card, which would reflow the grid.
   strip: {
-    card: "w-[300px] hover:w-[440px] focus-within:w-[440px] transition-[width,opacity] duration-200 ease-out group-hover/strip:opacity-85 hover:opacity-100 focus-within:opacity-100",
-    page: "h-[420px] group-hover/card:h-[560px] group-focus-within/card:h-[560px] transition-[height,box-shadow] duration-200 ease-out group-hover/card:shadow-float group-focus-within/card:shadow-float",
+    card: "w-[300px]",
+    page: "h-[420px] transition-[box-shadow,border-color] duration-200 ease-out group-hover/card:border-[#c8c8c8] group-hover/card:shadow-float group-focus-within/card:shadow-float motion-reduce:transition-none",
     expand: "top-3 right-3 size-9",
     label: "font-mono text-[12px] text-ink-3",
     // Inner page box (inside the 1px border) before it is measured.
@@ -61,7 +62,7 @@ function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
   return near;
 }
 
-/** The page box's inner size, following hover widening; `fallback` until measured. */
+/** The page box's inner size; `fallback` until measured. */
 function useBoxSize(ref: RefObject<HTMLElement | null>, fallback: { w: number; h: number }) {
   const [size, setSize] = useState(fallback);
   useEffect(() => {
@@ -121,6 +122,8 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onExpand, dra
               tabIndex={-1}
               src={client.fileUrl(info, artifact)}
               sandbox="allow-scripts allow-popups"
+              // A preview is clicked, never scrolled: no scrollbar inside the page.
+              scrolling="no"
               loading="lazy"
               className="absolute top-0 left-0 border-0 bg-white"
               style={{
