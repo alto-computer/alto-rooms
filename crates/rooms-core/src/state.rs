@@ -29,8 +29,34 @@ impl StateStore {
         std::fs::create_dir_all(rooms_dir)?;
         let path = rooms_dir.join("state.json");
         let disk: Disk = match std::fs::read(&path) {
-            Ok(b) => serde_json::from_slice(&b).unwrap_or_default(),
-            Err(_) => Disk::default(),
+            Ok(b) => match serde_json::from_slice(&b) {
+                Ok(d) => d,
+                Err(_e) => {
+                    // JSON parsing failed: save the corrupted file with timestamp
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let corrupt_path = rooms_dir.join(format!("state.json.corrupt-{}", now));
+                    let _ = std::fs::write(&corrupt_path, b);
+                    return Ok(StateStore {
+                        path,
+                        rooms: Vec::new(),
+                    });
+                }
+            },
+            Err(e) => {
+                // File read error: check if it's NotFound (file doesn't exist yet)
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Disk::default()
+                } else {
+                    // Other errors (permission denied, etc.) should be reported
+                    return Err(CoreError::WriteFailed(format!(
+                        "failed to read state.json: {}",
+                        e
+                    )));
+                }
+            }
         };
         Ok(StateStore {
             path,
@@ -98,5 +124,60 @@ mod tests {
         let b = d.path().join("b");
         std::fs::rename(&a, &b).unwrap();
         assert_eq!(inode_of(&b).unwrap(), before);
+    }
+
+    #[test]
+    fn corrupted_json_preserved_and_store_empty() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join(".rooms");
+        std::fs::create_dir_all(&dir).unwrap();
+        let state_json = dir.join("state.json");
+
+        // Write garbage JSON
+        let garbage = b"{ invalid json }]";
+        std::fs::write(&state_json, garbage).unwrap();
+
+        // Load should succeed but with empty rooms
+        let s = StateStore::load(&dir).unwrap();
+        assert!(s.rooms.is_empty());
+
+        // Corrupted file should be preserved with timestamp
+        let corrupt_files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| {
+                let entry = e.ok()?;
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("state.json.corrupt-") {
+                    Some(name_str.into_owned())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(corrupt_files.len(), 1);
+        let corrupt_content = std::fs::read(&dir.join(&corrupt_files[0])).unwrap();
+        assert_eq!(corrupt_content, garbage);
+    }
+
+    #[test]
+    fn existing_tests_still_pass() {
+        // Ensure the roundtrip test still passes after the changes
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join(".rooms");
+        let mut s = StateStore::load(&dir).unwrap();
+        assert!(s.rooms.is_empty());
+        s.rooms.push(RoomRecord {
+            id: "test".into(),
+            name: "Test".into(),
+            kind: RoomKind::Owned,
+            path: "/test".into(),
+            dev: Some(1),
+            ino: Some(2),
+        });
+        s.save().unwrap();
+        let s2 = StateStore::load(&dir).unwrap();
+        assert_eq!(s2.find("test").unwrap().name, "Test");
     }
 }
