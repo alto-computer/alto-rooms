@@ -1,0 +1,115 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource/jost/400.css";
+@import "@fontsource/jost/500.css";
+@import "@fontsource/jost/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+
+/* ---- Alto tokens: verbatim copy of ~/personal/alto-site/design/tokens.css ---- */
+/*
+  Alto design tokens, v3.
+  Airbnb's DLS palette: near-white canvas, #222 ink, hairline borders, and Rausch as the
+  one colour, used in very few places. For Alto, Rausch is the thread.
+  Works as-is with shadcn/ui on Tailwind v4: paste into app/globals.css after
+  `@import "tailwindcss";` (it replaces the theme block shadcn generates).
+*/
+
+:root{
+  /* Brand ground: the warm grey of the site and banners. Rausch sits on it. */
+  --ground:#efefed;
+
+  /* Neutrals (Airbnb), for product UI */
+  --canvas:#ffffff;
+  --surface:#f7f7f7;
+  --surface-strong:#f2f2f2;
+  --hairline:#dddddd;
+  --ink:#222222;
+  --ink-2:#6a6a6a;
+  --ink-3:#929292;
+
+  /* The one colour */
+  --thread:#ff385c;        /* Rausch: the thread, knots, live status */
+  --thread-deep:#e31c5f;   /* button fill: white text passes AA (about 4.6:1) */
+  --thread-deeper:#d70466; /* button hover and pressed */
+  --thread-tint:#fff0f3;   /* live badge, active icon fill */
+
+  /* Illustration only */
+  --water:#e8efee; --wave:#a9bcc0;
+
+  /* Status (Airbnb), kept apart from the thread */
+  --error:#c13515; --success:#008a05;
+
+  /* shadcn/ui */
+  --background:var(--canvas);         --foreground:var(--ink);
+  --card:#ffffff;                     --card-foreground:var(--ink);
+  --popover:#ffffff;                  --popover-foreground:var(--ink);
+  --primary:var(--thread-deep);       --primary-foreground:#ffffff;
+  --secondary:var(--surface-strong);  --secondary-foreground:var(--ink);
+  --muted:var(--surface);             --muted-foreground:var(--ink-2);
+  --accent:var(--surface-strong);     --accent-foreground:var(--ink);
+  --destructive:var(--error);
+  --border:var(--hairline);           --input:var(--hairline);
+  --ring:var(--ink);                  /* focus is ink, so red stays rare */
+  --chart-1:var(--thread); --chart-2:#222222; --chart-3:#6a6a6a; --chart-4:#a9bcc0; --chart-5:#dddddd;
+  --sidebar:var(--surface);           --sidebar-foreground:var(--ink);
+  --sidebar-primary:var(--thread-deep); --sidebar-primary-foreground:#ffffff;
+  --sidebar-accent:var(--surface-strong); --sidebar-accent-foreground:var(--ink);
+  --sidebar-border:var(--hairline);   --sidebar-ring:var(--ink);
+
+  /* Shape (Airbnb: 8 buttons, 14 cards, pill search) */
+  --radius:0.5rem;
+}
+
+.dark{
+  --canvas:#121212; --surface:#1c1c1c; --surface-strong:#262626; --hairline:#3a3a3a;
+  --ink:#f2f2f2; --ink-2:#a3a3a3; --ink-3:#737373;
+  --thread:#ff5a76; --thread-deep:#ff385c; --thread-deeper:#ff5a76; --thread-tint:#3a1520;
+  --water:#1b2224; --wave:#4b5d61;
+  --error:#ff6b4a; --success:#4cc35a;
+  --card:#1c1c1c; --popover:#1c1c1c; --primary-foreground:#121212;
+}
+
+/* Tailwind v4: turns the variables into classes such as bg-primary, text-ink-2, border-hairline */
+@theme inline{
+  --color-background:var(--background); --color-foreground:var(--foreground);
+  --color-card:var(--card); --color-card-foreground:var(--card-foreground);
+  --color-popover:var(--popover); --color-popover-foreground:var(--popover-foreground);
+  --color-primary:var(--primary); --color-primary-foreground:var(--primary-foreground);
+  --color-secondary:var(--secondary); --color-secondary-foreground:var(--secondary-foreground);
+  --color-muted:var(--muted); --color-muted-foreground:var(--muted-foreground);
+  --color-accent:var(--accent); --color-accent-foreground:var(--accent-foreground);
+  --color-destructive:var(--destructive);
+  --color-border:var(--border); --color-input:var(--input); --color-ring:var(--ring);
+  --color-chart-1:var(--chart-1); --color-chart-2:var(--chart-2); --color-chart-3:var(--chart-3); --color-chart-4:var(--chart-4); --color-chart-5:var(--chart-5);
+  --color-sidebar:var(--sidebar); --color-sidebar-foreground:var(--sidebar-foreground);
+  --color-sidebar-primary:var(--sidebar-primary); --color-sidebar-primary-foreground:var(--sidebar-primary-foreground);
+  --color-sidebar-accent:var(--sidebar-accent); --color-sidebar-accent-foreground:var(--sidebar-accent-foreground);
+  --color-sidebar-border:var(--sidebar-border); --color-sidebar-ring:var(--sidebar-ring);
+
+  /* brand */
+  --color-thread:var(--thread); --color-thread-deep:var(--thread-deep); --color-thread-tint:var(--thread-tint);
+  --color-ink:var(--ink); --color-ink-2:var(--ink-2); --color-ink-3:var(--ink-3);
+  --color-surface:var(--surface); --color-surface-strong:var(--surface-strong); --color-hairline:var(--hairline);
+  --color-ground:var(--ground); --color-water:var(--water); --color-wave:var(--wave);
+  --color-success:var(--success);
+
+  --radius-sm:calc(var(--radius) - 4px); --radius-md:calc(var(--radius) - 2px);
+  --radius-lg:var(--radius); --radius-xl:14px; --radius-pill:999px;
+  --shadow-float:0 6px 16px rgba(0,0,0,.12);
+
+  --font-sans:"Jost","Futura","Avenir Next",ui-sans-serif,system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+
+@custom-variant dark (&:is(.dark *));
+/* ---- end Alto tokens ---- */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}
+
+/* App base */
+body { font-family: Jost, 'Apple SD Gothic Neo', system-ui; background: var(--surface); color: var(--ink); }
