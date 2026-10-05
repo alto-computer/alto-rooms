@@ -32,13 +32,15 @@ impl StateStore {
             Ok(b) => match serde_json::from_slice(&b) {
                 Ok(d) => d,
                 Err(_e) => {
-                    // JSON parsing failed: save the corrupted file with timestamp
+                    // JSON parsing failed: atomically rename the corrupted file with timestamp
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs();
                     let corrupt_path = rooms_dir.join(format!("state.json.corrupt-{}", now));
-                    let _ = std::fs::write(&corrupt_path, b);
+                    std::fs::rename(&path, &corrupt_path).map_err(|e| {
+                        CoreError::WriteFailed(format!("failed to preserve corrupted state.json: {}", e))
+                    })?;
                     return Ok(StateStore {
                         path,
                         rooms: Vec::new(),
@@ -141,6 +143,9 @@ mod tests {
         let s = StateStore::load(&dir).unwrap();
         assert!(s.rooms.is_empty());
 
+        // Original state.json should be moved, not copied
+        assert!(!state_json.exists());
+
         // Corrupted file should be preserved with timestamp
         let corrupt_files: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
@@ -161,23 +166,4 @@ mod tests {
         assert_eq!(corrupt_content, garbage);
     }
 
-    #[test]
-    fn existing_tests_still_pass() {
-        // Ensure the roundtrip test still passes after the changes
-        let d = tempfile::tempdir().unwrap();
-        let dir = d.path().join(".rooms");
-        let mut s = StateStore::load(&dir).unwrap();
-        assert!(s.rooms.is_empty());
-        s.rooms.push(RoomRecord {
-            id: "test".into(),
-            name: "Test".into(),
-            kind: RoomKind::Owned,
-            path: "/test".into(),
-            dev: Some(1),
-            ino: Some(2),
-        });
-        s.save().unwrap();
-        let s2 = StateStore::load(&dir).unwrap();
-        assert_eq!(s2.find("test").unwrap().name, "Test");
-    }
 }
