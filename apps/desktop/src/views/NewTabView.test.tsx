@@ -166,9 +166,9 @@ describe("NewTabView: first run", () => {
     vi.useRealTimers();
   });
 
-  it("uses the real home when it is not ~/rooms", async () => {
+  it("uses the absolute path when the home is not ~/rooms", async () => {
     await renderWithStores(<NewTabView />, { viewer: viewer(), home: "/Users/me/agent-rooms", rooms: [] });
-    expect(screen.getByRole("button", { name: "~/agent-rooms/ONBOARD.md 를 읽고 따라 해줘" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "/Users/me/agent-rooms/ONBOARD.md 를 읽고 따라 해줘" })).toBeInTheDocument();
   });
 
   it("renders nothing before the first sync (no card flash)", () => {

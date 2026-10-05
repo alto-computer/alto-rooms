@@ -1,11 +1,19 @@
 import { useRooms } from "@/data/hooks";
-import { tildePath } from "@/lib/paths";
 import { CopyChip } from "./CopyChip";
 
-/** The prompt that points an agent at the rooms home's ONBOARD.md (`~` for the user's home). */
-export function onboardPrompt(home: string): string {
+/**
+ * The ONBOARD.md path an agent is pointed at: `~/rooms/ONBOARD.md` only when
+ * the home is exactly `/Users/<name>/rooms` or `/home/<name>/rooms` (where
+ * `~` is certain); the absolute path otherwise.
+ */
+export function onboardPromptPath(home: string): string {
   const base = home.replace(/\/+$/, "");
-  return `${tildePath(`${base}/ONBOARD.md`, base)} 를 읽고 따라 해줘`;
+  return /^\/(Users|home)\/[^/]+\/rooms$/.test(base) ? "~/rooms/ONBOARD.md" : `${base}/ONBOARD.md`;
+}
+
+/** The first-run prompt; the chip shows and copies exactly this. */
+export function onboardPrompt(home: string): string {
+  return `${onboardPromptPath(home)} 를 읽고 따라 해줘`;
 }
 
 /** The short re-run prompt for an agent that already has the rooms skill. */
