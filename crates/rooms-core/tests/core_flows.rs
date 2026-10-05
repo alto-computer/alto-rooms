@@ -493,7 +493,7 @@ fn one_new_file_in_big_room_is_added_within_a_second() {
     let mut rx = core.subscribe();
     let s = Instant::now();
     fs::write(big.join("fresh.html"), "<title>fresh</title>").unwrap();
-    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.rel_path == "fresh.html"), Duration::from_secs(2));
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.rel_path == "fresh.html"), slow(Duration::from_secs(2)));
     assert!(s.elapsed() < slow(Duration::from_secs(1)), "{:?}", s.elapsed());
 }
 
@@ -565,4 +565,21 @@ fn resync_all_picks_up_finder_created_folders_in_order() {
     let art = pos(&|k| matches!(k, EventKind::ArtifactAdded { .. })).expect("artifact.added");
     assert!(room < art);
     assert!(matches!(evs.last().unwrap().kind, EventKind::Resync { room_id: None }));
+}
+
+#[test]
+fn folder_replacing_another_rooms_folder_removes_the_moved_room() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap();
+    let b = core.create_room("b").unwrap();
+    fs::write(d.path().join("a/x.html"), "<title>x</title>").unwrap();
+    core.rescan_room(&a.id);
+    fs::remove_dir_all(d.path().join("b")).unwrap();
+    fs::rename(d.path().join("a"), d.path().join("b")).unwrap();
+    core.sync_home_dirs();
+    let rooms = core.list_rooms();
+    assert!(rooms.iter().all(|r| r.id != a.id), "ghost room a: {rooms:?}");
+    let rb = rooms.iter().find(|r| r.id == b.id).unwrap();
+    assert_eq!(std::path::Path::new(&rb.path), d.path().canonicalize().unwrap().join("b"));
+    core.create_room("a").unwrap();
 }

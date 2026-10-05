@@ -104,13 +104,13 @@ fn list_home_dirs(home: &Path) -> Option<Vec<HomeDir>> {
 /// renamed (path + display name follow, id kept), and an owned room whose folder is gone with no
 /// inode match is removed. The inbox is excluded from inode matching: a Finder rename of `inbox`
 /// is adopted as a normal room and the caller recreates an empty `home/inbox`.
-/// Defense in depth against a stale listing: an owned room whose (dev, ino) is still among the
-/// listed folders is never removed as "gone" (a later sync follows it as a rename).
+/// Defense in depth against a stale listing: an owned room whose (dev, ino) is still listed at a
+/// path no other room record holds is never removed as "gone" (a later sync follows it as a rename).
 /// If home could not be listed (`None`) nothing is changed.
 fn reconcile_home_dirs(home: &Path, listing: Option<Vec<HomeDir>>, state: &mut StateStore) -> Vec<HomeChange> {
     let mut out = Vec::new();
     let Some(listing) = listing else { return out };
-    let listed_inodes: HashSet<(u64, u64)> = listing.iter().filter_map(|h| Some((h.dev?, h.ino?))).collect();
+    let listed_inodes: HashMap<(u64, u64), PathBuf> = listing.iter().filter_map(|h| Some(((h.dev?, h.ino?), h.path.clone()))).collect();
     for HomeDir { path: p, name, dev, ino } in listing {
         if state.rooms.iter().any(|r| r.path == p) { continue; }
         if let (Some(dv), Some(io)) = (dev, ino) {
@@ -133,7 +133,12 @@ fn reconcile_home_dirs(home: &Path, listing: Option<Vec<HomeDir>>, state: &mut S
     // owned rooms, and it must see the same state the listing above was reconciled against.
     let gone: Vec<RoomId> = state.rooms.iter()
         .filter(|r| r.kind == RoomKind::Owned && r.id != "inbox" && r.path.starts_with(home) && std::fs::symlink_metadata(&r.path).is_err())
-        .filter(|r| !matches!((r.dev, r.ino), (Some(dv), Some(io)) if listed_inodes.contains(&(dv, io))))
+        // Protected only if its inode is listed at a path no OTHER room record holds: when another
+        // room owns that path (`rm -rf b && mv a b`), room a's folder really is gone.
+        .filter(|r| {
+            let listed_at = match (r.dev, r.ino) { (Some(dv), Some(io)) => listed_inodes.get(&(dv, io)), _ => None };
+            !listed_at.is_some_and(|p| !state.rooms.iter().any(|o| o.id != r.id && &o.path == p))
+        })
         .map(|r| r.id.clone()).collect();
     state.rooms.retain(|r| !gone.contains(&r.id));
     out.extend(gone.into_iter().map(HomeChange::Removed));
@@ -190,7 +195,7 @@ impl RoomsCore {
     /// Full reconcile after the watcher lost events (overflow / error): rescan everything, then
     /// tell clients to refetch.
     pub fn resync_all(&self) {
-        self.sync_home_dirs(); // pick up folders created/renamed/deleted in Finder (no lock held)
+        self.sync_home_dirs(); // pick up folders created/renamed/deleted in Finder (takes Inner itself)
         // Resync is emitted even if backfill_all errored, on purpose, so clients refetch.
         if let Err(e) = self.backfill_all() { eprintln!("rooms-core: resync backfill failed: {e}"); }
         let mut inner = self.inner.lock().unwrap();
