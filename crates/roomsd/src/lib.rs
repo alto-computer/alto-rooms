@@ -114,6 +114,7 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/rooms", get(routes::list_rooms).post(routes::create_room))
         .route("/v1/rooms/link", post(routes::link_room))
         .route("/v1/rooms/{room_id}", patch(routes::rename_room))
+        .route("/v1/rooms/{room_id}/move", post(routes::move_room))
         .route("/v1/rooms/{room_id}/artifacts", get(routes::list_artifacts))
         .route("/v1/journal/{date}", get(routes::journal_day))
         .route("/v1/journal/{date}/notes/{name}", get(routes::get_note).put(routes::put_note))

@@ -105,6 +105,14 @@ export function fakeClient(
       if (day?.notes) day.notes = day.notes.map((n) => (n.name === noteFile(from) ? renamed : n));
       return renamed;
     }),
+    moveRoom: vi.fn(async (id: string, to: number): Promise<string[]> => {
+      const from = state.rooms.findIndex((r) => r.id === id);
+      if (from < 0) throw new RoomsApiError(404, "room not found", "room_not_found");
+      const [moved] = state.rooms.splice(from, 1);
+      const others = state.rooms.flatMap((r, i) => (r.id === "inbox" ? [] : [i]));
+      state.rooms.splice(others[to] ?? state.rooms.length, 0, moved);
+      return state.rooms.map((r) => r.id);
+    }),
     moveArtifact: vi.fn(async (roomId: string, artifactId: string, toRoomId: string): Promise<Artifact> => {
       const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);
       if (!a) throw new RoomsApiError(404, "not found", "not_found");

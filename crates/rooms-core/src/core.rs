@@ -532,6 +532,22 @@ impl RoomsCore {
         Ok(room_v)
     }
 
+    /// Moves `room` to position `to` among the rooms other than the inbox, which keeps its place
+    /// (`to` past the end = last). Saves state.json and emits `rooms.reordered` with the full order.
+    pub fn move_room(&self, room: &RoomId, to: usize) -> Result<Vec<RoomId>, CoreError> {
+        if room == "inbox" { return Err(CoreError::InvalidInput("the inbox can't be moved".into())); }
+        let mut inner = self.inner.lock().unwrap();
+        let from = inner.state.rooms.iter().position(|r| &r.id == room).ok_or(CoreError::RoomNotFound)?;
+        let rec = inner.state.rooms.remove(from);
+        let rooms = &inner.state.rooms;
+        let at = rooms.iter().enumerate().filter(|(_, r)| r.id != "inbox").nth(to).map(|(i, _)| i).unwrap_or(rooms.len());
+        inner.state.rooms.insert(at, rec);
+        inner.state.save()?;
+        let room_ids: Vec<RoomId> = inner.state.rooms.iter().map(|r| r.id.clone()).collect();
+        self.emit(&mut inner, EventKind::RoomsReordered { room_ids: room_ids.clone() });
+        Ok(room_ids)
+    }
+
     pub fn save_note(&self, date: &IsoDate, name: &str, body: &str) -> Result<Note, CoreError> {
         validate_iso_date(date)?;
         let name = validate_note_name(name)?;

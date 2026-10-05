@@ -195,3 +195,68 @@ describe("Sidebar: drag to move", () => {
     expect(screen.queryByRole("button", { name: "Sort with an agent" })).toBeNull();
   });
 });
+
+describe("Sidebar: reorder rooms by dragging", () => {
+  // A fresh list per test: the fake moveRoom reorders the array it was given.
+  const four = () => [room("inbox", "Inbox"), room("a", "A"), room("b", "B"), room("c", "C")];
+  const names = () => within(screen.getByRole("list", { name: "Rooms" })).getAllByRole("button").map((b) => b.textContent);
+
+  /** Gives `el` a 36px-tall box at y=100, so y<118 is its top half. */
+  const placeRow = (el: HTMLElement) =>
+    vi.spyOn(el, "getBoundingClientRect").mockReturnValue({ top: 100, height: 36, bottom: 136, left: 0, right: 200, width: 200, x: 0, y: 100, toJSON() {} });
+
+  async function dragRoom(from: string, onto: string, clientY: number) {
+    const dt = stubTransfer();
+    const target = sidebarRow(onto);
+    placeRow(target);
+    // jsdom's DragEvent drops clientY, so send MouseEvents of the drag types (React reads them alike).
+    const at = (type: string) => Object.assign(new MouseEvent(type, { bubbles: true, cancelable: true, clientY }), { dataTransfer: dt });
+    fireEvent.dragStart(sidebarRow(from), { dataTransfer: dt });
+    fireEvent(target, at("dragenter"));
+    fireEvent(target, at("dragover"));
+    const line = target.closest("li")!.getAttribute("data-drop");
+    await act(async () => {
+      fireEvent(target, at("drop"));
+    });
+    fireEvent.dragEnd(sidebarRow(from), { dataTransfer: dt });
+    return line;
+  }
+
+  it("dropping on the top half of a room puts the dragged room before it", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: four() });
+    expect(await dragRoom("C", "A", 105)).toBe("before");
+    expect(h.client.moveRoom).toHaveBeenCalledWith("c", 0);
+  });
+
+  it("dropping on the bottom half puts it after; the indicator clears after the drop", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: four() });
+    expect(await dragRoom("A", "B", 130)).toBe("after");
+    expect(h.client.moveRoom).toHaveBeenCalledWith("a", 1);
+    expect(sidebarRow("B").closest("li")).not.toHaveAttribute("data-drop");
+  });
+
+  it("the inbox stays first: it can't be dragged, and dropping on it means the top", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: four() });
+    expect(sidebarRow("Inbox")).not.toHaveAttribute("draggable", "true");
+    expect(sidebarRow("A")).toHaveAttribute("draggable", "true");
+    expect(await dragRoom("B", "Inbox", 105)).toBe("after");
+    expect(h.client.moveRoom).toHaveBeenCalledWith("b", 0);
+  });
+
+  it("dropping a room on itself does nothing", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: four() });
+    await dragRoom("B", "B", 105);
+    expect(h.client.moveRoom).not.toHaveBeenCalled();
+  });
+
+  it("follows rooms.reordered from the core", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: four() });
+    act(() => h.emit({ type: "rooms.reordered", roomIds: ["inbox", "c", "a", "b"] }));
+    expect(names()).toEqual(["Inbox", "C", "A", "B"]);
+  });
+
+  it("is off when read-only", async () => {
+    await renderWithStores(<AppShell />, { rooms: four(), readOnly: true });
+    expect(sidebarRow("A")).not.toHaveAttribute("draggable", "true");
+  });
+});

@@ -96,6 +96,8 @@ pub enum EventKind {
     #[serde(rename = "room.added")] RoomAdded { room: Room },
     #[serde(rename = "room.updated")] RoomUpdated { room: Room },
     #[serde(rename = "room.removed", rename_all = "camelCase")] RoomRemoved { room_id: RoomId },
+    /// The sidebar order changed; `room_ids` is the full new order (as `GET /v1/rooms` lists it).
+    #[serde(rename = "rooms.reordered", rename_all = "camelCase")] RoomsReordered { room_ids: Vec<RoomId> },
     #[serde(rename = "artifact.added")] ArtifactAdded { artifact: Artifact },
     #[serde(rename = "artifact.updated")] ArtifactUpdated { artifact: Artifact },
     #[serde(rename = "artifact.removed", rename_all = "camelCase")] ArtifactRemoved { room_id: RoomId, artifact_id: ArtifactId },

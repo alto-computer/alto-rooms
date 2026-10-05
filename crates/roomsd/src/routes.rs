@@ -82,6 +82,12 @@ pub async fn rename_room(State(st): State<AppState>, Path(room_id): Path<String>
     Ok(Json(blocking(&st, move |c| c.rename_room(&room_id, &b.name)).await?))
 }
 
+#[derive(Deserialize)] pub struct MoveRoomBody { to: usize }
+/// Moves a room to position `to` among the rooms other than the inbox; returns the full new order.
+pub async fn move_room(State(st): State<AppState>, Path(room_id): Path<String>, Json(b): Json<MoveRoomBody>) -> Result<Json<Vec<String>>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.move_room(&room_id, b.to)).await?))
+}
+
 pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>, body: String) -> Result<Json<Note>, ApiErr> {
     Ok(Json(blocking(&st, move |c| c.save_note(&date, &name, &body)).await?))
 }

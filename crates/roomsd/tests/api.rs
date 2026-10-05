@@ -400,3 +400,19 @@ async fn artifact_move_to_linked_room_is_400() {
     assert_eq!(body_json(res).await["error"], "invalid_input");
     assert!(std::fs::read_dir(team.path()).unwrap().next().is_none());
 }
+
+#[tokio::test]
+async fn room_move_reorders_and_needs_the_token() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let a = st.core.create_room("a").unwrap().id;
+    let b = st.core.create_room("b").unwrap().id;
+    let r = app.clone().oneshot(post(&format!("/v1/rooms/{b}/move"), r#"{"to":0}"#, None, API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    let r = app.clone().oneshot(post(&format!("/v1/rooms/{b}/move"), r#"{"to":0}"#, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await, serde_json::json!(["inbox", b, a]));
+    let r = app.clone().oneshot(post("/v1/rooms/inbox/move", r#"{"to":1}"#, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    let r = app.oneshot(post("/v1/rooms/nope/move", r#"{"to":0}"#, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}

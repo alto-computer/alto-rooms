@@ -380,6 +380,14 @@ export class RoomsStore {
         this.wake(e.room.id);
         return;
       }
+      case "rooms.reordered": {
+        if (e.seq <= this.roomsSeq) return;
+        const byId = new Map(this.state.rooms.map((r) => [r.id, r]));
+        const listed = new Set(e.roomIds);
+        const ordered = e.roomIds.flatMap((id) => byId.get(id) ?? []);
+        this.patch({ rooms: [...ordered, ...this.state.rooms.filter((r) => !listed.has(r.id))] });
+        return;
+      }
       case "room.removed": {
         if (e.seq <= this.roomsSeq) return;
         const rooms = this.state.rooms.filter((r) => r.id !== e.roomId);

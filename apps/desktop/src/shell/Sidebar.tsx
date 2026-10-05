@@ -8,10 +8,15 @@ import type { ViewerStore } from "@/data/viewerStore";
 import { localDate } from "@/lib/dates";
 import {
   carriesArtifact,
+  carriesRoom,
   draggingFromRoom,
+  draggingRoom,
   endArtifactDrag,
+  endRoomDrag,
   INBOX_ID,
   readArtifactPayload,
+  ROOM_DRAG_TYPE,
+  roomDragSource,
   type ArtifactDragPayload,
 } from "@/lib/drag";
 import { moveErrorCopy } from "@/lib/errors";
@@ -55,6 +60,23 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
       () => moveFailed.clear(),
       (e: unknown) => {
         console.warn("could not move the artifact", e);
+        setMoveError(moveErrorCopy(e));
+        moveFailed.flash();
+      },
+    );
+  };
+
+  // Dropping room `id` on `side` of `targetId`: `to` counts the rooms below the pinned inbox, without the dragged one.
+  const reorder = (id: string, targetId: string, side: DropSide) => {
+    if (id === targetId) return;
+    const listed = rooms.filter((r) => r.id !== INBOX_ID);
+    const others = listed.filter((r) => r.id !== id);
+    const to = targetId === INBOX_ID ? 0 : others.findIndex((r) => r.id === targetId) + (side === "after" ? 1 : 0);
+    if (to < 0 || to === listed.findIndex((r) => r.id === id)) return;
+    client.moveRoom(id, to).then(
+      () => moveFailed.clear(),
+      (e: unknown) => {
+        console.warn("could not move the room", e);
         setMoveError(moveErrorCopy(e));
         moveFailed.flash();
       },
@@ -126,6 +148,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
               active={room.id === activeRoomId}
               readOnly={readOnly}
               onMove={readOnly || !isDropTarget(room) ? undefined : move}
+              onDropRoom={readOnly ? undefined : reorder}
             />
           ))}
         </ul>
@@ -185,23 +208,79 @@ function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomI
   };
 }
 
+type DropSide = "before" | "after";
+type DropHandlers = Partial<Record<"onDragEnter" | "onDragOver" | "onDragLeave" | "onDrop", (e: DragEvent<HTMLElement>) => void>>;
+
+/**
+ * Drop handlers for reordering: a room dragged over this row lands before or after it,
+ * by which half the pointer is in. The inbox is pinned first, so dropping on it means "after".
+ */
+function useRoomDrop(roomId: string, onDropRoom: ((id: string, targetId: string, side: DropSide) => void) | undefined) {
+  const [side, setSide] = useState<DropSide | null>(null);
+  if (!onDropRoom) return { side: null, handlers: {} as DropHandlers };
+  const over = (e: DragEvent<HTMLElement>) => {
+    if (!carriesRoom(e.dataTransfer) || draggingRoom() === roomId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const r = e.currentTarget.getBoundingClientRect();
+    setSide(roomId === INBOX_ID || e.clientY >= r.top + r.height / 2 ? "after" : "before");
+  };
+  const handlers: DropHandlers = {
+    onDragEnter: over,
+    onDragOver: over,
+    onDragLeave: (e) => {
+      if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
+      setSide(null);
+    },
+    onDrop: (e) => {
+      const at = side;
+      setSide(null);
+      const id = carriesRoom(e.dataTransfer) ? e.dataTransfer.getData(ROOM_DRAG_TYPE) : "";
+      if (!id || !at) return;
+      e.preventDefault();
+      endRoomDrag();
+      onDropRoom(id, roomId, at);
+    },
+  };
+  return { side, handlers };
+}
+
+/** Runs both sets of drag handlers; each one ignores drags of the other kind. */
+function bothHandlers(a: DropHandlers, b: DropHandlers): DropHandlers {
+  const keys = ["onDragEnter", "onDragOver", "onDragLeave", "onDrop"] as const;
+  return Object.fromEntries(
+    keys.map((k) => [
+      k,
+      (e: DragEvent<HTMLElement>) => {
+        a[k]?.(e);
+        b[k]?.(e);
+      },
+    ]),
+  );
+}
+
 function RoomRow({
   room,
   active,
   readOnly,
   onMove,
+  onDropRoom,
 }: {
   room: Room;
   active: boolean;
   readOnly: boolean;
   /** Set when the row is a drop target for artifacts. */
   onMove?: (p: ArtifactDragPayload, toRoomId: string) => void;
+  /** Set when rooms can be reordered: a room was dropped on `side` of this row. */
+  onDropRoom?: (id: string, targetId: string, side: DropSide) => void;
 }) {
   const viewer = useViewerStore();
   const client = useClient();
   const [editing, setEditing] = useState(false);
   const unavailable = room.status === "unavailable";
   const drop = useDropTarget(room.id, onMove);
+  const roomDrop = useRoomDrop(room.id, onDropRoom);
+  const draggable = !!onDropRoom && room.id !== INBOX_ID;
 
   if (editing && !readOnly) {
     return (
@@ -232,7 +311,8 @@ function RoomRow({
       onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))}
       onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "room", roomId: room.id })}
       onDoubleClick={readOnly ? undefined : () => setEditing(true)}
-      {...drop.handlers}
+      {...(draggable ? roomDragSource(room.id) : {})}
+      {...bothHandlers(drop.handlers as DropHandlers, roomDrop.handlers)}
       className={cn(
         ITEM,
         ITEM_INTERACTIVE,
@@ -246,7 +326,13 @@ function RoomRow({
   );
 
   return (
-    <li>
+    <li className="relative" data-drop={roomDrop.side ?? undefined}>
+      {roomDrop.side ? (
+        <span
+          aria-hidden
+          className={cn("pointer-events-none absolute inset-x-2 h-0.5 rounded-full bg-ink", roomDrop.side === "before" ? "-top-[2px]" : "-bottom-[2px]")}
+        />
+      ) : null}
       {unavailable ? (
         <Tooltip>
           <TooltipTrigger asChild>{row}</TooltipTrigger>

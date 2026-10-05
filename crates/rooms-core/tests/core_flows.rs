@@ -877,3 +877,36 @@ fn move_artifact_relative_sibling_symlink_is_not_retargeted_to_a_same_named_file
     core.rescan_room(&b.id);
     assert!(drain(&mut rx).is_empty());
 }
+
+fn order(core: &RoomsCore) -> Vec<String> {
+    core.list_rooms().into_iter().map(|r| r.name).collect()
+}
+
+#[test]
+fn move_room_reorders_after_the_pinned_inbox_and_persists() {
+    let (d, core) = home();
+    for n in ["a", "b", "c"] { core.create_room(n).unwrap(); }
+    assert_eq!(order(&core), ["inbox", "a", "b", "c"]);
+    let c = core.list_rooms().into_iter().find(|r| r.name == "c").unwrap().id;
+    let mut rx = core.subscribe();
+
+    let ids = core.move_room(&c, 0).unwrap();
+    assert_eq!(order(&core), ["inbox", "c", "a", "b"]);
+    assert_eq!(ids, core.list_rooms().into_iter().map(|r| r.id).collect::<Vec<_>>());
+    let ev = rx.try_recv().unwrap();
+    assert!(matches!(ev.kind, EventKind::RoomsReordered { ref room_ids } if *room_ids == ids));
+
+    core.move_room(&c, 99).unwrap(); // past the end: last
+    assert_eq!(order(&core), ["inbox", "a", "b", "c"]);
+    core.move_room(&c, 1).unwrap();
+    assert_eq!(order(&core), ["inbox", "a", "c", "b"]);
+    assert_eq!(order(&RoomsCore::open(d.path()).unwrap()), ["inbox", "a", "c", "b"]);
+}
+
+#[test]
+fn move_room_refuses_the_inbox_and_unknown_rooms() {
+    let (_d, core) = home();
+    core.create_room("a").unwrap();
+    assert!(matches!(core.move_room(&"inbox".to_string(), 1).unwrap_err(), CoreError::InvalidInput(_)));
+    assert_eq!(core.move_room(&"nope".to_string(), 0).unwrap_err(), CoreError::RoomNotFound);
+}

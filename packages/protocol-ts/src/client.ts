@@ -57,6 +57,9 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     createRoom: (name: string) => write<Room>("POST", "/v1/rooms", JSON.stringify({ name })),
     linkFolder: (path: string, name?: string) => write<Room>("POST", "/v1/rooms/link", JSON.stringify({ path, name })),
     renameRoom: (id: string, name: string) => write<Room>("PATCH", `/v1/rooms/${encodeURIComponent(id)}`, JSON.stringify({ name })),
+    /** Moves a room to position `to` among the rooms other than the inbox (past the end = last); returns the new order
+     *  of all room ids. 400 `invalid_input` for the inbox, 404 `room_not_found`. Also emits `rooms.reordered`. */
+    moveRoom: (id: string, to: number) => write<string[]>("POST", `/v1/rooms/${encodeURIComponent(id)}/move`, JSON.stringify({ to })),
     saveNote: (date: string, name: string, body: string) =>
       write<Note>("PUT", `/v1/journal/${date}/notes/${encodeURIComponent(name)}`, body, "text/markdown"),
     /** Renames a note in place; 404 `not_found` if `from` is gone, 409 `note_exists` if `to` is taken (case-insensitively). */
