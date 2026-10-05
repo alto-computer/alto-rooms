@@ -138,7 +138,7 @@ mod tests {
     #[tokio::test]
     async fn blocking_maps_panic_to_internal_error() {
         let (_d, st) = state();
-        let e = blocking(&st, |_core: &RoomsCore| -> Result<(), CoreError> { panic!("boom") }).await.err().expect("must fail");
+        let Err(e) = blocking(&st, |_core: &RoomsCore| -> Result<(), CoreError> { panic!("boom") }).await else { panic!("must fail") };
         assert_eq!(e.0.code(), "internal");
         assert_eq!(e.0.status(), 500);
     }
