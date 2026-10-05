@@ -79,7 +79,7 @@ async fn probe() -> Option<String> {
         .flatten()
 }
 
-/// Facts about the token file, gathered with `symlink_metadata` (never following links).
+/// Facts about the token file, from `fstat` of the opened file (or `symlink_metadata`).
 #[derive(Debug, Clone, Copy)]
 struct TokenMeta {
     is_symlink: bool,
@@ -116,11 +116,38 @@ fn check_token_meta(m: &TokenMeta, my_uid: u32) -> Result<(), &'static str> {
         Err("token is accessible by group/other")
     } else if m.nlink != 1 {
         Err("token has multiple hard links")
-    } else if m.len > 64 {
+    } else if m.len > TOKEN_MAX {
         Err("token file too large")
     } else {
         Ok(())
     }
+}
+
+/// Largest token file accepted, in bytes.
+const TOKEN_MAX: u64 = 64;
+
+/// Opens the token without following a symlink (and without blocking on a FIFO),
+/// checks the opened file itself (`fstat`), and reads at most `TOKEN_MAX + 1` bytes,
+/// so nothing can be swapped in between the check and the read.
+fn read_token_file(path: &std::path::Path, my_uid: u32) -> Result<String, String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|e| format!("open: {:?}", e.kind()))?;
+    let meta = file.metadata().map_err(|e| format!("fstat: {:?}", e.kind()))?;
+    check_token_meta(&TokenMeta::from_metadata(&meta), my_uid).map_err(str::to_string)?;
+    let mut raw = Vec::with_capacity(TOKEN_MAX as usize + 1);
+    file.take(TOKEN_MAX + 1)
+        .read_to_end(&mut raw)
+        .map_err(|e| format!("read: {:?}", e.kind()))?;
+    if raw.len() as u64 > TOKEN_MAX {
+        return Err("token file too large".to_string());
+    }
+    let text = String::from_utf8(raw).map_err(|_| "token is not UTF-8".to_string())?;
+    Ok(text.trim().to_string())
 }
 
 fn read_token(home: &str) -> Result<String, String> {
@@ -132,12 +159,9 @@ fn read_token(home: &str) -> Result<String, String> {
         return Err(fail("home is not absolute"));
     }
     let path: PathBuf = [home, ".rooms", "token"].iter().collect();
-    let meta = std::fs::symlink_metadata(&path).map_err(|e| fail(&format!("stat: {:?}", e.kind())))?;
     // SAFETY: getuid has no preconditions and cannot fail.
     let my_uid = unsafe { libc::getuid() };
-    check_token_meta(&TokenMeta::from_metadata(&meta), my_uid).map_err(fail)?;
-    let raw = std::fs::read_to_string(&path).map_err(|e| fail(&format!("read: {:?}", e.kind())))?;
-    Ok(raw.trim().to_string())
+    read_token_file(&path, my_uid).map_err(|reason| fail(&reason))
 }
 
 fn connection(home: String) -> Result<Connection, String> {
@@ -325,6 +349,48 @@ mod tests {
         std::fs::write(&big, "x".repeat(65)).unwrap();
         std::fs::set_permissions(&big, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert!(check_token_meta(&meta(&big), uid).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn token_read_opens_without_following_links_and_reads_at_most_64_bytes() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = std::env::temp_dir().join(format!("rooms-tokread-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let uid = unsafe { libc::getuid() };
+        let private = |p: &std::path::Path| std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let ok = dir.join("ok");
+        std::fs::write(&ok, "secret-token\n").unwrap();
+        private(&ok);
+        assert_eq!(read_token_file(&ok, uid), Ok("secret-token".to_string()));
+
+        // Exactly 64 bytes is fine; 65 is not.
+        let max = dir.join("max");
+        std::fs::write(&max, "x".repeat(64)).unwrap();
+        private(&max);
+        assert_eq!(read_token_file(&max, uid).map(|t| t.len()), Ok(64));
+        let big = dir.join("big");
+        std::fs::write(&big, "x".repeat(65)).unwrap();
+        private(&big);
+        assert!(read_token_file(&big, uid).is_err());
+
+        // A symlink to a good token is refused at open (O_NOFOLLOW), not just by a stat.
+        let link = dir.join("link");
+        symlink(&ok, &link).unwrap();
+        assert!(read_token_file(&link, uid).is_err());
+
+        // A FIFO neither blocks the open nor passes the regular-file check.
+        let fifo = dir.join("fifo");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert!(read_token_file(&fifo, uid).is_err());
+
+        // The checks run on the opened file: wrong owner, group-readable.
+        assert!(read_token_file(&ok, uid + 1).is_err());
+        std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(read_token_file(&ok, uid).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
