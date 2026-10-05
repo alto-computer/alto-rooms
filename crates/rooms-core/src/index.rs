@@ -16,6 +16,8 @@ pub enum Change {
     Removed { room_id: String, artifact_id: String },
 }
 
+const SCHEMA_VERSION: i64 = 1;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY,
@@ -25,11 +27,12 @@ CREATE TABLE IF NOT EXISTS artifacts (
   title TEXT NOT NULL,
   created_at TEXT NOT NULL,
   created_day TEXT NOT NULL,
+  created_ts INTEGER NOT NULL,
   updated_at TEXT NOT NULL,
   source TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_artifacts_room ON artifacts(room_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_artifacts_day ON artifacts(created_day, created_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_room ON artifacts(room_id, created_ts);
+CREATE INDEX IF NOT EXISTS idx_artifacts_day ON artifacts(created_day, created_ts);
 ";
 
 fn err(e: rusqlite::Error) -> CoreError { CoreError::WriteFailed(e.to_string()) }
@@ -39,13 +42,23 @@ impl Index {
         let try_open = || -> rusqlite::Result<Connection> {
             let c = Connection::open(path)?;
             c.pragma_update(None, "journal_mode", "WAL")?;
+            let v: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+            if v != SCHEMA_VERSION {
+                c.execute_batch("DROP TABLE IF EXISTS artifacts;")?;
+            }
             c.execute_batch(SCHEMA)?;
+            c.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             Ok(c)
         };
         match try_open() {
             Ok(conn) => Ok(Index { conn }),
             Err(_) => {
                 let _ = std::fs::remove_file(path);
+                for suffix in ["-wal", "-shm"] {
+                    let mut p = path.as_os_str().to_owned();
+                    p.push(suffix);
+                    let _ = std::fs::remove_file(p);
+                }
                 Ok(Index { conn: try_open().map_err(err)? })
             }
         }
@@ -70,27 +83,31 @@ impl Index {
         let id = artifact_id(room_id, &e.rel_path);
         let meta = read_meta(&e.target);
         let (file_created, updated) = file_times(&e.target);
-        let existing: Option<(String, String, String)> = self.conn.query_row(
-            "SELECT created_at, title, updated_at FROM artifacts WHERE id = ?1", params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().map_err(err)?;
+        let existing: Option<(String, String, String, String)> = self.conn.query_row(
+            "SELECT created_at, title, updated_at, created_day FROM artifacts WHERE id = ?1", params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional().map_err(err)?;
         let created = meta.created.clone()
             .or_else(|| existing.as_ref().map(|x| x.0.clone()))
             .unwrap_or(file_created);
         let title = title_or_filename(&meta, &e.rel_path);
-        let day = local_day(&created).unwrap_or_default();
+        let day = match &existing {
+            Some(x) if x.0 == created => x.3.clone(),
+            _ => local_day(&created).unwrap_or_default(),
+        };
+        let ts = chrono::DateTime::parse_from_rfc3339(&created).map(|d| d.timestamp_millis()).unwrap_or(0);
         let source = serde_json::to_string(&meta.source).unwrap_or_else(|_| "{}".into());
         self.conn.execute(
-            "INSERT INTO artifacts (id, room_id, rel_path, target, title, created_at, created_day, updated_at, source)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+            "INSERT INTO artifacts (id, room_id, rel_path, target, title, created_at, created_day, created_ts, updated_at, source)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
              ON CONFLICT(id) DO UPDATE SET target=excluded.target, title=excluded.title, created_at=excluded.created_at,
-               created_day=excluded.created_day, updated_at=excluded.updated_at, source=excluded.source",
-            params![id, room_id, e.rel_path, e.target.to_string_lossy(), title, created, day, updated, source],
+               created_day=excluded.created_day, created_ts=excluded.created_ts, updated_at=excluded.updated_at, source=excluded.source",
+            params![id, room_id, e.rel_path, e.target.to_string_lossy(), title, created, day, ts, updated, source],
         ).map_err(err)?;
         let a = Artifact { id, room_id: room_id.into(), rel_path: e.rel_path.clone(), title: title.clone(),
             created_at: created, updated_at: updated.clone(), author: Author::Agent, source: meta.source };
         Ok(Some(match existing {
             None => Change::Added(a),
-            Some((_, old_title, old_updated)) if old_title == title && old_updated == updated => return Ok(None),
+            Some((_, old_title, old_updated, _)) if old_title == title && old_updated == updated => return Ok(None),
             Some(_) => Change::Updated(a),
         }))
     }
@@ -103,6 +120,15 @@ impl Index {
 
     pub fn backfill(&mut self, room_id: &str, entries: &[ScanEntry]) -> Result<Vec<Change>, CoreError> {
         let mut changes = Vec::new();
+        self.conn.execute_batch("BEGIN").map_err(err)?;
+        let r = self.backfill_inner(room_id, entries, &mut changes);
+        match r {
+            Ok(()) => { self.conn.execute_batch("COMMIT").map_err(err)?; Ok(changes) }
+            Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); Err(e) }
+        }
+    }
+
+    fn backfill_inner(&mut self, room_id: &str, entries: &[ScanEntry], changes: &mut Vec<Change>) -> Result<(), CoreError> {
         let mut seen = HashSet::new();
         for e in entries.iter().filter(|e| e.class == PathClass::Artifact) {
             seen.insert(e.rel_path.clone());
@@ -116,17 +142,17 @@ impl Index {
         for rel in existing.into_iter().filter(|r| !seen.contains(r)) {
             if let Some(c) = self.remove_one(room_id, &rel)? { changes.push(c); }
         }
-        Ok(changes)
+        Ok(())
     }
 
     pub fn list(&self, room_id: &str) -> Result<Vec<Artifact>, CoreError> {
-        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE room_id = ?1 ORDER BY created_at ASC, id ASC").map_err(err)?;
+        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE room_id = ?1 ORDER BY created_ts ASC, id ASC").map_err(err)?;
         let rows = st.query_map(params![room_id], Self::row_to_artifact).map_err(err)?;
         Ok(rows.filter_map(Result::ok).collect())
     }
 
     pub fn by_day(&self, day: &str) -> Result<Vec<(Artifact, String)>, CoreError> {
-        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE created_day = ?1 ORDER BY created_at ASC, id ASC").map_err(err)?;
+        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE created_day = ?1 ORDER BY created_ts ASC, id ASC").map_err(err)?;
         let rows = st.query_map(params![day], |r| Ok((Self::row_to_artifact(r)?, r.get::<_, String>("target")?))).map_err(err)?;
         Ok(rows.filter_map(Result::ok).collect())
     }
@@ -195,6 +221,30 @@ mod tests {
         fs::write(room.join("a.html"), r#"<meta name="rooms:created" content="2026-01-02T03:04:05+09:00">"#).unwrap();
         ix.backfill("r1", &scan_room(&room, false, false)).unwrap();
         assert_eq!(ix.list("r1").unwrap()[0].created_at, "2026-01-02T03:04:05+09:00");
+    }
+
+    #[test]
+    fn list_orders_by_instant_not_string() {
+        let (d, room) = setup();
+        let mut ix = Index::open(&d.path().join("index.sqlite")).unwrap();
+        fs::write(room.join("a.html"), r#"<meta name="rooms:created" content="2026-10-05T01:00:00Z">"#).unwrap();
+        fs::write(room.join("b.html"), r#"<meta name="rooms:created" content="2026-10-05T09:30:00+09:00">"#).unwrap();
+        ix.backfill("r1", &scan_room(&room, false, false)).unwrap();
+        let l = ix.list("r1").unwrap();
+        assert_eq!(l[0].rel_path, "b.html");
+        assert_eq!(l[1].rel_path, "a.html");
+    }
+
+    #[test]
+    fn created_day_is_kept_on_reupsert() {
+        let (d, room) = setup();
+        let mut ix = Index::open(&d.path().join("index.sqlite")).unwrap();
+        fs::write(room.join("a.html"), r#"<meta name="rooms:created" content="2026-10-05T01:00:00Z">"#).unwrap();
+        let entries = scan_room(&room, false, false);
+        ix.backfill("r1", &entries).unwrap();
+        ix.conn.execute("UPDATE artifacts SET created_day = '1999-01-01'", []).unwrap();
+        ix.backfill("r1", &entries).unwrap();
+        assert_eq!(ix.by_day("1999-01-01").unwrap().len(), 1);
     }
 
     #[test]
