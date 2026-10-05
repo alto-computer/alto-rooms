@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn initial_uppercases_or_falls_back() {
-        assert_eq!(initial_from(Some("junseon")), "J");
+        assert_eq!(initial_from(Some("jamie")), "J");
         assert_eq!(initial_from(Some("")), "나");
         assert_eq!(initial_from(None), "나");
     }
