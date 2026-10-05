@@ -76,11 +76,15 @@ export function RoomView({ roomId }: { roomId: string }) {
   } else {
     const now = new Date();
     body = (
+      // overflow-x:auto forces overflow-y to clip, so the hover shadow (0 6px 16px)
+      // needs an inset: 10px on top (16 blur − 6 offset), cancelled by -mt so the
+      // layout gap stays 24. Below, the shadow falls inside the card (over its footer),
+      // so no bottom padding: the panel's pb-6 is the whole 24px bottom gap.
       <div
         ref={stripRef}
         data-strip
         data-scroll-root
-        className="group/strip -mx-12 -mt-3 flex flex-1 items-start gap-7 overflow-x-auto overflow-y-hidden px-12 pt-3 pb-6"
+        className="group/strip -mx-12 -mt-2.5 flex flex-1 items-start gap-7 overflow-x-auto overflow-y-hidden px-12 pt-2.5"
       >
         {info
           ? artifacts.map((a) => (

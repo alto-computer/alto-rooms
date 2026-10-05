@@ -2,10 +2,17 @@ import type { Artifact, Info } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
+import { AppShell } from "@/shell/AppShell";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { ArtifactCard } from "./ArtifactCard";
 import { EmptyRoom } from "./EmptyRoom";
 import { RoomView } from "./RoomView";
+
+vi.mock("@/lib/native", () => ({
+  pickFolder: vi.fn(async () => null),
+  openInEditor: vi.fn(async () => {}),
+  viewerInitial: vi.fn(async () => "J"),
+}));
 
 afterEach(() => {
   cleanup();
@@ -90,9 +97,9 @@ describe("RoomView", () => {
     expect(active).toEqual(expect.objectContaining({ kind: "doc", artifactId: "a" }));
   });
 
-  it("shows the new-doc dot for artifacts created after the last visit, frozen at activation", async () => {
+  it("shows the new-doc dot for artifacts created after the last visit", async () => {
     const viewer = viewerFor("2026-05-01T00:00:00Z");
-    const h = await renderWithStores(<RoomView roomId="r1" />, {
+    await renderWithStores(<RoomView roomId="r1" />, {
       rooms: [room("r1", "벤치마크")],
       artifacts: { r1: [artifact("old", "옛 문서", "2026-04-01T00:00:00Z"), artifact("new", "새 문서", "2026-06-01T00:00:00Z")] },
       viewer,
@@ -100,11 +107,38 @@ describe("RoomView", () => {
     const [old, fresh] = cards();
     expect(within(old).queryByLabelText("새 문서 표시")).toBeNull();
     expect(within(fresh).getByLabelText("새 문서 표시")).toBeInTheDocument();
-    // Opening (without activating) another tab or a later lastVisit write doesn't clear the dot while viewing.
-    act(() => {
-      h.viewer.open({ kind: "new" }, { activate: false });
+  });
+
+  it("keeps the dot while the tab stays active, even when lastVisit is written for it", async () => {
+    const viewer = viewerFor("2026-05-01T00:00:00Z");
+    await renderWithStores(<AppShell />, {
+      rooms: [room("r1", "벤치마크")],
+      artifacts: { r1: [artifact("new", "새 문서", "2026-06-01T00:00:00Z")] },
+      viewer,
     });
-    expect(within(cards()[1]).getByLabelText("새 문서 표시")).toBeInTheDocument();
+    expect(within(cards()[0]).getByLabelText("새 문서 표시")).toBeInTheDocument();
+    // flush() records leaving the active room tab now, while RoomView stays mounted.
+    act(() => viewer.flush());
+    expect(Date.parse(viewer.getState().lastVisit.r1)).toBeGreaterThan(Date.parse("2026-06-01T00:00:00Z"));
+    expect(within(cards()[0]).getByLabelText("새 문서 표시")).toBeInTheDocument();
+  });
+
+  it("clears the dot after leaving the room tab and coming back", async () => {
+    const viewer = viewerFor("2026-05-01T00:00:00Z");
+    await renderWithStores(<AppShell />, {
+      rooms: [room("r1", "벤치마크")],
+      artifacts: { r1: [artifact("new", "새 문서", "2026-06-01T00:00:00Z")] },
+      viewer,
+    });
+    const roomTab = viewer.getState().activeId!;
+    expect(within(cards()[0]).getByLabelText("새 문서 표시")).toBeInTheDocument();
+    act(() => {
+      viewer.open({ kind: "new" }); // leaves r1: records lastVisit, unmounts RoomView
+    });
+    expect(screen.queryAllByTestId("artifact-card")).toHaveLength(0);
+    act(() => viewer.activate(roomTab));
+    expect(cards()).toHaveLength(1);
+    expect(within(cards()[0]).queryByLabelText("새 문서 표시")).toBeNull();
   });
 
   it("an empty room shows the empty state with the path chip", async () => {
