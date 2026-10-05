@@ -44,7 +44,8 @@ impl RoomsCore {
         for e in std::fs::read_dir(&home)?.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
-            if !p.is_dir() || name.starts_with('.') || name == "journal" { continue; }
+            let is_real_dir = e.file_type().map(|t| t.is_dir() && !t.is_symlink()).unwrap_or(false);
+            if !is_real_dir || name.starts_with('.') || name == "journal" { continue; }
             if state.rooms.iter().any(|r| r.path == p) { continue; }
             let (dev, ino) = inode_of(&p).unzip();
             if let (Some(dv), Some(io)) = (dev, ino) {
@@ -114,15 +115,24 @@ impl RoomsCore {
 
     pub fn backfill_all(&self) -> Result<(), CoreError> {
         let roots = { Self::all_roots(&self.inner.lock().unwrap()) };
-        for (id, _, _) in roots { self.rescan_room(&id); }
+        let mut first_err = None;
+        for (id, _, _) in roots {
+            if let Err(e) = self.try_rescan_room(&id) { first_err.get_or_insert(e); }
+        }
+        match first_err { Some(e) => Err(e), None => Ok(()) }
+    }
+
+    fn try_rescan_room(&self, room: &RoomId) -> Result<(), CoreError> {
+        let Some((root, kind)) = self.room_root(room) else { return Ok(()) };
+        let entries = scan_room(&root, kind == RoomKind::Linked, kind == RoomKind::Journal);
+        let mut inner = self.inner.lock().unwrap();
+        let ch = inner.index.backfill(room, &entries)?;
+        self.emit_changes(&mut inner, ch);
         Ok(())
     }
 
     pub fn rescan_room(&self, room: &RoomId) {
-        let Some((root, kind)) = self.room_root(room) else { return };
-        let entries = scan_room(&root, kind == RoomKind::Linked, kind == RoomKind::Journal);
-        let mut inner = self.inner.lock().unwrap();
-        if let Ok(ch) = inner.index.backfill(room, &entries) { self.emit_changes(&mut inner, ch); }
+        if let Err(e) = self.try_rescan_room(room) { eprintln!("rooms-core: rescan of room {room} failed: {e}"); }
     }
 
     pub fn apply_fs_change(&self, abs_path: &Path) {
@@ -166,9 +176,11 @@ impl RoomsCore {
         Ok(JournalDay { date: date.clone(), artifacts, notes })
     }
 
-    fn slug_taken(inner: &Inner, slug: &str) -> bool {
+    fn slug_taken(inner: &Inner, slug: &str) -> bool { Self::slug_taken_except(inner, slug, None) }
+
+    fn slug_taken_except(inner: &Inner, slug: &str, except: Option<&str>) -> bool {
         let key = slug_key(slug);
-        inner.state.rooms.iter().any(|r| slug_key(&r.name) == key || r.path.file_name().map(|f| slug_key(&f.to_string_lossy()) == key).unwrap_or(false))
+        inner.state.rooms.iter().filter(|r| Some(r.id.as_str()) != except).any(|r| slug_key(&r.name) == key || r.path.file_name().map(|f| slug_key(&f.to_string_lossy()) == key).unwrap_or(false))
     }
 
     pub fn create_room(&self, name: &str) -> Result<Room, CoreError> {
@@ -214,12 +226,14 @@ impl RoomsCore {
         let mut inner = self.inner.lock().unwrap();
         let rec = inner.state.find(room).cloned().ok_or(CoreError::RoomNotFound)?;
         if rec.id == "inbox" { return Err(CoreError::InvalidRoomName); }
-        let others_taken = inner.state.rooms.iter().filter(|r| r.id != rec.id)
-            .any(|r| slug_key(&r.name) == slug_key(&room_slug(&name)));
-        if others_taken { return Err(CoreError::RoomExists); }
+        if Self::slug_taken_except(&inner, &room_slug(&name), Some(&rec.id)) { return Err(CoreError::RoomExists); }
         let new_path = if rec.kind == RoomKind::Owned {
             let p = inner.home.join(room_slug(&name));
-            if p != rec.path { std::fs::rename(&rec.path, &p)?; }
+            if p != rec.path {
+                let same_dir = std::fs::canonicalize(&p).ok() == std::fs::canonicalize(&rec.path).ok();
+                if !same_dir && std::fs::symlink_metadata(&p).is_ok() { return Err(CoreError::RoomExists); }
+                std::fs::rename(&rec.path, &p)?;
+            }
             p
         } else { rec.path.clone() };
         {
@@ -255,6 +269,7 @@ impl RoomsCore {
         let (root, _) = self.room_root(room).ok_or(CoreError::RoomNotFound)?;
         let rel_p = Path::new(rel);
         if rel_p.is_absolute() || rel_p.components().any(|c| matches!(c, std::path::Component::ParentDir)) { return Err(CoreError::PathEscape); }
+        if rel_p.components().any(|c| matches!(c, std::path::Component::Normal(n) if n.to_string_lossy().starts_with('.'))) { return Err(CoreError::PathEscape); }
         let root_real = std::fs::canonicalize(&root)?;
         let joined = root.join(rel_p);
         // every parent directory must resolve inside the room (no directory-link escape)
@@ -263,6 +278,7 @@ impl RoomsCore {
         if !parent_real.starts_with(&root_real) { return Err(CoreError::PathEscape); }
         let meta = std::fs::symlink_metadata(&joined).map_err(|_| CoreError::RoomNotFound)?;
         let target = std::fs::canonicalize(&joined).map_err(|_| CoreError::PathEscape)?;
+        if !target.is_file() { return Err(CoreError::PathEscape); }
         if meta.file_type().is_symlink() {
             let is_html = target.extension().and_then(|e| e.to_str()).map(|e| matches!(e.to_ascii_lowercase().as_str(), "html" | "htm")).unwrap_or(false);
             if !(target.is_file() && is_html) { return Err(CoreError::PathEscape); }

@@ -115,3 +115,37 @@ fn seq_increases_monotonically() {
     core.create_room("y").unwrap();
     assert_eq!(core.current_seq(), s0 + 2);
 }
+
+#[test]
+fn rename_refuses_slug_collision_with_existing_folder() {
+    let (d, core) = home();
+    core.create_room("a b").unwrap();
+    let x = core.create_room("x").unwrap();
+    assert_eq!(core.rename_room(&x.id, "a-b").unwrap_err(), CoreError::RoomExists);
+    assert!(d.path().join("a-b").is_dir());
+    assert!(d.path().join("x").is_dir());
+}
+
+#[test]
+fn open_does_not_adopt_symlinked_dirs() {
+    let d = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    symlink(outside.path(), d.path().join("lnk")).unwrap();
+    let core = RoomsCore::open(d.path()).unwrap();
+    assert!(!core.list_rooms().iter().any(|r| r.name == "lnk"));
+}
+
+#[test]
+fn resolve_file_rejects_dotfiles_and_directories() {
+    let (_d, core) = home();
+    let team = tempfile::tempdir().unwrap();
+    let root = team.path().join("r");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::create_dir_all(root.join("sub")).unwrap();
+    fs::write(root.join(".env"), "s").unwrap();
+    fs::write(root.join(".git/config"), "s").unwrap();
+    let r = core.link_folder(&root, Some("r")).unwrap();
+    assert_eq!(core.resolve_file(&r.id, ".env").unwrap_err(), CoreError::PathEscape);
+    assert_eq!(core.resolve_file(&r.id, ".git/config").unwrap_err(), CoreError::PathEscape);
+    assert!(core.resolve_file(&r.id, "sub").is_err());
+}
