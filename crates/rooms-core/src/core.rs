@@ -33,6 +33,44 @@ pub struct RoomsCore {
 
 const MAX_NOTE_BYTES: usize = 1_048_576;
 
+enum HomeChange { Added(RoomId), Renamed(RoomId), Removed(RoomId) }
+
+/// Reconciles direct children of home with the owned rooms in `state` (spec §2 / Q3):
+/// a new real folder is adopted, a folder whose inode matches a known room is that room renamed
+/// (path + display name follow, id kept), and an owned room whose folder is gone with no inode
+/// match is removed. `.`-folders, `journal` and `inbox` are fixed roots and never adopted/removed.
+/// If home cannot be listed nothing is changed.
+fn reconcile_home_dirs(home: &Path, state: &mut StateStore) -> Vec<HomeChange> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(home) else { return out };
+    for e in rd.flatten() {
+        let p = e.path();
+        let name = e.file_name().to_string_lossy().to_string();
+        let is_real_dir = e.file_type().map(|t| t.is_dir() && !t.is_symlink()).unwrap_or(false);
+        if !is_real_dir || name.starts_with('.') || name == "journal" || name == "inbox" { continue; }
+        if state.rooms.iter().any(|r| r.path == p) { continue; }
+        let (dev, ino) = inode_of(&p).unzip();
+        if let (Some(dv), Some(io)) = (dev, ino) {
+            if let Some(id) = state.find_by_inode(dv, io).map(|r| r.id.clone()) {
+                let rec = state.find_mut(&id).unwrap();
+                rec.path = p.clone();
+                rec.name = name.clone();
+                out.push(HomeChange::Renamed(id));
+                continue;
+            }
+        }
+        let id: RoomId = nanoid::nanoid!(12);
+        state.rooms.push(RoomRecord { id: id.clone(), name, kind: RoomKind::Owned, path: p, dev, ino });
+        out.push(HomeChange::Added(id));
+    }
+    let gone: Vec<RoomId> = state.rooms.iter()
+        .filter(|r| r.kind == RoomKind::Owned && r.id != "inbox" && r.path.starts_with(home) && std::fs::symlink_metadata(&r.path).is_err())
+        .map(|r| r.id.clone()).collect();
+    state.rooms.retain(|r| !gone.contains(&r.id));
+    out.extend(gone.into_iter().map(HomeChange::Removed));
+    out
+}
+
 impl RoomsCore {
     pub fn open(home: &Path) -> Result<Self, CoreError> {
         std::fs::create_dir_all(home)?;
@@ -48,26 +86,14 @@ impl RoomsCore {
                 path: home.join("inbox"), dev, ino });
             state.save()?;
         }
-        // adopt owned folders created in Finder
-        for e in std::fs::read_dir(&home)?.flatten() {
-            let p = e.path();
-            let name = e.file_name().to_string_lossy().to_string();
-            let is_real_dir = e.file_type().map(|t| t.is_dir() && !t.is_symlink()).unwrap_or(false);
-            if !is_real_dir || name.starts_with('.') || name == "journal" { continue; }
-            if state.rooms.iter().any(|r| r.path == p) { continue; }
-            let (dev, ino) = inode_of(&p).unzip();
-            if let (Some(dv), Some(io)) = (dev, ino) {
-                if let Some(id) = state.find_by_inode(dv, io).map(|r| r.id.clone()) {
-                    let rec = state.find_mut(&id).unwrap();
-                    rec.path = p.clone();
-                    rec.name = name.clone();
-                    continue;
-                }
-            }
-            state.rooms.push(RoomRecord { id: nanoid::nanoid!(12), name, kind: RoomKind::Owned, path: p, dev, ino });
-        }
+        // adopt / follow / drop owned folders changed in Finder while we were not running
+        let home_changes = reconcile_home_dirs(&home, &mut state);
         state.save()?;
-        let index = Index::open(&dot.join("index.sqlite"))?;
+        let mut index = Index::open(&dot.join("index.sqlite"))?;
+        for c in &home_changes {
+            if let HomeChange::Removed(id) = c { index.drop_room(id)?; }
+        }
+        let _ = index.take_touched_days();
         let (tx, _) = broadcast::channel(1024);
         Ok(RoomsCore { inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, seq: 0, unavailable: HashSet::new() })), tx, home })
     }
@@ -175,6 +201,41 @@ impl RoomsCore {
             .map(|(id, _, _)| id)
     }
 
+    /// Re-reads the direct children of home (called by the watcher when a batch touches one):
+    /// emits room.added / room.updated (Finder rename, same id) / room.removed. Returns the ids
+    /// of added or renamed rooms so the caller can scan them.
+    pub fn sync_home_dirs(&self) -> Vec<RoomId> {
+        let mut inner = self.inner.lock().unwrap();
+        let home = inner.home.clone();
+        let changes = reconcile_home_dirs(&home, &mut inner.state);
+        if changes.is_empty() { return Vec::new(); }
+        if let Err(e) = inner.state.save() { eprintln!("rooms-core: saving state after home sync failed: {e}"); }
+        let mut touched = Vec::new();
+        for c in changes {
+            match &c {
+                HomeChange::Added(id) | HomeChange::Renamed(id) => {
+                    let id = id.clone();
+                    let added = matches!(c, HomeChange::Added(_));
+                    let Some(rec) = inner.state.find(&id).cloned() else { continue };
+                    let room = Self::to_room(&inner, &rec);
+                    let kind = if added { EventKind::RoomAdded { room } } else { EventKind::RoomUpdated { room } };
+                    self.emit(&mut inner, kind);
+                    touched.push(id);
+                }
+                HomeChange::Removed(id) => {
+                    let id = id.clone();
+                    inner.unavailable.remove(&id);
+                    self.emit(&mut inner, EventKind::RoomRemoved { room_id: id.clone() });
+                    match inner.index.drop_room(&id) {
+                        Ok(ch) => self.emit_changes(&mut inner, ch),
+                        Err(e) => eprintln!("rooms-core: dropping index rows of room {id} failed: {e}"),
+                    }
+                }
+            }
+        }
+        touched
+    }
+
     pub fn apply_fs_change(&self, abs_path: &Path) {
         if let Some(id) = self.room_for_path(abs_path) { self.rescan_room(&id); }
     }
@@ -226,7 +287,9 @@ impl RoomsCore {
         let mut inner = self.inner.lock().unwrap();
         if Self::slug_taken(&inner, &slug) { return Err(CoreError::RoomExists); }
         let path = inner.home.join(&slug);
-        std::fs::create_dir(&path)?;
+        // A plain folder of that name (not yet adopted) or any other entry: the name is taken.
+        if std::fs::symlink_metadata(&path).is_ok() { return Err(CoreError::RoomExists); }
+        std::fs::create_dir(&path).map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { CoreError::RoomExists } else { e.into() })?;
         let (dev, ino) = inode_of(&path).unzip();
         let rec = RoomRecord { id: nanoid::nanoid!(12), name, kind: RoomKind::Owned, path, dev, ino };
         inner.state.rooms.push(rec.clone());

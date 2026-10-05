@@ -40,15 +40,20 @@ fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<Has
 pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     let c2 = core.clone();
     let rooms_dir = core.home().join(".rooms");
+    let home = core.home().to_path_buf();
     let debouncer = new_debouncer(Duration::from_millis(300), None, move |res: DebounceEventResult| {
         match res {
             Ok(events) => {
-                let mut rooms = std::collections::HashSet::new();
-                for ev in events {
-                    for p in &ev.paths {
-                        if p.starts_with(&rooms_dir) { continue; }
-                        if let Some(id) = c2.room_for_path(p) { rooms.insert(id); }
-                    }
+                let paths: Vec<PathBuf> = events.iter().flat_map(|ev| ev.paths.iter())
+                    .filter(|p| !p.starts_with(&rooms_dir)).cloned().collect();
+                // A direct child of home (or a path no room owns yet) may be a folder created,
+                // renamed or deleted in Finder: reconcile owned rooms first (emits room.* events).
+                let mut rooms = HashSet::new();
+                if paths.iter().any(|p| p.parent() == Some(home.as_path()) || c2.room_for_path(p).is_none()) {
+                    rooms.extend(c2.sync_home_dirs());
+                }
+                for p in &paths {
+                    if let Some(id) = c2.room_for_path(p) { rooms.insert(id); }
                 }
                 for id in rooms { c2.rescan_room(&id); }
             }

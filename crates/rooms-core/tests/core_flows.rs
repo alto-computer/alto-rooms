@@ -385,3 +385,53 @@ fn day_move_notifies_old_and_new_day() {
     assert_eq!(journal_dates(&drain(&mut rx)), vec!["2026-10-07".to_string(), "2026-10-09".to_string()]);
     assert_eq!(core.journal_day(&"2026-10-09".to_string()).unwrap().artifacts.len(), 1);
 }
+
+#[test]
+fn finder_mkdir_under_home_adopts_room_then_adds_artifact() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::create_dir(d.path().join("finder")).unwrap();
+    fs::write(d.path().join("finder/x.html"), "<title>X</title>").unwrap();
+    let evs = wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { .. }), Duration::from_secs(3));
+    let added = evs.iter().position(|e| matches!(&e.kind, EventKind::RoomAdded { room } if room.name == "finder" && room.kind == RoomKind::Owned));
+    let art = evs.iter().position(|e| matches!(e.kind, EventKind::ArtifactAdded { .. })).unwrap();
+    assert!(added.is_some_and(|a| a < art), "room.added must precede artifact.added: {evs:?}");
+}
+
+#[test]
+fn finder_rename_keeps_room_id_and_updates_path() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::rename(d.path().join("a"), d.path().join("b")).unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::RoomUpdated { room } if room.id == r.id && room.path.ends_with("/b")), Duration::from_secs(3));
+    let rooms = core.list_rooms();
+    let got = rooms.iter().find(|x| x.id == r.id).unwrap();
+    assert!(got.path.ends_with("/b"));
+    assert_eq!(got.name, "b");
+    assert_eq!(rooms.iter().filter(|x| x.path.ends_with("/b")).count(), 1, "no duplicate adoption: {rooms:?}");
+}
+
+#[test]
+fn finder_delete_removes_owned_room() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("gone").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::remove_dir(d.path().join("gone")).unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::RoomRemoved { room_id } if *room_id == r.id), Duration::from_secs(3));
+    assert!(!core.list_rooms().iter().any(|x| x.id == r.id));
+    assert_eq!(core.list_artifacts(&r.id).unwrap_err(), CoreError::RoomNotFound);
+}
+
+#[test]
+fn create_room_on_existing_plain_folder_is_room_exists() {
+    let (d, core) = home();
+    fs::create_dir(d.path().join("plain")).unwrap();
+    assert_eq!(core.create_room("plain").unwrap_err(), CoreError::RoomExists);
+}
