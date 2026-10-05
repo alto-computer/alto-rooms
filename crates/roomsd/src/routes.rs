@@ -88,7 +88,7 @@ pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(Stri
 
 pub async fn get_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>) -> Result<Response, ApiErr> {
     let body = blocking(&st, move |c| c.read_note(&date, &name)).await?;
-    Ok(([("content-type", "text/markdown; charset=utf-8")], body).into_response())
+    Ok(([("content-type", "text/markdown; charset=utf-8"), ("x-content-type-options", "nosniff")], body).into_response())
 }
 
 pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>) -> Result<Response, ApiErr> {

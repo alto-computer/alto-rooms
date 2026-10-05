@@ -50,16 +50,44 @@ impl Default for NetConfig {
     fn default() -> Self { NetConfig { api_port: 4317, files_port: 4318, dev_origin: None } }
 }
 
+/// Accepts only `http(s)://host[:port]` (no path, query, fragment, trailing slash); anything else
+/// (`null`, `*`, empty, ...) is `None`. Never lets the sandboxed-iframe origin `null` through.
+pub fn parse_dev_origin(raw: &str) -> Option<String> {
+    let v = raw.trim();
+    let rest = v.strip_prefix("http://").or_else(|| v.strip_prefix("https://"))?;
+    let (host, port) = match rest.split_once(':') { Some((h, p)) => (h, Some(p)), None => (rest, None) };
+    let host_ok = !host.is_empty() && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    let port_ok = port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.chars().all(|c| c.is_ascii_digit()));
+    (host_ok && port_ok).then(|| v.to_string())
+}
+
+/// `None` (unset) gives `default`; otherwise a nonzero u16 or an error naming the variable.
+pub fn parse_port(var: &str, raw: Option<&str>, default: u16) -> Result<u16, String> {
+    match raw {
+        None => Ok(default),
+        Some(v) => match v.trim().parse::<u16>() {
+            Ok(p) if p != 0 => Ok(p),
+            _ => Err(format!("{var}={v:?} is not a valid port (1-65535)")),
+        },
+    }
+}
+
 impl NetConfig {
-    /// Reads `ROOMS_API_PORT`, `ROOMS_FILES_PORT`, `ROOMS_DEV_ORIGIN`; unset or unparsable ports keep the defaults.
-    pub fn from_env() -> Self {
+    /// Reads `ROOMS_API_PORT`, `ROOMS_FILES_PORT`, `ROOMS_DEV_ORIGIN`. Invalid ports are an error;
+    /// an invalid dev origin is warned about and ignored.
+    pub fn from_env() -> Result<Self, String> {
         let d = NetConfig::default();
-        let port = |k: &str, dflt: u16| std::env::var(k).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(dflt);
-        NetConfig {
-            api_port: port("ROOMS_API_PORT", d.api_port),
-            files_port: port("ROOMS_FILES_PORT", d.files_port),
-            dev_origin: std::env::var("ROOMS_DEV_ORIGIN").ok().filter(|v| !v.trim().is_empty()),
-        }
+        let get = |k: &str| std::env::var(k).ok();
+        let dev_origin = get("ROOMS_DEV_ORIGIN").and_then(|raw| {
+            let o = parse_dev_origin(&raw);
+            if o.is_none() { eprintln!("roomsd: ignoring invalid ROOMS_DEV_ORIGIN={raw:?} (want http(s)://host[:port])"); }
+            o
+        });
+        Ok(NetConfig {
+            api_port: parse_port("ROOMS_API_PORT", get("ROOMS_API_PORT").as_deref(), d.api_port)?,
+            files_port: parse_port("ROOMS_FILES_PORT", get("ROOMS_FILES_PORT").as_deref(), d.files_port)?,
+            dev_origin,
+        })
     }
 }
 
@@ -109,7 +137,27 @@ pub fn build_files_router(state: AppState) -> Router {
 
 #[cfg(test)]
 mod tests {
-    use super::{acquire_home_lock, write_token};
+    use super::{acquire_home_lock, parse_dev_origin, parse_port, write_token};
+
+    #[test]
+    fn dev_origin_parsing() {
+        assert_eq!(parse_dev_origin("http://localhost:4173").as_deref(), Some("http://localhost:4173"));
+        assert_eq!(parse_dev_origin("https://a.b:8443").as_deref(), Some("https://a.b:8443"));
+        assert_eq!(parse_dev_origin(" http://localhost:1420 ").as_deref(), Some("http://localhost:1420"));
+        for bad in ["null", "*", "", "http://x/", "http://x/path", "ftp://x", "localhost:1420", "http://", "http://x:", "http://x:abc", "http://x?q", "http://x#f", "http://a b"] {
+            assert_eq!(parse_dev_origin(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn port_validation() {
+        assert_eq!(parse_port("X", None, 4317), Ok(4317));
+        assert_eq!(parse_port("X", Some(" 9000 "), 4317), Ok(9000));
+        for bad in ["abc", "0", "", "70000", "-1"] {
+            let e = parse_port("ROOMS_API_PORT", Some(bad), 4317).unwrap_err();
+            assert!(e.contains("ROOMS_API_PORT"), "{e}");
+        }
+    }
 
     #[test]
     fn second_home_lock_fails_until_first_is_dropped() {

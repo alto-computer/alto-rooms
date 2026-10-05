@@ -226,6 +226,7 @@ async fn note_get_returns_markdown_and_404_for_missing() {
     let r = app.clone().oneshot(Request::get("/v1/journal/2026-10-05/notes/%EA%B3%84%ED%9A%8D").header("host", "127.0.0.1:4317").body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     assert!(r.headers()["content-type"].to_str().unwrap().starts_with("text/markdown"));
+    assert_eq!(r.headers()["x-content-type-options"], "nosniff");
     assert_eq!(&r.into_body().collect().await.unwrap().to_bytes()[..], "- 할 일".as_bytes());
     let r = app.oneshot(Request::get("/v1/journal/2026-10-05/notes/none").header("host", "127.0.0.1:4317").body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
@@ -247,4 +248,47 @@ async fn custom_ports_and_dev_origin() {
     let mut evil = post("/v1/rooms", r#"{"name":"b"}"#, Some("t0k"), "127.0.0.1:14317");
     evil.headers_mut().insert("origin", "http://localhost:9999".parse().unwrap());
     assert_eq!(app.oneshot(evil).await.unwrap().status(), StatusCode::FORBIDDEN);
+}
+
+fn dev_app() -> axum::Router {
+    let d = tempfile::tempdir().unwrap();
+    let core = RoomsCore::open(d.path()).unwrap();
+    let net = NetConfig { api_port: 14317, files_port: 14318, dev_origin: Some("http://localhost:4173".into()) };
+    let st = AppState { core, token: "t0k".into(), read_only: false, files_origin: "http://127.0.0.1:14318".into(), net };
+    std::mem::forget(d);
+    build_api_router(st).layer(MockConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()))
+}
+
+fn preflight(origin: &str) -> Request<Body> {
+    Request::builder().method("OPTIONS").uri("/v1/rooms").header("host", "127.0.0.1:14317")
+        .header("origin", origin).header("access-control-request-method", "POST").body(Body::empty()).unwrap()
+}
+
+#[tokio::test]
+async fn null_origin_is_rejected_even_with_dev_origin() {
+    let app = dev_app();
+    let mut w = post("/v1/rooms", r#"{"name":"a"}"#, Some("t0k"), "127.0.0.1:14317");
+    w.headers_mut().insert("origin", "null".parse().unwrap());
+    assert_eq!(app.clone().oneshot(w).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let r = app.oneshot(preflight("null")).await.unwrap();
+    assert!(r.headers().get("access-control-allow-origin").is_none());
+}
+
+#[tokio::test]
+async fn cors_preflight_allows_dev_origin() {
+    let r = dev_app().oneshot(preflight("http://localhost:4173")).await.unwrap();
+    assert_eq!(r.headers()["access-control-allow-origin"], "http://localhost:4173");
+}
+
+#[tokio::test]
+async fn files_host_guard_uses_custom_port() {
+    let d = tempfile::tempdir().unwrap();
+    let core = RoomsCore::open(d.path()).unwrap();
+    let net = NetConfig { api_port: 14317, files_port: 14318, dev_origin: None };
+    let st = AppState { core, token: "t0k".into(), read_only: false, files_origin: "http://127.0.0.1:14318".into(), net };
+    let app = build_files_router(st);
+    let bad = app.clone().oneshot(get("/x/y.html", "127.0.0.1:4318")).await.unwrap();
+    assert_eq!(bad.status(), StatusCode::FORBIDDEN);
+    let ok = app.oneshot(get("/x/y.html", "127.0.0.1:14318")).await.unwrap();
+    assert_ne!(ok.status(), StatusCode::FORBIDDEN);
 }

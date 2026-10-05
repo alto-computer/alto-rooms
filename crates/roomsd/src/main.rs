@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 async fn main() {
     let home = std::env::var("ROOMS_HOME").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().expect("home dir").join("rooms"));
-    let net = NetConfig::from_env();
+    let net = NetConfig::from_env().unwrap_or_else(|e| { eprintln!("roomsd: {e}"); std::process::exit(2) });
     let (ap, fp) = (net.api_port, net.files_port);
     // Bind and lock BEFORE touching state.json or the token: a second daemon must exit 2 without
     // rewriting the first one's token (which would lock its clients out) or racing its state.
