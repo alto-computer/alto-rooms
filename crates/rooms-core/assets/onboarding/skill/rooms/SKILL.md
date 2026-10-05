@@ -1,8 +1,8 @@
 ---
 name: rooms
-description: "Rooms(HTML 아티팩트를 주제별 방 폴더에 모아 보는 앱)에 아티팩트를 정리한다. 트리거: \"rooms 정리해줘\", \"rooms 다시 정리해줘\", \"~/rooms/ONBOARD.md\" 읽기·따르기, \"방에 정리\", \"방에 넣어줘\", \"Rooms에 넣어줘\", \"inbox에 넣어줘\", 최근 HTML을 방으로 분류, 그리고 HTML 아티팩트를 만들었을 때(.html/.htm 파일을 새로 썼을 때) 알맞은 방에 링크하기. 원본은 옮기지 않고 심볼릭 링크만 만든다."
+description: "Rooms(HTML 아티팩트를 주제별 방 폴더에 모아 보는 앱)에 아티팩트를 정리한다. 트리거: \"rooms 정리해줘\", \"rooms 다시 정리해줘\", \"~/rooms/ONBOARD.md\" 읽기·따르기, \"방에 정리\", \"방에 넣어줘\", \"Rooms에 넣어줘\", \"inbox에 넣어줘\", \"Journal에 넣어줘\", \"오늘 Journal에\", 복습/Dream HTML 만들기, 최근 HTML을 방으로 분류, 그리고 HTML 아티팩트를 만들었을 때(.html/.htm 파일을 새로 썼을 때) 알맞은 방에 링크하기. 원본은 옮기지 않고 심볼릭 링크만 만든다."
 ---
-<!-- rooms-onboarding v2 -->
+<!-- rooms-onboarding v3 -->
 
 # rooms 스킬
 
@@ -108,6 +108,20 @@ ln -s "<원본 절대 경로>" "<home>/<slug>/<원본 파일 이름>"
 - 알맞은 방이 없거나 확신이 없으면 `"<home>/inbox/<파일 이름>"`에 링크한다.
 - 이미 `<home>` 아래에 직접 쓴 파일은 링크하지 않는다.
 
+## Journal에 넣기
+
+사용자가 "오늘 Journal에 넣어줘"처럼 Journal에 HTML을 넣어 달라고 하면, 링크가 아니라 **파일 자체를** 그날 폴더에 쓴다. 에이전트가 새로 만드는 아티팩트이기 때문이다.
+
+```sh
+mkdir -p "<home>/journal/<YYYY-MM-DD>"
+```
+
+- 경로: `"<home>/journal/<YYYY-MM-DD>/<이름>.html"`. 날짜는 **로컬 날짜**다 (`date +%F`).
+- 이름은 짧은 주제 이름. 같은 이름이 있으면 ` (2)`, ` (3)` …을 붙인다.
+- 복습이나 Dream을 만들어 달라고 하면 이름을 `dream.html`로 한다. Journal에서 그날 맨 앞에 "복습"으로 보인다. 이미 있으면 덮어쓸지 먼저 묻는다.
+- 그 폴더의 `.md` 노트는 사용자의 것이다. 읽거나 고치거나 지우지 않는다.
+- Journal에 쓴 파일은 방에 다시 링크하지 않는다.
+
 ## 한 줄 추가 (묻고 나서만)
 
 처음 정리를 마치면 사용자에게 묻는다: 아래 한 줄을 `~/.claude/CLAUDE.md`(Claude Code) 또는 `~/.codex/AGENTS.md`(Codex)에 추가할까요? "예"일 때만, 파일 끝에 한 번만 추가한다 (이미 있으면 추가하지 않는다).
@@ -120,6 +134,6 @@ ln -s "<원본 절대 경로>" "<home>/<slug>/<원본 파일 이름>"
 
 - 원본 파일을 옮기거나, 고치거나, 지우지 않는다.
 - linked(연결된 폴더) 방 안에는 아무것도 쓰지 않는다.
-- `journal`, `inbox`라는 방을 새로 만들지 않는다 (`inbox`에 링크하는 것은 된다).
+- `journal`, `inbox`라는 방을 새로 만들지 않는다 (`inbox`에 링크하는 것, "Journal에 넣기"대로 `journal/<날짜>/`에 HTML을 쓰는 것은 된다).
 - `<home>/.rooms`는 건드리지 않는다. 스킬 원본을 읽는 것만 된다 (`state.json`은 `find_html.py`가 읽기만 한다).
 - 토큰(`<home>/.rooms/token`)을 읽거나, 출력하거나, 명령에 넣지 않는다.

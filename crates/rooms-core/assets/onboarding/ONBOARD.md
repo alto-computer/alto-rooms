@@ -1,4 +1,4 @@
-<!-- rooms-onboarding v2 -->
+<!-- rooms-onboarding v3 -->
 # Rooms 온보딩 (에이전트용)
 
 Rooms는 HTML 아티팩트를 주제별 방(폴더)에 모아 보여주는 앱이다. 방은 Home 아래의 폴더 하나이고, 원본을 옮기지 않고 원본을 가리키는 파일 링크(심볼릭 링크)로 넣는다.
