@@ -13,11 +13,23 @@ fn is_html(p: &Path) -> bool {
     matches!(p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(), Some("html" | "htm"))
 }
 
+fn has_control_char(s: &str) -> bool {
+    s.chars().any(|c| c.is_control())
+}
+
 pub fn classify_path(rel: &Path, in_journal: bool) -> PathClass {
-    let parts: Vec<&str> = rel.components().filter_map(|c| match c {
-        Component::Normal(s) => s.to_str(),
-        _ => None,
-    }).collect();
+    let mut parts: Vec<&str> = Vec::new();
+    for c in rel.components() {
+        match c {
+            Component::Normal(s) => {
+                match s.to_str() {
+                    Some(s_str) => parts.push(s_str),
+                    None => return PathClass::Ignored,
+                }
+            }
+            _ => return PathClass::Ignored,
+        }
+    }
     if parts.is_empty() { return PathClass::Ignored; }
     for dir in &parts[..parts.len() - 1] {
         if dir.starts_with('.') || DEFAULT_IGNORED_DIRS.contains(dir) { return PathClass::Ignored; }
@@ -34,7 +46,7 @@ pub fn classify_path(rel: &Path, in_journal: bool) -> PathClass {
 pub fn validate_room_name(name: &str) -> Result<String, CoreError> {
     let t = name.trim();
     let n = t.chars().count();
-    if n == 0 || n > 80 || t.contains(['/', '\\', ':']) || t.contains("..") { return Err(CoreError::InvalidRoomName); }
+    if n == 0 || n > 80 || t.contains(['/', '\\', ':']) || t.contains("..") || t.starts_with('.') || has_control_char(t) { return Err(CoreError::InvalidRoomName); }
     let key = slug_key(&room_slug(t));
     if RESERVED_NAMES.contains(&key.as_str()) { return Err(CoreError::InvalidRoomName); }
     Ok(t.to_string())
@@ -49,12 +61,20 @@ pub fn slug_key(slug: &str) -> String {
 }
 
 pub fn validate_note_name(name: &str) -> Result<String, CoreError> {
-    let base = name.trim().trim_end_matches(".md");
-    let n = base.chars().count();
-    if n == 0 || n > 60 || base.contains(['/', '\\', ':']) || base.contains("..") || base.starts_with('.') {
+    let trimmed = name.trim();
+    // Strip exactly ONE trailing ".md" (case-insensitively)
+    let base = if trimmed.len() >= 3 && trimmed[trimmed.len()-3..].eq_ignore_ascii_case(".md") {
+        &trimmed[..trimmed.len()-3]
+    } else {
+        trimmed
+    };
+    // NFC-normalize the base
+    let normalized_base: String = base.nfc().collect();
+    let n = normalized_base.chars().count();
+    if n == 0 || n > 60 || normalized_base.contains(['/', '\\', ':']) || normalized_base.contains("..") || normalized_base.starts_with('.') || has_control_char(&normalized_base) {
         return Err(CoreError::InvalidInput("note name".into()));
     }
-    Ok(format!("{base}.md"))
+    Ok(format!("{}.md", normalized_base))
 }
 
 pub fn validate_iso_date(d: &str) -> Result<(), CoreError> {
@@ -133,5 +153,48 @@ mod tests {
         assert!(validate_iso_date("2026-10-05").is_ok());
         assert!(validate_iso_date("2026-02-30").is_err());
         assert!(validate_iso_date("2026-10-5").is_err());
+    }
+
+    #[test]
+    fn room_name_rejects_dot_prefix_and_control_chars() {
+        assert!(validate_room_name(".hidden").is_err());
+        assert!(validate_room_name(".rooms").is_err());
+        assert!(validate_room_name("a\0b").is_err()); // NUL control char
+        assert!(validate_room_name("test\nname").is_err()); // newline control char
+    }
+
+    #[test]
+    fn note_name_strips_one_md_and_normalizes() {
+        // Strip exactly ONE ".md"
+        assert_eq!(validate_note_name("a.md.md").unwrap(), "a.md.md");
+        assert_eq!(validate_note_name("a.md").unwrap(), "a.md");
+        assert_eq!(validate_note_name("X.MD").unwrap(), "X.md");
+
+        // NFC normalization: NFD input -> NFC output
+        let nfd: String = unicode_normalization::UnicodeNormalization::nfd("café").collect();
+        let result = validate_note_name(&nfd).unwrap();
+        // The base "café" (whether NFD or NFC) becomes "café.md" in NFC form
+        let expected = "café.md"; // This is in NFC form
+        assert_eq!(result, expected);
+
+        // Control character rejection
+        assert!(validate_note_name("a\0b").is_err()); // NUL control char
+    }
+
+    #[test]
+    fn classify_path_rejects_non_normal_and_non_utf8() {
+        // Path with ".." component should be ignored
+        assert_eq!(classify_path(Path::new("a/../b.html"), false), PathClass::Ignored);
+
+        // Non-UTF-8 path on Unix (using OsStr)
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            use std::ffi::OsStr;
+            let non_utf8_bytes = b"invalid\xffu.html";
+            let non_utf8 = OsStr::from_bytes(non_utf8_bytes);
+            let path = Path::new(non_utf8);
+            assert_eq!(classify_path(path, false), PathClass::Ignored);
+        }
     }
 }
