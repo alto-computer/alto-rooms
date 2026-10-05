@@ -9,6 +9,21 @@ use rooms_core::RoomsCore;
 use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 
+/// Writes a fresh 32-char token to `<home>/.rooms/token` (file 0600, dir 0700).
+pub fn write_token(home: &std::path::Path) -> std::io::Result<String> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let dir = home.join(".rooms");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    let token = nanoid::nanoid!(32);
+    let path = dir.join("token");
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path)?;
+    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    f.write_all(token.as_bytes())?;
+    Ok(token)
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub core: RoomsCore,
@@ -47,4 +62,36 @@ pub fn build_files_router(state: AppState) -> Router {
             HeaderValue::from_static("sandbox allow-scripts allow-popups"),
         ))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_token;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(p: &std::path::Path) -> u32 { std::fs::metadata(p).unwrap().permissions().mode() & 0o777 }
+
+    #[test]
+    fn write_token_sets_modes_and_length() {
+        let d = tempfile::tempdir().unwrap();
+        let t = write_token(d.path()).unwrap();
+        assert_eq!(t.len(), 32);
+        let f = d.path().join(".rooms/token");
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), t);
+        assert_eq!(mode(&f), 0o600);
+        assert_eq!(mode(&d.path().join(".rooms")), 0o700);
+    }
+
+    #[test]
+    fn write_token_tightens_existing_file_and_regenerates() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+        let f = d.path().join(".rooms/token");
+        std::fs::write(&f, "old-old-old-old-old-old-old-old-old-old").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let t = write_token(d.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), t);
+        assert_eq!(t.len(), 32);
+        assert_eq!(mode(&f), 0o600);
+    }
 }

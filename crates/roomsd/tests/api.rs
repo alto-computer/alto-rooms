@@ -165,3 +165,26 @@ async fn files_content_types_and_forbidden_csp() {
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
     assert_eq!(r.headers()["content-security-policy"], "sandbox allow-scripts allow-popups");
 }
+
+#[tokio::test]
+async fn events_stream_delivers_room_added_with_seq() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let r = app.oneshot(get("/v1/events", API_HOST)).await.unwrap();
+    assert_eq!(r.headers()["content-type"], "text/event-stream");
+    let mut body = r.into_body();
+    st.core.create_room("x").unwrap();
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(Ok(f)) = body.frame().await {
+                if let Ok(d) = f.into_data() {
+                    let s = String::from_utf8_lossy(&d).to_string();
+                    if s.contains("room.added") { return s; }
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(frame.contains("\"seq\":"));
+    assert!(frame.contains("id:"));
+}
