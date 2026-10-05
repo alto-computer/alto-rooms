@@ -56,12 +56,12 @@
 <div class="done-section">
   <h2>✅ Done (자동 테스트, Claude가 완료)</h2>
   <ul class="done-list">
-    <li><code>bun run --cwd apps/desktop test</code> — Vitest 22 files / 198 tests 통과. 스토어(snapshot+seq, 재연결 gap, artifactCount 동기화), 셸 단축키(입력 중 ⌘B/⌘T/⌘W 무시, 노트 본문 ⌘W 허용, Tauri에서 메뉴 이벤트), 노트 자동 저장/재시도, 종료 시 flush(2초 상한), 각 화면 컴포넌트.</li>
+    <li><code>bun run --cwd apps/desktop test</code> — Vitest 24 files / 229 tests 통과. 스토어(snapshot+seq, 재연결 gap, artifactCount 동기화, 참조 카운트 watch/unwatch, 연속 sync 실패 수), 셸 단축키(입력 중 ⌘B/⌘T/⌘W 무시, 노트 본문 ⌘W 허용, Tauri에서 ⌘W/⌘T/⌘K/⌘B 메뉴 이벤트), 노트 자동 저장/재시도, 저장 레지스트리(대소문자 무시 키, 새 연결로 rebind, 종료 시 못 저장한 글의 초안 보관·복원), 종료 시 flush(2초 상한), 코어 연결 끊김 화면과 "다시 시도", 각 화면 컴포넌트.</li>
     <li><code>bun run --cwd apps/desktop e2e</code> — Playwright 10 tests 통과. 실제 <code>roomsd</code>(임시 홈, 포트 14317/14318)와 웹 빌드(Vite preview 4173)로 AC-5, AC-1, AC-6, AC-9, AC-14, AC-10, AC-11, Review Focus 2(디스크에서 폴더 이름 변경), Review Focus 4(악성 아티팩트: 이동 안 됨, 쓰기 실패, postMessage 무시). 화면별 1440×900 스크린샷은 <code>apps/desktop/e2e/__screens__/</code>.</li>
     <li><code>bun run --cwd apps/desktop build</code> — <code>tsc -b</code>(e2e 포함) + Vite 빌드 통과.</li>
-    <li><code>cargo test</code> / <code>cargo clippy --all-targets</code> (apps/desktop/src-tauri) — 12 tests 통과, 경고 없음. 닫기/종료 flush 상태 기계(<code>FlushGate</code>) 단위 테스트 포함.</li>
+    <li><code>cargo test</code> / <code>cargo clippy --all-targets</code> (apps/desktop/src-tauri) — 21 tests 통과, 경고 없음. 닫기/종료 flush 상태 기계(<code>FlushGate</code>), 토큰 읽기(O_NOFOLLOW, fstat, 64바이트 상한), roomsd 종료(SIGTERM 후 1초 뒤 강제 종료), terminate 훅 panic 처리 단위 테스트 포함.</li>
     <li><code>cargo test --workspace -- --test-threads=1</code> (repo root) — 127 tests 통과 (Plan 1 동작 유지).</li>
-    <li>번들 스모크 — <code>bun run --cwd apps/desktop sidecar &amp;&amp; bun run --cwd apps/desktop tauri build --bundles app</code>로 <code>Alto Rooms.app</code> 생성. 임시 <code>ROOMS_HOME</code>으로 실행 → <code>:4317</code>에서 roomsd 응답, 웹뷰가 연결해 새 탭 화면 표시. <code>osascript -e 'quit app "Alto Rooms"'</code>, 메뉴 Quit, 메뉴 "창 닫기", 빨간 닫기 버튼 모두 1초 안에 종료되고 roomsd도 사라짐. 메뉴 "탭 닫기"/"새 탭"이 웹뷰의 탭을 닫고 엶.</li>
+    <li>번들 스모크 — <code>bun run --cwd apps/desktop sidecar &amp;&amp; bun run --cwd apps/desktop tauri build --bundles app</code>로 <code>Alto Rooms.app</code> 생성. 임시 <code>ROOMS_HOME</code>으로 실행 → <code>:4317</code>에서 roomsd 응답, 웹뷰가 연결해 새 탭 화면 표시. <code>osascript -e 'quit app "Alto Rooms"'</code>, 메뉴 Quit, 메뉴 "창 닫기", 빨간 닫기 버튼 모두 1초 안에 종료되고 roomsd도 사라짐. <code>osascript</code> 종료는 최종 수정 후 다시 확인: <code>ALTO_ROOMS_FLUSH_PROBE=&lt;오늘&gt;/probe.md</code>로 실행해 API로 만든 노트를 저장 안 된 상태로 둔 뒤 종료 → 로그 <code>applicationShouldTerminate</code> → <code>round 1 (Terminate)</code> → <code>flush_done</code> → <code>exiting</code>, 0.34초에 종료, 노트의 새 글이 디스크에 있음, roomsd 사라짐. 메뉴 "탭 닫기"/"새 탭"이 웹뷰의 탭을 닫고 엶.</li>
   </ul>
 </div>
 
@@ -134,7 +134,7 @@
   <ol class="steps">
     <li>
       <p class="step-action">메뉴 막대 확인</p>
-      <p class="step-expect"><code>Alto Rooms</code>(About, Hide, Quit ⌘Q), <code>Edit</code>(Undo, Redo, Cut, Copy, Paste, Select All), <code>파일</code>(새 탭 ⌘T, 탭 닫기 ⌘W, 창 닫기 ⇧⌘W)</p>
+      <p class="step-expect"><code>Alto Rooms</code>(About, Hide, Quit ⌘Q), <code>Edit</code>(Undo, Redo, Cut, Copy, Paste, Select All), <code>파일</code>(새 탭 ⌘T, 탭 닫기 ⌘W, 창 닫기 ⇧⌘W), <code>보기</code>(찾기 ⌘K, 사이드바 ⌘B)</p>
     </li>
     <li>
       <p class="step-action">방 탭이 열린 상태에서 ⌘W, ⌘T, ⌘B, ⌘K를 차례로</p>
@@ -288,6 +288,29 @@
     <li>
       <p class="step-action">"기존 폴더 연결…"로 홈 밖의 폴더 연결</p>
       <p class="step-expect">네이티브 폴더 선택 창이 열리고, 선택한 폴더가 방으로 추가되어 탭이 열림</p>
+    </li>
+  </ol>
+</div>
+
+<!-- ============================================== -->
+<div class="scenario">
+  <h3><span class="scenario-tag tag-edge">Scenario 9 · Edge Case</span> 코어가 사라졌을 때</h3>
+
+  <p><strong>전제:</strong> 앱이 roomsd를 직접 띄운 상태(따로 실행한 데몬 없음). 노트 하나에 글을 쓰는 중.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="step-action">터미널: <code>pkill -x roomsd</code></p>
+      <p class="step-expect">바로 "Rooms 코어를 시작하지 못했어요"와 "다시 시도" 버튼</p>
+      <p class="step-if-different">화면이 그대로면 <code>daemon://exited</code>가 안 온 것. 약 3초(재시도 2번) 뒤에는 떠야 함</p>
+    </li>
+    <li>
+      <p class="step-action">"다시 시도"</p>
+      <p class="step-expect">roomsd가 다시 뜨고 탭들이 그대로 돌아옴. 끊기기 전에 쓰던 노트의 글이 디스크에 저장됨</p>
+    </li>
+    <li>
+      <p class="step-action">노트 폴더를 <code>chmod 555</code>로 막고 글을 쓴 뒤 "저장하지 못했어요"가 뜨면 ⌘Q → 폴더를 <code>chmod 755</code>로 되돌리고 앱을 다시 열어 그 노트를 엶</p>
+      <p class="step-expect">종료 전에 쓴 글이 보이고, 0.8초 뒤 저장됨</p>
     </li>
   </ol>
 </div>
