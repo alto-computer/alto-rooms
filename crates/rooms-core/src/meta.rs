@@ -13,26 +13,68 @@ pub struct Meta {
     pub source: Source,
 }
 
+#[derive(Default)]
+struct Collector {
+    titles: Vec<String>,
+    meta: Meta,
+}
+
+impl Collector {
+    fn apply_meta(&mut self, name: &str, content: Option<String>) {
+        let Some(c) = content else { return };
+        let m = &mut self.meta;
+        match name {
+            "rooms:title" => { if m.title.is_none() { m.title = Some(c); } }
+            "rooms:created" => {
+                if m.created.is_none() && chrono::DateTime::parse_from_rfc3339(&c).is_ok() { m.created = Some(c); }
+            }
+            "rooms:agent" => { if m.source.agent.is_none() { m.source.agent = Some(c); } }
+            "rooms:session" => { if m.source.session.is_none() { m.source.session = Some(c); } }
+            "rooms:cwd" => { if m.source.cwd.is_none() { m.source.cwd = Some(c); } }
+            "rooms:machine" => { if m.source.machine.is_none() { m.source.machine = Some(c); } }
+            _ => {}
+        }
+    }
+
+    fn finish(self) -> Meta {
+        let mut m = self.meta;
+        if m.title.is_none() {
+            m.title = self.titles.iter().map(|t| t.trim()).find(|t| !t.is_empty()).map(str::to_string);
+        }
+        m
+    }
+}
+
+/// Head-scoped values win. Only when the document has no <head> element at all
+/// (fragments) do we fall back to the first top-level <title> and first-wins <meta>.
 pub fn extract_meta(head: &[u8]) -> Meta {
-    let tag_title = RefCell::new(String::new());
-    let meta = RefCell::new(Meta::default());
+    let in_head = RefCell::new(Collector::default());
+    let any = RefCell::new(Collector::default());
+    let saw_head = RefCell::new(false);
     let mut rw = HtmlRewriter::new(
         Settings {
             element_content_handlers: vec![
-                text!("title", |t| { tag_title.borrow_mut().push_str(t.as_str()); Ok(()) }),
+                element!("head", |_| { *saw_head.borrow_mut() = true; Ok(()) }),
+                element!("head title", |_| { in_head.borrow_mut().titles.push(String::new()); Ok(()) }),
+                text!("head title", |t| {
+                    if let Some(s) = in_head.borrow_mut().titles.last_mut() { s.push_str(t.as_str()); }
+                    Ok(())
+                }),
+                element!("title", |_| { any.borrow_mut().titles.push(String::new()); Ok(()) }),
+                text!("title", |t| {
+                    if let Some(s) = any.borrow_mut().titles.last_mut() { s.push_str(t.as_str()); }
+                    Ok(())
+                }),
+                element!("head meta[name]", |el| {
+                    let name = el.get_attribute("name").unwrap_or_default();
+                    let content = el.get_attribute("content").map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+                    in_head.borrow_mut().apply_meta(&name, content);
+                    Ok(())
+                }),
                 element!("meta[name]", |el| {
                     let name = el.get_attribute("name").unwrap_or_default();
                     let content = el.get_attribute("content").map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
-                    let mut m = meta.borrow_mut();
-                    match name.as_str() {
-                        "rooms:title" => m.title = content,
-                        "rooms:created" => m.created = content.filter(|c| chrono::DateTime::parse_from_rfc3339(c).is_ok()),
-                        "rooms:agent" => m.source.agent = content,
-                        "rooms:session" => m.source.session = content,
-                        "rooms:cwd" => m.source.cwd = content,
-                        "rooms:machine" => m.source.machine = content,
-                        _ => {}
-                    }
+                    any.borrow_mut().apply_meta(&name, content);
                     Ok(())
                 }),
             ],
@@ -42,12 +84,7 @@ pub fn extract_meta(head: &[u8]) -> Meta {
     );
     let _ = rw.write(&head[..head.len().min(HEAD_LIMIT)]);
     let _ = rw.end();
-    let mut m = meta.into_inner();
-    if m.title.is_none() {
-        let t = tag_title.into_inner().trim().to_string();
-        if !t.is_empty() { m.title = Some(t); }
-    }
-    m
+    if *saw_head.borrow() { in_head.into_inner().finish() } else { any.into_inner().finish() }
 }
 
 pub fn read_meta(path: &Path) -> Meta {
@@ -63,7 +100,7 @@ pub fn file_times(path: &Path) -> (String, String) {
     let to_rfc = |t: std::time::SystemTime| chrono::DateTime::<chrono::Local>::from(t).to_rfc3339();
     match std::fs::metadata(path) {
         Ok(m) => {
-            let modified = m.modified().map(to_rfc).unwrap_or_default();
+            let modified = m.modified().map(to_rfc).unwrap_or_else(|_| chrono::Local::now().to_rfc3339());
             let created = m.created().map(to_rfc).unwrap_or_else(|_| modified.clone());
             (created, modified)
         }
@@ -116,6 +153,24 @@ mod tests {
         std::fs::write(&p, &bytes).unwrap();
         let m = read_meta(&p);
         assert_eq!(title_or_filename(&m, "sub/blob.html"), "blob");
+    }
+
+    #[test]
+    fn body_svg_title_is_ignored_when_head_exists() {
+        let m = extract_meta(b"<head><title>Report</title></head><body><svg><title>Icon</title></svg></body>");
+        assert_eq!(m.title.as_deref(), Some("Report"));
+    }
+
+    #[test]
+    fn body_meta_does_not_override_head() {
+        let m = extract_meta(br#"<head><meta name="rooms:agent" content="codex"></head><body><meta name="rooms:agent" content="x"></body>"#);
+        assert_eq!(m.source.agent.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn later_empty_content_does_not_wipe_earlier() {
+        let m = extract_meta(br#"<head><meta name="rooms:session" content="s1"><meta name="rooms:session" content="  "></head>"#);
+        assert_eq!(m.source.session.as_deref(), Some("s1"));
     }
 
     #[test]
