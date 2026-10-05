@@ -135,6 +135,18 @@ describe("AppShell: sidebar", () => {
     expect(activeTab()).toHaveTextContent(`Journal · ${now.getMonth() + 1}월 ${now.getDate()}일`);
   });
 
+  it("a note tab's label strips one .md (any case) from the file name", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
+    act(() => {
+      h.viewer.open({ kind: "note", date: "2026-10-05", name: "x.md.md" });
+    });
+    expect(activeTab()).toHaveTextContent(/^x\.md$/);
+    act(() => {
+      h.viewer.open({ kind: "note", date: "2026-10-05", name: "Plan.MD" });
+    });
+    expect(activeTab()).toHaveTextContent(/^Plan$/);
+  });
+
   it("찾기 and ⌘K open the quick find dialog", async () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "찾기" }));

@@ -291,3 +291,19 @@ describe("noteSaver: injectable clock", () => {
     vi.useFakeTimers();
   });
 });
+
+describe("noteSaver: flush", () => {
+  it("skips the debounce, and during a flight makes the follow-up immediate", async () => {
+    const { save, calls } = controlledSave();
+    const s = make(save);
+    s.edit("a");
+    s.flush();
+    expect(calls).toHaveLength(1);
+    s.edit("ab"); // debounce pending
+    s.flush();
+    calls[0].d.resolve("2026-10-05T01:00:00Z");
+    await tick(0);
+    expect(calls).toHaveLength(2); // not waiting 800ms
+    expect(calls[1].text).toBe("ab");
+  });
+});

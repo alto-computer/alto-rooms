@@ -3,6 +3,8 @@ import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openInEditor } from "@/lib/native";
+import { noteSaverKeys, resetNoteSavers } from "@/lib/noteSaver";
+import { StoresProvider } from "@/data/hooks";
 import { renderWithStores } from "@/test/fakes";
 import { NoteView } from "./NoteView";
 
@@ -21,6 +23,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  resetNoteSavers();
   vi.useRealTimers();
   vi.clearAllMocks();
 });
@@ -33,8 +36,8 @@ const advance = (ms: number) =>
 const note = (name: string, updatedAt: string): Note => ({ date: DATE, name, relPath: `${DATE}/${name}`, updatedAt, author: "me" });
 
 async function renderNote(opts: Parameters<typeof renderWithStores>[1] = {}) {
-  const r = await renderWithStores(<NoteView date={DATE} name="계획" />, {
-    notes: { [`${DATE}/계획`]: "원래 내용" },
+  const r = await renderWithStores(<NoteView date={DATE} name="계획.md" />, {
+    notes: { [`${DATE}/계획.md`]: "원래 내용" },
     days: { [DATE]: { notes: [note("계획.md", "2026-10-05T01:00:00Z")] } },
     ...opts,
   });
@@ -49,27 +52,27 @@ describe("NoteView: loading", () => {
   it("shows the heading and loads the body", async () => {
     const { client } = await renderNote();
     expect(screen.getByRole("heading", { level: 1, name: "계획" })).toBeInTheDocument();
-    expect(client.getNote).toHaveBeenCalledWith(DATE, "계획");
+    expect(client.getNote).toHaveBeenCalledWith(DATE, "계획.md");
     expect(textarea()).toHaveValue("원래 내용");
     expect(textarea()).not.toBeDisabled();
   });
 
   it("treats a 404 as an empty, editable note", async () => {
-    await renderNote({ notes: { [`${DATE}/계획`]: new RoomsApiError(404, "nope", "not_found") } });
+    await renderNote({ notes: { [`${DATE}/계획.md`]: new RoomsApiError(404, "nope", "not_found") } });
     expect(textarea()).toHaveValue("");
     expect(textarea()).not.toBeDisabled();
     expect(screen.queryByText("문제가 생겼어요")).not.toBeInTheDocument();
   });
 
   it("on any other error, shows the copy, keeps the textarea disabled, and retries on request", async () => {
-    const { client, state } = await renderNote({ notes: { [`${DATE}/계획`]: new RoomsApiError(500, "boom") } });
+    const { client, state } = await renderNote({ notes: { [`${DATE}/계획.md`]: new RoomsApiError(500, "boom") } });
     expect(screen.getByText("문제가 생겼어요")).toBeInTheDocument();
     expect(textarea()).toBeDisabled();
     type("이건 저장되면 안 돼요");
     await advance(5000);
     expect(client.saveNote).not.toHaveBeenCalled();
 
-    state.notes[`${DATE}/계획`] = "서버 내용";
+    state.notes[`${DATE}/계획.md`] = "서버 내용";
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     await advance(0);
     expect(screen.queryByText("문제가 생겼어요")).not.toBeInTheDocument();
@@ -88,7 +91,7 @@ describe("NoteView: autosave", () => {
     expect(client.saveNote).not.toHaveBeenCalled();
     await advance(1);
     expect(client.saveNote).toHaveBeenCalledTimes(1);
-    expect(client.saveNote).toHaveBeenCalledWith(DATE, "계획", "원래 내용!!");
+    expect(client.saveNote).toHaveBeenCalledWith(DATE, "계획.md", "원래 내용!!");
     await advance(10_000);
     expect(client.saveNote).toHaveBeenCalledTimes(1);
   });
@@ -99,7 +102,7 @@ describe("NoteView: autosave", () => {
     type("바로 저장");
     fireEvent.blur(textarea());
     await advance(0);
-    expect(client.saveNote).toHaveBeenCalledWith(DATE, "계획", "바로 저장");
+    expect(client.saveNote).toHaveBeenCalledWith(DATE, "계획.md", "바로 저장");
   });
 
   it("after 3 failures shows the error copy and keeps the text; recovers on the 4th attempt", async () => {
@@ -117,7 +120,7 @@ describe("NoteView: autosave", () => {
 
     await advance(4000); // 4th succeeds
     expect(client.saveNote).toHaveBeenCalledTimes(4);
-    expect(client.saveNote).toHaveBeenLastCalledWith(DATE, "계획", "잃으면 안 되는 글");
+    expect(client.saveNote).toHaveBeenLastCalledWith(DATE, "계획.md", "잃으면 안 되는 글");
     expect(screen.queryByText(ERROR_COPY)).not.toBeInTheDocument();
     expect(textarea()).toHaveValue("잃으면 안 되는 글");
   });
@@ -141,22 +144,133 @@ describe("NoteView: autosave", () => {
     await act(async () => release());
     await advance(0);
     expect(client.saveNote).toHaveBeenCalledTimes(2);
-    expect(client.saveNote).toHaveBeenLastCalledWith(DATE, "계획", "하나 둘 셋");
+    expect(client.saveNote).toHaveBeenLastCalledWith(DATE, "계획.md", "하나 둘 셋");
     await advance(10_000);
     expect(client.saveNote).toHaveBeenCalledTimes(2);
   });
 
-  it("flushes unsaved text on unmount", async () => {
+  it("keeps saving unsaved text after unmount (debounce still applies)", async () => {
     const { client, unmount } = await renderNote();
     type("닫기 직전");
     unmount();
-    expect(client.saveNote).toHaveBeenCalledWith(DATE, "계획", "닫기 직전");
+    await advance(800);
+    expect(client.saveNote).toHaveBeenCalledWith(DATE, "계획.md", "닫기 직전");
+  });
+
+  it("flushes every dirty note immediately on pagehide / beforeunload", async () => {
+    const { client, state } = await renderNote();
+    type("종료 직전");
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    expect(client.saveNote).toHaveBeenCalledTimes(1);
+    expect(client.saveNote).toHaveBeenCalledWith(DATE, "계획.md", "종료 직전");
+    await advance(0);
+    expect(state.notes[`${DATE}/계획.md`]).toBe("종료 직전");
+    type("종료 직전!");
+    act(() => {
+      window.dispatchEvent(new Event("beforeunload"));
+    });
+    expect(client.saveNote).toHaveBeenCalledTimes(2);
+    expect(client.saveNote).toHaveBeenLastCalledWith(DATE, "계획.md", "종료 직전!");
+  });
+});
+
+describe("NoteView: saver registry (reopen and unmount)", () => {
+  type Fake = Awaited<ReturnType<typeof renderNote>>;
+  const show = (fake: Fake, on: boolean) =>
+    act(async () => {
+      fake.rerender(
+        <StoresProvider rooms={fake.rooms} viewer={fake.viewer} client={fake.client}>
+          {on ? <NoteView date={DATE} name="계획.md" /> : null}
+        </StoresProvider>,
+      );
+    });
+
+  it("reopening during an in-flight save attaches to the live saver: no getNote, local text shown, disk ends with it", async () => {
+    const fake = await renderNote({ notes: { [`${DATE}/계획.md`]: "" } });
+    let release!: () => void;
+    const real = fake.client.saveNote.getMockImplementation()!;
+    fake.client.saveNote.mockImplementationOnce(
+      (date: string, name: string, body?: string) =>
+        new Promise((resolve) => {
+          release = () => resolve(real(date, name, body));
+        }),
+    );
+    type("ab");
+    await advance(800);
+    expect(fake.client.saveNote).toHaveBeenCalledTimes(1);
+    type("abc");
+    await show(fake, false);
+    fake.client.getNote.mockClear();
+    await show(fake, true);
+    await advance(0);
+    expect(fake.client.getNote).not.toHaveBeenCalled();
+    expect(textarea()).toHaveValue("abc");
+    expect(textarea()).not.toBeDisabled();
+
+    await act(async () => release());
+    await advance(800);
+    expect(fake.client.saveNote).toHaveBeenCalledTimes(2);
+    expect(fake.state.notes[`${DATE}/계획.md`]).toBe("abc");
+    expect(textarea()).toHaveValue("abc");
+  });
+
+  it("an unmounted note in the error state keeps retrying until its text lands", async () => {
+    const fake = await renderNote();
+    const real = fake.client.saveNote.getMockImplementation()!;
+    let failing = true;
+    fake.client.saveNote.mockImplementation(async (date: string, name: string, body?: string) => {
+      if (failing) throw new RoomsApiError(500, "disk", "write_failed");
+      return real(date, name, body);
+    });
+    type("살아남아야 하는 글");
+    await advance(800 + 1000 + 2000);
+    expect(screen.getByText(ERROR_COPY)).toBeInTheDocument();
+    await show(fake, false);
+    await advance(4000 + 10_000);
+    expect(fake.client.saveNote).toHaveBeenCalledTimes(5);
+    expect(noteSaverKeys()).toEqual([`${DATE}/계획.md`]);
+    failing = false;
+    await advance(10_000);
+    expect(fake.state.notes[`${DATE}/계획.md`]).toBe("살아남아야 하는 글");
+    expect(noteSaverKeys()).toEqual([]); // clean, idle and detached: released
+    await advance(60_000);
+    expect(fake.client.saveNote).toHaveBeenCalledTimes(6);
+  });
+
+  it("releases a clean saver on unmount, so reopening loads from disk again", async () => {
+    const fake = await renderNote();
+    expect(noteSaverKeys()).toEqual([`${DATE}/계획.md`]);
+    await show(fake, false);
+    expect(noteSaverKeys()).toEqual([]);
+    fake.state.notes[`${DATE}/계획.md`] = "디스크의 새 내용";
+    fake.client.getNote.mockClear();
+    await show(fake, true);
+    await advance(0);
+    expect(fake.client.getNote).toHaveBeenCalledWith(DATE, "계획.md");
+    expect(textarea()).toHaveValue("디스크의 새 내용");
+  });
+});
+
+describe("NoteView: file names", () => {
+  it("uses the on-disk name for load and save, and strips one .md only for display (x.md.md round-trips)", async () => {
+    const fake = await renderWithStores(<NoteView date={DATE} name="x.md.md" />, { notes: { [`${DATE}/x.md.md`]: "본문" } });
+    await advance(0);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("x.md");
+    expect(fake.client.getNote).toHaveBeenCalledWith(DATE, "x.md.md");
+    expect(textarea()).toHaveValue("본문");
+    type("본문!");
+    await advance(800);
+    expect(fake.client.saveNote).toHaveBeenCalledWith(DATE, "x.md.md", "본문!");
+    expect(fake.state.notes[`${DATE}/x.md.md`]).toBe("본문!");
+    expect(fake.state.notes[`${DATE}/x.md`]).toBeUndefined();
   });
 });
 
 describe("NoteView: external changes", () => {
   async function externalSave(fake: Awaited<ReturnType<typeof renderNote>>, body: string, updatedAt: string) {
-    fake.state.notes[`${DATE}/계획`] = body;
+    fake.state.notes[`${DATE}/계획.md`] = body;
     fake.state.days[DATE] = { notes: [note("계획.md", updatedAt)] };
     await act(async () => {
       fake.emit({ type: "note.saved", note: note("계획.md", updatedAt) });

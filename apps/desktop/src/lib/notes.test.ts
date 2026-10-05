@@ -1,6 +1,6 @@
 import type { Note } from "@alto-rooms/protocol-ts";
 import { describe, expect, it } from "vitest";
-import { defaultNoteName, findNote, noteBase } from "./notes";
+import { defaultNoteName, findNote, noteBase, noteFileName } from "./notes";
 
 const note = (name: string): Note => ({ date: "2026-10-05", name, relPath: `2026-10-05/${name}`, updatedAt: "2026-10-05T01:00:00Z", author: "me" });
 
@@ -32,5 +32,16 @@ describe("defaultNoteName", () => {
     expect(defaultNoteName([note("계획.md")])).toBe("회고");
     expect(defaultNoteName([note("회고.md")])).toBe("계획");
     expect(defaultNoteName([note("계획.md"), note("회고.md")])).toBe("");
+  });
+});
+
+describe("noteFileName", () => {
+  it("matches roomsd: one .md stripped, NFC, .md appended", () => {
+    expect(noteFileName("계획")).toBe("계획.md");
+    expect(noteFileName("계획.md")).toBe("계획.md");
+    expect(noteFileName("Plan.MD")).toBe("Plan.md");
+    expect(noteFileName("x.md.md")).toBe("x.md.md");
+    expect(noteFileName(noteFileName("x.md.md"))).toBe("x.md.md");
+    expect(noteFileName("회고".normalize("NFD"))).toBe("회고.md");
   });
 });

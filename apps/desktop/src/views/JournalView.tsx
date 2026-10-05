@@ -1,12 +1,12 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { Artifact, Info, Note, Room } from "@alto-rooms/protocol-ts";
+import { RoomsApiError, type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
 import { useClient, useJournalDay, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { viewerInitial } from "@/lib/native";
-import { defaultNoteName, findNote, noteBase } from "@/lib/notes";
+import { defaultNoteName, findNote, noteBase, noteFileName } from "@/lib/notes";
 import otterAvatar from "@/assets/otter-avatar.svg";
 import { ArtifactCard } from "./ArtifactCard";
 import { WeekStrip } from "./WeekStrip";
@@ -41,7 +41,7 @@ export function agentCards(artifacts: readonly Artifact[], date: string, info: I
   const isDream = (a: Artifact) => a.roomId === info.journalRoomId && a.relPath === `${date}/dream.html`;
   const label = (a: Artifact) => {
     if (a.roomId === info.journalRoomId) return "Journal";
-    return rooms.find((r) => r.id === a.roomId)?.name ?? "";
+    return rooms.find((r) => r.id === a.roomId)?.name ?? "방";
   };
   const dream = artifacts.filter(isDream);
   const rest = artifacts.filter((a) => !isDream(a)).sort(byCreated);
@@ -82,21 +82,31 @@ function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly No
   };
 
   const submit = async () => {
-    const name = noteBase(value.trim());
-    if (!name || busy) return;
-    const existing = findNote(notes, name);
-    if (existing) {
-      // Never save over an existing note: just open it.
+    if (!noteBase(value.trim()) || busy) return;
+    const fileName = noteFileName(value);
+    const open = (name: string) => {
       setEditing(false);
-      viewer.open({ kind: "note", date, name: noteBase(existing.name) });
+      viewer.open({ kind: "note", date, name });
+    };
+    // Never save over an existing note: open it instead. The day list may lag
+    // behind the disk, so a miss there is confirmed with getNote (404 = free).
+    const listed = findNote(notes, fileName);
+    if (listed) {
+      open(listed.name);
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const saved = await client.saveNote(date, name, "");
-      setEditing(false);
-      viewer.open({ kind: "note", date, name: saved?.name ? noteBase(saved.name) : name });
+      try {
+        await client.getNote(date, fileName);
+        open(fileName);
+        return;
+      } catch (e) {
+        if (!(e instanceof RoomsApiError && e.status === 404)) throw e;
+      }
+      const saved = await client.saveNote(date, fileName, "");
+      open(saved?.name || fileName);
     } catch (e) {
       setError(errorCopy(e));
     } finally {
@@ -256,7 +266,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
           <div className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto px-12 pt-2.5 pb-1">
             {readOnly ? null : <NewNoteCard date={date} notes={notes} viewer={viewer} />}
             {notes.map((n) => (
-              <NoteCard key={n.name} note={n} now={now} onOpen={() => viewer.open({ kind: "note", date, name: noteBase(n.name) })} />
+              <NoteCard key={n.name} note={n} now={now} onOpen={() => viewer.open({ kind: "note", date, name: n.name })} />
             ))}
           </div>
         </section>

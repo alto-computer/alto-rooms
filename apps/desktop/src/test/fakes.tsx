@@ -2,9 +2,13 @@ import type { Artifact, Info, JournalDay, Room, RoomsEvent } from "@alto-rooms/p
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
+import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { StoresProvider, type RoomsClient } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
 import { ViewerStore } from "@/data/viewerStore";
+
+/** roomsd's note file name: one trailing ".md" (any case) stripped, NFC, then ".md". */
+const noteFile = (name: string) => `${name.trim().replace(/\.md$/i, "").normalize("NFC")}.md`;
 
 type EventInput = RoomsEvent extends infer T ? (T extends RoomsEvent ? Omit<T, "seq"> : never) : never;
 
@@ -38,7 +42,7 @@ export function fakeClient(
     artifactErrors?: Record<string, Error>;
     days?: Record<string, Partial<JournalDay>>;
     dayErrors?: Record<string, Error>;
-    /** Note bodies (or the error getNote throws), keyed `${date}/${name}`; absent = "". */
+    /** On-disk note bodies (or the error getNote throws), keyed `${date}/${file name with .md}`; absent = 404. */
     notes?: Record<string, string | Error>;
     readOnly?: boolean;
   } = {},
@@ -66,21 +70,21 @@ export function fakeClient(
       if (err) throw err;
       return { data: { date, artifacts: [], notes: [], ...state.days[date] } as JournalDay, seq };
     },
+    // Like roomsd: the file is the name with exactly one trailing ".md" stripped, plus ".md".
     getNote: vi.fn(async (date: string, name: string): Promise<string> => {
-      const v = state.notes[`${date}/${name}`];
+      const v = state.notes[`${date}/${noteFile(name)}`];
       if (v instanceof Error) throw v;
-      return v ?? "";
+      if (v === undefined) throw new RoomsApiError(404, "not found", "not_found");
+      return v;
     }),
     createRoom: vi.fn(async (name: string) => room(`new-${name}`, name)),
     linkFolder: vi.fn(async (path: string, name?: string) => room(`linked-${path}`, name ?? path, { kind: "linked", path })),
     renameRoom: vi.fn(async (id: string, name: string) => room(id, name)),
-    saveNote: vi.fn(async (date: string, name: string, _body?: string) => ({
-      date,
-      name: `${name}.md`,
-      relPath: `${date}/${name}.md`,
-      updatedAt: new Date().toISOString(),
-      author: "me" as const,
-    })),
+    saveNote: vi.fn(async (date: string, name: string, body: string = "") => {
+      const file = noteFile(name);
+      state.notes[`${date}/${file}`] = body;
+      return { date, name: file, relPath: `${date}/${file}`, updatedAt: new Date().toISOString(), author: "me" as const };
+    }),
     fileUrl: (i: Info, a: Artifact) => `${i.filesOrigin}/${a.roomId}/${a.relPath}`,
     subscribe: (cb: (e: RoomsEvent) => void) => {
       onEvent = cb;

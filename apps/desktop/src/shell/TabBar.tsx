@@ -2,6 +2,7 @@ import type { MouseEvent } from "react";
 import { Calendar, FileText, Folder, LayoutGrid, PanelLeft, Plus, X, type LucideIcon } from "lucide-react";
 import { useArtifacts, useRooms, useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab } from "@/data/viewerStore";
+import { noteBase } from "@/lib/notes";
 import { monthDay } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +39,7 @@ function TabLabel({ tab }: { tab: Tab }) {
     case "journal":
       return <>{`Journal · ${monthDay(tab.date)}`}</>;
     case "note":
-      return <>{tab.name.replace(/\.md$/, "")}</>;
+      return <>{noteBase(tab.name)}</>;
     case "new":
       return <>새 탭</>;
   }

@@ -98,6 +98,15 @@ describe("JournalView: agent row", () => {
     expect(active).toMatchObject({ kind: "doc", roomId: "r9", artifactId: "a1" });
   });
 
+  it("labels an artifact whose room isn't listed 방", async () => {
+    await renderWithStores(<Host />, {
+      viewer: journalViewer(),
+      days: { [today]: { artifacts: [artifact("a1", "gone-room", "x.html", "고아 문서", `${today}T01:00:00Z`)] } },
+    });
+    const card = within(agentRow()).getByTestId("artifact-card");
+    expect(within(card).getByText("방")).toBeInTheDocument();
+  });
+
   it("does not treat a dream.html outside the journal room as the Dream", async () => {
     await renderWithStores(<Host />, {
       viewer: journalViewer(),
@@ -160,7 +169,7 @@ describe("JournalView: header and week strip", () => {
 });
 
 describe("JournalView: me row and new note", () => {
-  it("lists 새 노트 first, then notes by name, and opens a note tab without .md", async () => {
+  it("lists 새 노트 first, then notes by name (shown without .md), and opens a note tab with the file name", async () => {
     const { viewer } = await renderWithStores(<Host />, {
       viewer: journalViewer(),
       days: { [today]: { notes: [note(today, "회고.md"), note(today, "계획.md")] } },
@@ -169,9 +178,10 @@ describe("JournalView: me row and new note", () => {
     expect(buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["새 노트", "계획", "회고"]);
     expect(within(meRow()).getByText("나")).toBeInTheDocument();
     expect(within(meRow()).getByText("2")).toBeInTheDocument();
+    expect(within(meRow()).getByText("회고")).toBeInTheDocument();
     fireEvent.click(within(meRow()).getByRole("button", { name: "회고" }));
     const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
-    expect(active).toMatchObject({ kind: "note", date: today, name: "회고" });
+    expect(active).toMatchObject({ kind: "note", date: today, name: "회고.md" });
   });
 
   it("shows the viewer initial", async () => {
@@ -207,9 +217,10 @@ describe("JournalView: me row and new note", () => {
     await act(async () => {
       fireEvent.keyDown(input, { key: "Enter" });
     });
-    expect(client.saveNote).toHaveBeenCalledWith(today, "아이디어", "");
+    expect(client.getNote).toHaveBeenCalledWith(today, "아이디어.md");
+    expect(client.saveNote).toHaveBeenCalledWith(today, "아이디어.md", "");
     const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
-    expect(active).toMatchObject({ kind: "note", date: today, name: "아이디어" });
+    expect(active).toMatchObject({ kind: "note", date: today, name: "아이디어.md" });
   });
 
   it("opens an existing note (case-insensitive) without saving over it", async () => {
@@ -225,7 +236,47 @@ describe("JournalView: me row and new note", () => {
     });
     expect(client.saveNote).not.toHaveBeenCalled();
     const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
-    expect(active).toMatchObject({ kind: "note", date: today, name: "Plan" });
+    expect(active).toMatchObject({ kind: "note", date: today, name: "Plan.md" });
+  });
+
+  it("opens a note that exists on disk but not in the day list, without saving over it", async () => {
+    const { viewer, client } = await renderWithStores(<Host />, {
+      viewer: journalViewer(),
+      notes: { [`${today}/계획.md`]: "이미 쓴 계획" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+    expect(screen.getByLabelText("노트 이름")).toHaveValue("계획");
+    await act(async () => {
+      fireEvent.keyDown(screen.getByLabelText("노트 이름"), { key: "Enter" });
+    });
+    expect(client.getNote).toHaveBeenCalledWith(today, "계획.md");
+    expect(client.saveNote).not.toHaveBeenCalled();
+    const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
+    expect(active).toMatchObject({ kind: "note", date: today, name: "계획.md" });
+  });
+
+  it("shows the error copy when the existence check fails with anything but 404", async () => {
+    const { client } = await renderWithStores(<Host />, {
+      viewer: journalViewer(),
+      notes: { [`${today}/계획.md`]: new RoomsApiError(500, "boom") },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+    await act(async () => {
+      fireEvent.keyDown(screen.getByLabelText("노트 이름"), { key: "Enter" });
+    });
+    expect(client.saveNote).not.toHaveBeenCalled();
+    expect(screen.getByText("문제가 생겼어요")).toBeInTheDocument();
+    expect(screen.getByLabelText("노트 이름")).toBeInTheDocument();
+  });
+
+  it("strips only one .md for display: x.md.md shows as x.md and opens as x.md.md", async () => {
+    const { viewer } = await renderWithStores(<Host />, {
+      viewer: journalViewer(),
+      days: { [today]: { notes: [note(today, "x.md.md")] } },
+    });
+    fireEvent.click(within(meRow()).getByRole("button", { name: "x.md" }));
+    const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
+    expect(active).toMatchObject({ kind: "note", date: today, name: "x.md.md" });
   });
 
   it("shows the error copy and stays in the input when saving fails", async () => {

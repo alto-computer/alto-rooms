@@ -2,12 +2,10 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
 import { useClient, useJournalDay, useRooms, useRoomsStore } from "@/data/hooks";
-import { GENERIC_ERROR } from "@/lib/errors";
+import { GENERIC_ERROR, SAVE_FAILED } from "@/lib/errors";
 import { openInEditor } from "@/lib/native";
-import { createNoteSaver, type NoteSaver, type NoteSaverState } from "@/lib/noteSaver";
-import { findNote, noteBase } from "@/lib/notes";
-
-const SAVE_ERROR = "저장하지 못했어요. 다시 시도할게요";
+import { attachNoteSaver, createNoteSaver, detachNoteSaver, noteSaverKey, type NoteSaver, type NoteSaverState } from "@/lib/noteSaver";
+import { findNote, noteBase, noteFileName } from "@/lib/notes";
 
 const NOT_READY: NoteSaverState = {
   text: "",
@@ -36,7 +34,10 @@ const warn = (...args: unknown[]) => console.warn(...args);
  * there are no unsaved edits and the textarea isn't focused.
  */
 export function NoteView({ date, name }: { date: string; name: string }) {
-  const base = noteBase(name);
+  // `name` is the on-disk file name (e.g. `계획.md`, `x.md.md`): the API gets it
+  // unchanged; one `.md` is stripped only for display.
+  const title = noteBase(name);
+  const fileName = noteFileName(name);
   const client = useClient();
   const store = useRoomsStore();
   const { info } = useRooms();
@@ -44,14 +45,16 @@ export function NoteView({ date, name }: { date: string; name: string }) {
   // Watching the day makes the store refetch it on note.saved/note.removed; no second event stream.
   const day = useJournalDay(date);
 
-  // One saver per mount; dispose() flushes unsaved text. Created in the effect
-  // so React's StrictMode remount gets a fresh one.
+  // The note's live saver from the registry: reopening a note whose saver is
+  // still saving (or retrying) attaches to it instead of reloading from disk.
+  // Unmounting detaches; the saver lives on until its text has landed.
   const [saver, setSaver] = useState<NoteSaver | null>(null);
   useEffect(() => {
-    const s = createNoteSaver({ save: (text) => client.saveNote(date, base, text), warn });
+    const key = noteSaverKey(date, fileName);
+    const { saver: s } = attachNoteSaver(key, () => createNoteSaver({ save: (text) => client.saveNote(date, name, text), warn }));
     setSaver(s);
-    return () => s.dispose();
-  }, [client, date, base]);
+    return () => detachNoteSaver(key, s);
+  }, [client, date, name, fileName]);
   const st = useSaverState(saver);
 
   // Initial load (and "다시 시도").
@@ -59,11 +62,16 @@ export function NoteView({ date, name }: { date: string; name: string }) {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!saver) return;
+    if (saver.getState().ready) {
+      // Attached to a live saver: its local text is the newest there is.
+      setLoad("ready");
+      return;
+    }
     let live = true;
     setLoad("loading");
     // The list's updatedAt as of now; a later one means a change after this read.
-    const known = findNote(store.getState().days[date]?.notes ?? [], base)?.updatedAt ?? null;
-    client.getNote(date, base).then(
+    const known = findNote(store.getState().days[date]?.notes ?? [], name)?.updatedAt ?? null;
+    client.getNote(date, name).then(
       (text) => {
         if (!live) return;
         saver.load(text, known);
@@ -84,20 +92,20 @@ export function NoteView({ date, name }: { date: string; name: string }) {
     return () => {
       live = false;
     };
-  }, [saver, attempt, client, store, date, base]);
+  }, [saver, attempt, client, store, date, name]);
 
   // External changes.
   const [focused, setFocused] = useState(false);
   const focusedRef = useRef(false);
   const reloading = useRef(false);
-  const remoteUpdatedAt = day ? findNote(day.notes, base)?.updatedAt : undefined;
+  const remoteUpdatedAt = day ? findNote(day.notes, name)?.updatedAt : undefined;
   useEffect(() => {
     if (!saver || load !== "ready" || !remoteUpdatedAt || focused || reloading.current) return;
     if (st.inFlight || st.text !== st.savedText || !saver.isNewer(remoteUpdatedAt)) return;
     let live = true;
     reloading.current = true;
     client
-      .getNote(date, base)
+      .getNote(date, name)
       .then(
         (text) => {
           if (live && !focusedRef.current) saver.applyRemote(text, remoteUpdatedAt);
@@ -110,20 +118,20 @@ export function NoteView({ date, name }: { date: string; name: string }) {
     return () => {
       live = false;
     };
-  }, [saver, load, remoteUpdatedAt, focused, st, client, date, base]);
+  }, [saver, load, remoteUpdatedAt, focused, st, client, date, name]);
 
   const editable = load === "ready" && !readOnly;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 bg-white px-12 py-10">
       <header className="flex items-center gap-4">
-        <h1 className="min-w-0 flex-1 truncate text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{base}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{title}</h1>
         {readOnly ? null : (
           <button
             type="button"
             disabled={!info}
             onClick={() => {
-              if (info) void openInEditor(`${info.home}/journal/${date}/${base}.md`);
+              if (info) void openInEditor(`${info.home}/journal/${date}/${fileName}`);
             }}
             className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[14px] text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
           >
@@ -148,7 +156,7 @@ export function NoteView({ date, name }: { date: string; name: string }) {
       {st.status === "error" ? (
         <p role="status" className="flex items-center gap-2 text-[14px] text-[#c13515]">
           <CircleAlert size={16} aria-hidden />
-          {SAVE_ERROR}
+          {SAVE_FAILED}
         </p>
       ) : null}
       <textarea

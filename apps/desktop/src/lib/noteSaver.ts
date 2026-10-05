@@ -66,7 +66,12 @@ export type NoteSaver = {
   /** True when `updatedAt` is strictly newer than the last load or acknowledged save. */
   isNewer(updatedAt: string): boolean;
   isDirty(): boolean;
+  /** Saves now, skipping the debounce or a pending retry (e.g. the app is quitting). */
+  flush(): void;
+  /** Hard stop: one last save of unsaved text, then nothing more. */
   dispose(): void;
+  /** Stops without saving anything (tests). */
+  stop(): void;
 };
 
 /** a > b, as instants when both parse, else as strings. */
@@ -202,6 +207,17 @@ export function createNoteSaver(opts: NoteSaverOptions): NoteSaver {
       return state.knownUpdatedAt === null || later(updatedAt, state.knownUpdatedAt);
     },
     isDirty: dirty,
+    flush() {
+      if (!state.ready || disposed || !dirty()) return;
+      clearTimer(); // an in-flight save then follows up immediately when it settles
+      if (state.inFlight) set({ dirtyDuringFlight: true });
+      else saveNow();
+    },
+    stop() {
+      disposed = true;
+      finalSent = true;
+      clearTimer();
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -210,4 +226,82 @@ export function createNoteSaver(opts: NoteSaverOptions): NoteSaver {
       // else: the in-flight save's settlement sends whatever is still unsaved.
     },
   };
+}
+
+/*
+ * Registry: one live saver per note file, shared across mounts.
+ *
+ * A note view attaches on mount and detaches on unmount. A detached saver
+ * stays alive, and keeps its schedule (debounce, then retries), for as long as
+ * it has unsaved text or a save in flight; it is released once it is clean and
+ * idle with no view attached. Reopening a note while its saver is alive
+ * attaches to it (and shows its local text) instead of reloading from disk.
+ */
+
+type Entry = { saver: NoteSaver; views: number; unsubscribe: () => void };
+const registry = new Map<string, Entry>();
+
+/** Registry key: `${date}/${fileName}`, the file name as on disk (with `.md`). */
+export const noteSaverKey = (date: string, fileName: string) => `${date}/${fileName}`;
+
+const releasable = (e: Entry) => {
+  const s = e.saver.getState();
+  return e.views === 0 && !s.inFlight && s.text === s.savedText;
+};
+
+function releaseIfIdle(key: string, e: Entry) {
+  if (registry.get(key) !== e || !releasable(e)) return;
+  registry.delete(key);
+  e.unsubscribe();
+  e.saver.dispose(); // clean: sends nothing, just stops it
+}
+
+/** Attaches a view to the note's live saver, creating it (`fresh`) if there is none. */
+export function attachNoteSaver(key: string, create: () => NoteSaver): { saver: NoteSaver; fresh: boolean } {
+  const existing = registry.get(key);
+  if (existing) {
+    existing.views++;
+    return { saver: existing.saver, fresh: false };
+  }
+  const saver = create();
+  const entry: Entry = { saver, views: 1, unsubscribe: () => {} };
+  entry.unsubscribe = saver.subscribe(() => releaseIfIdle(key, entry));
+  registry.set(key, entry);
+  installQuitFlush();
+  return { saver, fresh: true };
+}
+
+/** Detaches a view. The saver lives on until it is clean and idle. */
+export function detachNoteSaver(key: string, saver: NoteSaver): void {
+  const e = registry.get(key);
+  if (!e || e.saver !== saver) return;
+  e.views = Math.max(0, e.views - 1);
+  releaseIfIdle(key, e);
+}
+
+/** Saves every dirty note now (the app is quitting or hiding). */
+export function flushAllNoteSavers(): void {
+  for (const e of registry.values()) e.saver.flush();
+}
+
+let quitFlushInstalled = false;
+function installQuitFlush() {
+  if (quitFlushInstalled || typeof window === "undefined") return;
+  quitFlushInstalled = true;
+  window.addEventListener("pagehide", flushAllNoteSavers);
+  window.addEventListener("beforeunload", flushAllNoteSavers);
+}
+
+/** Keys of the live savers (for tests and diagnostics). */
+export function noteSaverKeys(): string[] {
+  return [...registry.keys()];
+}
+
+/** Tests only: stops and forgets every saver without saving. */
+export function resetNoteSavers(): void {
+  for (const e of registry.values()) {
+    e.unsubscribe();
+    e.saver.stop();
+  }
+  registry.clear();
 }
