@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useViewer } from "@/data/hooks";
 import { ViewerStore } from "@/data/viewerStore";
 import { addDays, localDate } from "@/lib/dates";
+import { takeNoteBodyFocus } from "@/lib/notes";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { JournalView } from "./JournalView";
 
@@ -190,83 +191,90 @@ describe("JournalView: me row and new note", () => {
     expect(within(meRow()).getByText("J")).toBeInTheDocument();
   });
 
-  it("defaults the new note name to 계획, then 회고, then empty", async () => {
-    await renderWithStores(<Host />, { viewer: journalViewer() });
-    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
-    expect(screen.getByLabelText("노트 이름")).toHaveValue("계획");
-    cleanup();
-
-    await renderWithStores(<Host />, { viewer: journalViewer(), days: { [today]: { notes: [note(today, "계획.md")] } } });
-    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
-    expect(screen.getByLabelText("노트 이름")).toHaveValue("회고");
-    cleanup();
-
-    await renderWithStores(<Host />, {
-      viewer: journalViewer(),
-      days: { [today]: { notes: [note(today, "계획.md"), note(today, "회고.md")] } },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
-    expect(screen.getByLabelText("노트 이름")).toHaveValue("");
-  });
-
-  it("Enter creates the note and opens its tab", async () => {
+  it("새 노트 asks for no name: it creates New Note at once and opens it in a new tab, cursor in the body", async () => {
     const { viewer, client } = await renderWithStores(<Host />, { viewer: journalViewer() });
-    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
-    const input = screen.getByLabelText("노트 이름");
-    fireEvent.change(input, { target: { value: "아이디어" } });
+    const before = viewer.getState().tabs.length;
     await act(async () => {
-      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
     });
-    expect(client.getNote).toHaveBeenCalledWith(today, "아이디어.md");
-    expect(client.saveNote).toHaveBeenCalledWith(today, "아이디어.md", "");
-    const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
-    expect(active).toMatchObject({ kind: "note", date: today, name: "아이디어.md" });
+    expect(screen.queryByLabelText("노트 이름")).not.toBeInTheDocument();
+    expect(client.getNote).toHaveBeenCalledWith(today, "New Note.md");
+    expect(client.saveNote).toHaveBeenCalledTimes(1);
+    expect(client.saveNote).toHaveBeenCalledWith(today, "New Note.md", "");
+    const { tabs, activeId } = viewer.getState();
+    expect(tabs).toHaveLength(before + 1);
+    expect(tabs.find((t) => t.id === activeId)).toMatchObject({ kind: "note", date: today, name: "New Note.md" });
+    expect(takeNoteBodyFocus(today, "New Note.md")).toBe(true);
   });
 
-  it("opens an existing note (case-insensitive) without saving over it", async () => {
+  it("the next note is New Note 2, then New Note 3 (names compared case-insensitively)", async () => {
     const { viewer, client } = await renderWithStores(<Host />, {
       viewer: journalViewer(),
-      days: { [today]: { notes: [note(today, "Plan.md")] } },
+      days: { [today]: { notes: [note(today, "new note.md")] } },
     });
-    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
-    const input = screen.getByLabelText("노트 이름");
-    fireEvent.change(input, { target: { value: "plan.MD" } });
     await act(async () => {
-      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
     });
-    expect(client.saveNote).not.toHaveBeenCalled();
-    const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
-    expect(active).toMatchObject({ kind: "note", date: today, name: "Plan.md" });
+    expect(client.getNote).not.toHaveBeenCalledWith(today, "New Note.md");
+    expect(client.saveNote).toHaveBeenCalledWith(today, "New Note 2.md", "");
+    expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ name: "New Note 2.md" });
+    cleanup();
+
+    const r = await renderWithStores(<Host />, {
+      viewer: journalViewer(),
+      days: { [today]: { notes: [note(today, "New Note.md"), note(today, "NEW NOTE 2.md")] } },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+    });
+    expect(r.client.saveNote).toHaveBeenCalledWith(today, "New Note 3.md", "");
   });
 
-  it("opens a note that exists on disk but not in the day list, without saving over it", async () => {
-    const { viewer, client } = await renderWithStores(<Host />, {
+  it("never saves over a New Note that exists on disk but not in the day list: it moves on to New Note 2", async () => {
+    const { viewer, client, state } = await renderWithStores(<Host />, {
       viewer: journalViewer(),
-      notes: { [`${today}/계획.md`]: "이미 쓴 계획" },
+      notes: { [`${today}/New Note.md`]: "이미 쓴 글" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
-    expect(screen.getByLabelText("노트 이름")).toHaveValue("계획");
     await act(async () => {
-      fireEvent.keyDown(screen.getByLabelText("노트 이름"), { key: "Enter" });
+      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
     });
-    expect(client.getNote).toHaveBeenCalledWith(today, "계획.md");
-    expect(client.saveNote).not.toHaveBeenCalled();
-    const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
-    expect(active).toMatchObject({ kind: "note", date: today, name: "계획.md" });
+    expect(client.getNote).toHaveBeenCalledWith(today, "New Note.md");
+    expect(client.saveNote).not.toHaveBeenCalledWith(today, "New Note.md", expect.anything());
+    expect(client.saveNote).toHaveBeenCalledWith(today, "New Note 2.md", "");
+    expect(state.notes[`${today}/New Note.md`]).toBe("이미 쓴 글");
+    expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ name: "New Note 2.md" });
   });
 
-  it("shows the error copy when the existence check fails with anything but 404", async () => {
-    const { client } = await renderWithStores(<Host />, {
+  it("shows the error copy and creates nothing when the existence check fails with anything but 404", async () => {
+    const { client, viewer } = await renderWithStores(<Host />, {
       viewer: journalViewer(),
-      notes: { [`${today}/계획.md`]: new RoomsApiError(500, "boom") },
+      notes: { [`${today}/New Note.md`]: new RoomsApiError(500, "boom") },
     });
-    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
     await act(async () => {
-      fireEvent.keyDown(screen.getByLabelText("노트 이름"), { key: "Enter" });
+      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
     });
     expect(client.saveNote).not.toHaveBeenCalled();
-    expect(screen.getByText("문제가 생겼어요")).toBeInTheDocument();
-    expect(screen.getByLabelText("노트 이름")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("문제가 생겼어요");
+    expect(viewer.getState().tabs.some((t) => t.kind === "note")).toBe(false);
+  });
+
+  it("shows the error copy and opens nothing when saving fails", async () => {
+    const { client, viewer } = await renderWithStores(<Host />, { viewer: journalViewer() });
+    client.saveNote.mockRejectedValueOnce(new RoomsApiError(500, "disk", "write_failed"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("저장하지 못했어요. 다시 시도할게요");
+    expect(viewer.getState().tabs.some((t) => t.kind === "note")).toBe(false);
+  });
+
+  it("a second click while creating does not create a second note", async () => {
+    const { client } = await renderWithStores(<Host />, { viewer: journalViewer() });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+    });
+    expect(client.saveNote).toHaveBeenCalledTimes(1);
   });
 
   it("strips only one .md for display: x.md.md shows as x.md and opens as x.md.md", async () => {
@@ -277,31 +285,6 @@ describe("JournalView: me row and new note", () => {
     fireEvent.click(within(meRow()).getByRole("button", { name: "x.md" }));
     const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
     expect(active).toMatchObject({ kind: "note", date: today, name: "x.md.md" });
-  });
-
-  it("shows the error copy and stays in the input when saving fails", async () => {
-    const { client } = await renderWithStores(<Host />, { viewer: journalViewer() });
-    client.saveNote.mockRejectedValueOnce(new RoomsApiError(500, "disk", "write_failed"));
-    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
-    const input = screen.getByLabelText("노트 이름");
-    await act(async () => {
-      fireEvent.keyDown(input, { key: "Enter" });
-    });
-    expect(screen.getByText("저장하지 못했어요. 다시 시도할게요")).toBeInTheDocument();
-    expect(screen.getByLabelText("노트 이름")).toHaveValue("계획");
-  });
-
-  it("does not submit while an IME composition is in progress, and Escape cancels", async () => {
-    const { client } = await renderWithStores(<Host />, { viewer: journalViewer() });
-    fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
-    const input = screen.getByLabelText("노트 이름");
-    await act(async () => {
-      fireEvent.keyDown(input, { key: "Enter", isComposing: true });
-    });
-    expect(client.saveNote).not.toHaveBeenCalled();
-    fireEvent.keyDown(input, { key: "Escape" });
-    expect(screen.queryByLabelText("노트 이름")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "새 노트" })).toBeInTheDocument();
   });
 
   it("hides 새 노트 in read-only mode", async () => {

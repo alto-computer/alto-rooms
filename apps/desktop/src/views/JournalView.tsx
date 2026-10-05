@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { RoomsApiError, type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
 import { useClient, useJournalDay, useReadOnly, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
@@ -6,7 +6,7 @@ import type { ViewerStore } from "@/data/viewerStore";
 import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { viewerInitial } from "@/lib/native";
-import { defaultNoteName, findNote, noteBase, noteFileName } from "@/lib/notes";
+import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from "@/lib/notes";
 import otterAvatar from "@/assets/otter-avatar.svg";
 import { ArtifactCard } from "./ArtifactCard";
 import { WeekStrip } from "./WeekStrip";
@@ -58,109 +58,62 @@ function RowLabel({ avatar, name, count }: { avatar: ReactNode; name: string; co
   );
 }
 
+/** Most default names tried before giving up (each one already on disk costs a getNote). */
+const MAX_NEW_NOTE_TRIES = 50;
+
+/**
+ * 새 노트: no name asked. Creates the first free default name ("New Note",
+ * "New Note 2", …) and opens it in a new tab with the cursor in the body.
+ * Never saves over a note: a name in the day list is skipped, and since that
+ * list may lag behind the disk, the rest are confirmed with getNote (404 = free).
+ */
 function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly Note[]; viewer: ViewerStore }) {
   const client = useClient();
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const inputId = useId();
+  const busyRef = useRef(false);
 
-  useEffect(() => {
-    if (editing) inputRef.current?.select();
-  }, [editing]);
-
-  const start = () => {
-    setValue(defaultNoteName(notes));
-    setError(null);
-    setEditing(true);
-  };
-  const cancel = () => {
-    setEditing(false);
-    setError(null);
-  };
-
-  const submit = async () => {
-    if (!noteBase(value.trim()) || busy) return;
-    const fileName = noteFileName(value);
-    const open = (name: string) => {
-      setEditing(false);
-      viewer.open({ kind: "note", date, name });
-    };
-    // Never save over an existing note: open it instead. The day list may lag
-    // behind the disk, so a miss there is confirmed with getNote (404 = free).
-    const listed = findNote(notes, fileName);
-    if (listed) {
-      open(listed.name);
-      return;
-    }
+  const create = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      try {
-        await client.getNote(date, fileName);
-        open(fileName);
+      for (const candidate of firstNewNoteNames(notes, MAX_NEW_NOTE_TRIES)) {
+        const fileName = noteFileName(candidate);
+        try {
+          await client.getNote(date, fileName);
+          continue; // on disk already: never overwrite it
+        } catch (e) {
+          if (!(e instanceof RoomsApiError && e.status === 404)) throw e;
+        }
+        const saved = await client.saveNote(date, fileName, "");
+        const name = saved?.name || fileName;
+        requestNoteBodyFocus(date, name);
+        viewer.open({ kind: "note", date, name });
         return;
-      } catch (e) {
-        if (!(e instanceof RoomsApiError && e.status === 404)) throw e;
       }
-      const saved = await client.saveNote(date, fileName, "");
-      open(saved?.name || fileName);
+      setError(GENERIC_ERROR);
     } catch (e) {
       setError(errorCopy(e));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return; // Korean IME: Enter confirms the syllable first
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void submit();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      cancel();
-    }
-  };
-
-  if (!editing) {
-    return (
+  return (
+    <div className="flex w-[160px] shrink-0 flex-col gap-2">
       <button
         type="button"
         aria-label="새 노트"
-        onClick={start}
+        aria-busy={busy || undefined}
+        onClick={() => void create()}
         className="flex h-[150px] w-[160px] shrink-0 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#ddd] bg-white text-ink-2 hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
         <Plus size={22} aria-hidden />
         <span className="text-[15px]">새 노트</span>
       </button>
-    );
-  }
-
-  return (
-    <div className="flex w-[220px] shrink-0 flex-col gap-2">
-      <div className="flex h-[150px] items-start rounded-xl bg-white p-4 shadow-[0_0_0_2px_#222]">
-        <label className="sr-only" htmlFor={inputId}>
-          노트 이름
-        </label>
-        <input
-          id={inputId}
-          ref={inputRef}
-          value={value}
-          disabled={busy}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={onKeyDown}
-          onBlur={() => {
-            if (!value.trim() && !busy) cancel();
-          }}
-          className="w-full min-w-0 bg-transparent text-[15px] font-medium text-ink outline-none"
-        />
-        <span aria-hidden className="ml-2 text-[12px] text-[#929292]">
-          ↵
-        </span>
-      </div>
       {error ? (
         <p role="alert" className="flex items-center gap-1.5 text-[14px] text-[#c13515]">
           <CircleAlert size={16} aria-hidden />
