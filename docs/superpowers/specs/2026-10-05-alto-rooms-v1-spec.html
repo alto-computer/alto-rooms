@@ -107,7 +107,7 @@
 <h3>원칙 (모든 결정의 기준)</h3>
 <ol>
   <li><strong>Rooms = HTML 아티팩트 저장소 + 나를 위한 이해 공간(Journal).</strong> 아티팩트를 만들지 않고, 에이전트를 돌리지 않는다.</li>
-  <li><strong>Rooms는 AI 일을 직접 하지 않는다.</strong> 미래 기능(묻기, 관계 시각화, 설명 채우기)도 맥락을 꾸려 사용자의 메인 에이전트에게 넘기고(또는 만든 세션을 이어 열고), 결과는 파일로 다시 받는다.</li>
+  <li><strong>Rooms는 AI 일을 직접 하지 않는다.</strong> v1의 분류(온보딩)도 사용자의 에이전트가 Rooms가 함께 주는 스킬로 하고, 결과는 방 폴더의 파일 링크로 들어온다. 미래 기능(묻기, 관계 시각화, 설명 채우기)도 맥락을 꾸려 사용자의 메인 에이전트에게 넘기고(또는 만든 세션을 이어 열고), 결과는 파일로 다시 받는다.</li>
   <li><strong>접점은 세 개뿐이고 모두 버전 붙은 고정 계약이다:</strong> 폴더 규칙(들어옴) · Rooms 프로토콜(코어↔UI) · 넘기기(나감, v2).</li>
   <li><strong>UI도 갈아끼울 수 있다.</strong> 데스크탑 앱은 프로토콜만 쓰는 참고 클라이언트다 (Codex CLI의 코어/UI 분리 수준).</li>
   <li><strong>모든 단어·요소·배치에는 이유가 있어야 한다.</strong> 이유가 약하면 뺀다.</li>
@@ -136,6 +136,9 @@
     <tr><td><code>roomsd</code></td><td>머리 없는(headless) 코어 데몬. 인덱스·감시·방·노트 관리, Rooms 프로토콜 제공.</td><td>UI 없는 코어. 데스크탑 앱·원격 웹·제3자 UI가 같은 데이터를 보려면 코어가 화면과 분리돼 있어야 한다.</td></tr>
     <tr><td><code>Rooms Protocol</code></td><td>roomsd ↔ 클라이언트 사이 버전 붙은 HTTP+JSON API와 SSE 이벤트 스트림. <code>/v1/…</code></td><td>UI를 갈아끼울 수 있게 하는 허리. 버전이 붙은 고정 계약이어야 클라이언트가 코어 내부를 몰라도 된다.</td></tr>
     <tr><td><code>Client</code></td><td>프로토콜을 쓰는 UI. 참고 구현 = Tauri 데스크탑 앱. 원격 웹 보기, 제3자 UI도 같은 지위.</td><td>데스크탑 앱도 특별 대우하지 않는다는 선언. 참고 구현과 남의 UI가 같은 프로토콜만 쓴다.</td></tr>
+    <tr><td><code>Onboarding</code></td><td>첫 실행 때 사용자가 에이전트에게 붙여넣는 프롬프트 1줄 → 에이전트가 <code>~/rooms/ONBOARD.md</code>를 읽고 <code>rooms</code> 스킬을 설치 → 최근 14일 HTML을 찾아 분류해 방에 파일 링크로 넣음.</td><td>이미 흩어진 아티팩트를 사람이 하나씩 옮기지 않게. 분류 AI를 Rooms 밖(사용자 에이전트)에 두면서도 v1부터 정리된 방을 준다.</td></tr>
+    <tr><td><code>Artifact link</code></td><td>owned 방 안에서 원본 HTML 파일을 가리키는 파일 심볼릭 링크. 원본은 옮기지 않는다.</td><td>원래 쓰던 위치(예: 저장소의 docs/superpowers/specs)를 깨지 않고 주제별로 모을 수 있다.</td></tr>
+    <tr><td><code>Inbox</code></td><td>예약된 방 <code>~/rooms/inbox/</code>. 스킬이 방을 확신하지 못한 파일, 방을 모르는 producer의 파일이 들어가는 곳.</td><td>분류가 틀리느니 보류가 낫다. 사용자가 끌어다 owned 방으로 옮긴다.</td></tr>
     <tr><td><code>Handoff</code></td><td>(v2) 맥락 꾸러미를 사용자가 설정한 에이전트 명령으로 넘기는 출구.</td><td>AI 일을 Rooms 안에 두지 않기 위한 출구. 묻기·관계 채우기도 사용자의 에이전트가 하고 결과는 폴더로 돌아온다.</td></tr>
   </tbody>
 </table>
@@ -205,6 +208,7 @@
   <li><strong>US-4.</strong> As a <em>사용자</em>, I want <em>방의 아티팩트를 큰 미리보기 가로 띠로 훑고, 확대하면 새 탭으로 열기를</em>, so that <em>무엇이 있는지 빠르게 파악하고 궁금한 것만 깊이 본다</em>.</li>
   <li><strong>US-5.</strong> As a <em>사용자</em>, I want <em>Journal에서 그날 생긴 아티팩트(Dream 포함)와 내 계획·회고를 함께 보기를</em>, so that <em>하루를 이해하고 정리한다</em>.</li>
   <li><strong>US-6.</strong> As a <em>사용자</em>, I want <em>다른 기기에서 Tailscale로 같은 화면을 읽기 전용으로 보기를</em>, so that <em>맥 앞에 없어도 확인한다</em>.</li>
+  <li><strong>US-8.</strong> As a <em>처음 쓰는 사용자</em>, I want <em>프롬프트 한 줄을 내 에이전트에 붙여넣으면 최근 14일의 HTML 아티팩트가 주제별 방으로 정리되기를</em>, so that <em>설정 없이 첫날부터 정리된 화면을 본다</em>.</li>
   <li><strong>US-7.</strong> As a <em>제3자 개발자</em>, I want <em>Rooms 프로토콜만으로 내 UI를 만들기를</em>, so that <em>코어를 건드리지 않고 다른 경험을 붙인다</em>.</li>
 </ul>
 
@@ -225,6 +229,10 @@
     <tr><td>AC-11</td><td>Journal 오늘</td><td>계획 노트를 열어 텍스트 상자에 씀</td><td>입력 멈춤 후 자동 저장되어 <code>journal/2026-10-05/계획.md</code>에 반영. 다른 편집기로 열기 가능</td></tr>
     <tr><td>AC-12</td><td>원격 기기가 Tailscale 주소로 접속</td><td>방 만들기·이름 바꾸기·노트 저장 시도</td><td>403, UI에는 쓰기 버튼이 보이지 않음</td></tr>
     <tr><td>AC-13</td><td>roomsd 실행 중</td><td>제3자 클라이언트가 <code>GET /v1/rooms</code>, <code>GET /v1/events</code>만 사용</td><td>데스크탑 앱과 같은 목록·같은 실시간 변경을 받음</td></tr>
+    <tr><td>AC-15</td><td>첫 실행, 방 없음</td><td>앱이 보여준 프롬프트를 Claude Code에 붙여넣음</td><td>에이전트가 <code>rooms</code> 스킬을 설치하고, 대화 기록에서 최근 14일 동안 쓴 <code>.html</code> 경로를 찾아 분류해 <code>~/rooms/&lt;방&gt;/</code>에 파일 링크를 만듦. 원본 위치의 파일은 그대로</td></tr>
+    <tr><td>AC-16</td><td>AC-15 직후</td><td>Journal을 봄</td><td>링크된 아티팩트는 <strong>원본 파일의 시각</strong> 날짜에 나옴 (온보딩한 날에 몰리지 않음)</td></tr>
+    <tr><td>AC-17</td><td>스킬이 방을 확신 못한 파일</td><td>—</td><td><code>~/rooms/inbox/</code>에 링크되어 새 탭의 "방을 기다리는 문서"에 보임. 끌어다 owned 방에 놓으면 링크가 그 방으로 이동</td></tr>
+    <tr><td>AC-18</td><td>같은 원본이 두 방에 링크됨</td><td>Journal 해당 날짜</td><td>한 번만 보임 (원본 realpath 기준 중복 제거)</td></tr>
     <tr><td>AC-14</td><td>사이드바</td><td><code>⌘B</code> 또는 탭 바 맨 앞 버튼</td><td>사이드바가 완전히 숨겨지고(아이콘 레일 없음), 다시 누르면 펼쳐짐</td></tr>
   </tbody>
 </table>
@@ -241,6 +249,9 @@
   <li><strong>Rooms 상태 위치:</strong> 방 id·표시 이름(owned 포함)·연결 경로·owned 폴더 inode·방 순서는 사람이 읽을 수 있는 <code>~/rooms/.rooms/state.json</code>. 아티팩트 색인(경로·제목·시각·메타)과 첫 발견 시각은 <code>~/rooms/.rooms/index.sqlite</code> — <strong>파일이 진실, SQLite는 파일에서 다시 만들 수 있는 파생 색인</strong>(Codex의 sessions/*.jsonl + state.sqlite와 같은 패턴). 어긋나면 언제나 파일이 이긴다. 보는 사람 상태(지난 방문, 사이드바 접힘, 탭)는 <strong>클라이언트</strong>가 가진다 — 코어는 보는 사람을 모른다.</li>
   <li><strong>Journal:</strong> <code>journal</code>은 예약된 방 이름. Journal day = <code>journal/YYYY-MM-DD/</code> 폴더(없으면 노트 저장 시 생성) + 그날 생긴 다른 방 아티팩트 조회(복사 안 함).</li>
   <li><strong>쓰는 주체:</strong> 아티팩트 = <code>agent</code>, Journal 노트 = <code>me</code>. 데이터 모델에 <code>author</code> 칸을 두어 나중에 방에도 내 노트를 넣을 수 있게 열어 둔다.</li>
+  <li><strong>파일 링크:</strong> owned 방(및 inbox) 안의 심볼릭 링크는 대상이 <code>.html</code>/<code>.htm</code> <em>파일</em>일 때만 아티팩트로 따른다. 방 안의 디렉터리 링크는 따르지 않는다(순환 방지 — 폴더는 "기존 폴더 연결"로만). 링크가 깨지면 아티팩트에서 빠진다.</li>
+  <li><strong>링크의 시각:</strong> 첫 발견 시각은 <em>대상</em> 파일의 생성·수정 시각(stat, 링크를 따라감)으로 정한다. 온보딩 날짜에 몰리지 않게.</li>
+  <li><strong>예약 방 이름:</strong> <code>journal</code>, <code>inbox</code>.</li>
   <li><strong>방 삭제는 없다.</strong> 연결 해제도 v1에 없음 (필요해지면 추가).</li>
   <li><strong>원격(Tailscale) = 읽기 전용.</strong> 원격 리스너(4319)에는 GET 경로만 존재. 쓰기는 로컬 리스너(4317)에서 토큰과 함께만.</li>
   <li><strong>코어에는 모델·프롬프트·API 키·UI가 없다.</strong></li>
@@ -252,6 +263,7 @@
   <tbody>
     <tr><td>관계형</td><td><code>room.kind == "linked"</code>이면 <code>room.path</code>는 Home 밖일 수 있고, Rooms는 그 경로에 쓰기 연산을 하지 않는다</td><td>팀 폴더를 더럽히지 않음</td></tr>
     <tr><td>관계형</td><td><code>author == "me"</code>인 항목은 Journal day 폴더의 <code>.md</code>뿐 (v1)</td><td>나를 위한 공간은 Journal에 모은다</td></tr>
+    <tr><td>관계형</td><td>JournalDay.artifacts는 대상 realpath 기준으로 중복이 없다 (같은 원본이 여러 방에 링크돼도 한 번)</td><td>링크로 인해 생길 수 있는 중복 표시 방지</td></tr>
     <tr><td>관계형</td><td>owned 방: 폴더 이름 = <code>slug(name)</code> (NFC 정규화, 공백→<code>-</code>), 표시 이름 원문은 state.json. 충돌 판정은 slug를 NFC·대소문자 무시로 비교 ("연구 도구" == "연구-도구"). linked 방: 표시 이름만 state.json</td><td>재시작 후에도 원문 이름 유지, APFS 대소문자 무시와 일치 (Q8)</td></tr>
     <tr><td>시간</td><td>아티팩트의 Journal day = <code>createdAt</code>의 로컬 날짜. <code>createdAt</code>은 첫 발견 시 <code>.rooms/index.sqlite</code>에 저장되어 재시작·임시파일 rename·동기화 후에도 바뀌지 않음 (<code>rooms:created</code> 메타가 있으면 그것이 우선)</td><td>"그날 생긴 것"의 정의 고정 (Q2)</td></tr>
     <tr><td>시간</td><td>파일 이벤트 → 프로토콜 이벤트 지연 ≤ 2초 (디바운스 300ms)</td><td>AC-1</td></tr>
@@ -282,6 +294,8 @@
     <tr><td><code>.md</code>, <code>journal/YYYY-MM-DD/</code> 바로 아래</td><td>note add/change/remove</td></tr>
     <tr><td><code>journal/YYYY-MM-DD/*.html</code></td><td>artifact (그 날짜 Journal day의 에이전트 줄; Dream 포함)</td></tr>
     <tr><td>그 외 확장자</td><td>무시</td></tr>
+    <tr><td>방 안 심볼릭 링크 → <code>.html</code> 파일</td><td>artifact (시각은 대상 기준)</td></tr>
+    <tr><td>방 안 심볼릭 링크 → 디렉터리 / 깨진 링크</td><td>무시</td></tr>
     <tr><td>Home 바로 아래 새 폴더</td><td>owned room add (사용자가 Finder에서 만들어도 방이 됨)</td></tr>
   </tbody>
 </table>
@@ -427,7 +441,9 @@
   <p class="seam-title">S1: Producer → Folder (폴더 규칙)</p>
   <p class="seam-sub">아무 에이전트·스크립트·사람이 Rooms에 아티팩트를 넣는 유일한 방법. 설치·등록·전용 스킬 없음.</p>
   <h5>Call-site</h5>
-  <pre><code># 어떤 producer든 — 쓰기만 하면 끝
+  <pre><code># 온보딩 스킬 — 원본은 두고 링크만
+ln -s ~/dev/lilys/docs/superpowers/specs/2026-10-02-x-spec.html ~/rooms/릴리스-리뷰/
+# 어떤 producer든 — 쓰기만 하면 끝
 cp benchmark.html ~/rooms/브라우저-하네스/
 # 또는 에이전트에게: "결과 HTML을 ~/rooms/브라우저-하네스/ 에 저장해"
 # Dream: 아무 스킬이 밤에
@@ -435,6 +451,8 @@ write ~/rooms/journal/2026-10-05/dream.html</code></pre>
   <h5>Frozen signature (파일 규칙 v1)</h5>
   <pre><code>path:   &lt;room-folder&gt;/**/&lt;name&gt;.html|.htm      # 무시 규칙 밖
         ~/rooms/journal/YYYY-MM-DD/&lt;name&gt;.html # Journal day 아티팩트
+        ~/rooms/&lt;room&gt;/&lt;name&gt;.html  →  (symlink) /anywhere/original.html  # 원본은 그대로
+        ~/rooms/inbox/&lt;name&gt;.html               # 방을 정하지 못한 것
 optional &lt;head&gt; meta (모두 생략 가능):
   &lt;meta name="rooms:title"   content="…"&gt;
   &lt;meta name="rooms:created" content="2026-10-05T10:02:00+09:00"&gt;
@@ -478,7 +496,7 @@ while let Ok(e) = rx.recv().await { sse.send(e) }</code></pre>
   <table><tbody>
     <tr class="contract-row"><th>건너감</th><td>↓ Home 경로 / 이름·경로·노트 본문. ↑ 순수 값 타입(protocol 패키지의 타입)과 <code>RoomsEvent</code></td></tr>
     <tr class="contract-row"><th>제어·상태 소유</th><td>core가 색인(<code>index.sqlite</code>)과 <code>.rooms/state.json</code>을 소유. 파일 시스템이 진실, 색인은 백필로 언제든 재구성 가능</td></tr>
-    <tr class="contract-row"><th>상대편 보장</th><td>모든 반환값은 protocol 스키마를 통과한다. <code>resolve_file</code>은 방 밖 경로(<code>..</code>, 심볼릭 링크 탈출)를 절대 반환하지 않는다</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>모든 반환값은 protocol 스키마를 통과한다. <code>resolve_file</code>은 <code>..</code>로 방 밖을 가리키는 경로와 디렉터리 링크 탈출을 절대 반환하지 않는다. 방 안의 <em>파일</em> 링크는 대상이 HTML일 때만 그 대상 경로를 반환한다</td></tr>
   </tbody></table>
 </div>
 
@@ -581,7 +599,7 @@ type RoomsEvent = { seq: number } & (
     <tr><td><code>date</code></td><td><code>IsoDate</code></td><td><code>YYYY-MM-DD</code>, 실재 날짜. roomsd 진입에서 검증</td></tr>
     <tr><td><code>name</code> (노트)</td><td><code>NoteName</code></td><td>1–60자 + <code>.md</code> 자동 부착, 경로 문자 금지</td></tr>
     <tr><td><code>body</code></td><td><code>string</code></td><td>UTF-8, ≤ 1MB</td></tr>
-    <tr><td><code>relPath</code></td><td><code>string</code></td><td>정규화 후 방 루트 안. 심볼릭 링크 해석 후에도 방 안</td></tr>
+    <tr><td><code>relPath</code></td><td><code>string</code></td><td>정규화 후 방 루트 안. 링크 해석은 마지막 요소(파일 링크, 대상 .html)만 허용, 중간 디렉터리 링크는 방 안이어야 함</td></tr>
   </tbody>
 </table>
 
@@ -629,6 +647,7 @@ type RoomsEvent = { seq: number } & (
     <tr><td>1</td><td>아티팩트 수집</td><td>파일 쓰기 → 띠에 카드</td><td><code>RoomsCore.onChange</code> → <code>GET /v1/events</code></td></tr>
     <tr><td>2</td><td>방 만들기·연결·이름 바꾸기</td><td>사용자 조작 → 폴더/state 반영</td><td><code>POST /v1/rooms</code>, <code>/link</code>, <code>PATCH</code></td></tr>
     <tr><td>3</td><td>Journal 하루</td><td>날짜 → 그날 아티팩트 + 내 노트</td><td><code>GET /v1/journal/:date</code>, <code>PUT …/notes/:name</code></td></tr>
+    <tr><td>5</td><td>에이전트 온보딩 (분류)</td><td>흩어진 HTML → 분류된 방(파일 링크)</td><td><code>~/rooms/ONBOARD.md</code> + <code>rooms</code> 스킬 (Rooms 밖, 사용자 에이전트가 실행)</td></tr>
     <tr><td>4</td><td>원격 보기</td><td>다른 기기 → 읽기 전용 같은 화면</td><td>roomsd(Tailscale 바인딩) + apps/web</td></tr>
   </tbody>
 </table>
@@ -704,6 +723,29 @@ type RoomsEvent = { seq: number } & (
   <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4><p>원격 쓰기 → 403 <code>read_only</code>.</p></div>
   <div class="slot"><h4>⑥ 동작 결과</h4><p>휴대폰·다른 컴퓨터에서 방 띠·문서·Journal을 볼 수 있음. 맥이 켜져 있어야 함.</p></div>
   <div class="slot"><h4>⑦ 연결</h4><p>S3만 사용 — 원격 웹도 제3자 UI와 같은 지위.</p></div>
+</div>
+
+
+<div class="flow">
+  <h3>핵심 흐름 5: 에이전트 온보딩 (분류)</h3>
+  <div class="slot"><h4>① 트리거 &amp; 타이밍</h4><p>첫 실행에 방이 없으면 빈 화면 대신 "이 한 줄을 에이전트에게 붙여넣으세요"를 보여준다: <code>~/rooms/ONBOARD.md 를 읽고 따라 해줘</code>. 앱은 첫 실행 때 <code>ONBOARD.md</code>와 스킬 원본을 Home에 둔다. 이후 사용자가 언제든 "rooms 정리해줘"로 다시 실행.</p></div>
+  <div class="slot"><h4>② 워크플로우</h4><ol>
+    <li>에이전트가 <code>ONBOARD.md</code>를 읽고 <code>rooms</code> 스킬을 자기 스킬 폴더에 설치 (Claude Code <code>~/.claude/skills/rooms/</code>, Codex는 그 에이전트의 스킬 위치).</li>
+    <li><strong>위치 찾기:</strong> 대화 기록에서 최근 14일 동안 <code>.html</code>을 쓴 경로를 뽑는다 — Claude Code <code>~/.claude/projects/*/*.jsonl</code>, Codex <code>~/.codex/sessions/YYYY/MM/DD/*.jsonl</code>의 파일 쓰기 기록. 자주 나오는 폴더(예: 저장소들의 <code>docs/superpowers/specs/</code>)를 주요 저장소로 정리하고 사용자에게 한 번 보여준다.</li>
+    <li><strong>분류:</strong> 각 HTML의 제목·앞부분을 읽고 주제별 방을 제안 → 사용자 확인 1회 → 방 폴더 생성, 원본을 가리키는 파일 링크 생성. 확신 없는 파일은 <code>inbox/</code>.</li>
+    <li><strong>습관:</strong> 스킬은 "앞으로 HTML 아티팩트를 만들면 알맞은 방에 링크하라"는 지침을 에이전트에 남긴다. 재실행 시 이미 링크된 원본은 건너뛴다(대상 realpath 비교).</li>
+    <li>Rooms는 폴더 변화를 보고 방·카드를 띄운다 (흐름 1과 동일).</li>
+  </ol></div>
+  <div class="slot"><h4>③ 입력 &amp; 출처</h4><table><thead><tr><th>입력</th><th>출처</th><th>전제</th><th>가공</th></tr></thead><tbody>
+    <tr><td>아티팩트 경로</td><td>에이전트 대화 기록 (jsonl)</td><td>최근 14일 (기본값, 재실행 시 "30일"처럼 넓힐 수 있음)</td><td><code>.html</code> 쓰기만, 지금도 존재하는 파일만</td></tr>
+    <tr><td>만든 세션</td><td>같은 기록</td><td>—</td><td>스킬이 기록해 두면 v2 묻기에 사용 (원본 파일은 수정하지 않음)</td></tr></tbody></table></div>
+  <div class="slot"><h4>④ 주요 결정</h4><table><thead><tr><th>결정</th><th>방식</th><th>근거</th></tr></thead><tbody>
+    <tr><td>어느 방에</td><td><strong>위임</strong>: 사용자 에이전트(스킬)</td><td>원칙 2. Rooms에 모델·프롬프트 없음. 분류 방식은 스킬만 바꾸면 됨</td></tr>
+    <tr><td>원본 이동 여부</td><td>결정론: 옮기지 않고 링크</td><td>원래 저장소·작업 흐름을 깨지 않음</td></tr>
+    <tr><td>기본 기간</td><td>14일</td><td>지금 진행 중인 작업이 거의 다 잡히고, 분류 품질·시간이 적당. 7일은 첫 화면이 비고, 30일은 분류가 거칠어짐</td></tr></tbody></table></div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4><p>대화 기록을 못 찾음 → 스킬이 사용자에게 아티팩트 폴더를 직접 묻는다. 원본이 나중에 지워짐 → 깨진 링크 → 아티팩트에서 빠짐(<code>artifact.removed</code>). 분류 확신 없음 → <code>inbox/</code>.</p></div>
+  <div class="slot"><h4>⑥ 동작 결과</h4><p>첫날부터 사이드바에 주제별 방, 띠에 최근 14일 아티팩트, Journal에는 각 원본 날짜에 맞춰 분포.</p></div>
+  <div class="slot"><h4>⑦ 연결</h4><p>스킬 → S1(폴더: 방 생성 + 파일 링크) → S2 → S3. Rooms 코어는 스킬을 모른다.</p></div>
 </div>
 
 <!-- ============================================== -->
@@ -791,6 +833,7 @@ type RoomsEvent = { seq: number } & (
 <ul>
   <li><mark class="ambiguous">에이전트가 <code>rooms:session</code>을 어떻게 채우나? (Claude Code는 hook으로 세션 ID를 받을 수 있는 것으로 알고 있으나 미확인. v1은 "있으면 읽기"만 하므로 v2 전에 실험)</mark></li>
     <li><mark class="ambiguous">roomsd 실행 방식: Tauri가 사이드카로 띄우고 앱과 함께 종료할지, 로그인 시 상주하는 서비스(launchd)로 둘지? (원격 보기·외부 클라이언트를 생각하면 상주가 유리)</mark></li>
+  <li><mark class="ambiguous">Codex의 스킬 설치 위치와 대화 기록의 "파일 쓰기" 형식은 버전마다 다를 수 있다 — ONBOARD.md가 에이전트 종류별 분기를 얼마나 자세히 담을지? (스킬 구현 때 실제 기록으로 확인)</mark></li>
   <li><mark class="ambiguous">기본 Home 위치 <code>~/rooms/</code>를 설정에서 바꿀 수 있게 할지?</mark></li>
   <li><mark class="ambiguous">카드 제목 옆 새 문서 점(지난 방문 이후 표시)을 유지할지? (디자인에선 유지, 사용자 확인 대기)</mark></li>
   <li><mark class="ambiguous">linked 폴더가 다른 경로로 옮겨졌을 때 다시 연결하는 UI가 필요한지?</mark></li>
