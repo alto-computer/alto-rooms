@@ -4,7 +4,7 @@ import clewPeek from "@/assets/clew-peek.svg";
 import { useRooms } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { CopyChip, CopyStatus, useCopy } from "./CopyChip";
+import { CopyStatus, useCopy } from "./CopyChip";
 
 /**
  * The ONBOARD.md path an agent is pointed at: `~/rooms/ONBOARD.md` only when
@@ -21,9 +21,6 @@ export function onboardPrompt(home: string): string {
   return `Read ${onboardPromptPath(home)} and follow it.`;
 }
 
-/** The short re-run prompt for an agent that already has the rooms skill. */
-export const COMPACT_PROMPT = "Sort my rooms";
-
 /** "Try telling your agent": each card copies its own text. */
 export const EXAMPLE_PROMPTS: readonly { icon: LucideIcon; text: string }[] = [
   { icon: FileText, text: "Turn this result into an HTML report and put it in the right room" },
@@ -32,36 +29,13 @@ export const EXAMPLE_PROMPTS: readonly { icon: LucideIcon; text: string }[] = [
 ];
 
 /**
- * Hands the user one line to paste into an agent. Full form on first run (no
- * rooms besides inbox): a welcome page with the prompt, the concepts, example
- * prompts and tips. Compact at the top of the New tab when opened from the
- * sidebar's "Sort with an agent": there it offers both the ONBOARD prompt
- * (first time, or another agent without the skill) and the short re-run line.
- * Renders nothing before the first sync.
+ * The first-run welcome page (no rooms besides inbox): the one line to paste
+ * into an agent, the concepts, example prompts and tips. Renders nothing
+ * before the first sync.
  */
-export function OnboardingCard({ compact = false }: { compact?: boolean }) {
+export function OnboardingCard() {
   const { info } = useRooms();
   if (!info) return null;
-
-  if (compact) {
-    return (
-      <section
-        aria-label="Sort again with an agent"
-        className="flex flex-col items-start gap-2 rounded-[14px] border border-[#ddd] bg-white px-5 py-[18px]"
-      >
-        <p className="text-[15px] font-medium text-ink">Sort again with an agent</p>
-        <div className="flex max-w-full flex-col items-start gap-1">
-          <p className="text-[13px] text-[#929292]">First time, or a different agent</p>
-          <CopyChip text={onboardPrompt(info.home)} />
-        </div>
-        <div className="flex max-w-full flex-col items-start gap-1">
-          <p className="text-[13px] text-[#929292]">If the skill is already installed</p>
-          <CopyChip text={COMPACT_PROMPT} />
-        </div>
-      </section>
-    );
-  }
-
   return <Welcome home={info.home} />;
 }
 

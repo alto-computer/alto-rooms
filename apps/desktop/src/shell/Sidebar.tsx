@@ -158,15 +158,6 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             {moveError}
           </p>
         ) : null}
-        {readOnly || rooms.every((r) => r.id === INBOX_ID) ? null : (
-          <button
-            type="button"
-            onClick={() => viewer.openOnboarding()}
-            className="mt-2 self-start rounded-lg px-2.5 py-1.5 text-[13px] text-ink-3 hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
-          >
-            Sort with an agent
-          </button>
-        )}
       </div>
     </ShadcnSidebar>
   );

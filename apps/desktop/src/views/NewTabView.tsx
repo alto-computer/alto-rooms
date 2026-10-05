@@ -1,6 +1,6 @@
 import { useMemo, useRef } from "react";
 import type { Artifact } from "@alto-rooms/protocol-ts";
-import { useReadOnly, useRooms, useViewer, useViewerStore, useWatchArtifacts } from "@/data/hooks";
+import { useReadOnly, useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
 import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { artifactDragSource, INBOX_ID } from "@/lib/drag";
 import { OnboardingCard } from "./OnboardingCard";
@@ -25,7 +25,6 @@ import { wantsNewTab } from "@/lib/nav";
  */
 export function NewTabView() {
   const viewer = useViewerStore();
-  const { activeId, onboardingTabId } = useViewer();
   const { rooms, artifacts, errors, info } = useRooms();
   const readOnly = useReadOnly();
 
@@ -98,7 +97,6 @@ export function NewTabView() {
 
   return (
     <div className={shell}>
-      {onboardingTabId !== null && onboardingTabId === activeId ? <OnboardingCard compact /> : null}
       <header className="flex flex-col gap-2">
         <h1 className="text-[32px] font-medium text-ink">Since your last visit</h1>
         {settled ? (
@@ -153,7 +151,6 @@ function InboxList({
       <h2 id="inbox-waiting" className="text-[18px] font-medium text-ink">
         Waiting for a room
       </h2>
-      {draggable ? <p className="text-[13px] text-ink-3">Drag a card onto a room on the left to move it</p> : null}
       <ul className="mt-1 flex flex-col gap-1">
         {artifacts.map((a) => (
           <li key={a.id}>

@@ -5,6 +5,7 @@ import { useClient } from "@/data/hooks";
 import { artifactDragSource } from "@/lib/drag";
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
+import { DocSkeleton } from "./DocSkeleton";
 
 /** Previews are laid out at this width, then scaled down to the page box. */
 const LAYOUT_WIDTH = 1280;
@@ -92,6 +93,11 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, dragg
   const s = SIZES[size];
   const pageRef = useRef<HTMLDivElement>(null);
   const near = useNearViewport(pageRef);
+  // The preview unmounts when the card scrolls far away, so loading starts over then.
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (!near) setLoaded(false);
+  }, [near]);
   const box = useBoxSize(pageRef, s.fallback);
   const scale = box.w / LAYOUT_WIDTH;
 
@@ -121,6 +127,7 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, dragg
         <div ref={pageRef} className={cn("relative overflow-hidden rounded-xl border border-[#ddd] bg-white", s.page)}>
           {near ? (
             <iframe
+              onLoad={() => setLoaded(true)}
               title={artifact.title}
               aria-hidden
               tabIndex={-1}
@@ -129,7 +136,7 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, dragg
               // A preview is clicked, never scrolled: no scrollbar inside the page.
               scrolling="no"
               loading="lazy"
-              className="absolute top-0 left-0 border-0 bg-white"
+              className={cn("absolute top-0 left-0 border-0 bg-white transition-opacity duration-300 ease-out", loaded ? "opacity-100" : "opacity-0")}
               style={{
                 width: LAYOUT_WIDTH,
                 height: (LAYOUT_WIDTH * box.h) / box.w,
@@ -139,6 +146,7 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, dragg
               }}
             />
           ) : null}
+          {loaded && near ? null : <DocSkeleton compact={size === "journal"} />}
         </div>
         <div className="flex min-w-0 items-center gap-2 px-0.5">
           <span data-testid="card-title" className="min-w-0 truncate text-[15px] font-medium text-ink">

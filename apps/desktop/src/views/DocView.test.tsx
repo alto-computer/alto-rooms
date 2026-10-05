@@ -1,5 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
-import { act, cleanup, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderWithStores, room } from "@/test/fakes";
 import { DocView } from "./DocView";
@@ -29,6 +29,16 @@ describe("DocView", () => {
     expect(frame.getAttribute("src")).toBe("http://files.test/r1/sub/a1.html");
     expect(frame.hasAttribute("srcdoc")).toBe(false);
     expect(frame).toHaveAttribute("title", "보고서");
+  });
+
+  it("shows a skeleton until the document loads", async () => {
+    const { container } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+    });
+    expect(screen.getByTestId("doc-skeleton")).toBeInTheDocument();
+    fireEvent.load(container.querySelector("iframe")!);
+    expect(screen.queryByTestId("doc-skeleton")).toBeNull();
   });
 
   it("says the document is gone once the room's artifacts no longer include it", async () => {

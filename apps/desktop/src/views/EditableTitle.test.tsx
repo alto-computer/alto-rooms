@@ -19,11 +19,10 @@ describe("EditableTitle", () => {
   it("click edits, Enter saves, input is disabled while saving", async () => {
     const d = deferred();
     const onSave = vi.fn(() => d.promise);
-    render(<EditableTitle value="벤치마크" onSave={onSave} ariaLabel="Room name" hint="Press Enter or click outside to save" />);
+    render(<EditableTitle value="벤치마크" onSave={onSave} ariaLabel="Room name" />);
     fireEvent.click(screen.getByRole("heading", { name: "벤치마크" }));
     const input = screen.getByRole("textbox", { name: "Room name" });
     expect(input).toHaveFocus();
-    expect(screen.getByText("Press Enter or click outside to save")).toBeInTheDocument();
     fireEvent.change(input, { target: { value: "벤치" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSave).toHaveBeenCalledWith("벤치");

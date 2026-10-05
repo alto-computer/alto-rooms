@@ -15,7 +15,6 @@ export type EditableTitleProps = {
   className?: string;
   inputClassName?: string;
   ariaLabel: string;
-  hint?: string;
   /** Start in edit mode (the sidebar row mounts it on double-click). */
   defaultEditing?: boolean;
   /** Read-only: plain text, never editable. */
@@ -37,7 +36,6 @@ export function EditableTitle({
   className,
   inputClassName,
   ariaLabel,
-  hint,
   defaultEditing = false,
   readOnly = false,
   copyError = errorCopy,
@@ -53,7 +51,6 @@ export function EditableTitle({
   const failedDraft = useRef<string | null>(null);
   const live = useRef(true);
   const errorId = useId();
-  const hintId = useId();
 
   useEffect(() => {
     live.current = true;
@@ -149,7 +146,6 @@ export function EditableTitle({
     );
   }
 
-  const describedBy = [error ? errorId : null, hint ? hintId : null].filter(Boolean).join(" ") || undefined;
 
   return (
     <div className="flex min-w-0 flex-col">
@@ -158,7 +154,7 @@ export function EditableTitle({
         type="text"
         aria-label={ariaLabel}
         aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy}
+        aria-describedby={error ? errorId : undefined}
         value={draft}
         disabled={saving}
         spellCheck={false}
@@ -172,11 +168,6 @@ export function EditableTitle({
         <p id={errorId} role="alert" className="mt-1.5 flex items-center gap-1.5 text-[14px] text-[#c13515]">
           <CircleAlert size={16} aria-hidden />
           {error}
-        </p>
-      ) : null}
-      {hint ? (
-        <p id={hintId} className="mt-1.5 text-[14px] text-ink-3">
-          {hint}
         </p>
       ) : null}
     </div>

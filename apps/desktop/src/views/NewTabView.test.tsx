@@ -218,7 +218,6 @@ describe("NewTabView: first run", () => {
     await renderWithStores(<NewTabView />, { viewer: viewer(), rooms: [room("inbox", "Inbox"), room("a", "가")] });
     expect(screen.getByRole("heading", { level: 1, name: "Since your last visit" })).toBeInTheDocument();
     expect(screen.queryByText("Welcome to Rooms")).toBeNull();
-    expect(screen.queryByText("Sort again with an agent")).toBeNull();
   });
 
   it("the read-only welcome page still shows (copying is harmless)", async () => {
@@ -237,12 +236,11 @@ describe("NewTabView: Waiting for a room", () => {
   const inboxRooms = [room("inbox", "Inbox", { artifactCount: 2 }), room("a", "가")];
   const inboxDocs = { inbox: [{ ...artifact("x1", "inbox", OLD), title: "오래된 문서" }, { ...artifact("x2", "inbox", NEW), title: "새 문서" }] };
 
-  it("lists inbox artifacts newest first with the hint; clicking a row opens the doc tab", async () => {
+  it("lists inbox artifacts newest first; clicking a row opens the doc tab", async () => {
     const v = viewer();
     await renderWithStores(<NewTabView />, { viewer: v, rooms: inboxRooms, artifacts: inboxDocs });
     const section = await screen.findByRole("region", { name: "Waiting for a room" });
     expect(within(section).getByRole("heading", { level: 2, name: "Waiting for a room" })).toBeInTheDocument();
-    expect(within(section).getByText("Drag a card onto a room on the left to move it")).toBeInTheDocument();
     const rows = within(section).getAllByTestId("inbox-row");
     expect(rows.map((r) => within(r).getByTestId("inbox-title").textContent)).toEqual(["새 문서", "오래된 문서"]);
     expect(rows[0]).toHaveAttribute("draggable", "true");
@@ -259,10 +257,9 @@ describe("NewTabView: Waiting for a room", () => {
     expect(screen.queryByText("Waiting for a room")).toBeNull();
   });
 
-  it("read-only: rows are not draggable and there is no drag hint", async () => {
+  it("read-only: rows are not draggable", async () => {
     await renderWithStores(<NewTabView />, { viewer: viewer(), readOnly: true, rooms: inboxRooms, artifacts: inboxDocs });
     const rows = await screen.findAllByTestId("inbox-row");
     for (const r of rows) expect(r).not.toHaveAttribute("draggable", "true");
-    expect(screen.queryByText("Drag a card onto a room on the left to move it")).toBeNull();
   });
 });

@@ -83,7 +83,6 @@ export function RoomView({ roomId }: { roomId: string }) {
           value={room.name}
           readOnly={readOnly}
           ariaLabel="Room name"
-          hint="Press Enter or click outside to save"
           onSave={async (next) => {
             await client.renameRoom(room.id, next);
           }}

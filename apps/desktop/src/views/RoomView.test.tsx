@@ -168,7 +168,6 @@ describe("RoomView", () => {
   it("an empty room shows the empty state with the path chip", async () => {
     await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [] } });
     expect(screen.getByText("No artifacts yet")).toBeInTheDocument();
-    expect(screen.getByText("Ask your agent to save HTML into this folder")).toBeInTheDocument();
     expect(screen.getByAltText("Clew the otter, peeking out of the water")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\/h\/rooms\/r1/ })).toBeInTheDocument();
   });
@@ -190,6 +189,19 @@ describe("RoomView", () => {
     expect(iframe).toHaveAttribute("scrolling", "no");
     expect(iframe.style.width).toBe("1280px");
     expect(iframe.style.transform).toMatch(/^scale\(/);
+  });
+
+  it("shows a page-shaped skeleton until the preview loads, then fades the preview in", async () => {
+    await renderWithStores(<RoomView roomId="r1" />, {
+      rooms: [room("r1", "벤치마크")],
+      artifacts: { r1: [artifact("a", "첫 문서", longAgo)] },
+    });
+    const iframe = screen.getByTitle("첫 문서");
+    expect(screen.getByTestId("doc-skeleton")).toBeInTheDocument();
+    expect(iframe).toHaveClass("opacity-0");
+    fireEvent.load(iframe);
+    expect(screen.queryByTestId("doc-skeleton")).toBeNull();
+    expect(iframe).toHaveClass("opacity-100");
   });
 
   it("shows Something went wrong when the first load failed", async () => {

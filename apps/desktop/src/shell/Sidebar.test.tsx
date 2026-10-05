@@ -60,61 +60,6 @@ async function dropOn(target: HTMLElement, dt: ReturnType<typeof stubTransfer>) 
   });
 }
 
-describe("Sidebar: Sort with an agent", () => {
-  it("opens the New tab with the compact card; leaving the tab dismisses it", async () => {
-    const h = await renderWithStores(<AppShell />, { rooms: ROOMS, artifacts: ARTIFACTS });
-    // Leave the initial New tab first.
-    fireEvent.click(sidebarRow("벤치마크"));
-    const link = screen.getByRole("button", { name: "Sort with an agent" });
-    expect(link).toHaveClass("text-[13px]", "text-ink-3");
-    await act(async () => {
-      fireEvent.click(link);
-    });
-    const active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
-    expect(active?.kind).toBe("new");
-    expect(h.viewer.getState().tabs.filter((t) => t.kind === "new")).toHaveLength(1);
-    expect(screen.getByText("Sort again with an agent")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sort my rooms" })).toBeInTheDocument();
-    expect(screen.getByText("Since your last visit")).toBeInTheDocument();
-
-    fireEvent.click(sidebarRow("벤치마크"));
-    act(() => h.viewer.open({ kind: "new" }));
-    expect(screen.getByText("Since your last visit")).toBeInTheDocument();
-    expect(screen.queryByText("Sort again with an agent")).toBeNull();
-  });
-
-  it("the compact chip copies Sort my rooms", async () => {
-    const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    await renderWithStores(<AppShell />, { rooms: ROOMS, artifacts: ARTIFACTS });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Sort with an agent" }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Sort my rooms" }));
-    });
-    expect(writeText).toHaveBeenCalledWith("Sort my rooms");
-    expect(screen.getByText("Copied")).toBeInTheDocument();
-  });
-});
-
-describe("Sidebar: Sort with an agent visibility", () => {
-  it("is hidden while there is no room besides inbox", async () => {
-    await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox")], artifacts: { inbox: [] } });
-    expect(screen.queryByRole("button", { name: "Sort with an agent" })).toBeNull();
-  });
-
-  it("is hidden with no rooms at all", async () => {
-    await renderWithStores(<AppShell />, { rooms: [] });
-    expect(screen.queryByRole("button", { name: "Sort with an agent" })).toBeNull();
-  });
-
-  it("shows once a room besides inbox exists", async () => {
-    await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox"), room("a", "가")], artifacts: { inbox: [] } });
-    expect(screen.getByRole("button", { name: "Sort with an agent" })).toBeInTheDocument();
-  });
-});
-
 describe("Sidebar: drag to move", () => {
   it("dragging an inbox row onto an owned room calls moveArtifact with the payload, highlighting while over", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: ROOMS, artifacts: ARTIFACTS });
@@ -192,7 +137,6 @@ describe("Sidebar: drag to move", () => {
     await dropOn(target, stubTransfer({ [ARTIFACT_DRAG_TYPE]: JSON.stringify({ roomId: "inbox", artifactId: "x1" }) }));
     expect(target).not.toHaveClass("outline-ink");
     expect(h.client.moveArtifact).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Sort with an agent" })).toBeNull();
   });
 });
 

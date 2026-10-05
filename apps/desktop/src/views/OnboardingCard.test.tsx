@@ -20,45 +20,6 @@ describe("onboardPromptPath", () => {
   });
 });
 
-describe("OnboardingCard compact", () => {
-  const render = (home = "/Users/me/rooms") =>
-    renderWithStores(<OnboardingCard compact />, { home, rooms: [room("inbox", "Inbox"), room("a", "가")] });
-
-  it("offers the full ONBOARD prompt under First time, or a different agent, then Sort my rooms under If the skill is already installed", async () => {
-    await render();
-    const first = screen.getByText("First time, or a different agent");
-    const second = screen.getByText("If the skill is already installed");
-    for (const label of [first, second]) expect(label).toHaveClass("text-[13px]", "text-[#929292]");
-    const full = screen.getByRole("button", { name: "Read ~/rooms/ONBOARD.md and follow it." });
-    const short = screen.getByRole("button", { name: "Sort my rooms" });
-    const order = [first, full, second, short];
-    for (let i = 1; i < order.length; i++) {
-      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    }
-  });
-
-  it("the first chip uses the absolute path for a non-standard home and copies it", async () => {
-    const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    await render("/opt/rooms");
-    const line = "Read /opt/rooms/ONBOARD.md and follow it.";
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: line }));
-    });
-    expect(writeText).toHaveBeenCalledWith(line);
-  });
-
-  it("the second chip copies Sort my rooms", async () => {
-    const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    await render();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Sort my rooms" }));
-    });
-    expect(writeText).toHaveBeenCalledWith("Sort my rooms");
-  });
-});
-
 describe("OnboardingCard full (welcome page)", () => {
   const PROMPT = "Read ~/rooms/ONBOARD.md and follow it.";
   const EXAMPLES = [
@@ -188,11 +149,4 @@ describe("OnboardingCard full (welcome page)", () => {
     expect(writeText).toHaveBeenCalledWith(EXAMPLES[1]);
   });
 
-  it("the compact form has none of the welcome page", async () => {
-    await renderWithStores(<OnboardingCard compact />, { home: "/Users/me/rooms", rooms: [room("inbox", "Inbox"), room("a", "가")] });
-    expect(screen.queryByText("Welcome to Rooms")).toBeNull();
-    expect(screen.queryByTestId("welcome")).toBeNull();
-    expect(screen.getByText("Sort again with an agent")).toBeInTheDocument();
-    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual([PROMPT, "Sort my rooms"]);
-  });
 });

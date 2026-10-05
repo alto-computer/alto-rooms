@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useArtifacts, useClient, useRooms, useScopeError } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
+import { cn } from "@/lib/utils";
+import { DocSkeleton } from "./DocSkeleton";
 
 function Centered({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center bg-white p-12 text-center text-[17px] text-ink-2">{children}</div>;
@@ -13,6 +15,7 @@ function Centered({ children }: { children: ReactNode }) {
 export function DocView({ roomId, artifactId }: { roomId: string; artifactId: string }) {
   const { info, rooms } = useRooms();
   const client = useClient();
+  const [loaded, setLoaded] = useState(false);
   const artifacts = useArtifacts(roomId);
   const loadError = useScopeError(`room:${roomId}`);
 
@@ -32,8 +35,10 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
         title={artifact.title}
         src={client.fileUrl(info, artifact)}
         sandbox="allow-scripts allow-popups"
-        className="absolute inset-0 size-full border-0 bg-white"
+        onLoad={() => setLoaded(true)}
+        className={cn("absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out", loaded ? "opacity-100" : "opacity-0")}
       />
+      {loaded ? null : <DocSkeleton />}
     </div>
   );
 }

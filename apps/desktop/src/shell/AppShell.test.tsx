@@ -287,7 +287,6 @@ describe("AppShell: tabs", () => {
     const h = await renderWithStores(<AppShell />, { rooms: twoRooms, viewer });
     fireEvent.click(screen.getByRole("heading", { level: 1, name: "벤치마크" }));
     const input = screen.getByRole("textbox", { name: "Room name" });
-    expect(screen.getByText("Press Enter or click outside to save")).toBeInTheDocument();
     fireEvent.change(input, { target: { value: "벤치" } });
     await act(async () => {
       fireEvent.blur(input);
