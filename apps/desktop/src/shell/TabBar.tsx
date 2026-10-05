@@ -1,4 +1,4 @@
-import type { MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Calendar, FileText, Folder, LayoutGrid, PanelLeft, Plus, X, type LucideIcon } from "lucide-react";
 import { useArtifacts, useRooms, useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab } from "@/data/viewerStore";
@@ -58,9 +58,62 @@ function TabLabel({ tab }: { tab: Tab }) {
 const ICON_BUTTON =
   "grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink";
 
+/** The tab list counts as scrolled to an end within this many pixels. */
+const EDGE_SLACK = 2;
+/** Fades the side(s) of the tab list that hide more tabs. */
+const FADE = {
+  none: "",
+  left: "[mask-image:linear-gradient(to_right,transparent,#000_32px)]",
+  right: "[mask-image:linear-gradient(to_left,transparent,#000_32px)]",
+  both: "[mask-image:linear-gradient(to_right,transparent,#000_32px,#000_calc(100%-32px),transparent)]",
+} as const;
+
+/**
+ * Many tabs, browser style: every tab shrinks evenly (220 → 112px) before the list
+ * scrolls; the list then hides its scrollbar, fades the clipped side(s), takes a
+ * vertical mouse wheel as sideways scrolling, and keeps the active tab in view.
+ */
+function useTabOverflow(activeId: string | null, count: number) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [fade, setFade] = useState<keyof typeof FADE>("none");
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const update = () => {
+      const left = el.scrollLeft > EDGE_SLACK;
+      const right = el.scrollWidth - el.clientWidth - el.scrollLeft > EDGE_SLACK;
+      setFade(left && right ? "both" : left ? "left" : right ? "right" : "none");
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX) || el.scrollWidth <= el.clientWidth) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    el.addEventListener("wheel", onWheel, { passive: false });
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      el.removeEventListener("wheel", onWheel);
+      ro?.disconnect();
+    };
+  }, [count]);
+
+  useEffect(() => {
+    if (!activeId) return;
+    document.getElementById(tabDomId(activeId))?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeId, count]);
+
+  return { listRef, fade: FADE[fade] };
+}
+
 export function TabBar() {
   const { tabs, activeId, sidebarOpen } = useViewer();
   const viewer = useViewerStore();
+  const { listRef, fade } = useTabOverflow(activeId, tabs.length);
 
   return (
     <div className="flex min-w-0 items-center gap-1 px-1 pb-2">
@@ -69,7 +122,12 @@ export function TabBar() {
           <PanelLeft size={17} strokeWidth={1.75} aria-hidden />
         </button>
       )}
-      <div role="tablist" aria-label="탭" className="no-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto">
+      <div
+        ref={listRef}
+        role="tablist"
+        aria-label="탭"
+        className={cn("flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", fade)}
+      >
         {tabs.map((tab) => (
           <TabItem
             key={tab.id}
@@ -96,7 +154,7 @@ function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boole
     }
   };
   return (
-    <div role="presentation" className="group relative flex max-w-[220px] min-w-0 shrink-0">
+    <div role="presentation" className="group relative flex min-w-[112px] flex-[0_1_220px]">
       <button
         type="button"
         role="tab"
@@ -108,8 +166,11 @@ function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boole
         // Stop the middle-button autoscroll cursor.
         onMouseDown={(e) => e.button === 1 && e.preventDefault()}
         className={cn(
-          "flex min-h-[34px] w-full min-w-0 items-center gap-2 rounded-lg border px-3 text-[14px]",
-          "group-hover:pr-8 group-focus-within:pr-8 focus-visible:outline-2 focus-visible:outline-ink",
+          // The active tab keeps room for its always-visible close button; the others never
+          // change padding on hover (their close button fades in over the label's end instead).
+          "flex min-h-[34px] w-full min-w-0 items-center gap-2 rounded-lg border pl-3 text-[14px]",
+          "focus-visible:outline-2 focus-visible:outline-ink",
+          active ? "pr-8" : "pr-3",
           active ? "border-[#ddd] bg-white text-[#222]" : "border-transparent text-[#6a6a6a] hover:text-[#222]",
         )}
       >
@@ -123,9 +184,17 @@ function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boole
         aria-label="탭 닫기"
         onClick={onClose}
         onAuxClick={middle}
-        className="absolute top-1/2 right-2 grid size-5 -translate-y-1/2 place-items-center rounded text-[#6a6a6a] opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 hover:text-[#222] focus-visible:outline-2 focus-visible:outline-ink"
+        className={cn(
+          "absolute top-1/2 right-[1px] flex h-[32px] -translate-y-1/2 items-center rounded-r-lg pr-[7px] text-[#6a6a6a] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-ink",
+          "transition-opacity duration-150",
+          active
+            ? "bg-white opacity-100"
+            : "bg-[linear-gradient(to_right,transparent,var(--surface)_12px)] pl-4 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
+        )}
       >
-        <X size={16} strokeWidth={1.75} aria-hidden />
+        <span className="grid size-5 place-items-center rounded hover:bg-[#f2f2f2]">
+          <X size={15} strokeWidth={1.75} aria-hidden />
+        </span>
       </button>
     </div>
   );
