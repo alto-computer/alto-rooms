@@ -2,6 +2,7 @@ pub mod core;
 pub mod error;
 pub mod index;
 pub mod meta;
+pub mod onboarding;
 pub mod rules;
 pub mod state;
 pub mod walk;

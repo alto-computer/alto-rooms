@@ -168,6 +168,7 @@ impl RoomsCore {
             if let HomeChange::Removed(id) = c { index.drop_room(id)?; }
         }
         let _ = index.take_touched_days();
+        if let Err(e) = crate::onboarding::ensure(&home) { eprintln!("rooms-core: onboarding files not written: {e}"); }
         let (tx, _) = broadcast::channel(1024);
         Ok(RoomsCore {
             inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new() })),
