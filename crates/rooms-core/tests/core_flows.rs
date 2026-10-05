@@ -152,6 +152,12 @@ fn resolve_file_rejects_dotfiles_and_directories() {
 
 use std::time::{Duration, Instant};
 
+/// Scales a timing bound by `ROOMS_TEST_SLOWDOWN` (f64, default 1.0) for slow or loaded machines.
+fn slow(d: Duration) -> Duration {
+    let k = std::env::var("ROOMS_TEST_SLOWDOWN").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
+    d.mul_f64(k)
+}
+
 fn wait_for(rx: &mut tokio::sync::broadcast::Receiver<RoomsEvent>, pred: impl Fn(&EventKind) -> bool, max: Duration) -> Vec<RoomsEvent> {
     let start = Instant::now();
     let mut got = Vec::new();
@@ -471,7 +477,7 @@ fn api_calls_stay_fast_during_big_backfill() {
         std::thread::sleep(Duration::from_millis(5));
     }
     t.join().unwrap();
-    assert!(worst < Duration::from_millis(150), "worst {worst:?}");
+    assert!(worst < slow(Duration::from_millis(150)), "worst {worst:?}");
 }
 
 #[test]
@@ -488,7 +494,7 @@ fn one_new_file_in_big_room_is_added_within_a_second() {
     let s = Instant::now();
     fs::write(big.join("fresh.html"), "<title>fresh</title>").unwrap();
     wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.rel_path == "fresh.html"), Duration::from_secs(2));
-    assert!(s.elapsed() < Duration::from_secs(1), "{:?}", s.elapsed());
+    assert!(s.elapsed() < slow(Duration::from_secs(1)), "{:?}", s.elapsed());
 }
 
 #[test]
@@ -523,13 +529,13 @@ fn dropping_handle_and_core_closes_the_event_channel() {
     let (core, w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
     let mut rx = core.subscribe();
     drop(w);
-    std::thread::sleep(Duration::from_millis(2500)); // one retry tick, so the retry thread sees the dropped debouncer
+    std::thread::sleep(slow(Duration::from_millis(2500))); // one retry tick, so the retry thread sees the dropped debouncer
     drop(core);
     let s = Instant::now();
     loop {
         match rx.try_recv() {
             Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
-            _ => { assert!(s.elapsed() < Duration::from_secs(3), "a helper thread still holds the core"); std::thread::sleep(Duration::from_millis(20)); }
+            _ => { assert!(s.elapsed() < slow(Duration::from_secs(3)), "a helper thread still holds the core"); std::thread::sleep(Duration::from_millis(20)); }
         }
     }
 }
