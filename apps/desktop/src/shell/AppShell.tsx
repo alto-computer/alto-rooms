@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
-import { Command, CommandDialog, CommandInput, CommandList } from "@/components/ui/command";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useViewer, useViewerStore } from "@/data/hooks";
@@ -8,7 +7,8 @@ import { cn } from "@/lib/utils";
 import { DocView } from "@/views/DocView";
 import { JournalView } from "@/views/JournalView";
 import { NoteView } from "@/views/NoteView";
-import { TabPlaceholder } from "@/views/Placeholder";
+import { NewTabView } from "@/views/NewTabView";
+import { QuickFind } from "@/views/QuickFind";
 import { RoomView } from "@/views/RoomView";
 import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
@@ -52,18 +52,6 @@ function useShortcuts(viewer: ViewerStore, openFind: () => void) {
   }, [viewer, openFind]);
 }
 
-/** ⌘K stub; Task 7 replaces it with QuickFind. */
-function QuickFindStub({ onClose }: { onClose: () => void }) {
-  return (
-    <CommandDialog open onOpenChange={(open) => !open && onClose()} title="찾기" description="방이나 문서 찾기">
-      <Command>
-        <CommandInput placeholder="방이나 문서 찾기" />
-        <CommandList />
-      </Command>
-    </CommandDialog>
-  );
-}
-
 /** The active tab's view. Mounted per tab id, so mount = activation. */
 function TabView({ tab }: { tab: Tab }) {
   switch (tab.kind) {
@@ -76,7 +64,7 @@ function TabView({ tab }: { tab: Tab }) {
     case "note":
       return <NoteView date={tab.date} name={tab.name} />;
     case "new":
-      return <TabPlaceholder tab={tab} />;
+      return <NewTabView />;
   }
 }
 
@@ -112,7 +100,7 @@ export function AppShell() {
             {active ? <TabView key={active.id} tab={active} /> : null}
           </main>
         </div>
-        {findOpen ? <QuickFindStub onClose={() => setFindOpen(false)} /> : null}
+        <QuickFind open={findOpen} onClose={() => setFindOpen(false)} />
       </SidebarProvider>
     </TooltipProvider>
   );

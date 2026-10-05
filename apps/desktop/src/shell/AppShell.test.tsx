@@ -171,7 +171,8 @@ describe("AppShell: sidebar", () => {
 
   it("an unavailable room is dimmed", async () => {
     await renderWithStores(<AppShell />, { rooms: [room("r1", "벤치마크", { status: "unavailable" })] });
-    expect(screen.getByText("벤치마크")).toHaveClass("opacity-50");
+    // The new tab also lists the room; the sidebar row is the dimmed one.
+    expect(screen.getAllByText("벤치마크").some((el) => el.classList.contains("opacity-50"))).toBe(true);
   });
 });
 
