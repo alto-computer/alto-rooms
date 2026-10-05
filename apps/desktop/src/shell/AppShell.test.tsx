@@ -181,8 +181,8 @@ describe("AppShell: sidebar", () => {
 describe("AppShell: tabs", () => {
   it("hover close button closes a tab; ⌘W closes the active tab", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
-    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
-    fireEvent.click(screen.getByRole("button", { name: "디자인" }));
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["새 탭", "벤치마크", "디자인"]);
 
     const benchTab = screen.getByRole("tab", { name: "벤치마크" });
@@ -197,10 +197,56 @@ describe("AppShell: tabs", () => {
 
   it("middle-click closes a tab", async () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
-    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
     const tab = screen.getByRole("tab", { name: "벤치마크" });
     fireEvent(tab, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
     expect(screen.queryByRole("tab", { name: "벤치마크" })).toBeNull();
+  });
+
+  it("a sidebar room opens in the current tab; back and forward walk that tab's history", async () => {
+    await renderWithStores(<AppShell />, { rooms: twoRooms });
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
+    const back = screen.getByRole("button", { name: "뒤로 (⌘[)" });
+    const forward = screen.getByRole("button", { name: "앞으로 (⌘])" });
+    expect(back).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
+    fireEvent.click(screen.getByRole("button", { name: "디자인" }));
+    expect(tabNames()).toEqual(["디자인"]);
+    expect(back).toBeEnabled();
+    expect(forward).toBeDisabled();
+
+    fireEvent.click(back);
+    expect(tabNames()).toEqual(["벤치마크"]);
+    fireEvent.keyDown(window, { key: "[", code: "BracketLeft", metaKey: true });
+    expect(tabNames()).toEqual(["새 탭"]);
+    fireEvent.keyDown(window, { key: "]", code: "BracketRight", metaKey: true });
+    expect(tabNames()).toEqual(["벤치마크"]);
+    fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft", metaKey: true });
+    expect(tabNames()).toEqual(["새 탭"]);
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight", metaKey: true });
+    expect(tabNames()).toEqual(["벤치마크"]);
+    fireEvent(window, new MouseEvent("mouseup", { button: 4 }));
+    expect(tabNames()).toEqual(["디자인"]);
+    fireEvent(window, new MouseEvent("mouseup", { button: 3 }));
+    expect(tabNames()).toEqual(["벤치마크"]);
+  });
+
+  it("⌘← stays a caret move inside a text field", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
+    fireEvent.click(screen.getByRole("button", { name: "새 방" }));
+    const input = screen.getByLabelText("새 방 이름");
+    input.focus();
+    fireEvent.keyDown(input, { key: "ArrowLeft", code: "ArrowLeft", metaKey: true });
+    expect(h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId)).toMatchObject({ kind: "room", roomId: "r1" });
+  });
+
+  it("⌘-click and middle click on a sidebar room open a new tab", async () => {
+    await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
+    fireEvent(screen.getByRole("button", { name: "디자인" }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["새 탭", "벤치마크", "디자인"]);
   });
 
   it("⌘T opens (or activates) the new tab", async () => {

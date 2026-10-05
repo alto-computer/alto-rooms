@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { Calendar, FileText, Folder, LayoutGrid, PanelLeft, Plus, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, Calendar, FileText, Folder, LayoutGrid, PanelLeft, Plus, X, type LucideIcon } from "lucide-react";
 import { useArtifacts, useRooms, useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab } from "@/data/viewerStore";
 import { noteBase } from "@/lib/notes";
@@ -56,7 +56,7 @@ function TabLabel({ tab }: { tab: Tab }) {
 }
 
 const ICON_BUTTON =
-  "grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink";
+  "grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink disabled:pointer-events-none disabled:text-ink-3 disabled:opacity-50";
 
 /** The tab list counts as scrolled to an end within this many pixels. */
 const EDGE_SLACK = 2;
@@ -122,6 +122,18 @@ export function TabBar() {
           <PanelLeft size={17} strokeWidth={1.75} aria-hidden />
         </button>
       )}
+      <button type="button" aria-label="뒤로 (⌘[)" disabled={!viewer.canGoBack()} onClick={() => viewer.back()} className={ICON_BUTTON}>
+        <ArrowLeft size={17} strokeWidth={1.75} aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label="앞으로 (⌘])"
+        disabled={!viewer.canGoForward()}
+        onClick={() => viewer.forward()}
+        className={cn(ICON_BUTTON, "mr-1")}
+      >
+        <ArrowRight size={17} strokeWidth={1.75} aria-hidden />
+      </button>
       <div
         ref={listRef}
         role="tablist"

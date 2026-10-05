@@ -74,7 +74,7 @@ export function QuickFind({ open, onClose }: { open: boolean; onClose: () => voi
                   key={r.id}
                   value={`room:${r.id}`}
                   onSelect={() => {
-                    viewer.open({ kind: "room", roomId: r.id });
+                    viewer.navigate({ kind: "room", roomId: r.id });
                     done();
                   }}
                 >
@@ -91,7 +91,7 @@ export function QuickFind({ open, onClose }: { open: boolean; onClose: () => voi
                   key={`${d.roomId}/${d.id}`}
                   value={`doc:${d.roomId}/${d.id}`}
                   onSelect={() => {
-                    viewer.open({ kind: "doc", roomId: d.roomId, artifactId: d.id });
+                    viewer.navigate({ kind: "doc", roomId: d.roomId, artifactId: d.id });
                     done();
                   }}
                 >

@@ -39,7 +39,7 @@ export function NewRoomRow({ onDone }: { onDone: () => void }) {
     try {
       const room = await write();
       if (!live.current || !room) return;
-      viewer.open({ kind: "room", roomId: room.id });
+      viewer.navigate({ kind: "room", roomId: room.id });
       onDone();
     } catch (e) {
       if (live.current) setError(errorCopy(e));

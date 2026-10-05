@@ -14,6 +14,8 @@ const MENU_CLOSE_WINDOW: &str = "close-window";
 const MENU_QUIT: &str = "quit";
 const MENU_FIND: &str = "find";
 const MENU_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
+const MENU_BACK: &str = "back";
+const MENU_FORWARD: &str = "forward";
 
 /// App menu (About, Hide, Quit ⌘Q), Edit (predefined, so text editing keys keep
 /// working), 파일 (새 탭 ⌘T, 탭 닫기 ⌘W, 창 닫기 ⇧⌘W) and 보기 (찾기 ⌘K, 사이드바 ⌘B).
@@ -50,7 +52,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()?;
     let find = MenuItemBuilder::with_id(MENU_FIND, "찾기").accelerator("CmdOrCtrl+K").build(app)?;
     let sidebar = MenuItemBuilder::with_id(MENU_TOGGLE_SIDEBAR, "사이드바").accelerator("CmdOrCtrl+B").build(app)?;
-    let view_menu = SubmenuBuilder::new(app, "보기").item(&find).item(&sidebar).build()?;
+    let back = MenuItemBuilder::with_id(MENU_BACK, "뒤로").accelerator("CmdOrCtrl+[").build(app)?;
+    let forward = MenuItemBuilder::with_id(MENU_FORWARD, "앞으로").accelerator("CmdOrCtrl+]").build(app)?;
+    let view_menu = SubmenuBuilder::new(app, "보기")
+        .item(&find)
+        .item(&sidebar)
+        .separator()
+        .item(&back)
+        .item(&forward)
+        .build()?;
     MenuBuilder::new(app).items(&[&app_menu, &edit_menu, &file_menu, &view_menu]).build()
 }
 
@@ -103,6 +113,8 @@ pub fn run() {
             MENU_CLOSE_TAB => emit(app, "menu://close-tab"),
             MENU_FIND => emit(app, "menu://find"),
             MENU_TOGGLE_SIDEBAR => emit(app, "menu://toggle-sidebar"),
+            MENU_BACK => emit(app, "menu://back"),
+            MENU_FORWARD => emit(app, "menu://forward"),
             MENU_CLOSE_WINDOW => flush::request(app, Intent::CloseWindow),
             MENU_QUIT => flush::request(app, Intent::Exit),
             _ => {}

@@ -67,7 +67,7 @@ export function RoomView({ roomId }: { roomId: string }) {
                   isNew={isNewSince(a.createdAt, baseline.current!)}
                   size="strip"
                   draggable={roomId === INBOX_ID && !readOnly}
-                  onExpand={() => viewer.open({ kind: "doc", roomId, artifactId: a.id }, { activate: true })}
+                  onOpen={(newTab) => viewer.go({ kind: "doc", roomId, artifactId: a.id }, newTab)}
                 />
               ))
           : null}

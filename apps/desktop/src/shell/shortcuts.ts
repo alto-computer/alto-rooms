@@ -23,6 +23,27 @@ export function keyAction(e: KeyboardEvent): ShortcutAction | null {
   return LETTERS[shortcutLetter(e)] ?? null;
 }
 
+const HISTORY_CODES: Record<string, "back" | "forward"> = {
+  BracketLeft: "back",
+  BracketRight: "forward",
+  ArrowLeft: "back",
+  ArrowRight: "forward",
+};
+
+/**
+ * Back and forward in the active tab, as in a browser: ⌘[ / ⌘] and ⌘← / ⌘→ (Ctrl
+ * off macOS). Matched by physical key, so any layout works. Callers skip text
+ * fields, where these keys indent or move the caret.
+ */
+export function historyKey(e: KeyboardEvent): "back" | "forward" | null {
+  const mod = e.metaKey || (!IS_MAC && e.ctrlKey);
+  if (!mod || e.shiftKey || e.altKey || e.isComposing) return null;
+  return HISTORY_CODES[e.code] ?? null;
+}
+
+/** ⌘[ / ⌘]: the native menu's 뒤로/앞으로 accelerators (a menu item takes only one, so ⌘←/⌘→ stay with the page). */
+export const isMenuHistoryKey = (e: KeyboardEvent) => e.code === "BracketLeft" || e.code === "BracketRight";
+
 /** An input, textarea or contenteditable element: typing goes there. */
 export function isTextField(el: Element | null | undefined): boolean {
   if (!el || !(el instanceof HTMLElement)) return false;

@@ -98,6 +98,18 @@ describe("RoomView", () => {
     expect(active).toEqual(expect.objectContaining({ kind: "doc", roomId: "r1", artifactId: "b" }));
   });
 
+  it("a card opens in the current tab; ⌘-click opens it in a new tab", async () => {
+    const h = await renderWithStores(<RoomView roomId="r1" />, {
+      rooms: [room("r1", "벤치마크")],
+      artifacts: { r1: [artifact("a", "첫 문서", longAgo), artifact("b", "둘째", longAgo)] },
+    });
+    const before = h.viewer.getState().tabs.length;
+    fireEvent.click(screen.getByRole("button", { name: "첫 문서" }));
+    expect(h.viewer.getState().tabs).toHaveLength(before);
+    fireEvent.click(screen.getByRole("button", { name: "둘째" }), { metaKey: true });
+    expect(h.viewer.getState().tabs).toHaveLength(before + 1);
+  });
+
   it("clicking the card body opens the doc tab", async () => {
     const h = await renderWithStores(<RoomView roomId="r1" />, {
       rooms: [room("r1", "벤치마크")],
@@ -223,7 +235,7 @@ describe("ArtifactCard: lazy preview", () => {
     );
     try {
       await renderWithStores(
-        <ArtifactCard artifact={artifact("a", "첫 문서", longAgo)} info={info} label="오늘" isNew={false} size="strip" onExpand={() => {}} />,
+        <ArtifactCard artifact={artifact("a", "첫 문서", longAgo)} info={info} label="오늘" isNew={false} size="strip" onOpen={() => {}} />,
       );
       expect(screen.queryByTitle("첫 문서")).toBeNull();
       act(() => fire(true));

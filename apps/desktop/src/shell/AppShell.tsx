@@ -3,7 +3,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab, ViewerStore } from "@/data/viewerStore";
-import { listenAll, MENU_CLOSE_TAB, MENU_FIND, MENU_NEW_TAB, MENU_TOGGLE_SIDEBAR } from "@/lib/appEvents";
+import { listenAll, MENU_BACK, MENU_CLOSE_TAB, MENU_FIND, MENU_FORWARD, MENU_NEW_TAB, MENU_TOGGLE_SIDEBAR } from "@/lib/appEvents";
 import { isTauri } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { DocView } from "@/views/DocView";
@@ -12,7 +12,7 @@ import { NoteView } from "@/views/NoteView";
 import { NewTabView } from "@/views/NewTabView";
 import { QuickFind } from "@/views/QuickFind";
 import { RoomView } from "@/views/RoomView";
-import { allowedWithFocus, keyAction, type ShortcutAction } from "./shortcuts";
+import { allowedWithFocus, historyKey, isMenuHistoryKey, isTextField, keyAction, type ShortcutAction } from "./shortcuts";
 import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
 
@@ -71,7 +71,45 @@ function useShortcuts(viewer: ViewerStore, openFind: () => void) {
   }, [viewer, openFind]);
 }
 
-/** The active tab's view. Mounted per tab id, so mount = activation. */
+/**
+ * Back/forward in the active tab: ⌘[ / ⌘] and ⌘← / ⌘→ (not from a text field, where
+ * they indent or move the caret) and the mouse's back/forward buttons (3/4). In
+ * Tauri the native menu (보기 › 뒤로/앞으로) owns ⌘[ / ⌘], as with the other shortcuts.
+ */
+function useHistoryNav(viewer: ViewerStore) {
+  useEffect(() => {
+    const menuOwned = isTauri();
+    const go = (dir: "back" | "forward") => (dir === "back" ? viewer.back() : viewer.forward());
+    const unlisten = menuOwned
+      ? listenAll({
+          [MENU_BACK]: () => !isTextField(document.activeElement) && go("back"),
+          [MENU_FORWARD]: () => !isTextField(document.activeElement) && go("forward"),
+        })
+      : null;
+    const onKey = (e: KeyboardEvent) => {
+      if (menuOwned && isMenuHistoryKey(e)) return;
+      const dir = historyKey(e);
+      if (!dir || isTextField(e.target instanceof Element ? e.target : null)) return;
+      e.preventDefault();
+      go(dir);
+    };
+    const onMouse = (e: MouseEvent) => {
+      if (e.button !== 3 && e.button !== 4) return;
+      e.preventDefault();
+      if (e.button === 3) viewer.back();
+      else viewer.forward();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mouseup", onMouse);
+    return () => {
+      unlisten?.();
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mouseup", onMouse);
+    };
+  }, [viewer]);
+}
+
+/** The active tab's view. Mounted per tab id and in-tab navigation, so mount = arriving. */
 function TabView({ tab }: { tab: Tab }) {
   switch (tab.kind) {
     case "room":
@@ -95,6 +133,7 @@ export function AppShell() {
   const [findOpen, setFindOpen] = useState(false);
   const openFind = useCallback(() => setFindOpen(true), []);
   useShortcuts(viewer, openFind);
+  useHistoryNav(viewer);
 
   const active = tabs.find((t) => t.id === activeId);
 
@@ -116,7 +155,7 @@ export function AppShell() {
             aria-labelledby={active ? tabDomId(active.id) : undefined}
             className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-[#ddd] bg-white"
           >
-            {active ? <TabView key={active.id} tab={active} /> : null}
+            {active ? <TabView key={viewer.navKey(active.id)} tab={active} /> : null}
           </main>
         </div>
         <QuickFind open={findOpen} onClose={() => setFindOpen(false)} />

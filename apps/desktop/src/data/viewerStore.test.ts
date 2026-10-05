@@ -230,3 +230,119 @@ describe("ViewerStore: onboarding", () => {
     expect(st.getState().onboardingTabId).toBeNull();
   });
 });
+
+describe("ViewerStore: in-tab history", () => {
+  const room = (roomId: string) => ({ kind: "room", roomId }) as const;
+  const doc = (artifactId: string) => ({ kind: "doc", roomId: "r1", artifactId }) as const;
+  const activeTab = (st: ViewerStore) => st.getState().tabs.find((t) => t.id === st.getState().activeId)!;
+
+  it("navigate changes the active tab in place and back/forward walk its history", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.getState().activeId!;
+    st.navigate(room("r1"));
+    st.navigate(doc("x"));
+    expect(st.getState().tabs).toHaveLength(1);
+    expect(activeTab(st)).toEqual({ id, ...doc("x") });
+    expect(st.canGoBack()).toBe(true);
+    expect(st.canGoForward()).toBe(false);
+
+    st.back();
+    expect(activeTab(st)).toEqual({ id, ...room("r1") });
+    expect(st.canGoForward()).toBe(true);
+    st.back();
+    expect(activeTab(st)).toEqual({ id, kind: "new" });
+    expect(st.canGoBack()).toBe(false);
+    st.back();
+    expect(activeTab(st)).toEqual({ id, kind: "new" });
+
+    st.forward();
+    st.forward();
+    expect(activeTab(st)).toEqual({ id, ...doc("x") });
+  });
+
+  it("navigating after going back drops the forward entries", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    st.navigate(room("r1"));
+    st.navigate(doc("x"));
+    st.back();
+    st.navigate(doc("y"));
+    expect(st.canGoForward()).toBe(false);
+    st.back();
+    expect(activeTab(st).kind).toBe("room");
+  });
+
+  it("navigating to what the tab already shows adds nothing", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    st.navigate(room("r1"));
+    st.navigate(room("r1"));
+    st.back();
+    expect(activeTab(st).kind).toBe("new");
+  });
+
+  it("each tab keeps its own history; a new tab starts without one", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    st.navigate(room("r1"));
+    const second = st.open({ kind: "new" });
+    expect(st.getState().activeId).toBe(second);
+    expect(st.canGoBack()).toBe(false);
+    st.navigate(room("r2"));
+    st.back();
+    expect(activeTab(st).kind).toBe("new");
+  });
+
+  it("records lastVisit when navigating away from a room and when going back from it", () => {
+    const c = clock("2026-10-05T01:00:00Z");
+    const st = new ViewerStore(memoryStorage(), c.now);
+    st.navigate(room("r1"));
+    c.set("2026-10-05T02:00:00Z");
+    st.navigate(doc("x"));
+    expect(st.getState().lastVisit.r1).toBe("2026-10-05T02:00:00.000Z");
+    st.back();
+    c.set("2026-10-05T03:00:00Z");
+    st.back();
+    expect(st.getState().lastVisit.r1).toBe("2026-10-05T03:00:00.000Z");
+  });
+
+  it("navKey changes on every navigation, so the view remounts even between two rooms", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.getState().activeId!;
+    st.navigate(room("r1"));
+    const k1 = st.navKey(id);
+    st.navigate(room("r2"));
+    const k2 = st.navKey(id);
+    st.back();
+    expect(new Set([k1, k2, st.navKey(id)]).size).toBe(3);
+  });
+
+  it("persists history across instances and drops it when the tab closes", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    st.navigate(room("r1"));
+    st.navigate(doc("x"));
+    const again = new ViewerStore(storage, clock().now);
+    expect(again.canGoBack()).toBe(true);
+    again.back();
+    expect(activeTab(again).kind).toBe("room");
+    again.close(again.getState().activeId!);
+    expect(JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!).history).toEqual({});
+  });
+
+  it("keeps at most 50 back entries per tab", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    for (let i = 0; i < 60; i++) st.navigate(room(`r${i}`));
+    let steps = 0;
+    while (st.canGoBack()) {
+      st.back();
+      steps++;
+    }
+    expect(steps).toBe(50);
+  });
+
+  it("navigate with no tab open opens one", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    st.close(st.getState().activeId!);
+    st.navigate(room("r1"));
+    expect(st.getState().tabs).toHaveLength(1);
+    expect(activeTab(st).kind).toBe("room");
+  });
+});

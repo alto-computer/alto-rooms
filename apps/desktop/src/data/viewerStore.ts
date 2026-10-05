@@ -10,8 +10,17 @@ export type Tab =
 /** `Omit` distributed over the union, so each kind keeps its own id fields. */
 export type TabInput = Tab extends infer T ? (T extends Tab ? Omit<T, "id"> : never) : never;
 
+/** A tab's own back/forward entries (nearest last in `back`, nearest first in `forward`). */
+export type TabHistory = { back: TabInput[]; forward: TabInput[] };
+
+/** Entries kept per direction, per tab. */
+const HISTORY_LIMIT = 50;
+const NO_HISTORY: TabHistory = { back: [], forward: [] };
+
 export type ViewerState = {
   tabs: Tab[];
+  /** Tab id -> its in-tab navigation history. Tabs without one have nowhere to go back to. */
+  history: Record<string, TabHistory>;
   activeId: string | null;
   sidebarOpen: boolean;
   lastVisit: Record<string, string>; // roomId -> ISO time the user last LEFT that room tab
@@ -58,6 +67,25 @@ function parseTab(v: unknown): Tab | null {
   }
 }
 
+/** A history entry from untrusted JSON: a tab's id fields, without an id. */
+function parseInput(v: unknown): TabInput | null {
+  if (!v || typeof v !== "object") return null;
+  const tab = parseTab({ ...(v as object), id: "" });
+  return tab ? toInput(tab) : null;
+}
+
+function parseHistory(v: unknown, ids: Set<string>): Record<string, TabHistory> {
+  const out: Record<string, TabHistory> = {};
+  if (!v || typeof v !== "object") return out;
+  const list = (x: unknown) => (Array.isArray(x) ? x.map(parseInput).filter((t): t is TabInput => t !== null).slice(-HISTORY_LIMIT) : []);
+  for (const [id, h] of Object.entries(v as Record<string, unknown>)) {
+    if (!ids.has(id) || !h || typeof h !== "object") continue;
+    const { back, forward } = h as Record<string, unknown>;
+    out[id] = { back: list(back), forward: list(forward).slice(0, HISTORY_LIMIT) };
+  }
+  return out;
+}
+
 function parseState(raw: string | null): ViewerState | null {
   if (raw === null) return null;
   try {
@@ -79,6 +107,7 @@ function parseState(raw: string | null): ViewerState | null {
     const activeId = isStr(v.activeId) && seen.has(v.activeId) ? v.activeId : (tabs[0]?.id ?? null);
     return {
       tabs,
+      history: parseHistory(v.history, seen),
       activeId,
       sidebarOpen: typeof v.sidebarOpen === "boolean" ? v.sidebarOpen : true,
       lastVisit,
@@ -106,6 +135,12 @@ function sameTab(a: TabInput | Tab, b: TabInput | Tab): boolean {
   }
 }
 
+/** A tab's id fields without its id: what a history entry stores. */
+function toInput(tab: Tab): TabInput {
+  const { id: _id, ...rest } = tab;
+  return rest as TabInput;
+}
+
 /** Copies only the id fields, so nothing else from callers (or the server) is persisted. */
 function makeTab(id: string, t: TabInput): Tab {
   switch (t.kind) {
@@ -127,6 +162,8 @@ export class ViewerStore {
   private state: ViewerState;
   private listeners = new Set<() => void>();
   private counter = 0;
+  /** Transient: bumped per tab on every in-tab navigation, so its view remounts. */
+  private navCounts = new Map<string, number>();
   private readonly storage: StorageLike | undefined;
   private readonly now: () => Date;
 
@@ -141,6 +178,7 @@ export class ViewerStore {
     }
     this.state = parseState(raw) ?? {
       tabs: [],
+      history: {},
       activeId: null,
       sidebarOpen: true,
       lastVisit: {},
@@ -181,12 +219,66 @@ export class ViewerStore {
     const i = this.state.tabs.findIndex((t) => t.id === id);
     if (i < 0) return;
     const tabs = this.state.tabs.filter((t) => t.id !== id);
+    const { [id]: _dropped, ...history } = this.state.history;
+    this.navCounts.delete(id);
     if (this.state.activeId !== id) {
-      this.set({ tabs });
+      this.set({ tabs, history });
       return;
     }
     const next = tabs[i] ?? tabs[i - 1] ?? null;
-    this.set({ ...this.leaving(), tabs, activeId: next?.id ?? null });
+    this.set({ ...this.leaving(), tabs, history, activeId: next?.id ?? null });
+  }
+
+  /**
+   * Shows `tab` in the active tab, browser style: what it showed goes on its back
+   * list and its forward list is dropped. With no tab open, opens one instead.
+   */
+  navigate(tab: TabInput): void {
+    const active = this.activeTab();
+    if (!active) {
+      this.open(tab);
+      return;
+    }
+    if (sameTab(active, tab)) return;
+    const h = this.historyOf(active.id);
+    this.moveTo(active.id, tab, { back: [...h.back, toInput(active)].slice(-HISTORY_LIMIT), forward: [] });
+  }
+
+  /** A click's destination: a new tab (⌘/Ctrl or middle click) or this one. */
+  go(tab: TabInput, newTab = false): void {
+    if (newTab) this.open(tab);
+    else this.navigate(tab);
+  }
+
+  back(): void {
+    const active = this.activeTab();
+    const h = active && this.historyOf(active.id);
+    if (!active || !h?.back.length) return;
+    const to = h.back[h.back.length - 1];
+    this.moveTo(active.id, to, { back: h.back.slice(0, -1), forward: [toInput(active), ...h.forward].slice(0, HISTORY_LIMIT) });
+  }
+
+  forward(): void {
+    const active = this.activeTab();
+    const h = active && this.historyOf(active.id);
+    if (!active || !h?.forward.length) return;
+    const [to, ...rest] = h.forward;
+    this.moveTo(active.id, to, { back: [...h.back, toInput(active)].slice(-HISTORY_LIMIT), forward: rest });
+  }
+
+  canGoBack(): boolean {
+    const active = this.activeTab();
+    return !!active && this.historyOf(active.id).back.length > 0;
+  }
+
+  canGoForward(): boolean {
+    const active = this.activeTab();
+    return !!active && this.historyOf(active.id).forward.length > 0;
+  }
+
+  /** Changes on every in-tab navigation of `id`: the key its view mounts under. */
+  navKey(id: string): string {
+    return `${id}:${this.navCounts.get(id) ?? 0}`;
   }
 
   /** Replaces a tab's id fields in place (same id and position), e.g. the journal tab's date. */
@@ -225,6 +317,21 @@ export class ViewerStore {
     const since = Date.parse(this.state.lastVisit[a.roomId] ?? this.state.firstRunAt);
     if (Number.isNaN(created) || Number.isNaN(since)) return false;
     return created > since;
+  }
+
+  private activeTab(): Tab | undefined {
+    return this.state.tabs.find((t) => t.id === this.state.activeId);
+  }
+
+  private historyOf(id: string): TabHistory {
+    return this.state.history[id] ?? NO_HISTORY;
+  }
+
+  /** Points tab `id` (the active one) at `to` with history `h`, recording leaving a room. */
+  private moveTo(id: string, to: TabInput, h: TabHistory) {
+    const tabs = this.state.tabs.map((t) => (t.id === id ? makeTab(id, to) : t));
+    this.navCounts.set(id, (this.navCounts.get(id) ?? 0) + 1);
+    this.set({ ...this.leaving(), tabs, history: { ...this.state.history, [id]: h } });
   }
 
   /** If the active tab is a room tab, the patch that records leaving it now. */

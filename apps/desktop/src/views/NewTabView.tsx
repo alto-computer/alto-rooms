@@ -4,6 +4,7 @@ import { useReadOnly, useRooms, useViewer, useViewerStore, useWatchArtifacts } f
 import { dateLabel, isNewSince } from "@/lib/dates";
 import { artifactDragSource, INBOX_ID } from "@/lib/drag";
 import { OnboardingCard } from "./OnboardingCard";
+import { wantsNewTab } from "@/lib/nav";
 
 /**
  * The new tab: per room, how many docs arrived since the last visit.
@@ -82,7 +83,7 @@ export function NewTabView() {
       <InboxList
         artifacts={inbox}
         draggable={!readOnly}
-        onOpen={(a) => viewer.open({ kind: "doc", roomId: a.roomId, artifactId: a.id })}
+        onOpen={(a, newTab) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab)}
       />
     ) : null;
 
@@ -116,7 +117,8 @@ export function NewTabView() {
             <button
               type="button"
               data-testid="new-room-card"
-              onClick={() => viewer.open({ kind: "room", roomId: room.id })}
+              onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))}
+              onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "room", roomId: room.id })}
               className="flex flex-col gap-1 rounded-[14px] border border-[#ddd] bg-white px-5 py-[18px] text-left hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink"
             >
               <span data-testid="new-room-name" className="text-[18px] font-medium text-ink">
@@ -136,7 +138,15 @@ export function NewTabView() {
 }
 
 /** "방을 기다리는 문서": inbox docs, newest first; rows open the doc and drag onto sidebar rooms. */
-function InboxList({ artifacts, draggable, onOpen }: { artifacts: Artifact[]; draggable: boolean; onOpen: (a: Artifact) => void }) {
+function InboxList({
+  artifacts,
+  draggable,
+  onOpen,
+}: {
+  artifacts: Artifact[];
+  draggable: boolean;
+  onOpen: (a: Artifact, newTab: boolean) => void;
+}) {
   const now = new Date();
   return (
     <section aria-labelledby="inbox-waiting" className="flex flex-col gap-2">
@@ -150,7 +160,8 @@ function InboxList({ artifacts, draggable, onOpen }: { artifacts: Artifact[]; dr
             <button
               type="button"
               data-testid="inbox-row"
-              onClick={() => onOpen(a)}
+              onClick={(e) => onOpen(a, wantsNewTab(e))}
+              onAuxClick={(e) => e.button === 1 && onOpen(a, true)}
               {...(draggable ? artifactDragSource({ roomId: a.roomId, artifactId: a.id }) : {})}
               className="flex w-full min-w-0 items-baseline gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink"
             >

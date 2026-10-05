@@ -3,6 +3,7 @@ import type { Artifact, Info } from "@alto-rooms/protocol-ts";
 import { Maximize2 } from "lucide-react";
 import { useClient } from "@/data/hooks";
 import { artifactDragSource } from "@/lib/drag";
+import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 
 /** Previews are laid out at this width, then scaled down to the page box. */
@@ -36,7 +37,8 @@ export type ArtifactCardProps = {
   label: string;
   isNew: boolean;
   size: "strip" | "journal";
-  onExpand: () => void;
+  /** Opens the document: here, or in a new tab (⌘/middle click, or the expand button). */
+  onOpen: (newTab: boolean) => void;
   /** The whole card drags onto sidebar rooms (inbox cards, when writable). */
   draggable?: boolean;
 };
@@ -81,10 +83,11 @@ function useBoxSize(ref: RefObject<HTMLElement | null>, fallback: { w: number; h
 /**
  * One artifact: a white page holding a live, sandboxed, non-interactive preview
  * (laid out at 1280px and scaled to fit), then title, new-doc dot and label.
- * The card body is a focusable button (click/Enter/Space opens the doc tab);
- * the expand button shows on hover or focus and does the same.
+ * The card body is a focusable button: click/Enter/Space opens the doc in this tab
+ * (⌘ or a middle click: a new tab); the expand button, shown on hover or focus,
+ * always opens a new tab.
  */
-export function ArtifactCard({ artifact, info, label, isNew, size, onExpand, draggable = false }: ArtifactCardProps) {
+export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, draggable = false }: ArtifactCardProps) {
   const client = useClient();
   const s = SIZES[size];
   const pageRef = useRef<HTMLDivElement>(null);
@@ -96,7 +99,7 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onExpand, dra
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      onExpand();
+      onOpen(wantsNewTab(e));
     }
   };
 
@@ -110,7 +113,8 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onExpand, dra
         role="button"
         tabIndex={0}
         aria-label={artifact.title}
-        onClick={onExpand}
+        onClick={(e) => onOpen(wantsNewTab(e))}
+        onAuxClick={(e) => e.button === 1 && onOpen(true)}
         onKeyDown={onKeyDown}
         className="flex cursor-pointer flex-col gap-3 rounded-xl outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
@@ -147,7 +151,7 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onExpand, dra
       <button
         type="button"
         aria-label="새 탭에서 크게 보기"
-        onClick={onExpand}
+        onClick={() => onOpen(true)}
         className={cn(
           "absolute flex items-center justify-center rounded-lg border border-[#ddd] bg-white text-ink shadow-float",
           "opacity-0 transition-opacity group-focus-within/card:opacity-100 group-hover/card:opacity-100",

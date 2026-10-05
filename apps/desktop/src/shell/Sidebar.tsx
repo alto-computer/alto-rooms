@@ -15,6 +15,7 @@ import {
   type ArtifactDragPayload,
 } from "@/lib/drag";
 import { moveErrorCopy } from "@/lib/errors";
+import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { useBriefError } from "@/views/briefError";
 import { EditableTitle } from "@/views/EditableTitle";
@@ -228,7 +229,8 @@ function RoomRow({
     <button
       type="button"
       aria-current={active ? "page" : undefined}
-      onClick={() => viewer.open({ kind: "room", roomId: room.id })}
+      onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))}
+      onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "room", roomId: room.id })}
       onDoubleClick={readOnly ? undefined : () => setEditing(true)}
       {...drop.handlers}
       className={cn(

@@ -6,6 +6,7 @@ import type { ViewerStore } from "@/data/viewerStore";
 import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { viewerInitial } from "@/lib/native";
+import { wantsNewTab } from "@/lib/nav";
 import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from "@/lib/notes";
 import otterAvatar from "@/assets/otter-avatar.svg";
 import { ArtifactCard } from "./ArtifactCard";
@@ -124,13 +125,14 @@ function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly No
   );
 }
 
-function NoteCard({ note, onOpen, now }: { note: Note; onOpen: () => void; now: Date }) {
+function NoteCard({ note, onOpen, now }: { note: Note; onOpen: (newTab: boolean) => void; now: Date }) {
   const name = noteBase(note.name);
   return (
     <button
       type="button"
       aria-label={name}
-      onClick={onOpen}
+      onClick={(e) => onOpen(wantsNewTab(e))}
+      onAuxClick={(e) => e.button === 1 && onOpen(true)}
       className="flex h-[150px] w-[220px] shrink-0 flex-col justify-between rounded-xl border border-[#ddd] bg-white p-4 text-left hover:shadow-float focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
     >
       <span className="line-clamp-3 text-[15px] font-medium text-ink">{name}</span>
@@ -200,7 +202,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
                     label={label}
                     isNew={isNewSince(artifact.createdAt, baselineFor(artifact.roomId))}
                     size="journal"
-                    onExpand={() => viewer.open({ kind: "doc", roomId: artifact.roomId, artifactId: artifact.id })}
+                    onOpen={(newTab) => viewer.go({ kind: "doc", roomId: artifact.roomId, artifactId: artifact.id }, newTab)}
                   />
                 ))
               : null}
@@ -219,7 +221,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
           <div className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto px-12 pt-2.5 pb-1">
             {readOnly ? null : <NewNoteCard date={date} notes={notes} viewer={viewer} />}
             {notes.map((n) => (
-              <NoteCard key={n.name} note={n} now={now} onOpen={() => viewer.open({ kind: "note", date, name: n.name })} />
+              <NoteCard key={n.name} note={n} now={now} onOpen={(newTab) => viewer.go({ kind: "note", date, name: n.name }, newTab)} />
             ))}
           </div>
         </section>

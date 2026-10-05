@@ -75,6 +75,29 @@ describe("AppShell in Tauri", () => {
     expect(screen.getByPlaceholderText("방이나 문서 찾기")).toBeInTheDocument();
   });
 
+  it("menu://back and menu://forward walk the active tab's history; the page leaves ⌘[ to the menu", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
+    fireEvent.click(screen.getByRole("button", { name: "디자인" }));
+    await act(async () => {}); // listeners register asynchronously
+    const active = () => h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
+    const ev = new KeyboardEvent("keydown", { key: "[", code: "BracketLeft", metaKey: true, cancelable: true, bubbles: true });
+    act(() => {
+      window.dispatchEvent(ev);
+    });
+    expect(ev.defaultPrevented).toBe(false);
+    expect(active()).toMatchObject({ kind: "room", roomId: "r2" });
+    menu("menu://back");
+    expect(active()).toMatchObject({ kind: "room", roomId: "r1" });
+    menu("menu://forward");
+    expect(active()).toMatchObject({ kind: "room", roomId: "r2" });
+    // ⌘← has no menu item, so the page handles it even in Tauri.
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, bubbles: true }));
+    });
+    expect(active()).toMatchObject({ kind: "room", roomId: "r1" });
+  });
+
   it("menu://close-tab and menu://new-tab run the tab actions", async () => {
     const h = await renderWithStores(<AppShell />, { rooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
