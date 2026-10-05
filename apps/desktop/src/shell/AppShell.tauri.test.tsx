@@ -39,16 +39,40 @@ const keyOn = (el: EventTarget, k: string) => {
 };
 
 describe("AppShell in Tauri", () => {
-  it("the page leaves ⌘W/⌘T to the menu, so they never fire twice", async () => {
+  it("the page leaves ⌘W/⌘T/⌘B/⌘K to the menu, so they never fire twice", async () => {
     const h = await renderWithStores(<AppShell />, { rooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
     const before = h.viewer.getState().tabs.length;
     expect(keyOn(window, "w").defaultPrevented).toBe(false);
     expect(keyOn(window, "t").defaultPrevented).toBe(false);
     expect(h.viewer.getState().tabs).toHaveLength(before);
-    // ⌘B and ⌘K stay in the page.
-    expect(keyOn(window, "b").defaultPrevented).toBe(true);
+    expect(keyOn(window, "b").defaultPrevented).toBe(false);
+    expect(h.viewer.getState().sidebarOpen).toBe(true);
+    expect(keyOn(window, "k").defaultPrevented).toBe(false);
+    expect(screen.queryByPlaceholderText("방이나 문서 찾기")).toBeNull();
+  });
+
+  it("menu://find and menu://toggle-sidebar open quick find and toggle the sidebar", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms });
+    await act(async () => {}); // listeners register asynchronously
+    menu("menu://toggle-sidebar");
     expect(h.viewer.getState().sidebarOpen).toBe(false);
+    menu("menu://toggle-sidebar");
+    expect(h.viewer.getState().sidebarOpen).toBe(true);
+    menu("menu://find");
+    expect(screen.getByPlaceholderText("방이나 문서 찾기")).toBeInTheDocument();
+  });
+
+  it("from a text field the menu's ⌘K still finds, but its ⌘B does nothing", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms });
+    fireEvent.click(screen.getByRole("button", { name: "새 방" }));
+    screen.getByLabelText("새 방 이름").focus();
+    await act(async () => {});
+    menu("menu://toggle-sidebar");
+    expect(h.viewer.getState().sidebarOpen).toBe(true);
+    expect(screen.getByLabelText("새 방 이름")).toBeInTheDocument();
+    menu("menu://find");
+    expect(screen.getByPlaceholderText("방이나 문서 찾기")).toBeInTheDocument();
   });
 
   it("menu://close-tab and menu://new-tab run the tab actions", async () => {

@@ -3,7 +3,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab, ViewerStore } from "@/data/viewerStore";
-import { listenAll, MENU_CLOSE_TAB, MENU_NEW_TAB } from "@/lib/appEvents";
+import { listenAll, MENU_CLOSE_TAB, MENU_FIND, MENU_NEW_TAB, MENU_TOGGLE_SIDEBAR } from "@/lib/appEvents";
 import { isTauri } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { DocView } from "@/views/DocView";
@@ -37,8 +37,10 @@ function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => 
 
 /**
  * ⌘B sidebar, ⌘W close tab, ⌘T new tab, ⌘K quick find. Bound on window.
- * In Tauri, ⌘W/⌘T belong to the native menu (which emits `menu://…`), so the
- * page leaves them alone and they never fire twice.
+ * In Tauri all four belong to the native menu (which emits `menu://…`), so the
+ * page leaves them alone and they never fire twice. Either way the same focus
+ * rule applies: ⌘K works from a text field, the others don't (except ⌘W from
+ * the note body).
  */
 function useShortcuts(viewer: ViewerStore, openFind: () => void) {
   useEffect(() => {
@@ -46,7 +48,7 @@ function useShortcuts(viewer: ViewerStore, openFind: () => void) {
     const onKey = (e: KeyboardEvent) => {
       const action = keyAction(e);
       if (!action) return;
-      if (menuOwned && (action === "close-tab" || action === "new-tab")) return;
+      if (menuOwned) return;
       if (!allowedWithFocus(action, e.target instanceof Element ? e.target : null)) return;
       e.preventDefault();
       runAction(action, viewer, openFind);
@@ -60,7 +62,12 @@ function useShortcuts(viewer: ViewerStore, openFind: () => void) {
     const fromMenu = (action: ShortcutAction) => () => {
       if (allowedWithFocus(action, document.activeElement)) runAction(action, viewer, openFind);
     };
-    return listenAll({ [MENU_NEW_TAB]: fromMenu("new-tab"), [MENU_CLOSE_TAB]: fromMenu("close-tab") });
+    return listenAll({
+      [MENU_NEW_TAB]: fromMenu("new-tab"),
+      [MENU_CLOSE_TAB]: fromMenu("close-tab"),
+      [MENU_FIND]: fromMenu("find"),
+      [MENU_TOGGLE_SIDEBAR]: fromMenu("toggle-sidebar"),
+    });
   }, [viewer, openFind]);
 }
 
