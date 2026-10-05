@@ -17,17 +17,27 @@ const ICONS: Record<Tab["kind"], LucideIcon> = {
   new: LayoutGrid,
 };
 
+/** Before the first sync we can't tell yet. */
 const PENDING = "…";
+const GONE_ROOM = "없는 방";
+const GONE_DOC = "없는 문서";
 
 /** Room names come from RoomsState by id on every render; tabs never cache them. */
 function RoomLabel({ roomId }: { roomId: string }) {
-  const { rooms } = useRooms();
-  return <>{rooms.find((r) => r.id === roomId)?.name ?? PENDING}</>;
+  const { rooms, info } = useRooms();
+  const name = rooms.find((r) => r.id === roomId)?.name;
+  return <>{name ?? (info ? GONE_ROOM : PENDING)}</>;
 }
 
 function DocLabel({ roomId, artifactId }: { roomId: string; artifactId: string }) {
+  const { rooms, info } = useRooms();
   const artifacts = useArtifacts(roomId);
-  return <>{artifacts?.find((a) => a.id === artifactId)?.title ?? PENDING}</>;
+  const title = artifacts?.find((a) => a.id === artifactId)?.title;
+  if (title !== undefined) return <>{title}</>;
+  if (!info) return <>{PENDING}</>;
+  // The journal room is never listed; any other room must be.
+  const roomGone = roomId !== info.journalRoomId && !rooms.some((r) => r.id === roomId);
+  return <>{roomGone || artifacts !== undefined ? GONE_DOC : PENDING}</>;
 }
 
 function TabLabel({ tab }: { tab: Tab }) {

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { CircleAlert } from "lucide-react";
-import { useArtifacts, useClient, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
+import { useArtifacts, useClient, useReadOnly, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
 import { dateLabel, isNewSince } from "@/lib/dates";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { ArtifactCard } from "./ArtifactCard";
@@ -30,6 +30,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   const artifacts = useArtifacts(roomId);
   const loadError = useScopeError(`room:${roomId}`);
   const room = rooms.find((r) => r.id === roomId);
+  const readOnly = useReadOnly();
 
   // Frozen at activation: `lastVisit` is only written when leaving, and dots must not vanish while viewed.
   const baseline = useRef<string | null>(null);
@@ -109,7 +110,7 @@ export function RoomView({ roomId }: { roomId: string }) {
         <EditableTitle
           key={room.id}
           value={room.name}
-          readOnly={info?.readOnly}
+          readOnly={readOnly}
           ariaLabel="방 이름"
           hint="Enter 또는 바깥을 누르면 저장"
           onSave={async (next) => {

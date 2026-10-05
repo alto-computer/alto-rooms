@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { RoomsApiError, type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
-import { useClient, useJournalDay, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
+import { useClient, useJournalDay, useReadOnly, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
@@ -196,7 +196,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const day = useJournalDay(date);
   const loadError = useScopeError(`day:${date}`);
   const initial = useViewerInitial();
-  const readOnly = info?.readOnly ?? false;
+  const readOnly = useReadOnly();
 
   // New-doc dots: frozen at activation (AppShell mounts this per activation),
   // per artifact, against its own room's last visit — as in RoomView.

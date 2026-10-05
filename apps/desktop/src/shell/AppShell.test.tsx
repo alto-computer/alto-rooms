@@ -1,7 +1,9 @@
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
-import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { fakeClient, memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { StoresProvider } from "@/data/hooks";
+import { RoomsStore } from "@/data/roomsStore";
 import { ViewerStore } from "@/data/viewerStore";
 import { AppShell } from "./AppShell";
 
@@ -300,5 +302,32 @@ describe("AppShell: shortcuts while typing", () => {
     expect(activeTab()).toHaveTextContent("계획");
     expect(keyOn(body, "w").defaultPrevented).toBe(true);
     expect(h.viewer.getState().tabs.some((t) => t.kind === "note")).toBe(false);
+  });
+});
+
+describe("AppShell: gone rooms and docs, and before the first sync", () => {
+  it("labels a tab whose room or doc is gone 없는 방 / 없는 문서 once synced", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "room", roomId: "gone" });
+    viewer.open({ kind: "doc", roomId: "r1", artifactId: "missing" });
+    viewer.open({ kind: "doc", roomId: "gone", artifactId: "x" });
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [] }, viewer });
+    await act(async () => {});
+    const labels = screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(labels).toEqual(["새 탭", "없는 방", "없는 문서", "없는 문서"]);
+  });
+
+  it("before the first sync (no info): tabs show …, and nothing is writable", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "room", roomId: "r1" });
+    const fake = fakeClient({ rooms: twoRooms });
+    const rooms = new RoomsStore(fake.client, { warn: () => {} });
+    render(
+      <StoresProvider rooms={rooms} viewer={viewer} client={fake.client}>
+        <AppShell />
+      </StoresProvider>,
+    );
+    expect(activeTab()).toHaveTextContent("…");
+    expect(screen.queryByRole("button", { name: "새 방" })).toBeNull();
   });
 });

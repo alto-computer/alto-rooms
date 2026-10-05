@@ -103,6 +103,19 @@ export function useJournalDay(date: string): JournalDay | undefined {
   return useSyncExternalStore(store.subscribe, () => store.getState().days[date]);
 }
 
+/**
+ * True while nothing may be written: the core is read-only, or its info has
+ * not arrived yet (before the first sync we can't tell). Every write
+ * affordance (new room, room rename, new note, the note body) follows it.
+ */
+export function useReadOnly(): boolean {
+  const store = useRoomsStore();
+  return useSyncExternalStore(store.subscribe, () => {
+    const info = store.getState().info;
+    return info === null || info.readOnly;
+  });
+}
+
 export function useViewer(): ViewerState {
   const store = useViewerStore();
   return useSyncExternalStore(store.subscribe, store.getState);

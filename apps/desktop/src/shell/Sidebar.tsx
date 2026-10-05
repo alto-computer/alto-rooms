@@ -3,7 +3,7 @@ import type { Room } from "@alto-rooms/protocol-ts";
 import { Calendar, Folder, PanelLeft, Plus, Search } from "lucide-react";
 import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useClient, useRooms, useViewer, useViewerStore } from "@/data/hooks";
+import { useClient, useReadOnly, useRooms, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { localDate } from "@/lib/dates";
 import { cn } from "@/lib/utils";
@@ -29,10 +29,10 @@ export function openJournal(viewer: ViewerStore) {
 }
 
 export function Sidebar({ onFind }: { onFind: () => void }) {
-  const { rooms, info } = useRooms();
+  const { rooms } = useRooms();
   const { tabs, activeId, sidebarOpen } = useViewer();
   const viewer = useViewerStore();
-  const readOnly = info?.readOnly ?? false;
+  const readOnly = useReadOnly();
   const [creating, setCreating] = useState(false);
 
   const active = tabs.find((t) => t.id === activeId);
