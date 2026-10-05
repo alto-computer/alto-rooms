@@ -20,16 +20,18 @@ fn watch_dir(deb: &Mutex<Deb>, path: &Path) -> Result<(), notify::Error> {
 
 pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     let c2 = core.clone();
+    let rooms_dir = core.home().join(".rooms");
     let debouncer = new_debouncer(Duration::from_millis(300), None, move |res: DebounceEventResult| {
         match res {
             Ok(events) => {
-                let mut seen = std::collections::HashSet::new();
+                let mut rooms = std::collections::HashSet::new();
                 for ev in events {
                     for p in &ev.paths {
-                        if p.components().any(|c| c.as_os_str() == ".rooms") { continue; }
-                        if seen.insert(p.clone()) { c2.apply_fs_change(p); }
+                        if p.starts_with(&rooms_dir) { continue; }
+                        if let Some(id) = c2.room_for_path(p) { rooms.insert(id); }
                     }
                 }
+                for id in rooms { c2.rescan_room(&id); }
             }
             Err(errs) => {
                 for e in errs { eprintln!("rooms-core: watcher error: {e}"); }

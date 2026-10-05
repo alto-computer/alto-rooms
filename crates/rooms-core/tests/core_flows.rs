@@ -206,10 +206,58 @@ fn open_returns_before_backfill_completes_for_big_room() {
 }
 
 #[test]
+fn room_for_path_picks_longest_root() {
+    let (d, core) = home();
+    let r = core.create_room("a").unwrap();
+    let d = d.path().canonicalize().unwrap();
+    assert_eq!(core.room_for_path(&d.join("a/x.html")).unwrap(), r.id);
+    assert_eq!(core.room_for_path(&d.join("journal/2026-01-01/n.md")).unwrap(), "journal");
+    let inbox = core.list_rooms().into_iter().find(|x| x.name == "inbox").unwrap();
+    assert_eq!(core.room_for_path(&d.join("inbox/y.html")).unwrap(), inbox.id);
+    assert!(core.room_for_path(&d.join("zzz-unknown/y.html")).is_none());
+}
+
+#[test]
+fn burst_of_twenty_files_yields_twenty_adds() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    core.create_room("a").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    for i in 0..20 { fs::write(d.path().join(format!("a/f{i}.html")), "<title>F</title>").unwrap(); }
+    let start = Instant::now();
+    let mut adds = 0;
+    while start.elapsed() < Duration::from_secs(2) && adds < 20 {
+        match rx.try_recv() {
+            Ok(e) => if matches!(e.kind, EventKind::ArtifactAdded { .. }) { adds += 1 },
+            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    assert_eq!(adds, 20);
+}
+
+#[test]
+fn rooms_dir_changes_are_ignored_but_rooms_named_folder_elsewhere_is_not() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::create_dir_all(d.path().join("a/.rooms")).unwrap();
+    fs::write(d.path().join("a/.rooms/z.html"), "").unwrap();
+    fs::write(d.path().join("a/ok.html"), "<title>O</title>").unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.room_id == r.id), Duration::from_secs(2));
+}
+
+#[test]
 fn dropping_watch_handle_stops_watching() {
     let d = tempfile::tempdir().unwrap();
     let (core, w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
     core.create_room("a").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx0 = core.subscribe();
+    fs::write(d.path().join("a/before.html"), "<title>B</title>").unwrap();
+    wait_for(&mut rx0, |k| matches!(k, EventKind::ArtifactAdded { .. }), Duration::from_secs(2));
     std::thread::sleep(Duration::from_millis(400));
     drop(w);
     std::thread::sleep(Duration::from_millis(100));

@@ -135,11 +135,17 @@ impl RoomsCore {
         if let Err(e) = self.try_rescan_room(room) { eprintln!("rooms-core: rescan of room {room} failed: {e}"); }
     }
 
-    pub fn apply_fs_change(&self, abs_path: &Path) {
+    /// Room owning `abs_path` (longest matching root wins: journal/inbox live under home).
+    pub fn room_for_path(&self, abs_path: &Path) -> Option<RoomId> {
         let roots = { Self::all_roots(&self.inner.lock().unwrap()) };
-        // longest matching root wins (journal/inbox live under home)
-        let hit = roots.into_iter().filter(|(_, root, _)| abs_path.starts_with(root)).max_by_key(|(_, root, _)| root.as_os_str().len());
-        if let Some((id, _, _)) = hit { self.rescan_room(&id); }
+        roots.into_iter()
+            .filter(|(_, root, _)| abs_path.starts_with(root))
+            .max_by_key(|(_, root, _)| root.as_os_str().len())
+            .map(|(id, _, _)| id)
+    }
+
+    pub fn apply_fs_change(&self, abs_path: &Path) {
+        if let Some(id) = self.room_for_path(abs_path) { self.rescan_room(&id); }
     }
 
     pub fn list_rooms(&self) -> Vec<Room> {
