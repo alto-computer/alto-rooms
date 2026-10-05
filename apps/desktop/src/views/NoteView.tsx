@@ -3,6 +3,7 @@ import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
 import { useClient, useJournalDay, useReadOnly, useRooms, useRoomsStore } from "@/data/hooks";
 import { GENERIC_ERROR, SAVE_FAILED } from "@/lib/errors";
+import { useBriefError } from "./briefError";
 import { openInEditor } from "@/lib/native";
 import {
   attachNoteSaver,
@@ -148,6 +149,13 @@ export function NoteView({ date, name }: { date: string; name: string }) {
   }, [saver, load, remoteUpdatedAt, focused, st, client, date, name]);
 
   const editable = load === "ready" && !readOnly;
+  const openFailed = useBriefError();
+  const openElsewhere = (absPath: string) => {
+    openInEditor(absPath).then(openFailed.clear, (err) => {
+      warn("note: could not open in another editor", err);
+      openFailed.flash();
+    });
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 bg-white px-12 py-10">
@@ -158,7 +166,7 @@ export function NoteView({ date, name }: { date: string; name: string }) {
             type="button"
             disabled={!info}
             onClick={() => {
-              if (info) void openInEditor(`${info.home}/journal/${date}/${fileName}`);
+              if (info) openElsewhere(`${info.home}/journal/${date}/${fileName}`);
             }}
             className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[14px] text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
           >
@@ -178,6 +186,12 @@ export function NoteView({ date, name }: { date: string; name: string }) {
           >
             다시 시도
           </button>
+        </p>
+      ) : null}
+      {openFailed.shown ? (
+        <p role="status" className="flex items-center gap-2 text-[14px] text-[#c13515]">
+          <CircleAlert size={16} aria-hidden />
+          {GENERIC_ERROR}
         </p>
       ) : null}
       {st.status === "error" ? (

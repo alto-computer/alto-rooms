@@ -326,6 +326,19 @@ describe("NoteView: other editor and read-only", () => {
     expect(openInEditor).toHaveBeenCalledWith("/h/journal/2026-10-05/계획.md");
   });
 
+  it("says 문제가 생겼어요 briefly when the other editor can't be opened", async () => {
+    await renderNote();
+    vi.mocked(openInEditor).mockRejectedValueOnce(new Error("no app"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "다른 편집기로 열기" }));
+    });
+    const msg = screen.getByText("문제가 생겼어요");
+    expect(msg.closest("[role=status]")).toHaveClass("text-[#c13515]");
+    expect(msg.closest("[role=status]")!.querySelector("svg")).not.toBeNull();
+    await advance(3000);
+    expect(screen.queryByText("문제가 생겼어요")).toBeNull();
+  });
+
   it("is read-only in read-only mode, without editing affordances", async () => {
     const { client } = await renderNote({ readOnly: true });
     expect(textarea()).toHaveAttribute("readonly");

@@ -293,7 +293,8 @@ describe("EmptyRoom", () => {
     expect(screen.queryByText("복사했어요")).toBeNull();
   });
 
-  it("shows nothing extra when the clipboard fails", async () => {
+  it("says 문제가 생겼어요 briefly when the clipboard fails", async () => {
+    vi.useFakeTimers();
     const writeText = vi.fn(async () => {
       throw new Error("denied");
     });
@@ -303,5 +304,10 @@ describe("EmptyRoom", () => {
       fireEvent.click(screen.getByRole("button", { name: /\/Volumes\/ext\/bench/ }));
     });
     expect(screen.queryByText("복사했어요")).toBeNull();
+    const msg = screen.getByText("문제가 생겼어요");
+    expect(msg.closest("[role=status]")).toHaveClass("text-[#c13515]");
+    expect(msg.closest("[role=status]")!.querySelector("svg")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(3000));
+    expect(screen.queryByText("문제가 생겼어요")).toBeNull();
   });
 });

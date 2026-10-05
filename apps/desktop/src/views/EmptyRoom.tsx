@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Room } from "@alto-rooms/protocol-ts";
+import { CircleAlert } from "lucide-react";
+import { GENERIC_ERROR } from "@/lib/errors";
+import { useBriefError } from "./briefError";
 import clewPeek from "@/assets/clew-peek.svg";
 import { tildePath } from "@/lib/paths";
 
@@ -15,13 +18,19 @@ export function EmptyRoom({ room, home }: { room: Room; home: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
+  const failed = useBriefError();
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(room.path);
-    } catch {
-      return; // No clipboard access: nothing extra to show.
+    } catch (err) {
+      console.warn("could not copy the folder path", err);
+      clearTimeout(timer.current);
+      setCopied(false);
+      failed.flash();
+      return;
     }
+    failed.clear();
     clearTimeout(timer.current);
     setCopied(true);
     timer.current = setTimeout(() => setCopied(false), COPIED_MS);
@@ -39,9 +48,16 @@ export function EmptyRoom({ room, home }: { room: Room; home: string }) {
       >
         {tildePath(room.path, home)}
       </button>
-      <p role="status" className="min-h-5 text-[14px] text-ink-3">
-        {copied ? "복사했어요" : null}
-      </p>
+      {failed.shown ? (
+        <p role="status" className="flex min-h-5 items-center gap-1.5 text-[14px] text-[#c13515]">
+          <CircleAlert size={16} aria-hidden />
+          {GENERIC_ERROR}
+        </p>
+      ) : (
+        <p role="status" className="min-h-5 text-[14px] text-ink-3">
+          {copied ? "복사했어요" : null}
+        </p>
+      )}
     </div>
   );
 }
