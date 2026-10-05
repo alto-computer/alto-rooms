@@ -545,3 +545,18 @@ fn resync_all_rescans_and_emits_resync() {
     assert!(evs.iter().any(|e| matches!(&e.kind, EventKind::ArtifactAdded { artifact } if artifact.room_id == r.id)));
     assert!(matches!(evs.last().unwrap().kind, EventKind::Resync { room_id: None }));
 }
+
+#[test]
+fn resync_all_picks_up_finder_created_folders_in_order() {
+    let (d, core) = home();
+    fs::create_dir(d.path().join("fresh")).unwrap();
+    fs::write(d.path().join("fresh/x.html"), "").unwrap();
+    let mut rx = core.subscribe();
+    core.resync_all();
+    let evs = drain(&mut rx);
+    let pos = |f: &dyn Fn(&EventKind) -> bool| evs.iter().position(|e| f(&e.kind));
+    let room = pos(&|k| matches!(k, EventKind::RoomAdded { .. })).expect("room.added");
+    let art = pos(&|k| matches!(k, EventKind::ArtifactAdded { .. })).expect("artifact.added");
+    assert!(room < art);
+    assert!(matches!(evs.last().unwrap().kind, EventKind::Resync { room_id: None }));
+}

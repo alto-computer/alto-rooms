@@ -96,6 +96,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                 let (Some(core), Some(deb)) = (wcore3.upgrade(), wdeb3.upgrade()) else { break };
                 if room.status == RoomStatus::Unavailable {
                     let p = PathBuf::from(&room.path);
+                    f3.lock().unwrap().remove(&p);
                     if w3.lock().unwrap().remove(&p) { let _ = deb.lock().unwrap().unwatch(&p); }
                 } else {
                     ensure_linked_watched(&core, &deb, &w3, &f3);
