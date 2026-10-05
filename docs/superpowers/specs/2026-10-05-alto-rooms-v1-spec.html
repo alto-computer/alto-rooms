@@ -125,20 +125,69 @@
 
 <h3>Glossary</h3>
 <table>
-  <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+  <thead><tr><th>Term</th><th>Definition</th><th>왜 필요한가?</th></tr></thead>
   <tbody>
-    <tr><td><code>Home</code></td><td>Rooms 루트 폴더. 기본 <code>~/rooms/</code>. Rooms 자체 상태는 <code>~/rooms/.rooms/</code>에만.</td></tr>
-    <tr><td><code>Room</code></td><td>주제 축의 단위. 폴더 하나 = 방 하나. <code>owned</code>(Rooms가 만든 Home 하위 폴더) 또는 <code>linked</code>(사용자가 연결한 기존 폴더, 예: 팀 폴더).</td></tr>
-    <tr><td><code>Artifact</code></td><td>방 폴더(하위 포함) 안의 <code>.html</code>/<code>.htm</code> 파일 하나. 무시 규칙에 걸리지 않은 것.</td></tr>
-    <tr><td><code>Journal day</code></td><td>시간 축의 단위. 날짜로 된 방. <code>~/rooms/journal/YYYY-MM-DD/</code> 폴더 + 그날 모든 방에서 생긴 아티팩트 조회.</td></tr>
-    <tr><td><code>Note</code></td><td>사람이 쓴 <code>.md</code>. v1에서는 Journal day 폴더 안에만 존재 (계획·회고 등).</td></tr>
-    <tr><td><code>Producer</code></td><td>아티팩트를 폴더에 쓰는 모든 것 — Claude Code, Codex, 브라우저 에이전트, 스크립트, 사람.</td></tr>
-    <tr><td><code>roomsd</code></td><td>머리 없는(headless) 코어 데몬. 인덱스·감시·방·노트 관리, Rooms 프로토콜 제공.</td></tr>
-    <tr><td><code>Rooms Protocol</code></td><td>roomsd ↔ 클라이언트 사이 버전 붙은 HTTP+JSON API와 SSE 이벤트 스트림. <code>/v1/…</code></td></tr>
-    <tr><td><code>Client</code></td><td>프로토콜을 쓰는 UI. 참고 구현 = Tauri 데스크탑 앱. 원격 웹 보기, 제3자 UI도 같은 지위.</td></tr>
-    <tr><td><code>Handoff</code></td><td>(v2) 맥락 꾸러미를 사용자가 설정한 에이전트 명령으로 넘기는 출구.</td></tr>
+    <tr><td><code>Home</code></td><td>Rooms 루트 폴더. 기본 <code>~/rooms/</code>. Rooms 자체 상태는 <code>~/rooms/.rooms/</code>에만.</td><td>Rooms의 모든 것이 파일로 있는 단 하나의 위치. 진실이 한곳이어야 재스캔만으로 복구되고, 동기화·백업을 기존 도구에 맡길 수 있다.</td></tr>
+    <tr><td><code>Room</code></td><td>주제 축의 단위. 폴더 하나 = 방 하나. <code>owned</code>(Rooms가 만든 Home 하위 폴더) 또는 <code>linked</code>(사용자가 연결한 기존 폴더, 예: 팀 폴더).</td><td>주제 축. 아티팩트를 "무엇에 대한 것인가"로 묶어야 66개 중 56개가 "기타"가 되는 종류별 분류 실패를 피한다.</td></tr>
+    <tr><td><code>Artifact</code></td><td>방 폴더(하위 포함) 안의 <code>.html</code>/<code>.htm</code> 파일 하나. 무시 규칙에 걸리지 않은 것.</td><td>Rooms가 보여주는 유일한 대상. HTML 한 가지로 좁혀야 잡음이 섞이지 않고 producer에게 요구할 것이 없다.</td></tr>
+    <tr><td><code>Journal day</code></td><td>시간 축의 단위. 날짜로 된 방. <code>~/rooms/journal/YYYY-MM-DD/</code> 폴더 + 그날 모든 방에서 생긴 아티팩트 조회.</td><td>시간 축이자 나를 위한 공간. 주제(방)만으로는 "오늘 무엇이 생겼고 나는 무엇을 이해했나"를 볼 수 없다.</td></tr>
+    <tr><td><code>Note</code></td><td>사람이 쓴 <code>.md</code>. v1에서는 Journal day 폴더 안에만 존재 (계획·회고 등).</td><td>사람이 쓰는 몫. 에이전트 결과만 쌓이는 Claude Artifacts와 달리 계획·회고를 남길 자리가 필요하다.</td></tr>
+    <tr><td><code>Producer</code></td><td>아티팩트를 폴더에 쓰는 모든 것 — Claude Code, Codex, 브라우저 에이전트, 스크립트, 사람.</td><td>누가 만들든 같은 규칙(폴더에 쓰기)으로 들어오게 하기 위한 이름. Rooms는 producer를 몰라도 된다.</td></tr>
+    <tr><td><code>roomsd</code></td><td>머리 없는(headless) 코어 데몬. 인덱스·감시·방·노트 관리, Rooms 프로토콜 제공.</td><td>UI 없는 코어. 데스크탑 앱·원격 웹·제3자 UI가 같은 데이터를 보려면 코어가 화면과 분리돼 있어야 한다.</td></tr>
+    <tr><td><code>Rooms Protocol</code></td><td>roomsd ↔ 클라이언트 사이 버전 붙은 HTTP+JSON API와 SSE 이벤트 스트림. <code>/v1/…</code></td><td>UI를 갈아끼울 수 있게 하는 허리. 버전이 붙은 고정 계약이어야 클라이언트가 코어 내부를 몰라도 된다.</td></tr>
+    <tr><td><code>Client</code></td><td>프로토콜을 쓰는 UI. 참고 구현 = Tauri 데스크탑 앱. 원격 웹 보기, 제3자 UI도 같은 지위.</td><td>데스크탑 앱도 특별 대우하지 않는다는 선언. 참고 구현과 남의 UI가 같은 프로토콜만 쓴다.</td></tr>
+    <tr><td><code>Handoff</code></td><td>(v2) 맥락 꾸러미를 사용자가 설정한 에이전트 명령으로 넘기는 출구.</td><td>AI 일을 Rooms 안에 두지 않기 위한 출구. 묻기·관계 채우기도 사용자의 에이전트가 하고 결과는 폴더로 돌아온다.</td></tr>
   </tbody>
 </table>
+<h3>관계 맵</h3>
+<p class="meta">용어 사이 관계. 실선 = 포함·소유, 점선 = 읽기·조회, 회색 점선 = v2.</p>
+<svg class="diagram" viewBox="0 0 820 400">
+  <defs>
+    <marker id="g1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c1917"/></marker>
+    <marker id="g2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78716c"/></marker>
+  </defs>
+  <rect x="20" y="20" width="400" height="360" rx="10" fill="#fefce8" stroke="#ca8a04" stroke-width="1.5"/>
+  <text x="36" y="44" font-size="14" font-weight="600">Home (~/rooms)</text>
+  <rect x="40" y="64" width="170" height="150" rx="8" fill="white" stroke="#ca8a04" stroke-width="1.5"/>
+  <text x="125" y="86" text-anchor="middle" font-size="13" font-weight="600">Room</text>
+  <text x="125" y="104" text-anchor="middle" font-size="11" fill="#78716c">owned · linked</text>
+  <rect x="62" y="122" width="126" height="34" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="125" y="144" text-anchor="middle" font-size="12">Artifact (.html)</text>
+  <text x="125" y="190" text-anchor="middle" font-size="11" fill="#78716c">한 파일 = 한 방</text>
+  <rect x="230" y="64" width="170" height="150" rx="8" fill="white" stroke="#ca8a04" stroke-width="1.5"/>
+  <text x="315" y="86" text-anchor="middle" font-size="13" font-weight="600">Journal day</text>
+  <text x="315" y="104" text-anchor="middle" font-size="11" fill="#78716c">journal/YYYY-MM-DD</text>
+  <rect x="252" y="122" width="126" height="30" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="315" y="142" text-anchor="middle" font-size="12">Artifact (Dream 등)</text>
+  <rect x="252" y="162" width="126" height="30" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/><text x="315" y="182" text-anchor="middle" font-size="12">Note (.md, 나)</text>
+  <path d="M188 139 C 215 139, 225 230, 315 230 L 315 216" fill="none" stroke="#1c1917" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#g1)"/>
+  <text x="200" y="250" font-size="11" fill="#78716c">그날 생긴 것은 날짜로 조회 (복사 없음)</text>
+  <rect x="40" y="290" width="360" height="70" rx="8" fill="white" stroke="#78716c" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="56" y="312" font-size="12" font-weight="600">.rooms/ (Rooms 자체 상태)</text>
+  <text x="56" y="332" font-size="11" fill="#78716c">state.json: 방 id·표시 이름·연결 경로·inode</text>
+  <text x="56" y="349" font-size="11" fill="#78716c">index.json: 첫 발견 시각 · token</text>
+  <rect x="470" y="40" width="150" height="50" rx="8" fill="white" stroke="#1c1917" stroke-width="1.5"/>
+  <text x="545" y="62" text-anchor="middle" font-size="13" font-weight="600">Producer</text>
+  <text x="545" y="80" text-anchor="middle" font-size="11" fill="#78716c">Claude Code · Codex · …</text>
+  <path d="M470 65 C 330 65, 160 40, 125 120" fill="none" stroke="#1c1917" stroke-width="1.5" marker-end="url(#g1)"/>
+  <text x="300" y="58" font-size="11" fill="#78716c">HTML을 씀 (S1)</text>
+  <rect x="470" y="170" width="150" height="50" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="545" y="192" text-anchor="middle" font-size="13" font-weight="600">roomsd</text>
+  <text x="545" y="210" text-anchor="middle" font-size="11" fill="#78716c">코어 · 인덱스 · 감시</text>
+  <line x1="470" y1="195" x2="422" y2="195" stroke="#1c1917" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#g1)"/>
+  <text x="446" y="186" text-anchor="middle" font-size="11" fill="#78716c">읽기 (S2)</text>
+  <rect x="660" y="170" width="140" height="50" rx="8" fill="white" stroke="#1c1917" stroke-width="1.5"/>
+  <text x="730" y="192" text-anchor="middle" font-size="13" font-weight="600">Client</text>
+  <text x="730" y="210" text-anchor="middle" font-size="11" fill="#78716c">데스크탑 · 웹 · 제3자</text>
+  <line x1="620" y1="195" x2="658" y2="195" stroke="#1c1917" stroke-width="1.5" marker-end="url(#g1)"/>
+  <text x="640" y="240" text-anchor="middle" font-size="11" fill="#78716c">Rooms Protocol /v1 (S3)</text>
+  <rect x="470" y="310" width="150" height="50" rx="8" fill="white" stroke="#78716c" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="545" y="332" text-anchor="middle" font-size="13">사용자 에이전트</text>
+  <text x="545" y="350" text-anchor="middle" font-size="11" fill="#78716c">v2</text>
+  <line x1="545" y1="220" x2="545" y2="308" stroke="#78716c" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#g2)"/>
+  <text x="555" y="270" font-size="11" fill="#78716c">Handoff (S4)</text>
+  <path d="M620 335 C 700 335, 700 60, 622 60" fill="none" stroke="#78716c" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#g2)"/>
+  <text x="708" y="120" font-size="11" fill="#78716c">결과도 Producer로서</text>
+  <text x="708" y="134" font-size="11" fill="#78716c">폴더에 씀</text>
+</svg>
 
 <div class="review-box">
   <h4>리뷰 시 확인할 점</h4>
