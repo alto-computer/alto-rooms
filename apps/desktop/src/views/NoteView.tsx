@@ -4,7 +4,16 @@ import { CircleAlert, ExternalLink } from "lucide-react";
 import { useClient, useJournalDay, useRooms, useRoomsStore } from "@/data/hooks";
 import { GENERIC_ERROR, SAVE_FAILED } from "@/lib/errors";
 import { openInEditor } from "@/lib/native";
-import { attachNoteSaver, createNoteSaver, detachNoteSaver, noteSaverKey, type NoteSaver, type NoteSaverState } from "@/lib/noteSaver";
+import {
+  attachNoteSaver,
+  clearNoteDraft,
+  createNoteSaver,
+  detachNoteSaver,
+  noteSaverKey,
+  readNoteDraft,
+  type NoteSaver,
+  type NoteSaverState,
+} from "@/lib/noteSaver";
 import { findNote, noteBase, noteFileName } from "@/lib/notes";
 
 const NOT_READY: NoteSaverState = {
@@ -51,7 +60,10 @@ export function NoteView({ date, name }: { date: string; name: string }) {
   const [saver, setSaver] = useState<NoteSaver | null>(null);
   useEffect(() => {
     const key = noteSaverKey(date, fileName);
-    const { saver: s } = attachNoteSaver(key, () => createNoteSaver({ save: (text) => client.saveNote(date, name, text), warn }));
+    const { saver: s } = attachNoteSaver(key, () => createNoteSaver({ save: (text) => client.saveNote(date, name, text), warn }), {
+      date,
+      name,
+    });
     setSaver(s);
     return () => detachNoteSaver(key, s);
   }, [client, date, name, fileName]);
@@ -71,18 +83,19 @@ export function NoteView({ date, name }: { date: string; name: string }) {
     setLoad("loading");
     // The list's updatedAt as of now; a later one means a change after this read.
     const known = findNote(store.getState().days[date]?.notes ?? [], name)?.updatedAt ?? null;
+    const loaded = (text: string) => {
+      saver.load(text, known);
+      setLoad("ready");
+    };
     client.getNote(date, name).then(
       (text) => {
-        if (!live) return;
-        saver.load(text, known);
-        setLoad("ready");
+        if (live) loaded(text);
       },
       (err) => {
         if (!live) return;
         if (err instanceof RoomsApiError && err.status === 404) {
           // Not on disk yet (e.g. just created): an empty note.
-          saver.load("", known);
-          setLoad("ready");
+          loaded("");
         } else {
           warn("note: failed to load", err);
           setLoad("error");
@@ -93,6 +106,20 @@ export function NoteView({ date, name }: { date: string; name: string }) {
       live = false;
     };
   }, [saver, attempt, client, store, date, name]);
+
+  // Text that could not be saved before the app last quit was kept as a draft:
+  // it comes back as unsaved local text (so autosave sends it) unless it matches
+  // what is there. The registry deletes the draft once a save lands.
+  const draftChecked = useRef<NoteSaver | null>(null);
+  useEffect(() => {
+    if (!saver || load !== "ready" || readOnly || draftChecked.current === saver) return;
+    draftChecked.current = saver;
+    const draft = readNoteDraft(date, name);
+    if (draft === null) return;
+    const s = saver.getState();
+    if (draft === s.text) clearNoteDraft(date, name);
+    else if (s.text === s.savedText && !s.inFlight) saver.edit(draft);
+  }, [saver, load, readOnly, date, name]);
 
   // External changes.
   const [focused, setFocused] = useState(false);

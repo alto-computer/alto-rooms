@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createNoteSaver, type Clock, type NoteSaver } from "./noteSaver";
+import { attachNoteSaver, createNoteSaver, noteSaverKey, noteSaverKeys, rebindNoteSavers, resetNoteSavers, type Clock, type NoteSaver } from "./noteSaver";
 
 type Deferred = { resolve: (updatedAt: string) => void; reject: (e: unknown) => void };
 
@@ -305,5 +305,44 @@ describe("noteSaver: flush", () => {
     await tick(0);
     expect(calls).toHaveLength(2); // not waiting 800ms
     expect(calls[1].text).toBe("ab");
+  });
+});
+
+describe("noteSaver registry: keys and rebinding", () => {
+  afterEach(() => {
+    resetNoteSavers();
+  });
+
+  it("case-folds the key after NFC, so Plan.md and plan.md share one saver", () => {
+    const D = "2026-10-05";
+    expect(noteSaverKey(D, "Plan.md")).toBe(noteSaverKey(D, "plan.md"));
+    expect(noteSaverKey(D, "계획.md".normalize("NFD"))).toBe(noteSaverKey(D, "계획.md"));
+    const create = () => createNoteSaver({ save: async () => ({ updatedAt: "" }), warn: () => {} });
+    const a = attachNoteSaver(noteSaverKey(D, "Plan.md"), create);
+    const b = attachNoteSaver(noteSaverKey(D, "plan.md"), create);
+    expect(b.fresh).toBe(false);
+    expect(b.saver).toBe(a.saver);
+    expect(noteSaverKeys()).toHaveLength(1);
+  });
+
+  it("rebindNoteSavers switches live savers to the new client and retries now", async () => {
+    const D = "2026-10-05";
+    const oldSave = failing();
+    const { saver: s } = attachNoteSaver(
+      noteSaverKey(D, "계획.md"),
+      () => createNoteSaver({ save: oldSave, warn: () => {} }),
+      { date: D, name: "계획.md" },
+    );
+    s.load("", null);
+    s.edit("살릴 글");
+    await tick(800);
+    expect(oldSave).toHaveBeenCalledTimes(1);
+    const newSaveNote = vi.fn(async (_date: string, _name: string, _text: string) => ({ updatedAt: "2026-10-05T02:00:00Z" }));
+    rebindNoteSavers(newSaveNote);
+    await tick(0);
+    expect(newSaveNote).toHaveBeenCalledWith(D, "계획.md", "살릴 글");
+    expect(s.getState().savedText).toBe("살릴 글");
+    await tick(60_000);
+    expect(oldSave).toHaveBeenCalledTimes(1);
   });
 });

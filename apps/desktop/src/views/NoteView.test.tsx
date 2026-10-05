@@ -335,3 +335,40 @@ describe("NoteView: other editor and read-only", () => {
     expect(client.saveNote).not.toHaveBeenCalled();
   });
 });
+
+describe("NoteView: drafts kept at quit", () => {
+  const DRAFT = `alto-rooms.note-draft.v1:${DATE}/계획.md`;
+  afterEach(() => localStorage.clear());
+
+  it("opens a draft that differs from the disk as unsaved text, saves it, then deletes the draft", async () => {
+    localStorage.setItem(DRAFT, "종료 전에 못 저장한 글");
+    const fake = await renderNote();
+    expect(textarea()).toHaveValue("종료 전에 못 저장한 글");
+    expect(fake.client.saveNote).not.toHaveBeenCalled();
+    expect(localStorage.getItem(DRAFT)).toBe("종료 전에 못 저장한 글"); // kept until it lands
+    await advance(800);
+    expect(fake.client.saveNote).toHaveBeenCalledWith(DATE, "계획.md", "종료 전에 못 저장한 글");
+    expect(fake.state.notes[`${DATE}/계획.md`]).toBe("종료 전에 못 저장한 글");
+    expect(localStorage.getItem(DRAFT)).toBeNull();
+  });
+
+  it("drops a draft that matches the disk without saving", async () => {
+    localStorage.setItem(DRAFT, "원래 내용");
+    const fake = await renderNote();
+    expect(textarea()).toHaveValue("원래 내용");
+    await advance(5000);
+    expect(fake.client.saveNote).not.toHaveBeenCalled();
+    expect(localStorage.getItem(DRAFT)).toBeNull();
+  });
+
+  it("keeps a failing draft until a save lands", async () => {
+    localStorage.setItem(DRAFT, "초안");
+    const fake = await renderNote();
+    fake.client.saveNote.mockRejectedValueOnce(new RoomsApiError(500, "disk", "write_failed"));
+    await advance(800);
+    expect(localStorage.getItem(DRAFT)).toBe("초안");
+    await advance(1000);
+    expect(fake.state.notes[`${DATE}/계획.md`]).toBe("초안");
+    expect(localStorage.getItem(DRAFT)).toBeNull();
+  });
+});

@@ -70,6 +70,8 @@ export type NoteSaver = {
   flush(): void;
   /** Hard stop: one last save of unsaved text, then nothing more. */
   dispose(): void;
+  /** Replaces the save function (a new daemon connection); the next save uses it. */
+  setSave(save: (text: string) => Promise<{ updatedAt: string }>): void;
   /** Stops without saving anything (tests). */
   stop(): void;
 };
@@ -84,6 +86,7 @@ function later(a: string, b: string): boolean {
 
 export function createNoteSaver(opts: NoteSaverOptions): NoteSaver {
   const clock = opts.clock ?? realClock;
+  let save = opts.save;
   const warn = opts.warn ?? ((...args: unknown[]) => console.warn(...args));
   const listeners = new Set<() => void>();
   let state: NoteSaverState = {
@@ -130,7 +133,7 @@ export function createNoteSaver(opts: NoteSaverOptions): NoteSaver {
     if (finalSent || !dirty()) return;
     finalSent = true;
     const text = state.text;
-    opts.save(text).catch((err) => warn("note: unsaved changes could not be saved after closing", err));
+    save(text).catch((err) => warn("note: unsaved changes could not be saved after closing", err));
   };
 
   function saveNow() {
@@ -143,7 +146,7 @@ export function createNoteSaver(opts: NoteSaverOptions): NoteSaver {
     clearTimer();
     const text = state.text;
     set({ inFlight: true, dirtyDuringFlight: false, status: state.status === "error" ? "error" : "saving" });
-    opts.save(text).then(
+    save(text).then(
       (res) => {
         set({
           inFlight: false,
@@ -213,6 +216,9 @@ export function createNoteSaver(opts: NoteSaverOptions): NoteSaver {
       if (state.inFlight) set({ dirtyDuringFlight: true });
       else saveNow();
     },
+    setSave(next) {
+      save = next;
+    },
     stop() {
       disposed = true;
       finalSent = true;
@@ -238,11 +244,18 @@ export function createNoteSaver(opts: NoteSaverOptions): NoteSaver {
  * attaches to it (and shows its local text) instead of reloading from disk.
  */
 
-type Entry = { saver: NoteSaver; views: number; unsubscribe: () => void };
+/** Which note a saver writes; lets the registry rebind it to a new client and keep drafts. */
+export type NoteTarget = { date: string; name: string };
+
+type Entry = { saver: NoteSaver; views: number; unsubscribe: () => void; target?: NoteTarget };
 const registry = new Map<string, Entry>();
 
-/** Registry key: `${date}/${fileName}`, the file name as on disk (with `.md`). */
-export const noteSaverKey = (date: string, fileName: string) => `${date}/${fileName}`;
+/**
+ * Registry key: `${date}/${fileName}` with the file name as on disk (with
+ * `.md`), NFC and lowercased, so `Plan.md` and `plan.md` (one file on macOS's
+ * case-insensitive disk) share a saver.
+ */
+export const noteSaverKey = (date: string, fileName: string) => `${date}/${fileName.normalize("NFC").toLowerCase()}`;
 
 const releasable = (e: Entry) => {
   const s = e.saver.getState();
@@ -256,16 +269,30 @@ function releaseIfIdle(key: string, e: Entry) {
   e.saver.dispose(); // clean: sends nothing, just stops it
 }
 
-/** Attaches a view to the note's live saver, creating it (`fresh`) if there is none. */
-export function attachNoteSaver(key: string, create: () => NoteSaver): { saver: NoteSaver; fresh: boolean } {
+/** A save landed and nothing is unsaved: any draft kept for this note is obsolete. */
+function clearDraftIfLanded(e: Entry) {
+  const s = e.saver.getState();
+  if (e.target && s.status === "saved" && !s.inFlight && s.text === s.savedText) clearNoteDraft(e.target.date, e.target.name);
+}
+
+/**
+ * Attaches a view to the note's live saver, creating it (`fresh`) if there is
+ * none. Pass `target` so the saver can be rebound to a new connection and its
+ * text kept as a draft if it can't be saved before quitting.
+ */
+export function attachNoteSaver(key: string, create: () => NoteSaver, target?: NoteTarget): { saver: NoteSaver; fresh: boolean } {
   const existing = registry.get(key);
   if (existing) {
     existing.views++;
+    existing.target ??= target;
     return { saver: existing.saver, fresh: false };
   }
   const saver = create();
-  const entry: Entry = { saver, views: 1, unsubscribe: () => {} };
-  entry.unsubscribe = saver.subscribe(() => releaseIfIdle(key, entry));
+  const entry: Entry = { saver, views: 1, unsubscribe: () => {}, target };
+  entry.unsubscribe = saver.subscribe(() => {
+    clearDraftIfLanded(entry);
+    releaseIfIdle(key, entry);
+  });
   registry.set(key, entry);
   installQuitFlush();
   return { saver, fresh: true };
@@ -277,6 +304,69 @@ export function detachNoteSaver(key: string, saver: NoteSaver): void {
   if (!e || e.saver !== saver) return;
   e.views = Math.max(0, e.views - 1);
   releaseIfIdle(key, e);
+}
+
+export type SaveNoteFn = (date: string, name: string, text: string) => Promise<{ updatedAt: string }>;
+
+/**
+ * A new daemon connection: every live saver now saves through `saveNote`
+ * instead of the old client. Savers that have failed retry right away.
+ */
+export function rebindNoteSavers(saveNote: SaveNoteFn): void {
+  for (const e of registry.values()) {
+    const t = e.target;
+    if (!t) continue;
+    e.saver.setSave((text) => saveNote(t.date, t.name, text));
+    if (e.saver.getState().failures > 0) e.saver.flush();
+  }
+}
+
+/*
+ * Drafts: a note that still could not be saved when the app quits keeps its
+ * text in localStorage (text only, never a token) until a later save lands.
+ */
+const DRAFT_PREFIX = "alto-rooms.note-draft.v1:";
+/** `alto-rooms.note-draft.v1:${date}/${file}`, the file part folded like the registry key. */
+export const noteDraftKey = (date: string, fileName: string) => `${DRAFT_PREFIX}${noteSaverKey(date, fileName)}`;
+
+function storage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readNoteDraft(date: string, fileName: string): string | null {
+  try {
+    return storage()?.getItem(noteDraftKey(date, fileName)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearNoteDraft(date: string, fileName: string): void {
+  try {
+    storage()?.removeItem(noteDraftKey(date, fileName));
+  } catch {
+    // Storage unavailable: nothing was kept there either.
+  }
+}
+
+/** Keeps the text of every note that has not landed (in error, or still unsaved) as a draft. Returns how many. */
+export function keepUnsavedNoteDrafts(): number {
+  let kept = 0;
+  for (const e of registry.values()) {
+    const s = e.saver.getState();
+    if (!e.target || !s.ready || (s.text === s.savedText && !s.inFlight)) continue;
+    try {
+      storage()?.setItem(noteDraftKey(e.target.date, e.target.name), s.text);
+      kept++;
+    } catch (err) {
+      console.warn("note: could not keep a draft", err);
+    }
+  }
+  return kept;
 }
 
 /** Saves every dirty note now (the app is quitting or hiding). */

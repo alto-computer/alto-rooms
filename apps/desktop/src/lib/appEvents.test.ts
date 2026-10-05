@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onBeforeQuitFlush, runQuitFlush } from "./appEvents";
-import { attachNoteSaver, createNoteSaver, flushAllNoteSaversAndWait, resetNoteSavers, type NoteSaver } from "./noteSaver";
+import { attachNoteSaver, createNoteSaver, flushAllNoteSaversAndWait, noteSaverKey, resetNoteSavers, type NoteSaver } from "./noteSaver";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => undefined) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
@@ -89,5 +89,37 @@ describe("runQuitFlush", () => {
     expect(err).toHaveBeenCalled();
     err.mockRestore();
     off();
+  });
+});
+
+describe("runQuitFlush drafts", () => {
+  const KEY = "alto-rooms.note-draft.v1:2026-10-05/계획.md";
+  afterEach(() => localStorage.clear());
+
+  function target(save: (text: string) => Promise<{ updatedAt: string }>) {
+    const { saver } = attachNoteSaver(noteSaverKey("2026-10-05", "계획.md"), () => createNoteSaver({ save, warn: () => {} }), {
+      date: "2026-10-05",
+      name: "계획.md",
+    });
+    saver.load("", null);
+    return saver;
+  }
+
+  it("keeps the text of a note that could not be saved as a local draft (text only)", async () => {
+    const saver = target(async () => Promise.reject(new Error("write_failed")));
+    saver.edit("잃으면 안 되는 글");
+    await vi.advanceTimersByTimeAsync(800 + 1000 + 2000); // now in error
+    expect(saver.getState().status).toBe("error");
+    const p = runQuitFlush(2000, async () => {});
+    await vi.advanceTimersByTimeAsync(2000);
+    await p;
+    expect(localStorage.getItem(KEY)).toBe("잃으면 안 되는 글");
+  });
+
+  it("writes no draft when every note landed", async () => {
+    const saver = target(async () => ({ updatedAt: "2026-10-05T01:00:00Z" }));
+    saver.edit("저장됨");
+    await runQuitFlush(2000, async () => {});
+    expect(localStorage.getItem(KEY)).toBeNull();
   });
 });

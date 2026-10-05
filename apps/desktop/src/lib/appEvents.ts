@@ -5,12 +5,12 @@
  *   and `menu://close-tab`.
  * - Before the window closes or the app quits, Rust emits `app://flush` and
  *   holds the close until we invoke `flush_done` (it gives up after 2.5s).
- *   We run the registered sync hooks, flush every note (capped at 2s), then
- *   answer.
+ *   We run the registered sync hooks, flush every note (capped at 2s), keep
+ *   any note that still did not land as a localStorage draft, then answer.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { flushAllNoteSaversAndWait } from "./noteSaver";
+import { flushAllNoteSaversAndWait, keepUnsavedNoteDrafts } from "./noteSaver";
 
 export const MENU_NEW_TAB = "menu://new-tab";
 export const MENU_CLOSE_TAB = "menu://close-tab";
@@ -56,7 +56,9 @@ export async function runQuitFlush(cap = FLUSH_CAP_MS, done: () => Promise<unkno
       console.error("quit flush step failed:", err);
     }
   }
-  await flushAllNoteSaversAndWait(cap);
+  const landed = await flushAllNoteSaversAndWait(cap);
+  // Whatever did not land is kept locally and restored the next time its note opens.
+  if (!landed) keepUnsavedNoteDrafts();
   try {
     await done();
   } catch (err) {
