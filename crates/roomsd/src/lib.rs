@@ -118,6 +118,7 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/journal/{date}", get(routes::journal_day))
         .route("/v1/journal/{date}/notes/{name}", get(routes::get_note).put(routes::put_note))
         .route("/v1/journal/{date}/notes/{name}/rename", post(routes::rename_note))
+        .route("/v1/artifacts/move", post(routes::move_artifact))
         .route("/v1/events", get(sse::events))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::write_guard))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::api_host_guard))

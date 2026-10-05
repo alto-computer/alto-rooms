@@ -91,6 +91,13 @@ pub async fn rename_note(State(st): State<AppState>, Path((date, name)): Path<(S
     Ok(Json(blocking(&st, move |c| c.rename_note(&date, &name, &b.to)).await?))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveArtifactBody { room_id: String, artifact_id: String, to_room_id: String }
+pub async fn move_artifact(State(st): State<AppState>, Json(b): Json<MoveArtifactBody>) -> Result<Json<Artifact>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.move_artifact(&b.room_id, &b.artifact_id, &b.to_room_id)).await?))
+}
+
 pub async fn get_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>) -> Result<Response, ApiErr> {
     let body = blocking(&st, move |c| c.read_note(&date, &name)).await?;
     Ok(([("content-type", "text/markdown; charset=utf-8"), ("x-content-type-options", "nosniff")], body).into_response())

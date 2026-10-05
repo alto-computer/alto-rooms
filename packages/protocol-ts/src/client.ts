@@ -62,6 +62,11 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     /** Renames a note in place; 404 `not_found` if `from` is gone, 409 `note_exists` if `to` is taken (case-insensitively). */
     renameNote: (date: string, from: string, to: string) =>
       write<Note>("POST", `/v1/journal/${date}/notes/${encodeURIComponent(from)}/rename`, JSON.stringify({ to })),
+    /** Moves an artifact from an owned room (inbox allowed) to the top level of another owned room (not inbox), keeping
+     *  its createdAt; a taken name gets " (2)". 400 `invalid_input` for linked/journal/inbox/same-room or a broken link,
+     *  404 `room_not_found` / `not_found`. */
+    moveArtifact: (roomId: string, artifactId: string, toRoomId: string) =>
+      write<Artifact>("POST", "/v1/artifacts/move", JSON.stringify({ roomId, artifactId, toRoomId })),
     fileUrl: (info: Info, a: Artifact) =>
       `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}`,
     /** Every (re)connection first delivers `resync {roomId: null}`; `onOpen` fires on each (re)open. */

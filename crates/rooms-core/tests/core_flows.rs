@@ -660,3 +660,169 @@ fn rename_note_rejects_invalid_names_and_traversal() {
     assert!(core.rename_note(&"2026-13-01".to_string(), "a", "b").is_err());
     assert!(d.path().join("journal/2026-10-05/a.md").exists());
 }
+
+// ---- move_artifact ----
+
+/// An original outside home plus a symlink to it in `inbox`, indexed. Returns (originals dir, original path, artifact).
+fn inbox_link(core: &RoomsCore, name: &str, body: &str) -> (tempfile::TempDir, std::path::PathBuf, Artifact) {
+    let orig_dir = tempfile::tempdir().unwrap();
+    let orig = orig_dir.path().join(name);
+    fs::write(&orig, body).unwrap();
+    symlink(&orig, core.home().join("inbox").join(name)).unwrap();
+    core.rescan_room(&"inbox".to_string());
+    let a = core.list_artifacts(&"inbox".to_string()).unwrap().into_iter().find(|a| a.rel_path == name).unwrap();
+    (orig_dir, orig, a)
+}
+
+fn ino(p: &std::path::Path) -> u64 { use std::os::unix::fs::MetadataExt; fs::metadata(p).unwrap().ino() }
+
+#[test]
+fn move_artifact_keeps_first_seen_and_journal_day_and_leaves_original_alone() {
+    let (_d, core) = home();
+    let r = core.create_room("a").unwrap();
+    let (_o, orig, a) = inbox_link(&core, "spec.html", r#"<meta name="rooms:created" content="2026-01-02T03:04:05+09:00"><title>Spec</title>"#);
+    let (before_ino, before_body) = (ino(&orig), fs::read(&orig).unwrap());
+    let day = rooms_core::rules::local_day(&a.created_at).unwrap();
+    let mut rx = core.subscribe();
+    let moved = core.move_artifact(&"inbox".to_string(), &a.id, &r.id).unwrap();
+    assert_eq!((moved.room_id.as_str(), moved.rel_path.as_str()), (r.id.as_str(), "spec.html"));
+    assert_eq!((moved.created_at.as_str(), moved.title.as_str()), (a.created_at.as_str(), "Spec"));
+    assert_eq!(moved.updated_at, a.updated_at);
+    assert_ne!(moved.id, a.id);
+    assert!(core.list_artifacts(&"inbox".to_string()).unwrap().is_empty());
+    assert_eq!(core.list_artifacts(&r.id).unwrap(), vec![moved.clone()]);
+    assert!(fs::symlink_metadata(core.home().join("a/spec.html")).unwrap().file_type().is_symlink());
+    assert!(fs::symlink_metadata(core.home().join("inbox/spec.html")).is_err());
+    assert_eq!((ino(&orig), fs::read(&orig).unwrap()), (before_ino, before_body));
+    let jd = core.journal_day(&day).unwrap();
+    assert_eq!(jd.artifacts.iter().map(|x| x.id.clone()).collect::<Vec<_>>(), vec![moved.id.clone()]);
+    let evs = drain(&mut rx);
+    assert!(matches!(&evs[..], [
+        RoomsEvent { kind: EventKind::ArtifactRemoved { room_id, artifact_id }, .. },
+        RoomsEvent { kind: EventKind::ArtifactAdded { artifact }, .. },
+        RoomsEvent { kind: EventKind::JournalChanged { date }, .. },
+    ] if room_id == "inbox" && artifact_id == &a.id && artifact == &moved && date == &day), "{evs:?}");
+    // A rescan of either room afterwards changes nothing.
+    core.rescan_room(&"inbox".to_string());
+    core.rescan_room(&r.id);
+    assert!(drain(&mut rx).is_empty());
+}
+
+#[test]
+fn move_artifact_name_collision_gets_a_number_and_lands_at_the_top_level() {
+    let (d, core) = home();
+    let r = core.create_room("a").unwrap();
+    fs::write(d.path().join("a/spec.html"), "<title>Old</title>").unwrap();
+    fs::write(d.path().join("a/spec (2).html"), "<title>Old 2</title>").unwrap();
+    core.rescan_room(&r.id);
+    let (_o, _orig, a) = inbox_link(&core, "spec.html", "<title>New</title>");
+    let moved = core.move_artifact(&"inbox".to_string(), &a.id, &r.id).unwrap();
+    assert_eq!(moved.rel_path, "spec (3).html");
+    assert_eq!(fs::read_to_string(core.home().join("a/spec.html")).unwrap(), "<title>Old</title>");
+    // From a subfolder of an owned room: lands at the top level of the target.
+    let b = core.create_room("b").unwrap();
+    fs::create_dir_all(core.home().join("b/sub")).unwrap();
+    fs::write(core.home().join("b/sub/deep.html"), "<title>Deep</title>").unwrap();
+    core.rescan_room(&b.id);
+    let deep = core.list_artifacts(&b.id).unwrap()[0].clone();
+    let moved = core.move_artifact(&b.id, &deep.id, &r.id).unwrap();
+    assert_eq!((moved.rel_path.as_str(), moved.created_at.as_str()), ("deep.html", deep.created_at.as_str()));
+    assert!(core.home().join("a/deep.html").is_file() && !core.home().join("b/sub/deep.html").exists());
+    // The plain file's stored target followed it, so rescans find nothing to change.
+    let mut rx = core.subscribe();
+    core.rescan_room(&b.id);
+    core.rescan_room(&r.id);
+    assert!(drain(&mut rx).is_empty());
+}
+
+fn listing(p: &std::path::Path) -> Vec<(String, std::time::SystemTime)> {
+    let mut v: Vec<_> = fs::read_dir(p).unwrap().flatten()
+        .map(|e| (e.file_name().to_string_lossy().to_string(), e.metadata().unwrap().modified().unwrap())).collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn move_artifact_refuses_linked_rooms_without_touching_them() {
+    let (_d, core) = home();
+    let r = core.create_room("a").unwrap();
+    let team = tempfile::tempdir().unwrap();
+    let root = team.path().join("research");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("x.html"), "<title>X</title>").unwrap();
+    let l = core.link_folder(&root, Some("linked")).unwrap();
+    let lx = core.list_artifacts(&l.id).unwrap()[0].clone();
+    let (_o, _orig, a) = inbox_link(&core, "spec.html", "<title>S</title>");
+    let (before, root_mtime) = (listing(&root), fs::metadata(&root).unwrap().modified().unwrap());
+    assert!(matches!(core.move_artifact(&"inbox".to_string(), &a.id, &l.id), Err(CoreError::InvalidInput(_))));
+    assert!(matches!(core.move_artifact(&l.id, &lx.id, &r.id), Err(CoreError::InvalidInput(_))));
+    assert_eq!((listing(&root), fs::metadata(&root).unwrap().modified().unwrap()), (before, root_mtime));
+    assert!(core.home().join("inbox/spec.html").exists() && !core.home().join("a/x.html").exists());
+    assert_eq!(core.list_artifacts(&l.id).unwrap().len(), 1);
+}
+
+#[test]
+fn move_artifact_refuses_journal_inbox_and_same_room_targets() {
+    let (_d, core) = home();
+    let r = core.create_room("a").unwrap();
+    let (_o, _orig, a) = inbox_link(&core, "spec.html", "");
+    let inbox = "inbox".to_string();
+    for to in [JOURNAL_ROOM_ID.to_string(), inbox.clone()] {
+        assert!(matches!(core.move_artifact(&inbox, &a.id, &to), Err(CoreError::InvalidInput(_))), "{to}");
+    }
+    let moved = core.move_artifact(&inbox, &a.id, &r.id).unwrap();
+    assert!(matches!(core.move_artifact(&r.id, &moved.id, &inbox), Err(CoreError::InvalidInput(_))));
+    assert!(matches!(core.move_artifact(&r.id, &moved.id, &r.id), Err(CoreError::InvalidInput(_))));
+    assert!(matches!(core.move_artifact(&JOURNAL_ROOM_ID.to_string(), &moved.id, &r.id), Err(CoreError::InvalidInput(_))));
+    assert_eq!(core.move_artifact(&"nope".to_string(), &moved.id, &r.id).unwrap_err(), CoreError::RoomNotFound);
+    assert_eq!(core.move_artifact(&r.id, &moved.id, &"nope".to_string()).unwrap_err(), CoreError::RoomNotFound);
+}
+
+#[test]
+fn move_artifact_refuses_a_broken_symlink() {
+    let (_d, core) = home();
+    let r = core.create_room("a").unwrap();
+    let (_o, orig, a) = inbox_link(&core, "spec.html", "");
+    fs::remove_file(&orig).unwrap(); // not rescanned: the row is still there
+    assert!(matches!(core.move_artifact(&"inbox".to_string(), &a.id, &r.id), Err(CoreError::InvalidInput(_))));
+    assert!(fs::symlink_metadata(core.home().join("inbox/spec.html")).is_ok());
+    assert!(fs::read_dir(core.home().join("a")).unwrap().next().is_none());
+}
+
+#[test]
+fn move_artifact_missing_id_is_not_found() {
+    let (_d, core) = home();
+    let r = core.create_room("a").unwrap();
+    assert_eq!(core.move_artifact(&"inbox".to_string(), "0123456789abcdef", &r.id).unwrap_err(), CoreError::NotFound);
+}
+
+#[test]
+fn move_artifact_under_the_watcher_yields_one_remove_one_add() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    let orig_dir = tempfile::tempdir().unwrap();
+    let orig = orig_dir.path().join("spec.html");
+    fs::write(&orig, "<title>S</title>").unwrap();
+    let mut rx = core.subscribe();
+    symlink(&orig, core.home().join("inbox/spec.html")).unwrap();
+    let evs = wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.room_id == "inbox"), slow(Duration::from_secs(3)));
+    let EventKind::ArtifactAdded { artifact: a } = &evs.last().unwrap().kind else { unreachable!() };
+    std::thread::sleep(slow(Duration::from_millis(600))); // let the add's own batch settle
+    drain(&mut rx);
+    let moved = core.move_artifact(&"inbox".to_string(), &a.id, &r.id).unwrap();
+    std::thread::sleep(slow(Duration::from_millis(1500)));
+    let evs = drain(&mut rx);
+    let mine: Vec<_> = evs.iter().filter(|e| match &e.kind {
+        EventKind::ArtifactAdded { artifact } | EventKind::ArtifactUpdated { artifact } => artifact.id == a.id || artifact.id == moved.id,
+        EventKind::ArtifactRemoved { artifact_id, .. } => artifact_id == &a.id || artifact_id == &moved.id,
+        _ => false,
+    }).collect();
+    assert!(matches!(&mine[..], [
+        RoomsEvent { kind: EventKind::ArtifactRemoved { artifact_id, .. }, .. },
+        RoomsEvent { kind: EventKind::ArtifactAdded { artifact }, .. },
+    ] if artifact_id == &a.id && artifact.id == moved.id), "{evs:?}");
+    assert_eq!(evs.iter().filter(|e| matches!(e.kind, EventKind::JournalChanged { .. })).count(), 1, "{evs:?}");
+    assert_eq!(core.list_artifacts(&r.id).unwrap(), vec![moved]);
+    assert!(core.list_artifacts(&"inbox".to_string()).unwrap().is_empty());
+}

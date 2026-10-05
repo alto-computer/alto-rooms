@@ -352,3 +352,51 @@ async fn note_rename_is_behind_the_write_guard() {
     let r = app.oneshot(post(uri, r#"{"to":"b"}"#, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
 }
+
+/// An indexed symlink `inbox/spec.html` to an original outside home, plus an owned room `a`.
+fn inbox_artifact(st: &AppState) -> (tempfile::TempDir, rooms_protocol::Artifact, rooms_protocol::Room) {
+    let o = tempfile::tempdir().unwrap();
+    std::fs::write(o.path().join("spec.html"), "<title>S</title>").unwrap();
+    std::os::unix::fs::symlink(o.path().join("spec.html"), st.core.home().join("inbox/spec.html")).unwrap();
+    st.core.rescan_room(&"inbox".to_string());
+    let a = st.core.list_artifacts(&"inbox".to_string()).unwrap().remove(0);
+    let r = st.core.create_room("a").unwrap();
+    (o, a, r)
+}
+
+#[tokio::test]
+async fn artifact_move_returns_the_moved_artifact() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let (_o, a, r) = inbox_artifact(&st);
+    let body = format!(r#"{{"roomId":"inbox","artifactId":"{}","toRoomId":"{}"}}"#, a.id, r.id);
+    let res = app.oneshot(post("/v1/artifacts/move", &body, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let v = body_json(res).await;
+    assert_eq!((v["roomId"].as_str(), v["relPath"].as_str()), (Some(r.id.as_str()), Some("spec.html")));
+    assert_eq!(v["createdAt"].as_str(), Some(a.created_at.as_str()));
+    assert_eq!(st.core.list_artifacts(&r.id).unwrap()[0].id, v["id"].as_str().unwrap());
+}
+
+#[tokio::test]
+async fn artifact_move_without_token_is_403() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let (_o, a, r) = inbox_artifact(&st);
+    let body = format!(r#"{{"roomId":"inbox","artifactId":"{}","toRoomId":"{}"}}"#, a.id, r.id);
+    let res = app.oneshot(post("/v1/artifacts/move", &body, None, API_HOST)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(res).await["error"], "read_only");
+    assert_eq!(st.core.list_artifacts(&"inbox".to_string()).unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn artifact_move_to_linked_room_is_400() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let (_o, a, _r) = inbox_artifact(&st);
+    let team = tempfile::tempdir().unwrap();
+    let l = st.core.link_folder(team.path(), Some("linked")).unwrap();
+    let body = format!(r#"{{"roomId":"inbox","artifactId":"{}","toRoomId":"{}"}}"#, a.id, l.id);
+    let res = app.oneshot(post("/v1/artifacts/move", &body, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(res).await["error"], "invalid_input");
+    assert!(std::fs::read_dir(team.path()).unwrap().next().is_none());
+}

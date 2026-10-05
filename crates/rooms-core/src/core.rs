@@ -77,6 +77,14 @@ type ScanHook = Arc<dyn Fn(&str) + Send + Sync>;
 #[cfg(test)]
 static BEFORE_APPLY_HOOK: Mutex<Option<ScanHook>> = Mutex::new(None);
 
+/// `base` if nothing (not even a broken symlink) is at `dir/base`, else `stem (2).ext`, `stem (3).ext`, …
+fn free_name(dir: &Path, base: &str) -> String {
+    let taken = |n: &str| std::fs::symlink_metadata(dir.join(n)).is_ok();
+    if !taken(base) { return base.to_string(); }
+    let (stem, ext) = match base.rsplit_once('.') { Some((s, e)) if !s.is_empty() => (s, format!(".{e}")), _ => (base, String::new()) };
+    (2..).map(|i| format!("{stem} ({i}){ext}")).find(|n| !taken(n)).unwrap()
+}
+
 enum HomeChange { Added(RoomId), Renamed(RoomId), Removed(RoomId) }
 
 /// One real (non-symlink) directory directly under home.
@@ -589,6 +597,81 @@ impl RoomsCore {
         }
     }
 
+    /// Owned, existing room → its root. Journal and linked rooms are `InvalidInput` (never written
+    /// to by a move); an unknown id is `RoomNotFound`. Checked before any filesystem op.
+    fn owned_root(inner: &Inner, room: &RoomId) -> Result<PathBuf, CoreError> {
+        if room == JOURNAL_ROOM_ID { return Err(CoreError::InvalidInput("journal is not a move room".into())); }
+        let rec = inner.state.find(room).ok_or(CoreError::RoomNotFound)?;
+        if rec.kind != RoomKind::Owned { return Err(CoreError::InvalidInput("linked rooms are read only".into())); }
+        Ok(rec.path.clone())
+    }
+
+    /// Moves an artifact (a symlink to an original, or a plain html file) out of owned room `from`
+    /// (inbox allowed) to the top level of owned room `to` (not inbox), keeping its first-seen
+    /// `createdAt` and Journal day. Only the entry inside the room moves; a symlink's original is
+    /// never touched. A taken name gets ` (2)`, ` (3)`, … before the extension.
+    ///
+    /// Locking: both rooms' scan locks (taken in room-id order, so two opposite moves cannot
+    /// deadlock) are held across the rename and the index reassign, so a watcher rescan of either
+    /// room runs entirely before or entirely after and then finds matching fingerprints (no-op).
+    /// `Inner` is taken only for the short lookups and the reassign + emit; the rename runs without it.
+    pub fn move_artifact(&self, from_room: &RoomId, artifact_id: &str, to_room: &RoomId) -> Result<Artifact, CoreError> {
+        let check = |inner: &Inner| -> Result<(PathBuf, PathBuf), CoreError> {
+            let from_root = Self::owned_root(inner, from_room)?;
+            let to_root = Self::owned_root(inner, to_room)?;
+            if to_room == "inbox" { return Err(CoreError::InvalidInput("cannot move into inbox".into())); }
+            if from_room == to_room { return Err(CoreError::InvalidInput("source and target room are the same".into())); }
+            Ok((from_root, to_root))
+        };
+        check(&self.inner.lock().unwrap())?; // fail fast before waiting on scan locks
+        let (first, second) = if from_room < to_room { (from_room, to_room) } else { (to_room, from_room) };
+        let (l1, l2) = (self.scan_lock(first), self.scan_lock(second));
+        let _g1 = l1.lock().unwrap(); // lock order: room scan locks (by id) → Inner
+        let _g2 = l2.lock().unwrap();
+        // Re-read under the scan locks: the rooms may have been renamed or removed meanwhile.
+        let (from_root, to_root, art) = {
+            let inner = self.inner.lock().unwrap();
+            let (f, t) = check(&inner)?;
+            let art = inner.index.get(from_room, artifact_id)?.ok_or(CoreError::NotFound)?;
+            (f, t, art)
+        };
+        let src = from_root.join(&art.rel_path);
+        let meta = std::fs::symlink_metadata(&src).map_err(|_| CoreError::NotFound)?;
+        let is_html = |p: &Path| p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"));
+        let plain_file = if meta.file_type().is_symlink() {
+            let ok = std::fs::metadata(&src).is_ok_and(|m| m.is_file()) && std::fs::canonicalize(&src).is_ok_and(|t| is_html(&t));
+            if !ok { return Err(CoreError::InvalidInput("symlink does not point to an html file".into())); }
+            false
+        } else if meta.is_file() {
+            true
+        } else {
+            return Err(CoreError::InvalidInput("not a file".into()));
+        };
+        let base = Path::new(&art.rel_path).file_name().map(|n| n.to_string_lossy().to_string()).ok_or(CoreError::NotFound)?;
+        let to_rel = free_name(&to_root, &base);
+        let dst = to_root.join(&to_rel);
+        std::fs::rename(&src, &dst)?;
+        // A plain file's stored target is its own canonical path, which just changed; a symlink's
+        // target (the original) did not.
+        let new_target = if plain_file { std::fs::canonicalize(&dst).ok().map(|p| p.to_string_lossy().to_string()) } else { None };
+        let mut inner = self.inner.lock().unwrap();
+        match inner.index.reassign(from_room, &art.rel_path, to_room, &to_rel, new_target.as_deref()) {
+            Ok((removed, added)) => {
+                let Change::Added(moved) = &added else { unreachable!("reassign returns Added second") };
+                let moved = moved.clone();
+                self.emit_changes(&mut inner, vec![removed, added]);
+                Ok(moved)
+            }
+            Err(e) => {
+                drop(inner);
+                if let Err(back) = std::fs::rename(&dst, &src) {
+                    eprintln!("rooms-core: moving {} back to {} failed: {back}", dst.display(), src.display());
+                }
+                Err(e)
+            }
+        }
+    }
+
     pub fn resolve_file(&self, room: &RoomId, rel: &str) -> Result<PathBuf, CoreError> {
         let (root, _) = self.room_root(room).ok_or(CoreError::RoomNotFound)?;
         let rel_p = Path::new(rel);
@@ -730,6 +813,38 @@ mod tests {
         b.join().unwrap();
         clear_hook();
         assert!(!rels(&core, &r.id).contains(&"a.html".to_string()), "deleted a.html resurrected");
+    }
+
+    #[test]
+    fn move_waits_for_an_in_flight_rescan_and_later_rescans_are_no_ops() {
+        let _g = HOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let r = core.create_room("r").unwrap();
+        let inbox: RoomId = "inbox".into();
+        std::fs::write(core.home().join("inbox/a.html"), "<title>a</title>").unwrap();
+        core.rescan_room(&inbox);
+        let a = core.list_artifacts(&inbox).unwrap().remove(0);
+        let mut rx = core.subscribe();
+        let (entered, release) = block_first_scan(&inbox);
+        let (cs, ids) = (core.clone(), inbox.clone());
+        let scan = std::thread::spawn(move || cs.rescan_room(&ids));
+        entered.recv_timeout(Duration::from_secs(5)).unwrap(); // rescan holds inbox's scan lock
+        let (cm, from, to, id) = (core.clone(), inbox.clone(), r.id.clone(), a.id.clone());
+        let mv = std::thread::spawn(move || cm.move_artifact(&from, &id, &to));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(core.home().join("inbox/a.html").exists(), "move ran while a rescan of its room was in flight");
+        release.send(()).unwrap();
+        scan.join().unwrap();
+        let moved = mv.join().unwrap().unwrap();
+        clear_hook();
+        core.rescan_room(&inbox);
+        core.rescan_room(&r.id);
+        let evs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).map(|e| e.kind).collect();
+        assert!(matches!(&evs[..], [
+            EventKind::ArtifactRemoved { artifact_id, .. }, EventKind::ArtifactAdded { artifact }, EventKind::JournalChanged { .. },
+        ] if artifact_id == &a.id && artifact == &moved), "{evs:?}");
+        assert_eq!(rels(&core, &r.id), vec!["a.html".to_string()]);
     }
 
     #[test]

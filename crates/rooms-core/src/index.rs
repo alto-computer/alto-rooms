@@ -202,6 +202,44 @@ impl Index {
         Ok(rows.filter_map(Result::ok).collect())
     }
 
+    /// The row with `id` in `room_id`, if any.
+    pub fn get(&self, room_id: &str, id: &str) -> Result<Option<Artifact>, CoreError> {
+        self.conn.query_row("SELECT * FROM artifacts WHERE id = ?1 AND room_id = ?2", params![id, room_id], Self::row_to_artifact)
+            .optional().map_err(err)
+    }
+
+    /// Moves the row of `from_room/from_rel` to `to_room/to_rel` in one transaction: a new id and
+    /// rel_path, everything else kept (first-seen `created_at`/`created_day`/`created_ts`, title,
+    /// source, updated_at, target). `new_target` replaces the stored target when the moved entry is
+    /// a regular file (its canonical path changed); a symlink keeps its original's target.
+    /// Returns (Removed in from_room, Added in to_room) and touches the row's day. A stale row
+    /// already at the new id (file gone, not yet rescanned) is replaced; `NotFound` if there is no
+    /// source row.
+    pub fn reassign(&mut self, from_room: &str, from_rel: &str, to_room: &str, to_rel: &str, new_target: Option<&str>) -> Result<(Change, Change), CoreError> {
+        let (old_id, new_id) = (artifact_id(from_room, from_rel), artifact_id(to_room, to_rel));
+        self.conn.execute_batch("BEGIN").map_err(err)?;
+        let r = (|| -> Result<(Change, Change), CoreError> {
+            let row: Option<(Artifact, String, String)> = self.conn.query_row(
+                "SELECT * FROM artifacts WHERE id = ?1 AND room_id = ?2", params![old_id, from_room],
+                |r| Ok((Self::row_to_artifact(r)?, r.get("target")?, r.get("created_day")?))).optional().map_err(err)?;
+            let (old, target, day) = row.ok_or(CoreError::NotFound)?;
+            if let Some(stale_day) = self.conn.query_row("SELECT created_day FROM artifacts WHERE id = ?1", params![new_id], |r| r.get::<_, String>(0))
+                .optional().map_err(err)? { self.touch(&stale_day); }
+            self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![new_id]).map_err(err)?;
+            let n = self.conn.execute(
+                "UPDATE artifacts SET id = ?1, room_id = ?2, rel_path = ?3, target = ?4 WHERE id = ?5",
+                params![new_id, to_room, to_rel, new_target.unwrap_or(&target), old_id]).map_err(err)?;
+            if n != 1 { return Err(CoreError::NotFound); }
+            self.touch(&day);
+            let new = Artifact { id: new_id.clone(), room_id: to_room.into(), rel_path: to_rel.into(), ..old };
+            Ok((Change::Removed { room_id: from_room.into(), artifact_id: old_id.clone() }, Change::Added(new)))
+        })();
+        match r {
+            Ok(c) => { self.conn.execute_batch("COMMIT").map_err(err)?; Ok(c) }
+            Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
+        }
+    }
+
     pub fn by_day(&self, day: &str) -> Result<Vec<(Artifact, String)>, CoreError> {
         let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE created_day = ?1 ORDER BY created_ts ASC, id ASC").map_err(err)?;
         let rows = st.query_map(params![day], |r| Ok((Self::row_to_artifact(r)?, r.get::<_, String>("target")?))).map_err(err)?;
