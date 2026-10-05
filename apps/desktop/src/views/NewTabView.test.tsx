@@ -174,7 +174,7 @@ describe("NewTabView loading", () => {
 describe("NewTabView: first run", () => {
   const PROMPT = "~/rooms/ONBOARD.md 를 읽고 따라 해줘";
 
-  it("with no rooms but inbox, shows the full onboarding card with the exact copy; clicking the chip copies the prompt", async () => {
+  it("with no rooms but inbox, shows the welcome page instead of the grid; 복사 copies the prompt", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
@@ -184,26 +184,22 @@ describe("NewTabView: first run", () => {
       rooms: [room("inbox", "Inbox")],
       artifacts: { inbox: [] },
     });
-    expect(screen.getByRole("heading", { level: 1, name: "이 한 줄을 에이전트에게 붙여넣으세요" })).toBeInTheDocument();
-    expect(
-      screen.getByText("에이전트가 최근 14일 동안 만든 HTML을 주제별 방으로 정리해요. 원본은 그대로 두고 링크만 만들어요."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Claude Code나 Codex에 붙여넣으면 돼요.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Rooms에 오신 걸 환영해요" })).toBeInTheDocument();
     expect(screen.queryByText("지난 방문 이후")).toBeNull();
-    const chip = screen.getByRole("button", { name: PROMPT });
+    expect(screen.getByTestId("welcome-prompt")).toHaveTextContent(PROMPT);
     await act(async () => {
-      fireEvent.click(chip);
+      fireEvent.click(screen.getByTestId("welcome-copy"));
     });
     expect(writeText).toHaveBeenCalledWith(PROMPT);
-    expect(screen.getByText("복사했어요")).toBeInTheDocument();
+    expect(screen.getByTestId("welcome-copy")).toHaveTextContent("복사했어요");
     act(() => vi.advanceTimersByTime(1500));
-    expect(screen.queryByText("복사했어요")).toBeNull();
+    expect(screen.getByTestId("welcome-copy")).toHaveTextContent(/^복사$/);
     vi.useRealTimers();
   });
 
   it("uses the absolute path when the home is not ~/rooms", async () => {
     await renderWithStores(<NewTabView />, { viewer: viewer(), home: "/Users/me/agent-rooms", rooms: [] });
-    expect(screen.getByRole("button", { name: "/Users/me/agent-rooms/ONBOARD.md 를 읽고 따라 해줘" })).toBeInTheDocument();
+    expect(screen.getByTestId("welcome-prompt")).toHaveTextContent("/Users/me/agent-rooms/ONBOARD.md 를 읽고 따라 해줘");
   });
 
   it("renders nothing before the first sync (no card flash)", () => {
@@ -214,20 +210,26 @@ describe("NewTabView: first run", () => {
         <NewTabView />
       </StoresProvider>,
     );
-    expect(screen.queryByText("이 한 줄을 에이전트에게 붙여넣으세요")).toBeNull();
+    expect(screen.queryByText("Rooms에 오신 걸 환영해요")).toBeNull();
     expect(screen.queryByText("지난 방문 이후")).toBeNull();
   });
 
   it("with rooms present, the heading reads 지난 방문 이후 and there is no card", async () => {
     await renderWithStores(<NewTabView />, { viewer: viewer(), rooms: [room("inbox", "Inbox"), room("a", "가")] });
     expect(screen.getByRole("heading", { level: 1, name: "지난 방문 이후" })).toBeInTheDocument();
-    expect(screen.queryByText("이 한 줄을 에이전트에게 붙여넣으세요")).toBeNull();
+    expect(screen.queryByText("Rooms에 오신 걸 환영해요")).toBeNull();
     expect(screen.queryByText("에이전트로 다시 정리하기")).toBeNull();
   });
 
-  it("the read-only full card still shows (copying is harmless)", async () => {
-    await renderWithStores(<NewTabView />, { viewer: viewer(), readOnly: true, rooms: [] });
-    expect(screen.getByText("이 한 줄을 에이전트에게 붙여넣으세요")).toBeInTheDocument();
+  it("the read-only welcome page still shows (copying is harmless)", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await renderWithStores(<NewTabView />, { viewer: viewer(), readOnly: true, home: "/Users/me/rooms", rooms: [] });
+    expect(screen.getByText("Rooms에 오신 걸 환영해요")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("welcome-copy"));
+    });
+    expect(writeText).toHaveBeenCalledWith(PROMPT);
   });
 });
 

@@ -19,8 +19,8 @@ import { OnboardingCard } from "./OnboardingCard";
  * visited, the subtitle counts those as "새로 정리된 방": an agent's links keep
  * the originals' (old) createdAt, so after onboarding nothing reads as new.
  *
- * First run (synced, and no rooms besides inbox): the onboarding card takes
- * the place of the grid. Before the first sync nothing is shown.
+ * First run (synced, and no rooms besides inbox): the welcome page takes the
+ * place of the grid, in a centered 760px column. Before the first sync nothing is shown.
  */
 export function NewTabView() {
   const viewer = useViewerStore();
@@ -90,7 +90,7 @@ export function NewTabView() {
     return (
       <div className={shell}>
         <OnboardingCard />
-        {waiting}
+        {waiting ? <div className="mx-auto w-full max-w-[760px]">{waiting}</div> : null}
       </div>
     );
   }

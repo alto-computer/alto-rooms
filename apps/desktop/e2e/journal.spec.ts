@@ -3,7 +3,7 @@ import { artifactHtml, expect, test, today } from "./fixtures";
 
 async function openJournal(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Journal" }).click();
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
   await expect(page.getByRole("tab", { name: /^Journal · /, selected: true })).toBeVisible();
 }
 

@@ -52,7 +52,7 @@ test("screens for visual review", async ({ page, daemon }) => {
   await shot(page, "empty-room");
 
   // Journal: dream, a room artifact, two notes.
-  await page.getByRole("button", { name: "Journal" }).click();
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
   await expect(page.getByRole("region", { name: "에이전트가 쓴 것" }).getByTestId("artifact-card")).toHaveCount(6);
   await expect(page.getByRole("region", { name: "내가 쓴 것" }).getByRole("button", { name: "회고" })).toBeVisible();
   await settle(page);
