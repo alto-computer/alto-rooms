@@ -26,13 +26,22 @@ fn watch_dir(deb: &Mutex<Deb>, path: &Path) -> Result<(), notify::Error> {
 /// `watched` holds the roots with a live watch; any linked room that is `ok` but not in the set
 /// is (re)watched here. Callers: startup, room.added, room.updated→ok, and the retry tick.
 /// A root that goes unavailable is dropped from the set (and unwatched) so its return re-watches.
-fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<HashSet<PathBuf>>) {
+/// A root whose watch() fails is logged once per path (`failed` holds the already-logged paths);
+/// a later success clears the entry so a future failure logs again.
+fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<HashSet<PathBuf>>, failed: &Mutex<HashSet<PathBuf>>) {
     for r in core.list_rooms().into_iter().filter(|r| r.kind == RoomKind::Linked && r.status == RoomStatus::Ok) {
         let p = PathBuf::from(&r.path);
         if watched.lock().unwrap().contains(&p) { continue; }
         match watch_dir(deb, &p) {
-            Ok(()) => { watched.lock().unwrap().insert(p); }
-            Err(e) => eprintln!("rooms-core: failed to watch linked room {}: {e}", r.path),
+            Ok(()) => {
+                failed.lock().unwrap().remove(&p);
+                watched.lock().unwrap().insert(p);
+            }
+            Err(e) => {
+                if failed.lock().unwrap().insert(p) {
+                    eprintln!("rooms-core: failed to watch linked room {}: {e}", r.path);
+                }
+            }
         }
     }
 }
@@ -43,6 +52,12 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     let home = core.home().to_path_buf();
     let debouncer = new_debouncer(Duration::from_millis(300), None, move |res: DebounceEventResult| {
         match res {
+            // Overflow (events were dropped) or a watcher error: per-room rescans can't be trusted.
+            Ok(events) if events.iter().any(|ev| ev.need_rescan()) => c2.resync_all(),
+            Err(errs) => {
+                for e in errs { eprintln!("rooms-core: watcher error: {e}"); }
+                c2.resync_all();
+            }
             Ok(events) => {
                 let paths: Vec<PathBuf> = events.iter().flat_map(|ev| ev.paths.iter())
                     .filter(|p| !p.starts_with(&rooms_dir)).cloned().collect();
@@ -57,19 +72,20 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                 }
                 for id in rooms { c2.rescan_room(&id); }
             }
-            Err(errs) => {
-                for e in errs { eprintln!("rooms-core: watcher error: {e}"); }
-            }
         }
     }).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
     let deb = Arc::new(Mutex::new(debouncer));
     watch_dir(&deb, core.home()).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
     let watched = Arc::new(Mutex::new(HashSet::new()));
-    ensure_linked_watched(&core, &deb, &watched);
-    // Pick up rooms linked later / returning roots. Holds only a Weak so dropping the handle ends the thread.
-    let weak = Arc::downgrade(&deb);
+    let failed = Arc::new(Mutex::new(HashSet::new()));
+    ensure_linked_watched(&core, &deb, &watched, &failed);
+    // Helper threads hold only weak references, so dropping the handle and every RoomsCore ends them.
+    // (The debouncer callback owns a strong core; the debouncer's own thread drops it shortly after
+    // the Debouncer is dropped, since Drop only signals stop.)
+    let (wcore, wdeb) = (core.downgrade(), Arc::downgrade(&deb));
     let mut rx = core.subscribe();
-    let (c3, w3) = (core.clone(), watched.clone());
+    let (w3, f3) = (watched.clone(), failed.clone());
+    let (wcore3, wdeb3) = (wcore.clone(), wdeb.clone());
     std::thread::spawn(move || loop {
         match rx.blocking_recv() {
             Ok(e) => {
@@ -77,27 +93,24 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                     EventKind::RoomAdded { room } | EventKind::RoomUpdated { room } if room.kind == RoomKind::Linked => room,
                     _ => continue,
                 };
-                let Some(deb) = weak.upgrade() else { break };
+                let (Some(core), Some(deb)) = (wcore3.upgrade(), wdeb3.upgrade()) else { break };
                 if room.status == RoomStatus::Unavailable {
                     let p = PathBuf::from(&room.path);
                     if w3.lock().unwrap().remove(&p) { let _ = deb.lock().unwrap().unwatch(&p); }
                 } else {
-                    ensure_linked_watched(&c3, &deb, &w3);
+                    ensure_linked_watched(&core, &deb, &w3, &f3);
                 }
             }
             Err(RecvError::Lagged(_)) => continue,
             Err(RecvError::Closed) => break,
         }
-        if weak.strong_count() == 0 { break; }
     });
     // Retry tick: re-check unavailable rooms (a returning root emits room.updated→ok, which re-watches above).
-    let weak = Arc::downgrade(&deb);
-    let c4 = core.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(RETRY_INTERVAL);
-        let Some(deb) = weak.upgrade() else { break };
-        c4.rescan_unavailable();
-        ensure_linked_watched(&c4, &deb, &watched);
+        let (Some(core), Some(deb)) = (wcore.upgrade(), wdeb.upgrade()) else { break };
+        core.rescan_unavailable();
+        ensure_linked_watched(&core, &deb, &watched, &failed);
     });
     Ok(WatchHandle { _debouncer: deb })
 }

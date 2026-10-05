@@ -516,3 +516,32 @@ fn concurrent_save_note_on_one_name_never_fails_or_corrupts() {
     let got = fs::read_to_string(d.path().join("journal/2026-10-05/same.md")).unwrap();
     assert!(bodies.contains(&got), "final file is not one of the bodies (len {})", got.len());
 }
+
+#[test]
+fn dropping_handle_and_core_closes_the_event_channel() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let mut rx = core.subscribe();
+    drop(w);
+    std::thread::sleep(Duration::from_millis(2500)); // one retry tick, so the retry thread sees the dropped debouncer
+    drop(core);
+    let s = Instant::now();
+    loop {
+        match rx.try_recv() {
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+            _ => { assert!(s.elapsed() < Duration::from_secs(3), "a helper thread still holds the core"); std::thread::sleep(Duration::from_millis(20)); }
+        }
+    }
+}
+
+#[test]
+fn resync_all_rescans_and_emits_resync() {
+    let (d, core) = home();
+    let r = core.create_room("a").unwrap();
+    fs::write(d.path().join("a/x.html"), "").unwrap();
+    let mut rx = core.subscribe();
+    core.resync_all();
+    let evs = drain(&mut rx);
+    assert!(evs.iter().any(|e| matches!(&e.kind, EventKind::ArtifactAdded { artifact } if artifact.room_id == r.id)));
+    assert!(matches!(evs.last().unwrap().kind, EventKind::Resync { room_id: None }));
+}

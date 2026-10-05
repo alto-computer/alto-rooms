@@ -7,7 +7,7 @@ use rooms_protocol::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::broadcast;
 
 struct Inner {
@@ -38,6 +38,34 @@ pub struct RoomsCore {
     notes_lock: Arc<Mutex<()>>,
     tx: broadcast::Sender<RoomsEvent>,
     home: PathBuf,
+}
+
+/// Non-owning handle to a `RoomsCore`: lets helper threads observe the core without keeping it
+/// (or the event channel) alive.
+#[derive(Clone)]
+pub struct WeakRoomsCore {
+    inner: Weak<Mutex<Inner>>,
+    seq: Arc<AtomicU64>,
+    scan_locks: Arc<Mutex<HashMap<RoomId, Arc<Mutex<()>>>>>,
+    notes_lock: Arc<Mutex<()>>,
+    tx: broadcast::WeakSender<RoomsEvent>,
+    home: PathBuf,
+}
+
+impl WeakRoomsCore {
+    /// `None` once the core (its `Inner` or its event sender) has been dropped.
+    pub fn upgrade(&self) -> Option<RoomsCore> {
+        let inner = self.inner.upgrade()?;
+        let tx = self.tx.upgrade()?;
+        Some(RoomsCore {
+            inner,
+            seq: self.seq.clone(),
+            scan_locks: self.scan_locks.clone(),
+            notes_lock: self.notes_lock.clone(),
+            tx,
+            home: self.home.clone(),
+        })
+    }
 }
 
 const MAX_NOTE_BYTES: usize = 1_048_576;
@@ -142,6 +170,25 @@ impl RoomsCore {
     }
 
     pub fn home(&self) -> &Path { &self.home }
+
+    pub fn downgrade(&self) -> WeakRoomsCore {
+        WeakRoomsCore {
+            inner: Arc::downgrade(&self.inner),
+            seq: self.seq.clone(),
+            scan_locks: self.scan_locks.clone(),
+            notes_lock: self.notes_lock.clone(),
+            tx: self.tx.downgrade(),
+            home: self.home.clone(),
+        }
+    }
+
+    /// Full reconcile after the watcher lost events (overflow / error): rescan everything, then
+    /// tell clients to refetch.
+    pub fn resync_all(&self) {
+        if let Err(e) = self.backfill_all() { eprintln!("rooms-core: resync backfill failed: {e}"); }
+        let mut inner = self.inner.lock().unwrap();
+        self.emit(&mut inner, EventKind::Resync { room_id: None });
+    }
 
     pub fn subscribe(&self) -> broadcast::Receiver<RoomsEvent> { self.tx.subscribe() }
 
