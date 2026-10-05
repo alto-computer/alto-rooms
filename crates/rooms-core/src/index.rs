@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use crate::meta::{file_times, read_meta, title_or_filename};
+use crate::meta::{file_mtime, file_times, read_meta, title_or_filename};
 use crate::rules::{artifact_id, local_day, PathClass};
 use crate::walk::ScanEntry;
 use rooms_protocol::{Artifact, Author, Source};
@@ -93,11 +93,19 @@ impl Index {
     pub fn upsert_one(&mut self, room_id: &str, e: &ScanEntry) -> Result<Option<Change>, CoreError> {
         if e.class != PathClass::Artifact { return Ok(None); }
         let id = artifact_id(room_id, &e.rel_path);
+        let existing: Option<(String, String, String, String, String)> = self.conn.query_row(
+            "SELECT created_at, title, updated_at, created_day, target FROM artifacts WHERE id = ?1", params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional().map_err(err)?;
+        // Cheap path: same target and same mtime → nothing to re-read (unless a journal row's day is stale).
+        if let Some((_, _, old_updated, old_day, old_target)) = &existing {
+            let day_ok = journal_folder_day(room_id, &e.rel_path).map(|d| &d == old_day).unwrap_or(true);
+            if day_ok && *old_target == e.target.to_string_lossy() && file_mtime(&e.target).as_ref() == Some(old_updated) {
+                return Ok(None);
+            }
+        }
+        let existing = existing.map(|(c, t, u, d, _)| (c, t, u, d));
         let meta = read_meta(&e.target);
         let (file_created, updated) = file_times(&e.target);
-        let existing: Option<(String, String, String, String)> = self.conn.query_row(
-            "SELECT created_at, title, updated_at, created_day FROM artifacts WHERE id = ?1", params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional().map_err(err)?;
         let created = meta.created.clone()
             .or_else(|| existing.as_ref().map(|x| x.0.clone()))
             .unwrap_or(file_created);
@@ -274,6 +282,36 @@ mod tests {
         ix.conn.execute("UPDATE artifacts SET created_day = '1999-01-01'", []).unwrap();
         ix.backfill("r1", &entries).unwrap();
         assert_eq!(ix.by_day("1999-01-01").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn unchanged_file_skips_meta_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let (d, room) = setup();
+        let mut ix = Index::open(&d.path().join("index.sqlite")).unwrap();
+        fs::write(room.join("a.html"), "<title>Kept</title>").unwrap();
+        let entries = scan_room(&room, false, false);
+        ix.backfill("r1", &entries).unwrap();
+        // chmod does not change mtime; if meta were re-read the title would fall back to "a".
+        fs::set_permissions(room.join("a.html"), fs::Permissions::from_mode(0o000)).unwrap();
+        let ch = ix.backfill("r1", &entries).unwrap();
+        fs::set_permissions(room.join("a.html"), fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(ch.is_empty(), "{ch:?}");
+        assert_eq!(ix.list("r1").unwrap()[0].title, "Kept");
+    }
+
+    #[test]
+    fn unchanged_journal_file_still_gets_folder_day() {
+        let (d, _room) = setup();
+        let j = d.path().join("journal");
+        fs::create_dir_all(j.join("2026-10-05")).unwrap();
+        fs::write(j.join("2026-10-05/a.html"), "").unwrap();
+        let mut ix = Index::open(&d.path().join("index.sqlite")).unwrap();
+        let entries = scan_room(&j, false, true);
+        ix.backfill("journal", &entries).unwrap();
+        ix.conn.execute("UPDATE artifacts SET created_day = '1999-01-01'", []).unwrap();
+        ix.backfill("journal", &entries).unwrap();
+        assert_eq!(ix.by_day("2026-10-05").unwrap().len(), 1);
     }
 
     #[test]

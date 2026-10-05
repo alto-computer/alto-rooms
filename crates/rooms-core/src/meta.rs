@@ -96,8 +96,14 @@ pub fn read_meta(path: &Path) -> Meta {
     extract_meta(&buf)
 }
 
+fn to_rfc(t: std::time::SystemTime) -> String { chrono::DateTime::<chrono::Local>::from(t).to_rfc3339() }
+
+/// mtime in the same format `file_times` reports as `updated` (None if it cannot be read).
+pub fn file_mtime(path: &Path) -> Option<String> {
+    std::fs::metadata(path).ok()?.modified().ok().map(to_rfc)
+}
+
 pub fn file_times(path: &Path) -> (String, String) {
-    let to_rfc = |t: std::time::SystemTime| chrono::DateTime::<chrono::Local>::from(t).to_rfc3339();
     match std::fs::metadata(path) {
         Ok(m) => {
             let modified = m.modified().map(to_rfc).unwrap_or_else(|_| chrono::Local::now().to_rfc3339());
