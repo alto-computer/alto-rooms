@@ -14,3 +14,8 @@ chrono = { version = "0.4", features = ["serde"] }
 ts-rs = "10"
 schemars = "0.8"
 tokio = { version = "1", features = ["full"] }
+
+# SQLite is C code compiled with the crate's opt-level; unoptimized it makes the index's
+# apply transaction (held under the core lock) ~3.5x slower in debug builds.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3

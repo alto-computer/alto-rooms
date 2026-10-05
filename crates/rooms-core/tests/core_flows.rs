@@ -437,20 +437,6 @@ fn create_room_on_existing_plain_folder_is_room_exists() {
 }
 
 #[test]
-fn concurrent_rescans_of_one_room_converge_to_latest_files() {
-    let (d, core) = home();
-    let r = core.create_room("c").unwrap();
-    for i in 0..300 { fs::write(d.path().join(format!("c/{i}.html")), format!("<title>{i}</title>")).unwrap(); }
-    let threads: Vec<_> = (0..4).map(|_| { let c = core.clone(); let id = r.id.clone(); std::thread::spawn(move || c.rescan_room(&id)) }).collect();
-    fs::remove_file(d.path().join("c/0.html")).unwrap();
-    fs::write(d.path().join("c/new.html"), "<title>new</title>").unwrap();
-    for t in threads { t.join().unwrap(); }
-    core.rescan_room(&r.id);
-    let rels: std::collections::HashSet<String> = core.list_artifacts(&r.id).unwrap().into_iter().map(|a| a.rel_path).collect();
-    assert!(!rels.contains("0.html") && rels.contains("new.html") && rels.len() == 300, "{}", rels.len());
-}
-
-#[test]
 fn scan_of_removed_room_writes_nothing() {
     let (d, core) = home();
     let r = core.create_room("gone").unwrap();
@@ -516,4 +502,17 @@ fn finder_rename_of_inbox_does_not_move_the_inbox() {
     assert_eq!(std::path::Path::new(&inbox.path), d.path().canonicalize().unwrap().join("inbox"));
     assert!(d.path().join("inbox").is_dir());
     assert!(rooms.iter().any(|r| r.name == "old-inbox" && r.id != "inbox"));
+}
+
+#[test]
+fn concurrent_save_note_on_one_name_never_fails_or_corrupts() {
+    let (d, core) = home();
+    let bodies: Vec<String> = (0..8).map(|t| char::from(b'a' + t as u8).to_string().repeat(1 + t * 40_000)).collect();
+    let threads: Vec<_> = (0..8).map(|t| {
+        let (c, body) = (core.clone(), bodies[t].clone());
+        std::thread::spawn(move || (0..25).map(|_| c.save_note(&"2026-10-05".to_string(), "same.md", &body).map(|_| ())).collect::<Vec<_>>())
+    }).collect();
+    for t in threads { for r in t.join().unwrap() { assert_eq!(r, Ok(())); } }
+    let got = fs::read_to_string(d.path().join("journal/2026-10-05/same.md")).unwrap();
+    assert!(bodies.contains(&got), "final file is not one of the bodies (len {})", got.len());
 }

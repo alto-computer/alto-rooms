@@ -33,11 +33,21 @@ pub struct RoomsCore {
     /// One mutex per room serializing its rescans. Lock order: room scan lock → `Inner`
     /// (never take a scan lock while holding `Inner`). The map lock itself is only held briefly.
     scan_locks: Arc<Mutex<HashMap<RoomId, Arc<Mutex<()>>>>>,
+    /// Serializes `save_note` (tmp write → rename → emit) so NoteSaved order equals file order.
+    /// Lock order: notes_lock → `Inner`.
+    notes_lock: Arc<Mutex<()>>,
     tx: broadcast::Sender<RoomsEvent>,
     home: PathBuf,
 }
 
 const MAX_NOTE_BYTES: usize = 1_048_576;
+
+/// Test-only seam: called in `try_rescan_room` between the read phase and the apply phase, with
+/// the room id. Compiles to nothing outside `cfg(test)`.
+#[cfg(test)]
+type ScanHook = Arc<dyn Fn(&str) + Send + Sync>;
+#[cfg(test)]
+static BEFORE_APPLY_HOOK: Mutex<Option<ScanHook>> = Mutex::new(None);
 
 enum HomeChange { Added(RoomId), Renamed(RoomId), Removed(RoomId) }
 
@@ -125,6 +135,7 @@ impl RoomsCore {
             inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new() })),
             seq: Arc::new(AtomicU64::new(0)),
             scan_locks: Arc::new(Mutex::new(HashMap::new())),
+            notes_lock: Arc::new(Mutex::new(())),
             tx,
             home,
         })
@@ -212,9 +223,17 @@ impl RoomsCore {
         let fps = { self.inner.lock().unwrap().index.fingerprints(room)? };
         let facts: Vec<_> = entries.iter().filter_map(|e| read_entry(room, e, fps.get(&e.rel_path))).collect(); // no lock
         let present: HashSet<String> = entries.iter().filter(|e| e.class == PathClass::Artifact).map(|e| e.rel_path.clone()).collect();
+        #[cfg(test)]
+        {
+            // Clone out and release the hook mutex before calling, so the hook never serializes scans.
+            let hook = BEFORE_APPLY_HOOK.lock().unwrap().clone();
+            if let Some(h) = hook { h(room); }
+        }
         let mut inner = self.inner.lock().unwrap();
-        // Removed while we were reading (Finder delete): write nothing for it.
-        if room != JOURNAL_ROOM_ID && inner.state.find(room).is_none() { return Ok(()); }
+        // Removed while we were reading (Finder delete) → write nothing for it. Renamed while we were
+        // reading (root moved) → our entries describe the old root; the rename's follow-up rescan
+        // does the work.
+        if room != JOURNAL_ROOM_ID && inner.state.find(room).map(|r| &r.path) != Some(&root) { return Ok(()); }
         let ch = inner.index.apply(room, &facts, &present)?;
         self.emit_changes(&mut inner, ch);
         if inner.unavailable.remove(room) { self.emit_room_updated(&mut inner, room); }
@@ -250,7 +269,8 @@ impl RoomsCore {
 
     /// Re-reads the direct children of home (called by the watcher when a batch touches one):
     /// emits room.added / room.updated (Finder rename, same id) / room.removed. Returns the ids
-    /// of added or renamed rooms so the caller can scan them.
+    /// of added or renamed rooms, plus "inbox" when its folder had to be recreated, so the caller
+    /// can scan them.
     pub fn sync_home_dirs(&self) -> Vec<RoomId> {
         let listing = list_home_dirs(&self.home); // no lock
         let mut touched = Vec::new();
@@ -425,11 +445,13 @@ impl RoomsCore {
         validate_iso_date(date)?;
         let name = validate_note_name(name)?;
         if body.len() > MAX_NOTE_BYTES { return Err(CoreError::InvalidInput("note too large".into())); }
-        // File IO without the lock; the lock is taken only to emit.
+        // File IO without `Inner`; it is taken only to emit. `notes_lock` is held across the write,
+        // the rename and the emit so NoteSaved order equals file order (lock order: notes_lock → Inner).
+        let _notes = self.notes_lock.lock().unwrap();
         let dir = self.home.join("journal").join(date);
         std::fs::create_dir_all(&dir)?;
         let path = dir.join(&name);
-        let tmp = dir.join(format!(".{name}.tmp"));
+        let tmp = dir.join(format!(".{name}.{}.tmp", nanoid::nanoid!(8)));
         std::fs::write(&tmp, body)?;
         std::fs::rename(&tmp, &path)?;
         let (_, updated) = crate::meta::file_times(&path);
@@ -460,5 +482,80 @@ impl RoomsCore {
         }
         if !target.starts_with(&root_real) { return Err(CoreError::PathEscape); }
         Ok(target)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// Serializes the tests that install the global hook.
+    static HOOK_TESTS: Mutex<()> = Mutex::new(());
+
+    /// Installs a hook that blocks the FIRST scan of `room` before its apply phase: it signals
+    /// `entered` and waits for `release`. Later scans pass through.
+    fn block_first_scan(room: &str) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let room = room.to_string();
+        let state = Mutex::new(Some((entered_tx, release_rx)));
+        *BEFORE_APPLY_HOOK.lock().unwrap() = Some(Arc::new(move |r: &str| {
+            if r != room { return; }
+            let Some((entered, release)) = state.lock().unwrap().take() else { return };
+            entered.send(()).unwrap();
+            release.recv().unwrap();
+        }));
+        (entered_rx, release_tx)
+    }
+
+    fn clear_hook() { *BEFORE_APPLY_HOOK.lock().unwrap() = None; }
+
+    fn rels(core: &RoomsCore, room: &RoomId) -> Vec<String> {
+        core.list_artifacts(room).unwrap().into_iter().map(|a| a.rel_path).collect()
+    }
+
+    #[test]
+    fn later_scan_waits_for_earlier_scan_so_deleted_file_is_not_resurrected() {
+        let _g = HOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let r = core.create_room("r").unwrap();
+        // Not indexed yet: scan A reads a.html as new and will upsert it at apply time.
+        std::fs::write(d.path().join("r/a.html"), "<title>a</title>").unwrap();
+        let (entered, release) = block_first_scan(&r.id);
+        let (ca, ida) = (core.clone(), r.id.clone());
+        let a = std::thread::spawn(move || ca.rescan_room(&ida));
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        std::fs::remove_file(d.path().join("r/a.html")).unwrap();
+        let (cb, idb) = (core.clone(), r.id.clone());
+        let b = std::thread::spawn(move || cb.rescan_room(&idb));
+        std::thread::sleep(Duration::from_millis(200));
+        release.send(()).unwrap();
+        a.join().unwrap();
+        b.join().unwrap();
+        clear_hook();
+        assert!(!rels(&core, &r.id).contains(&"a.html".to_string()), "deleted a.html resurrected");
+    }
+
+    #[test]
+    fn scan_whose_room_was_renamed_mid_scan_applies_nothing() {
+        let _g = HOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let r = core.create_room("r").unwrap();
+        std::fs::write(d.path().join("r/a.html"), "<title>a</title>").unwrap();
+        let (entered, release) = block_first_scan(&r.id);
+        let (ca, ida) = (core.clone(), r.id.clone());
+        let a = std::thread::spawn(move || ca.rescan_room(&ida));
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        core.rename_room(&r.id, "s").unwrap();
+        std::fs::remove_file(d.path().join("s/a.html")).unwrap();
+        release.send(()).unwrap();
+        a.join().unwrap();
+        clear_hook();
+        // The stale scan (old root) must not write; no follow-up rescan runs here.
+        assert!(rels(&core, &r.id).is_empty(), "{:?}", rels(&core, &r.id));
     }
 }
