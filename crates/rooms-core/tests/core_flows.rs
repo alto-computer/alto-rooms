@@ -435,3 +435,85 @@ fn create_room_on_existing_plain_folder_is_room_exists() {
     fs::create_dir(d.path().join("plain")).unwrap();
     assert_eq!(core.create_room("plain").unwrap_err(), CoreError::RoomExists);
 }
+
+#[test]
+fn concurrent_rescans_of_one_room_converge_to_latest_files() {
+    let (d, core) = home();
+    let r = core.create_room("c").unwrap();
+    for i in 0..300 { fs::write(d.path().join(format!("c/{i}.html")), format!("<title>{i}</title>")).unwrap(); }
+    let threads: Vec<_> = (0..4).map(|_| { let c = core.clone(); let id = r.id.clone(); std::thread::spawn(move || c.rescan_room(&id)) }).collect();
+    fs::remove_file(d.path().join("c/0.html")).unwrap();
+    fs::write(d.path().join("c/new.html"), "<title>new</title>").unwrap();
+    for t in threads { t.join().unwrap(); }
+    core.rescan_room(&r.id);
+    let rels: std::collections::HashSet<String> = core.list_artifacts(&r.id).unwrap().into_iter().map(|a| a.rel_path).collect();
+    assert!(!rels.contains("0.html") && rels.contains("new.html") && rels.len() == 300, "{}", rels.len());
+}
+
+#[test]
+fn scan_of_removed_room_writes_nothing() {
+    let (d, core) = home();
+    let r = core.create_room("gone").unwrap();
+    for i in 0..500 { fs::write(d.path().join(format!("gone/{i}.html")), "").unwrap(); }
+    let c = core.clone(); let id = r.id.clone();
+    let t = std::thread::spawn(move || c.rescan_room(&id));
+    fs::remove_dir_all(d.path().join("gone")).unwrap();
+    core.sync_home_dirs();
+    t.join().unwrap();
+    assert!(core.list_rooms().iter().all(|x| x.id != r.id));
+    assert_eq!(core.list_artifacts(&r.id).unwrap_err(), CoreError::RoomNotFound);
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    assert!(core.journal_day(&today).unwrap().artifacts.iter().all(|a| a.room_id != r.id));
+}
+
+#[test]
+fn api_calls_stay_fast_during_big_backfill() {
+    let d = tempfile::tempdir().unwrap();
+    let big = d.path().join("big");
+    fs::create_dir_all(&big).unwrap();
+    let head = format!("<title>t</title>{}", "x".repeat(20_000));
+    for i in 0..3000 { fs::write(big.join(format!("{i}.html")), &head).unwrap(); }
+    let core = RoomsCore::open(d.path()).unwrap();
+    let c = core.clone();
+    let t = std::thread::spawn(move || c.backfill_all().unwrap());
+    let mut worst = Duration::ZERO;
+    while !t.is_finished() {
+        let s = Instant::now();
+        let _ = core.list_rooms();
+        let _ = core.current_seq();
+        worst = worst.max(s.elapsed());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    t.join().unwrap();
+    assert!(worst < Duration::from_millis(150), "worst {worst:?}");
+}
+
+#[test]
+fn one_new_file_in_big_room_is_added_within_a_second() {
+    let d = tempfile::tempdir().unwrap();
+    let big = d.path().join("big");
+    fs::create_dir_all(&big).unwrap();
+    for i in 0..3000 { fs::write(big.join(format!("{i}.html")), "<title>t</title>").unwrap(); }
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let id = core.list_rooms().into_iter().find(|r| r.name == "big").unwrap().id;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while core.list_artifacts(&id).unwrap().len() < 3000 { assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(50)); }
+    let mut rx = core.subscribe();
+    let s = Instant::now();
+    fs::write(big.join("fresh.html"), "<title>fresh</title>").unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.rel_path == "fresh.html"), Duration::from_secs(2));
+    assert!(s.elapsed() < Duration::from_secs(1), "{:?}", s.elapsed());
+}
+
+#[test]
+fn finder_rename_of_inbox_does_not_move_the_inbox() {
+    let (d, core) = home();
+    fs::write(d.path().join("inbox/x.html"), "").unwrap();
+    fs::rename(d.path().join("inbox"), d.path().join("old-inbox")).unwrap();
+    core.sync_home_dirs();
+    let rooms = core.list_rooms();
+    let inbox = rooms.iter().find(|r| r.id == "inbox").unwrap();
+    assert_eq!(std::path::Path::new(&inbox.path), d.path().canonicalize().unwrap().join("inbox"));
+    assert!(d.path().join("inbox").is_dir());
+    assert!(rooms.iter().any(|r| r.name == "old-inbox" && r.id != "inbox"));
+}
