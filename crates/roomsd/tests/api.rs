@@ -3,7 +3,7 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use rooms_core::RoomsCore;
-use roomsd::{build_api_router, build_files_router, AppState};
+use roomsd::{build_api_router, build_files_router, AppState, NetConfig};
 use std::net::SocketAddr;
 use tower::ServiceExt;
 
@@ -14,7 +14,7 @@ fn app(read_only: bool, peer: &str) -> (tempfile::TempDir, axum::Router, AppStat
     let d = tempfile::tempdir().unwrap();
     let core = RoomsCore::open(d.path()).unwrap();
     core.backfill_all().unwrap();
-    let st = AppState { core, token: "t0k".into(), read_only, files_origin: "http://127.0.0.1:4318".into() };
+    let st = AppState { core, token: "t0k".into(), read_only, files_origin: "http://127.0.0.1:4318".into(), net: NetConfig::default() };
     let addr: SocketAddr = peer.parse().unwrap();
     (d, build_api_router(st.clone()).layer(MockConnectInfo(addr)), st)
 }
@@ -214,4 +214,37 @@ async fn events_stream_delivers_room_added_with_seq() {
     assert_eq!(v["type"], "room.added");
     assert_eq!(v["seq"].as_u64().unwrap().to_string(), id);
     assert!(v["seq"].as_u64().unwrap() > first["seq"].as_u64().unwrap());
+}
+
+#[tokio::test]
+async fn note_get_returns_markdown_and_404_for_missing() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let put = Request::put("/v1/journal/2026-10-05/notes/%EA%B3%84%ED%9A%8D")
+        .header("host", "127.0.0.1:4317").header("authorization", "Bearer t0k")
+        .header("content-type", "text/markdown").body(Body::from("- 할 일")).unwrap();
+    assert_eq!(app.clone().oneshot(put).await.unwrap().status(), StatusCode::OK);
+    let r = app.clone().oneshot(Request::get("/v1/journal/2026-10-05/notes/%EA%B3%84%ED%9A%8D").header("host", "127.0.0.1:4317").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert!(r.headers()["content-type"].to_str().unwrap().starts_with("text/markdown"));
+    assert_eq!(&r.into_body().collect().await.unwrap().to_bytes()[..], "- 할 일".as_bytes());
+    let r = app.oneshot(Request::get("/v1/journal/2026-10-05/notes/none").header("host", "127.0.0.1:4317").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    assert_eq!(body_json(r).await["error"], "not_found");
+}
+
+#[tokio::test]
+async fn custom_ports_and_dev_origin() {
+    let d = tempfile::tempdir().unwrap();
+    let core = RoomsCore::open(d.path()).unwrap();
+    let net = NetConfig { api_port: 14317, files_port: 14318, dev_origin: Some("http://localhost:4173".into()) };
+    let st = AppState { core, token: "t0k".into(), read_only: false, files_origin: "http://127.0.0.1:14318".into(), net };
+    let app = build_api_router(st).layer(MockConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
+    let mut ok = post("/v1/rooms", r#"{"name":"a"}"#, Some("t0k"), "127.0.0.1:14317");
+    ok.headers_mut().insert("origin", "http://localhost:4173".parse().unwrap());
+    assert_eq!(app.clone().oneshot(ok).await.unwrap().status(), StatusCode::OK);
+    let old_port = Request::get("/v1/rooms").header("host", "127.0.0.1:4317").body(Body::empty()).unwrap();
+    assert_eq!(app.clone().oneshot(old_port).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let mut evil = post("/v1/rooms", r#"{"name":"b"}"#, Some("t0k"), "127.0.0.1:14317");
+    evil.headers_mut().insert("origin", "http://localhost:9999".parse().unwrap());
+    assert_eq!(app.oneshot(evil).await.unwrap().status(), StatusCode::FORBIDDEN);
 }

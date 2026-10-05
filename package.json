@@ -1,0 +1,5 @@
+{
+  "name": "alto-rooms",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"]
+}

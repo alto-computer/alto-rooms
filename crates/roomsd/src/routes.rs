@@ -86,6 +86,11 @@ pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(Stri
     Ok(Json(blocking(&st, move |c| c.save_note(&date, &name, &body)).await?))
 }
 
+pub async fn get_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>) -> Result<Response, ApiErr> {
+    let body = blocking(&st, move |c| c.read_note(&date, &name)).await?;
+    Ok(([("content-type", "text/markdown; charset=utf-8")], body).into_response())
+}
+
 pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>) -> Result<Response, ApiErr> {
     let path = blocking(&st, move |c| c.resolve_file(&room_id, &rel)).await?;
     // CoreError has no read/not-found variant besides RoomNotFound (misleading here); WriteFailed (500) is the closest fit.
@@ -121,7 +126,7 @@ mod tests {
     fn state() -> (tempfile::TempDir, AppState) {
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
-        (d, AppState { core, token: "t".into(), read_only: false, files_origin: String::new() })
+        (d, AppState { core, token: "t".into(), read_only: false, files_origin: String::new(), net: crate::NetConfig::default() })
     }
 
     /// Spec §5 S3 rule ③: the client drops buffered events with seq ≤ snapshot seq, so the header

@@ -49,6 +49,11 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     listRooms: () => get<Room[]>("/v1/rooms"),
     listArtifacts: (roomId: string) => get<Artifact[]>(`/v1/rooms/${encodeURIComponent(roomId)}/artifacts`),
     journalDay: (date: string) => get<JournalDay>(`/v1/journal/${date}`),
+    getNote: async (date: string, name: string): Promise<string> => {
+      const r = await fetch(`${baseUrl}/v1/journal/${date}/notes/${encodeURIComponent(name)}`);
+      if (!r.ok) throw await failure(r);
+      return r.text();
+    },
     createRoom: (name: string) => write<Room>("POST", "/v1/rooms", JSON.stringify({ name })),
     linkFolder: (path: string, name?: string) => write<Room>("POST", "/v1/rooms/link", JSON.stringify({ path, name })),
     renameRoom: (id: string, name: string) => write<Room>("PATCH", `/v1/rooms/${encodeURIComponent(id)}`, JSON.stringify({ name })),

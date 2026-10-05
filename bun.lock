@@ -1,0 +1,16 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "alto-rooms",
+    },
+    "packages/protocol-ts": {
+      "name": "@alto-rooms/protocol-ts",
+      "version": "0.1.0",
+    },
+  },
+  "packages": {
+    "@alto-rooms/protocol-ts": ["@alto-rooms/protocol-ts@workspace:packages/protocol-ts"],
+  }
+}

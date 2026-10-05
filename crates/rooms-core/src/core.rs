@@ -538,6 +538,20 @@ impl RoomsCore {
         Ok(note)
     }
 
+    /// Reads `journal/<date>/<name>.md`. Holds only `notes_lock` (never `Inner`) so it cannot see a
+    /// half-written file; saves are tmp + rename, so this is consistency rather than necessity.
+    pub fn read_note(&self, date: &IsoDate, name: &str) -> Result<String, CoreError> {
+        validate_iso_date(date)?;
+        let name = validate_note_name(name)?;
+        let _notes = self.notes_lock.lock().unwrap();
+        let path = self.home.join("journal").join(date).join(&name);
+        match std::fs::read_to_string(&path) {
+            Ok(s) => Ok(s),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(CoreError::NotFound),
+            Err(e) => Err(CoreError::Internal(e.to_string())),
+        }
+    }
+
     pub fn resolve_file(&self, room: &RoomId, rel: &str) -> Result<PathBuf, CoreError> {
         let (root, _) = self.room_root(room).ok_or(CoreError::RoomNotFound)?;
         let rel_p = Path::new(rel);

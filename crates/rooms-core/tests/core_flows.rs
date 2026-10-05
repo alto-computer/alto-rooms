@@ -583,3 +583,12 @@ fn folder_replacing_another_rooms_folder_removes_the_moved_room() {
     assert_eq!(std::path::Path::new(&rb.path), d.path().canonicalize().unwrap().join("b"));
     core.create_room("a").unwrap();
 }
+
+#[test]
+fn read_note_roundtrip_and_not_found() {
+    let (_d, core) = home();
+    core.save_note(&"2026-10-05".to_string(), "회고", "오늘 배운 것").unwrap();
+    assert_eq!(core.read_note(&"2026-10-05".to_string(), "회고").unwrap(), "오늘 배운 것");
+    assert_eq!(core.read_note(&"2026-10-05".to_string(), "없음").unwrap_err(), CoreError::NotFound);
+    assert!(core.read_note(&"2026-10-05".to_string(), "../x").is_err());
+}

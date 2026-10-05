@@ -3,10 +3,10 @@ pub mod routes;
 pub mod sse;
 
 use axum::http::{header, HeaderName, HeaderValue, Method};
-use axum::routing::{get, patch, post, put};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use rooms_core::RoomsCore;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 
 /// Takes an exclusive, non-blocking lock on `<home>/.rooms/lock` (one daemon per home).
@@ -38,17 +38,46 @@ pub fn write_token(home: &std::path::Path) -> std::io::Result<String> {
     Ok(token)
 }
 
+/// Listener ports and the optional dev-server origin; the guards and CORS derive their allow-lists from it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NetConfig {
+    pub api_port: u16,
+    pub files_port: u16,
+    pub dev_origin: Option<String>,
+}
+
+impl Default for NetConfig {
+    fn default() -> Self { NetConfig { api_port: 4317, files_port: 4318, dev_origin: None } }
+}
+
+impl NetConfig {
+    /// Reads `ROOMS_API_PORT`, `ROOMS_FILES_PORT`, `ROOMS_DEV_ORIGIN`; unset or unparsable ports keep the defaults.
+    pub fn from_env() -> Self {
+        let d = NetConfig::default();
+        let port = |k: &str, dflt: u16| std::env::var(k).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(dflt);
+        NetConfig {
+            api_port: port("ROOMS_API_PORT", d.api_port),
+            files_port: port("ROOMS_FILES_PORT", d.files_port),
+            dev_origin: std::env::var("ROOMS_DEV_ORIGIN").ok().filter(|v| !v.trim().is_empty()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub core: RoomsCore,
     pub token: String,
     pub read_only: bool,
     pub files_origin: String,
+    pub net: NetConfig,
 }
 
 pub fn build_api_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(guard::ALLOWED_ORIGINS.iter().map(|o| HeaderValue::from_static(o)).collect::<Vec<_>>())
+        .allow_origin(AllowOrigin::predicate({
+            let st = state.clone();
+            move |o: &HeaderValue, _| o.to_str().map(|o| guard::origin_allowed(&st, o)).unwrap_or(false)
+        }))
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
         .expose_headers([HeaderName::from_static("x-rooms-seq")]);
@@ -59,7 +88,7 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/rooms/{room_id}", patch(routes::rename_room))
         .route("/v1/rooms/{room_id}/artifacts", get(routes::list_artifacts))
         .route("/v1/journal/{date}", get(routes::journal_day))
-        .route("/v1/journal/{date}/notes/{name}", put(routes::put_note))
+        .route("/v1/journal/{date}/notes/{name}", get(routes::get_note).put(routes::put_note))
         .route("/v1/events", get(sse::events))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::write_guard))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::api_host_guard))
