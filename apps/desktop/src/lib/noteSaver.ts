@@ -321,18 +321,25 @@ export type SaveNoteFn = (date: string, name: string, text: string) => Promise<{
  * writes `target` through `saveNote`, and keeps its views, text and schedule.
  * Call it after the rename landed and before the view switches to the new
  * name, so that view attaches to this saver instead of loading a fresh one.
+ * Refuses (returns false, both savers untouched) when another live saver
+ * already holds `newKey`, so a dirty saver is never overwritten.
  */
-export function renameNoteSaver(oldKey: string, newKey: string, target: NoteTarget, saveNote: SaveNoteFn): void {
+export function renameNoteSaver(oldKey: string, newKey: string, target: NoteTarget, saveNote: SaveNoteFn): boolean {
+  if (newKey !== oldKey && noteSaverLive(newKey)) return false;
   const e = registry.get(oldKey);
-  if (!e) return;
+  if (!e) return true;
   e.saver.setSave((text) => saveNote(target.date, target.name, text));
   e.target = target;
-  if (newKey === oldKey) return;
-  const other = registry.get(newKey);
-  if (other) console.warn("note: a saver was already live under the renamed note's key", newKey);
+  if (newKey === oldKey) return true;
   registry.delete(oldKey);
   e.key = newKey;
   registry.set(newKey, e);
+  return true;
+}
+
+/** Whether a saver is live under `key`. */
+export function noteSaverLive(key: string): boolean {
+  return registry.has(key);
 }
 
 /**

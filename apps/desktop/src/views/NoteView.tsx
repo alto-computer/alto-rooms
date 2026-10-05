@@ -15,11 +15,12 @@ import {
   detachNoteSaver,
   flushNoteSaverAndWait,
   noteSaverKey,
+  noteSaverLive,
   renameNoteSaver,
   type NoteSaver,
   type NoteSaverState,
 } from "@/lib/noteSaver";
-import { findNote, noteFileName, noteTitle, takeNoteBodyFocus } from "@/lib/notes";
+import { findNote, noteBase, noteFileName, takeNoteBodyFocus } from "@/lib/notes";
 
 const NOT_READY: NoteSaverState = {
   text: "",
@@ -54,7 +55,7 @@ const warn = (...args: unknown[]) => console.warn(...args);
 export function NoteView({ tabId, date, name }: { tabId?: string; date: string; name: string }) {
   // `name` is the on-disk file name (e.g. `계획.md`, `x.md.md`): the API gets it
   // unchanged; one `.md` is stripped only for display.
-  const title = noteTitle(name);
+  const title = noteBase(name);
   const fileName = noteFileName(name);
   const client = useClient();
   const viewer = useViewerStore();
@@ -173,9 +174,18 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
     try {
       // Never lose body text: whatever is typed or in flight lands under the old name first.
       if (!(await flushNoteSaverAndWait(key))) throw new RoomsApiError(500, "note body not saved", "write_failed");
+      // Another live saver under the new name (unsaved text for a file that vanished):
+      // refuse rather than overwrite it, before anything moves on disk.
+      const toKey = noteSaverKey(date, noteFileName(next));
+      if (toKey !== key && noteSaverLive(toKey)) throw new Error("note: a live saver holds the new name");
       const renamed = await client.renameNote(date, name, next);
       const to = renamed?.name || noteFileName(next);
-      renameNoteSaver(key, noteSaverKey(date, to), { date, name: to }, (d, n, text) => client.saveNote(d, n, text));
+      if (!renameNoteSaver(key, noteSaverKey(date, to), { date, name: to }, (d, n, text) => client.saveNote(d, n, text))) {
+        throw new Error("note: a live saver holds the new name");
+      }
+      // The body landed under the old name and moved with the file: a draft kept under that name is stale.
+      setOffer(null);
+      void clearNoteDraft(date, name);
       const id = tabId ?? viewer.getState().tabs.find((t) => t.kind === "note" && t.date === date && t.name === name)?.id;
       if (id) viewer.replace(id, { kind: "note", date, name: to });
     } finally {

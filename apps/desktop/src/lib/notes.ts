@@ -25,7 +25,6 @@ export function findNote(notes: readonly Note[], name: string): Note | undefined
 
 /** The name a new note starts with ("New Note", then "New Note 2", …) until it is renamed. */
 export const NEW_NOTE = "New Note";
-const DEFAULT_NAME = /^New Note(?: [1-9]\d*)?$/;
 
 /** The first `count` default names ("New Note", "New Note 2", …) not taken in `notes` (case-insensitively). */
 export function firstNewNoteNames(notes: readonly Note[], count: number): string[] {
@@ -35,12 +34,6 @@ export function firstNewNoteNames(notes: readonly Note[], count: number): string
     if (!findNote(notes, candidate)) out.push(candidate);
   }
   return out;
-}
-
-/** The note's heading: "New Note" while it still has a default name, else its name without `.md`. */
-export function noteTitle(fileName: string): string {
-  const base = noteBase(fileName);
-  return DEFAULT_NAME.test(base) ? NEW_NOTE : base;
 }
 
 /*

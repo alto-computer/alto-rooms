@@ -408,7 +408,7 @@ describe("noteSaver registry: flush one note and rename", () => {
     const { saver: s } = attachNoteSaver(oldKey, () => createNoteSaver({ save: oldSave, warn: () => {} }), { date: D, name: "New Note.md" });
     s.load("", null);
     const saveNote = vi.fn(async (_d: string, _n: string, _t: string) => ({ updatedAt: "2026-10-05T02:00:00Z" }));
-    renameNoteSaver(oldKey, newKey, { date: D, name: "회고.md" }, saveNote);
+    expect(renameNoteSaver(oldKey, newKey, { date: D, name: "회고.md" }, saveNote)).toBe(true);
     expect(noteSaverKeys()).toEqual([newKey]);
     // The view re-renders with the new name and attaches there: same live saver, not a fresh one.
     const again = attachNoteSaver(newKey, () => createNoteSaver({ save: oldSave, warn: () => {} }));
@@ -430,10 +430,31 @@ describe("noteSaver registry: flush one note and rename", () => {
     expect(noteSaverKeys()).toEqual([]);
   });
 
+  it("renameNoteSaver refuses when another live saver holds the new key, and keeps both", async () => {
+    const aKey = noteSaverKey(D, "a.md");
+    const bKey = noteSaverKey(D, "b.md");
+    const aSave = vi.fn(async (_t: string) => ({ updatedAt: "2026-10-05T01:00:00Z" }));
+    const bSave = failing(); // b is dirty and retrying
+    const { saver: a } = attachNoteSaver(aKey, () => createNoteSaver({ save: aSave, warn: () => {} }), { date: D, name: "a.md" });
+    const { saver: b } = attachNoteSaver(bKey, () => createNoteSaver({ save: bSave, warn: () => {} }), { date: D, name: "b.md" });
+    a.load("", null);
+    b.load("", null);
+    b.edit("b의 글");
+    const saveNote = vi.fn(async (_d: string, _n: string, _t: string) => ({ updatedAt: "" }));
+    expect(renameNoteSaver(aKey, bKey, { date: D, name: "b.md" }, saveNote)).toBe(false);
+    expect(noteSaverKeys().sort()).toEqual([aKey, bKey].sort());
+    expect(attachNoteSaver(bKey, () => createNoteSaver({ save: aSave, warn: () => {} })).saver).toBe(b);
+    a.edit("a의 글");
+    await tick(800);
+    expect(aSave).toHaveBeenCalledWith("a의 글"); // a still writes a.md
+    expect(saveNote).not.toHaveBeenCalled();
+    expect(b.getState().text).toBe("b의 글");
+  });
+
   it("renameNoteSaver with a case-only change keeps one entry", () => {
     const key = noteSaverKey(D, "a.md");
     const { saver: s } = attachNoteSaver(key, () => createNoteSaver({ save: failing(), warn: () => {} }), { date: D, name: "a.md" });
-    renameNoteSaver(key, noteSaverKey(D, "A.md"), { date: D, name: "A.md" }, vi.fn());
+    expect(renameNoteSaver(key, noteSaverKey(D, "A.md"), { date: D, name: "A.md" }, vi.fn())).toBe(true);
     expect(noteSaverKeys()).toEqual([key]);
     detachNoteSaver(key, s);
     expect(noteSaverKeys()).toEqual([]);

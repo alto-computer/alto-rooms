@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openInEditor } from "@/lib/native";
 import { textHash } from "@/lib/drafts";
-import { noteSaverKeys, resetNoteSavers } from "@/lib/noteSaver";
+import { attachNoteSaver, createNoteSaver, noteSaverKey, noteSaverKeys, resetNoteSavers } from "@/lib/noteSaver";
 import { StoresProvider, useViewer } from "@/data/hooks";
 import { ViewerStore } from "@/data/viewerStore";
 import { requestNoteBodyFocus } from "@/lib/notes";
@@ -461,9 +461,69 @@ async function renameTo(next: string, key = "Enter") {
 }
 
 describe("NoteView: title", () => {
-  it("shows New Note while the name is still a default one", async () => {
+  afterEach(() => localStorage.clear());
+
+  it("shows the real name: New Note 2 is New Note 2", async () => {
     await renderNoteTab("New Note 2.md");
-    expect(heading()).toHaveTextContent(/^New Note$/);
+    expect(heading()).toHaveTextContent(/^New Note 2$/);
+  });
+
+  it("renaming New Note 2 to New Note while New Note exists shows the collision copy", async () => {
+    const { client } = await renderNoteTab("New Note 2.md", {
+      notes: { [`${DATE}/New Note 2.md`]: "", [`${DATE}/New Note.md`]: "먼저 쓴 노트" },
+    });
+    await renameTo("New Note");
+    expect(client.renameNote).toHaveBeenCalledWith(DATE, "New Note 2.md", "New Note");
+    expect(screen.getByRole("alert")).toHaveTextContent("같은 이름의 노트가 있어요");
+    expect(titleInput()).toHaveValue("New Note");
+  });
+
+  it("when the body can't be saved, the rename does not happen and the save-failed copy shows", async () => {
+    const { client, viewer, tabId } = await renderNoteTab("New Note.md");
+    client.saveNote.mockImplementation(async () => {
+      throw new RoomsApiError(500, "disk", "write_failed");
+    });
+    type("못 저장한 글");
+    fireEvent.click(heading());
+    fireEvent.change(titleInput(), { target: { value: "회고" } });
+    await act(async () => {
+      fireEvent.keyDown(titleInput(), { key: "Enter" });
+    });
+    await advance(5000);
+    expect(client.renameNote).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(ERROR_COPY);
+    expect(titleInput()).toHaveValue("회고");
+    expect(viewer.getState().tabs.find((t) => t.id === tabId)).toMatchObject({ name: "New Note.md" });
+    expect(textarea()).toHaveValue("못 저장한 글");
+  });
+
+  it("clears a draft kept under the old name once the rename lands", async () => {
+    const OLD = `alto-rooms.note-draft.v1:${DATE}/new note.md`;
+    localStorage.setItem(OLD, JSON.stringify({ v: 1, text: "예전 초안", baseHash: textHash("다른 본문") }));
+    await renderNoteTab("New Note.md");
+    expect(screen.getByText("저장되지 않았던 글이 있어요")).toBeInTheDocument(); // the conflict offer
+    await renameTo("회고");
+    await advance(0);
+    expect(localStorage.getItem(OLD)).toBeNull();
+    expect(screen.queryByText("저장되지 않았던 글이 있어요")).not.toBeInTheDocument();
+  });
+
+  it("refuses when a live saver already holds the new name, without renaming the file", async () => {
+    const { client, viewer, tabId } = await renderNoteTab("New Note.md");
+    // A detached saver for 회고.md still holds unsaved text (e.g. retrying after the file vanished).
+    const { saver: other } = attachNoteSaver(
+      noteSaverKey(DATE, "회고.md"),
+      () => createNoteSaver({ save: async () => Promise.reject(new Error("disk")), warn: () => {} }),
+      { date: DATE, name: "회고.md" },
+    );
+    other.load("", null);
+    other.edit("살아 있는 글");
+    await renameTo("회고");
+    expect(client.renameNote).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("문제가 생겼어요");
+    expect(viewer.getState().tabs.find((t) => t.id === tabId)).toMatchObject({ name: "New Note.md" });
+    expect(other.getState().text).toBe("살아 있는 글");
+    other.stop();
   });
 
   it("puts the cursor in the body of a note that asked for it (a new note), once", async () => {

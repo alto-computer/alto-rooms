@@ -1,6 +1,6 @@
 import type { Note } from "@alto-rooms/protocol-ts";
 import { describe, expect, it } from "vitest";
-import { findNote, firstNewNoteNames, noteBase, noteFileName, noteTitle } from "./notes";
+import { findNote, firstNewNoteNames, noteBase, noteFileName } from "./notes";
 
 const note = (name: string): Note => ({ date: "2026-10-05", name, relPath: `2026-10-05/${name}`, updatedAt: "2026-10-05T01:00:00Z", author: "me" });
 
@@ -34,18 +34,6 @@ describe("firstNewNoteNames", () => {
       "New Note 5",
       "New Note 6",
     ]);
-  });
-});
-
-describe("noteTitle", () => {
-  it("shows New Note while the name is still a default one, else the name without .md", () => {
-    expect(noteTitle("New Note.md")).toBe("New Note");
-    expect(noteTitle("New Note 2.md")).toBe("New Note");
-    expect(noteTitle("New Note 17.md")).toBe("New Note");
-    expect(noteTitle("New Note x.md")).toBe("New Note x");
-    expect(noteTitle("New Notes.md")).toBe("New Notes");
-    expect(noteTitle("계획.md")).toBe("계획");
-    expect(noteTitle("x.md.md")).toBe("x.md");
   });
 });
 
