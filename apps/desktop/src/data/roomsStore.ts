@@ -51,6 +51,12 @@ type RoomFetch = { token: number; queue: RoomsEvent[]; promise: Promise<void> };
  * dropping any event whose seq is <= that scope's snapshot seq.
  *
  * Scopes: rooms (one), artifacts (one per watched room), days (refetch-only).
+ *
+ * Artifact and day scopes are ref-counted: every `loadArtifacts` / `loadDay`
+ * is paired with an `unwatchArtifacts` / `unwatchDay`. When the last watcher
+ * lets go, the scope's data is dropped and it is no longer refetched. A watched
+ * room that disappears from the room list goes dormant (data dropped, not
+ * fetched) and reloads by itself when it comes back.
  */
 export class RoomsStore {
   private state: RoomsState = { status: "connecting", info: null, rooms: [], artifacts: {}, days: {}, errors: {} };
@@ -73,14 +79,15 @@ export class RoomsStore {
   // Rooms scope.
   private roomsSeq = 0;
 
-  // Artifact scopes.
-  private watchedRooms = new Set<string>();
+  // Artifact scopes: watchers per room, and watched rooms currently absent from the list.
+  private roomRefs = new Map<string, number>();
+  private dormantRooms = new Set<string>();
   private artifactsSeq = new Map<string, number>();
   private roomTokens = new Map<string, number>();
   private roomFetches = new Map<string, RoomFetch>();
 
-  // Days (refetch-only).
-  private watchedDays = new Set<string>();
+  // Days (refetch-only): watchers per date.
+  private dayRefs = new Map<string, number>();
   private dayTokens = new Map<string, number>();
   private dayFetches = new Map<string, Promise<void>>();
   private dayTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -132,22 +139,72 @@ export class RoomsStore {
     this.dayFetches.clear();
   }
 
-  /** Marks the room watched (refetched on every resync) and loads it once. */
+  /**
+   * Adds a watcher to the room (refetched on every resync while watched) and
+   * loads it once. Pair every call with `unwatchArtifacts(roomId)`.
+   */
   loadArtifacts(roomId: string): Promise<void> {
-    this.watchedRooms.add(roomId);
+    this.roomRefs.set(roomId, (this.roomRefs.get(roomId) ?? 0) + 1);
+    if (this.dormantRooms.has(roomId)) return Promise.resolve();
     const inflight = this.roomFetches.get(roomId);
     if (inflight) return inflight.promise;
     if (this.state.artifacts[roomId] !== undefined) return Promise.resolve();
     return this.fetchRoom(roomId);
   }
 
-  /** Marks the day watched (refetched on resync and journal/note events) and loads it once. */
+  /** Removes a watcher; the last one out drops the room's artifacts and stops refetching them. */
+  unwatchArtifacts(roomId: string): void {
+    const n = (this.roomRefs.get(roomId) ?? 0) - 1;
+    if (n > 0) {
+      this.roomRefs.set(roomId, n);
+      return;
+    }
+    this.roomRefs.delete(roomId);
+    this.dormantRooms.delete(roomId);
+    this.batch(() => this.dropRoom(roomId));
+  }
+
+  /**
+   * Adds a watcher to the day (refetched on resync and journal/note events)
+   * and loads it once. Pair every call with `unwatchDay(date)`.
+   */
   loadDay(date: string): Promise<void> {
-    this.watchedDays.add(date);
+    this.dayRefs.set(date, (this.dayRefs.get(date) ?? 0) + 1);
     const inflight = this.dayFetches.get(date);
     if (inflight) return inflight;
     if (this.state.days[date] !== undefined) return Promise.resolve();
     return this.fetchDay(date);
+  }
+
+  /** Removes a watcher; the last one out drops the day and stops refetching it. */
+  unwatchDay(date: string): void {
+    const n = (this.dayRefs.get(date) ?? 0) - 1;
+    if (n > 0) {
+      this.dayRefs.set(date, n);
+      return;
+    }
+    this.dayRefs.delete(date);
+    const timer = this.dayTimers.get(date);
+    if (timer) clearTimeout(timer);
+    this.dayTimers.delete(date);
+    this.bump(this.dayTokens, date);
+    this.dayFetches.delete(date);
+    this.batch(() => {
+      if (date in this.state.days) {
+        const { [date]: _gone, ...days } = this.state.days;
+        this.patch({ days });
+      }
+      this.setError(dayKey(date), undefined);
+    });
+  }
+
+  /** Watched and present in the room list (or not yet known to be absent). */
+  private isWatchedRoom(roomId: string): boolean {
+    return (this.roomRefs.get(roomId) ?? 0) > 0 && !this.dormantRooms.has(roomId);
+  }
+
+  private isWatchedDay(date: string): boolean {
+    return (this.dayRefs.get(date) ?? 0) > 0;
   }
 
   // ---------------------------------------------------------------- state
@@ -254,7 +311,7 @@ export class RoomsStore {
   private apply(e: RoomsEvent) {
     switch (e.type) {
       case "resync": // `resync {null}` never reaches here (handled in onEvent)
-        if (e.roomId !== null && this.watchedRooms.has(e.roomId)) void this.fetchRoom(e.roomId);
+        if (e.roomId !== null && this.isWatchedRoom(e.roomId)) void this.fetchRoom(e.roomId);
         return;
       case "room.added":
       case "room.updated": {
@@ -265,6 +322,7 @@ export class RoomsStore {
           this.patch({ rooms: i < 0 ? [...rooms, e.room] : rooms.map((r, j) => (j === i ? e.room : r)) });
           this.syncCount(e.room.id);
         });
+        this.wake(e.room.id);
         return;
       }
       case "room.removed": {
@@ -299,9 +357,20 @@ export class RoomsStore {
     }
   }
 
-  /** Unwatch a room and drop its scope (seq, in-flight fetch, data, error). */
+  /** The room left the list: drop its scope; watchers keep it dormant until it comes back. */
   private forgetRoom(roomId: string) {
-    this.watchedRooms.delete(roomId);
+    if (this.roomRefs.has(roomId)) this.dormantRooms.add(roomId);
+    this.dropRoom(roomId);
+  }
+
+  /** A dormant watched room is listed again: load it. */
+  private wake(roomId: string) {
+    if (!this.dormantRooms.delete(roomId)) return;
+    void this.fetchRoom(roomId);
+  }
+
+  /** Drops a room's scope (seq, in-flight fetch, data, error). */
+  private dropRoom(roomId: string) {
     this.artifactsSeq.delete(roomId);
     this.bump(this.roomTokens, roomId);
     this.roomFetches.delete(roomId);
@@ -329,7 +398,7 @@ export class RoomsStore {
   }
 
   private applyArtifact(roomId: string, e: RoomsEvent) {
-    if (!this.watchedRooms.has(roomId)) return;
+    if (!this.isWatchedRoom(roomId)) return;
     const inflight = this.roomFetches.get(roomId);
     if (inflight) {
       inflight.queue.push(e);
@@ -347,7 +416,7 @@ export class RoomsStore {
   }
 
   private dayChanged(date: string) {
-    if (!this.watchedDays.has(date)) return;
+    if (!this.isWatchedDay(date)) return;
     const prev = this.dayTimers.get(date);
     if (prev) clearTimeout(prev);
     this.dayTimers.set(
@@ -370,7 +439,7 @@ export class RoomsStore {
       (snap) => {
         if (this.roomTokens.get(roomId) !== token) return;
         this.roomFetches.delete(roomId);
-        if (!this.watchedRooms.has(roomId)) return;
+        if (!this.isWatchedRoom(roomId)) return;
         this.batch(() => {
           this.artifactsSeq.set(roomId, snap.seq);
           this.setArtifacts(roomId, sortArtifacts(snap.data));
@@ -426,8 +495,8 @@ export class RoomsStore {
 
     // Standalone fetches started before this sync are superseded by it; the
     // events they queued predate this snapshot, so dropping them is safe.
-    const rooms = [...this.watchedRooms];
-    const dayList = [...this.watchedDays];
+    const rooms = [...this.roomRefs.keys()].filter((id) => this.isWatchedRoom(id));
+    const dayList = [...this.dayRefs.keys()];
     const roomToks = rooms.map((id) => this.bump(this.roomTokens, id));
     const dayToks = dayList.map((d) => this.bump(this.dayTokens, d));
     for (const id of rooms) this.roomFetches.delete(id);
@@ -470,7 +539,7 @@ export class RoomsStore {
         const vanished: string[] = [];
         rooms.forEach((id, i) => {
           const r = artRs[i];
-          if (this.roomTokens.get(id) !== roomToks[i] || !this.watchedRooms.has(id)) return;
+          if (this.roomTokens.get(id) !== roomToks[i] || !this.isWatchedRoom(id)) return;
           if (!present.has(id)) {
             vanished.push(id);
             return;
@@ -506,6 +575,8 @@ export class RoomsStore {
         this.patch({ status: "live", info: infoR.value, rooms: listR.value.data, artifacts, days, errors });
         for (const id of vanished) this.forgetRoom(id);
         for (const r of listR.value.data) this.syncCount(r.id);
+        // Dormant watched rooms that are listed again reload on their own.
+        for (const id of [...this.dormantRooms]) if (present.has(id)) this.wake(id);
 
         // Drain in arrival order under the per-scope rule. Nothing here can restart
         // the sync (resync {null} is never queued), so the drain runs to completion.

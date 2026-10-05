@@ -677,3 +677,86 @@ describe("RoomsStore errors", () => {
     expect(s.getState().status).toBe("connecting");
   });
 });
+
+describe("RoomsStore watch ref-counting", () => {
+  it("a room stays watched until its last watcher lets go; then it is dropped and never refetched", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [{ ...room("r1"), artifactCount: 1 }], seq: 1 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
+    const s = await liveStore(c);
+    await s.loadArtifacts("r1");
+    await s.loadArtifacts("r1");
+    s.unwatchArtifacts("r1");
+    c.calls.listArtifacts = [];
+    c.connect(1);
+    await flush();
+    expect(c.calls.listArtifacts).toEqual(["r1"]); // one watcher left
+    expect(ids(s)).toEqual(["a1"]);
+
+    s.unwatchArtifacts("r1");
+    expect("r1" in s.getState().artifacts).toBe(false);
+    c.calls.listArtifacts = [];
+    c.connect(1);
+    c.emit({ seq: 2, type: "resync", roomId: "r1" });
+    c.emit({ seq: 3, type: "artifact.added", artifact: art("a2") });
+    await flush();
+    expect(c.calls.listArtifacts).toEqual([]);
+    expect("r1" in s.getState().artifacts).toBe(false);
+    expect(s.getState().rooms[0].artifactCount).toBe(2); // the count still follows events
+    s.stop();
+  });
+
+  it("letting go during the first load cancels it", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [room("r1")], seq: 1 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
+    const s = await liveStore(c);
+    c.hold();
+    const p = s.loadArtifacts("r1");
+    s.unwatchArtifacts("r1");
+    c.releaseAll();
+    await p;
+    await flush();
+    expect("r1" in s.getState().artifacts).toBe(false);
+    s.stop();
+  });
+
+  it("a watched room that vanished is reloaded when it comes back, without a new watch", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [room("r1")], seq: 1 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
+    const s = await liveStore(c);
+    await s.loadArtifacts("r1");
+    c.emit({ seq: 2, type: "room.removed", roomId: "r1" });
+    expect(s.getState().artifacts.r1).toBeUndefined();
+    c.emit({ seq: 3, type: "room.added", room: room("r1") });
+    await flush();
+    expect(ids(s)).toEqual(["a1"]);
+    // Still one watcher: letting go drops it.
+    s.unwatchArtifacts("r1");
+    expect(s.getState().artifacts.r1).toBeUndefined();
+    s.stop();
+  });
+
+  it("days are ref-counted too: an unwatched day is dropped and not refetched", async () => {
+    vi.useFakeTimers();
+    const c = new FakeClient();
+    c.days.set("2026-10-05", { data: day("2026-10-05", 1), seq: 1 });
+    const s = new RoomsStore(c);
+    s.start();
+    c.connect(0);
+    await vi.advanceTimersByTimeAsync(0);
+    await s.loadDay("2026-10-05");
+    await s.loadDay("2026-10-05");
+    s.unwatchDay("2026-10-05");
+    expect(s.getState().days["2026-10-05"]).toBeDefined();
+    s.unwatchDay("2026-10-05");
+    expect("2026-10-05" in s.getState().days).toBe(false);
+    c.calls.journalDay = [];
+    c.connect(0);
+    c.emit({ seq: 2, type: "journal.changed", date: "2026-10-05" });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(c.calls.journalDay).toEqual([]);
+    s.stop();
+  });
+});

@@ -1,6 +1,7 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { StoresProvider } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
 import { QuickFind } from "./QuickFind";
 
@@ -61,5 +62,41 @@ describe("QuickFind", () => {
   it("loads every room's artifacts on first open", async () => {
     const h = await setup();
     await waitFor(() => expect(h.rooms.getState().artifacts.r2).toBeDefined());
+  });
+});
+
+describe("QuickFind watching", () => {
+  it("lets go of every room once closed: resync {null} no longer refetches them", async () => {
+    const h = await setup();
+    await waitFor(() => expect(h.rooms.getState().artifacts.r2).toBeDefined());
+    await act(async () => {
+      h.rerender(
+        <StoresProvider rooms={h.rooms} viewer={h.viewer} client={h.client}>
+          <QuickFind open={false} onClose={() => {}} />
+        </StoresProvider>,
+      );
+    });
+    const spy = vi.spyOn(h.client, "listArtifacts");
+    await act(async () => {
+      h.emit({ type: "resync", roomId: null });
+    });
+    expect(spy).not.toHaveBeenCalled();
+    expect(h.rooms.getState().artifacts).toEqual({});
+  });
+
+  it("normalizes titles once per list, not on every keystroke", async () => {
+    const h = await setup();
+    await waitFor(() => expect(h.rooms.getState().artifacts.r2).toBeDefined());
+    const input = screen.getByPlaceholderText("방이나 문서 찾기");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "현" } });
+    });
+    const spy = vi.spyOn(String.prototype, "normalize");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "현황" } });
+    });
+    // Only the query itself is normalized; 2 room names + 2 titles are cached.
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(1);
+    spy.mockRestore();
   });
 });

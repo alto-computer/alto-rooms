@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Artifact, Room } from "@alto-rooms/protocol-ts";
 import { FileText, Folder } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { useRooms, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
 
 const MAX_ROOMS = 8;
 const MAX_DOCS = 30;
@@ -11,19 +12,28 @@ const norm = (s: string) => s.normalize("NFC").toLowerCase();
 /**
  * ⌘K palette over room names and artifact titles. We filter ourselves (NFC +
  * lowercase substring) rather than with cmdk's fuzzy matcher, so results are
- * deterministic. Artifacts of every room are loaded the first time it opens;
- * results fill in as rooms arrive.
+ * deterministic. Artifacts of every room are loaded (and watched) while it is
+ * open; results fill in as rooms arrive. Normalized names and titles are
+ * computed once per list, not per keystroke.
  */
 export function QuickFind({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const store = useRoomsStore();
   const viewer = useViewerStore();
   const { rooms, artifacts } = useRooms();
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    if (!open) return;
-    for (const r of rooms) void store.loadArtifacts(r.id);
-  }, [open, rooms, store]);
+  const roomIds = useMemo(() => (open ? rooms.map((r) => r.id) : []), [open, rooms]);
+  useWatchArtifacts(roomIds);
+
+  const roomNames = useMemo(() => rooms.map((r) => ({ room: r, key: norm(r.name) })), [rooms]);
+  const titleCache = useRef(new WeakMap<readonly Artifact[], string[]>());
+  const titlesOf = (list: readonly Artifact[]) => {
+    let t = titleCache.current.get(list);
+    if (!t) {
+      t = list.map((a) => norm(a.title));
+      titleCache.current.set(list, t);
+    }
+    return t;
+  };
 
   useEffect(() => {
     if (!open) setQuery("");
@@ -31,16 +41,23 @@ export function QuickFind({ open, onClose }: { open: boolean; onClose: () => voi
 
   const { roomHits, docHits } = useMemo(() => {
     const q = norm(query.trim());
-    const roomHits = rooms.filter((r) => norm(r.name).includes(q)).slice(0, MAX_ROOMS);
+    const roomHits: Room[] = roomNames
+      .filter((n) => n.key.includes(q))
+      .slice(0, MAX_ROOMS)
+      .map((n) => n.room);
     const docHits: { id: string; roomId: string; title: string; roomName: string }[] = [];
     for (const r of rooms) {
-      for (const a of artifacts[r.id] ?? []) {
-        if (docHits.length >= MAX_DOCS) break;
-        if (norm(a.title).includes(q)) docHits.push({ id: a.id, roomId: r.id, title: a.title, roomName: r.name });
+      const list = artifacts[r.id];
+      if (!list) continue;
+      const titles = titlesOf(list);
+      for (let i = 0; i < list.length && docHits.length < MAX_DOCS; i++) {
+        const a = list[i];
+        if (titles[i].includes(q)) docHits.push({ id: a.id, roomId: r.id, title: a.title, roomName: r.name });
       }
     }
     return { roomHits, docHits };
-  }, [query, rooms, artifacts]);
+    // titlesOf only reads its per-list cache.
+  }, [query, rooms, roomNames, artifacts]);
 
   const done = () => onClose();
 

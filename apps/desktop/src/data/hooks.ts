@@ -38,20 +38,46 @@ export function useRooms(): RoomsState {
 /**
  * The room's artifacts (createdAt ASC); `undefined` while loading or after a
  * failed first load (see `useScopeError(\`room:${roomId}\`)`). Watches the room
- * on mount, and again whenever the room (re)appears in the room list: the store
- * forgets a room on `room.removed` or when a resync no longer lists it.
+ * while mounted. The store reloads it by itself if it leaves the room list
+ * (`room.removed`, or a resync no longer lists it) and comes back.
  */
 export function useArtifacts(roomId: string): Artifact[] | undefined {
   const store = useRoomsStore();
-  const listed = useSyncExternalStore(store.subscribe, () => store.getState().rooms.some((r) => r.id === roomId));
-  const mounted = useRef(false);
   useEffect(() => {
-    // Load on mount (the journal room is never listed) and on reappearance;
-    // never re-watch a room just because it disappeared.
-    if (listed || !mounted.current) void store.loadArtifacts(roomId);
-    mounted.current = true;
-  }, [store, roomId, listed]);
+    void store.loadArtifacts(roomId);
+    return () => store.unwatchArtifacts(roomId);
+  }, [store, roomId]);
   return useSyncExternalStore(store.subscribe, () => store.getState().artifacts[roomId]);
+}
+
+/**
+ * Watches the artifacts of every room in `roomIds` while mounted, adding and
+ * letting go of rooms as the list changes (rooms that stay are not reloaded).
+ */
+export function useWatchArtifacts(roomIds: readonly string[]): void {
+  const store = useRoomsStore();
+  const held = useRef(new Set<string>());
+  const key = roomIds.join("\n");
+  useEffect(() => {
+    const want = new Set(key ? key.split("\n") : []);
+    for (const id of want) {
+      if (held.current.has(id)) continue;
+      held.current.add(id);
+      void store.loadArtifacts(id);
+    }
+    for (const id of [...held.current]) {
+      if (want.has(id)) continue;
+      held.current.delete(id);
+      store.unwatchArtifacts(id);
+    }
+  }, [store, key]);
+  useEffect(() => {
+    const h = held.current;
+    return () => {
+      for (const id of h) store.unwatchArtifacts(id);
+      h.clear();
+    };
+  }, [store]);
 }
 
 /**
@@ -67,11 +93,12 @@ export function useScopeError(scope: `room:${string}` | `day:${string}`): string
   return useSyncExternalStore(store.subscribe, () => store.getState().errors[scope]);
 }
 
-/** The journal day; `undefined` while loading or after a failed first load (see `useScopeError(\`day:${date}\`)`). Watches the day on mount. */
+/** The journal day; `undefined` while loading or after a failed first load (see `useScopeError(\`day:${date}\`)`). Watches the day while mounted. */
 export function useJournalDay(date: string): JournalDay | undefined {
   const store = useRoomsStore();
   useEffect(() => {
     void store.loadDay(date);
+    return () => store.unwatchDay(date);
   }, [store, date]);
   return useSyncExternalStore(store.subscribe, () => store.getState().days[date]);
 }

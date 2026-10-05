@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef } from "react";
-import { useRooms, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { useMemo, useRef } from "react";
+import type { Artifact } from "@alto-rooms/protocol-ts";
+import { useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
 import { isNewSince } from "@/lib/dates";
 
 /**
@@ -7,9 +8,11 @@ import { isNewSince } from "@/lib/dates";
  *
  * AppShell mounts this per activation, so the baselines captured at mount are
  * "the moment the tab became active" (same as RoomView's dots).
+ *
+ * Only rooms whose `updatedAt` is after their baseline can have new docs, so
+ * only those are loaded (and watched while the tab is open); the rest count 0.
  */
 export function NewTabView() {
-  const store = useRoomsStore();
   const viewer = useViewerStore();
   const { rooms, artifacts, errors, info } = useRooms();
 
@@ -19,24 +22,35 @@ export function NewTabView() {
     baselines.current = { lastVisit: v.lastVisit, firstRunAt: v.firstRunAt };
   }
 
-  useEffect(() => {
-    for (const r of rooms) void store.loadArtifacts(r.id);
-  }, [store, rooms]);
+  const since = (roomId: string) => baselines.current!.lastVisit[roomId] ?? baselines.current!.firstRunAt;
+  const changed = useMemo(
+    () => rooms.filter((r) => r.updatedAt !== null && isNewSince(r.updatedAt, since(r.id))).map((r) => r.id),
+    // `since` reads the baselines frozen at mount.
+    [rooms],
+  );
+  useWatchArtifacts(changed);
 
+  // New-doc counts per room, recomputed only when that room's list changes.
+  const counts = useRef(new WeakMap<readonly Artifact[], number>());
   const cards = useMemo(() => {
-    const b = baselines.current!;
+    const newCount = (roomId: string) => {
+      const list = artifacts[roomId];
+      if (!list) return 0;
+      let n = counts.current.get(list);
+      if (n === undefined) {
+        const s = since(roomId);
+        n = list.filter((a) => isNewSince(a.createdAt, s)).length;
+        counts.current.set(list, n);
+      }
+      return n;
+    };
     return rooms
-      .map((room) => {
-        const list = artifacts[room.id];
-        const since = b.lastVisit[room.id] ?? b.firstRunAt;
-        const newCount = list ? list.filter((a) => isNewSince(a.createdAt, since)).length : 0;
-        return { room, newCount };
-      })
+      .map((room) => ({ room, newCount: newCount(room.id) }))
       .sort((x, y) => y.newCount - x.newCount || x.room.name.localeCompare(y.room.name, "ko"));
   }, [rooms, artifacts]);
 
-  // Only say anything once every room has loaded (or failed to).
-  const settled = info !== null && rooms.every((r) => artifacts[r.id] !== undefined || errors[`room:${r.id}`] !== undefined);
+  // Only say anything once every room that needs loading has loaded (or failed to).
+  const settled = info !== null && changed.every((id) => artifacts[id] !== undefined || errors[`room:${id}`] !== undefined);
   const roomsWithNew = cards.filter((c) => c.newCount > 0).length;
 
   return (

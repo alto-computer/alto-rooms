@@ -1,6 +1,6 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { NewTabView } from "./NewTabView";
@@ -37,9 +37,9 @@ describe("NewTabView", () => {
     await renderWithStores(<NewTabView />, {
       viewer: viewer(),
       rooms: [
-        room("a", "가", { artifactCount: 1 }),
-        room("b", "나", { artifactCount: 3 }),
-        room("c", "다", { artifactCount: 2 }),
+        room("a", "가", { artifactCount: 1, updatedAt: NEW }),
+        room("b", "나", { artifactCount: 3, updatedAt: NEW }),
+        room("c", "다", { artifactCount: 2, updatedAt: NEW }),
         room("d", "라", { artifactCount: 0 }),
       ],
       artifacts: {
@@ -70,7 +70,7 @@ describe("NewTabView", () => {
   it("counts only the rooms that loaded when another room's load failed", async () => {
     await renderWithStores(<NewTabView />, {
       viewer: viewer(),
-      rooms: [room("a", "가"), room("b", "나")],
+      rooms: [room("a", "가", { updatedAt: NEW }), room("b", "나", { updatedAt: NEW })],
       artifacts: { a: [artifact("a1", "a", NEW)] },
       artifactErrors: { b: new Error("boom") },
     });
@@ -91,5 +91,41 @@ describe("NewTabView", () => {
       fireEvent.click(card);
     });
     expect(v.getState().tabs.some((t) => t.kind === "room" && t.roomId === "a")).toBe(true);
+  });
+});
+
+describe("NewTabView loading", () => {
+  it("loads only rooms changed since their baseline; the rest count 0 without a request", async () => {
+    const h = await renderWithStores(<NewTabView />, {
+      viewer: viewer(),
+      rooms: [
+        room("a", "가", { artifactCount: 1, updatedAt: OLD }), // before firstRunAt
+        room("b", "나", { artifactCount: 1, updatedAt: NEW }),
+        room("c", "다", { artifactCount: 0, updatedAt: null }),
+      ],
+      artifacts: { a: [artifact("a1", "a", OLD)], b: [artifact("b1", "b", NEW)] },
+    });
+    const spy = vi.spyOn(h.client, "listArtifacts");
+    expect(await screen.findByText("방 1곳에 새 문서가 들어왔어요.")).toBeInTheDocument();
+    expect(h.rooms.getState().artifacts.a).toBeUndefined();
+    expect(h.rooms.getState().artifacts.c).toBeUndefined();
+    expect(cardNames()).toEqual(["나", "가", "다"]);
+    spy.mockRestore();
+  });
+
+  it("a closed New tab lets go of its rooms: resync {null} no longer refetches them", async () => {
+    const h = await renderWithStores(<NewTabView />, {
+      viewer: viewer(),
+      rooms: [room("a", "가", { updatedAt: NEW }), room("b", "나", { updatedAt: NEW })],
+      artifacts: { a: [artifact("a1", "a", NEW)], b: [] },
+    });
+    await screen.findByText("방 1곳에 새 문서가 들어왔어요.");
+    const spy = vi.spyOn(h.client, "listArtifacts");
+    h.unmount();
+    await act(async () => {
+      h.emit({ type: "resync", roomId: null });
+    });
+    expect(spy).not.toHaveBeenCalled();
+    expect(h.rooms.getState().artifacts).toEqual({});
   });
 });
