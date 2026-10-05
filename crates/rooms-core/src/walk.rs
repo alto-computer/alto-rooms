@@ -10,11 +10,20 @@ pub struct ScanEntry {
     pub class: PathClass,
 }
 
+fn is_html_ext(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"))
+        .unwrap_or(false)
+}
+
 pub fn scan_room(root: &Path, honor_gitignore: bool, in_journal: bool) -> Vec<ScanEntry> {
     let mut out = Vec::new();
     let walker = WalkBuilder::new(root)
         .hidden(true)
         .follow_links(false)
+        .ignore(false)
+        .parents(false)
         .git_ignore(honor_gitignore)
         .git_global(false)
         .git_exclude(false)
@@ -33,7 +42,10 @@ pub fn scan_room(root: &Path, honor_gitignore: bool, in_journal: bool) -> Vec<Sc
         // Directory symlinks inside rooms are never followed; file symlinks must point to a regular file.
         let target = if ft.is_symlink() {
             match std::fs::metadata(&abs) {
-                Ok(m) if m.is_file() => match std::fs::canonicalize(&abs) { Ok(t) => t, Err(_) => continue },
+                Ok(m) if m.is_file() => match std::fs::canonicalize(&abs) {
+                    Ok(t) if is_html_ext(&t) => t,
+                    _ => continue,
+                },
                 _ => continue,
             }
         } else if ft.is_file() {
@@ -121,5 +133,34 @@ mod tests {
         let v = scan_room(j, false, true);
         assert_eq!(rels(&v), vec!["2026-10-05/dream.html", "2026-10-05/회고.md"]);
         assert!(matches!(v[1].class, PathClass::Note { .. }));
+    }
+
+    #[test]
+    fn symlink_target_must_be_html_and_link_name_must_be_html() {
+        let d = tempfile::tempdir().unwrap();
+        let orig = d.path().join("elsewhere");
+        fs::create_dir_all(&orig).unwrap();
+        fs::write(orig.join("y.txt"), "").unwrap();
+        fs::write(orig.join("y.md"), "").unwrap();
+        fs::write(orig.join("y.html"), "").unwrap();
+        let room = d.path().join("room");
+        fs::create_dir_all(&room).unwrap();
+        symlink(orig.join("y.txt"), room.join("x.html")).unwrap();
+        symlink(orig.join("y.md"), room.join("m.html")).unwrap();
+        symlink(orig.join("y.html"), room.join("x.txt")).unwrap();
+        symlink(orig.join("y.html"), room.join("spec.html")).unwrap();
+        assert_eq!(rels(&scan_room(&room, false, false)), vec!["spec.html"]);
+    }
+
+    #[test]
+    fn ignores_dot_ignore_and_parent_ignore_files() {
+        let d = tempfile::tempdir().unwrap();
+        let room = d.path().join("room");
+        fs::create_dir_all(&room).unwrap();
+        fs::write(room.join("a.html"), "").unwrap();
+        fs::write(room.join(".ignore"), "a.html\n").unwrap();
+        fs::write(d.path().join(".roomsignore"), "a.html\n").unwrap();
+        fs::write(d.path().join(".gitignore"), "a.html\n").unwrap();
+        assert_eq!(rels(&scan_room(&room, true, false)), vec!["a.html"]);
     }
 }
