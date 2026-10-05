@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 
 import type { Artifact, Info } from "@alto-rooms/protocol-ts";
 import { Maximize2 } from "lucide-react";
 import { useClient } from "@/data/hooks";
+import { artifactDragSource } from "@/lib/drag";
 import { cn } from "@/lib/utils";
 
 /** Previews are laid out at this width, then scaled down to the page box. */
@@ -35,6 +36,8 @@ export type ArtifactCardProps = {
   isNew: boolean;
   size: "strip" | "journal";
   onExpand: () => void;
+  /** The whole card drags onto sidebar rooms (inbox cards, when writable). */
+  draggable?: boolean;
 };
 
 /** True while `el` is within one viewport of its scroll root (the nearest `[data-scroll-root]`, else the viewport). */
@@ -80,7 +83,7 @@ function useBoxSize(ref: RefObject<HTMLElement | null>, fallback: { w: number; h
  * The card body is a focusable button (click/Enter/Space opens the doc tab);
  * the expand button shows on hover or focus and does the same.
  */
-export function ArtifactCard({ artifact, info, label, isNew, size, onExpand }: ArtifactCardProps) {
+export function ArtifactCard({ artifact, info, label, isNew, size, onExpand, draggable = false }: ArtifactCardProps) {
   const client = useClient();
   const s = SIZES[size];
   const pageRef = useRef<HTMLDivElement>(null);
@@ -97,7 +100,11 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onExpand }: A
   };
 
   return (
-    <div data-testid="artifact-card" className={cn("group/card relative shrink-0", s.card)}>
+    <div
+      data-testid="artifact-card"
+      {...(draggable ? artifactDragSource({ roomId: artifact.roomId, artifactId: artifact.id }) : {})}
+      className={cn("group/card relative shrink-0", s.card)}
+    >
       <div
         role="button"
         tabIndex={0}

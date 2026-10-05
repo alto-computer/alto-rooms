@@ -16,6 +16,11 @@ export type ViewerState = {
   sidebarOpen: boolean;
   lastVisit: Record<string, string>; // roomId -> ISO time the user last LEFT that room tab
   firstRunAt: string; // rooms never visited use this as their last visit
+  /**
+   * Transient (never persisted): the New tab opened via "에이전트로 정리하기",
+   * which shows the compact onboarding card. Cleared once it stops being active.
+   */
+  onboardingTabId: string | null;
 };
 
 export const VIEWER_STORAGE_KEY = "alto-rooms.viewer.v1";
@@ -78,6 +83,7 @@ function parseState(raw: string | null): ViewerState | null {
       sidebarOpen: typeof v.sidebarOpen === "boolean" ? v.sidebarOpen : true,
       lastVisit,
       firstRunAt: v.firstRunAt,
+      onboardingTabId: null,
     };
   } catch {
     return null;
@@ -139,6 +145,7 @@ export class ViewerStore {
       sidebarOpen: true,
       lastVisit: {},
       firstRunAt: this.now().toISOString(),
+      onboardingTabId: null,
     };
     if (this.state.tabs.length === 0) {
       const tab = makeTab(this.newId(), { kind: "new" });
@@ -196,6 +203,12 @@ export class ViewerStore {
     this.set({ ...this.leaving(), activeId: id });
   }
 
+  /** Opens (or activates) the New tab and flags it to show the compact onboarding card. */
+  openOnboarding(): void {
+    const id = this.open({ kind: "new" });
+    if (this.state.onboardingTabId !== id) this.set({ onboardingTabId: id });
+  }
+
   setSidebarOpen(open: boolean): void {
     if (open !== this.state.sidebarOpen) this.set({ sidebarOpen: open });
   }
@@ -223,13 +236,17 @@ export class ViewerStore {
 
   private set(p: Partial<ViewerState>) {
     this.state = { ...this.state, ...p };
+    if (this.state.onboardingTabId !== null && this.state.onboardingTabId !== this.state.activeId) {
+      this.state = { ...this.state, onboardingTabId: null };
+    }
     this.persist();
     for (const l of [...this.listeners]) l();
   }
 
   private persist() {
     try {
-      this.storage?.setItem(VIEWER_STORAGE_KEY, JSON.stringify(this.state));
+      const { onboardingTabId: _transient, ...kept } = this.state;
+      this.storage?.setItem(VIEWER_STORAGE_KEY, JSON.stringify(kept));
     } catch {
       // Storage full or denied: state still works for this session.
     }

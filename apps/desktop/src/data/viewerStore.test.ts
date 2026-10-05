@@ -196,3 +196,37 @@ describe("ViewerStore", () => {
     expect(l).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("ViewerStore: onboarding", () => {
+  it("openOnboarding activates the existing New tab (or opens one) and flags it, without persisting the flag", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    const first = st.getState().activeId!;
+    st.open({ kind: "room", roomId: "r1" });
+    st.openOnboarding();
+    expect(st.getState().activeId).toBe(first);
+    expect(st.getState().onboardingTabId).toBe(first);
+    expect(storage.map.get(VIEWER_STORAGE_KEY)).not.toContain("onboarding");
+    expect(new ViewerStore(storage, clock().now).getState().onboardingTabId).toBeNull();
+
+    st.close(first);
+    st.openOnboarding();
+    const created = st.getState().tabs.find((t) => t.kind === "new")!;
+    expect(st.getState().activeId).toBe(created.id);
+    expect(st.getState().onboardingTabId).toBe(created.id);
+  });
+
+  it("the flag clears when the tab stops being active, or closes", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const r = st.open({ kind: "room", roomId: "r1" });
+    st.openOnboarding();
+    const n = st.getState().onboardingTabId!;
+    st.activate(r);
+    expect(st.getState().onboardingTabId).toBeNull();
+    st.activate(n);
+    expect(st.getState().onboardingTabId).toBeNull();
+    st.openOnboarding();
+    st.close(n);
+    expect(st.getState().onboardingTabId).toBeNull();
+  });
+});

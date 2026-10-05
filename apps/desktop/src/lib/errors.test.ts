@@ -1,6 +1,6 @@
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { describe, expect, it } from "vitest";
-import { errorCopy, noteNameErrorCopy } from "./errors";
+import { errorCopy, moveErrorCopy, noteNameErrorCopy } from "./errors";
 
 describe("errorCopy", () => {
   it("maps codes to spec §3 copy", () => {
@@ -26,5 +26,13 @@ describe("errorCopy", () => {
     expect(errorCopy(new RoomsApiError(500, "x"))).toBe("문제가 생겼어요");
     expect(errorCopy(new Error("x"))).toBe("문제가 생겼어요");
     expect(errorCopy("x")).toBe("문제가 생겼어요");
+  });
+});
+
+describe("moveErrorCopy", () => {
+  it("invalid_input is 옮길 수 없는 문서예요; the rest map as usual", () => {
+    expect(moveErrorCopy(new RoomsApiError(400, "linked room", "invalid_input"))).toBe("옮길 수 없는 문서예요");
+    expect(moveErrorCopy(new RoomsApiError(500, "x", "write_failed"))).toBe("저장하지 못했어요. 다시 시도할게요");
+    expect(moveErrorCopy(new Error("x"))).toBe("문제가 생겼어요");
   });
 });

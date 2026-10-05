@@ -34,3 +34,16 @@ export function noteNameErrorCopy(e: unknown): string {
   if (e instanceof RoomsApiError && e.code === "invalid_input") return INVALID_NAME;
   return errorCopy(e);
 }
+
+/** Spec copy for a refused move (linked/journal room, bad id): roomsd says `invalid_input`. */
+export const MOVE_REFUSED = "옮길 수 없는 문서예요";
+
+/**
+ * Copy for a failed artifact move. `invalid_input` is scoped to moves here
+ * (elsewhere it means other things, e.g. a bad note name), so it is not in
+ * the shared table.
+ */
+export function moveErrorCopy(e: unknown): string {
+  if (e instanceof RoomsApiError && e.code === "invalid_input") return MOVE_REFUSED;
+  return errorCopy(e);
+}

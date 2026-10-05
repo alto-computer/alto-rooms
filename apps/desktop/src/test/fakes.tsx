@@ -45,6 +45,8 @@ export function fakeClient(
     /** On-disk note bodies (or the error getNote throws), keyed `${date}/${file name with .md}`; absent = 404. */
     notes?: Record<string, string | Error>;
     readOnly?: boolean;
+    /** `Info.home` (default `/h`). */
+    home?: string;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -53,7 +55,7 @@ export function fakeClient(
   const info: Info = {
     version: "0",
     readOnly: opts.readOnly ?? false,
-    home: "/h",
+    home: opts.home ?? "/h",
     journalRoomId: "journal",
     filesOrigin: "http://files.test",
   };
@@ -102,6 +104,11 @@ export function fakeClient(
       const day = state.days[date];
       if (day?.notes) day.notes = day.notes.map((n) => (n.name === noteFile(from) ? renamed : n));
       return renamed;
+    }),
+    moveArtifact: vi.fn(async (roomId: string, artifactId: string, toRoomId: string): Promise<Artifact> => {
+      const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);
+      if (!a) throw new RoomsApiError(404, "not found", "not_found");
+      return { ...a, roomId: toRoomId };
     }),
     fileUrl: (i: Info, a: Artifact) => `${i.filesOrigin}/${a.roomId}/${a.relPath}`,
     subscribe: (cb: (e: RoomsEvent) => void) => {

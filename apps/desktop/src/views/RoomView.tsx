@@ -6,6 +6,7 @@ import { GENERIC_ERROR } from "@/lib/errors";
 import { ArtifactCard } from "./ArtifactCard";
 import { EditableTitle } from "./EditableTitle";
 import { EmptyRoom } from "./EmptyRoom";
+import { INBOX_ID } from "@/lib/drag";
 
 /** The strip counts as "at the right end" within this many pixels. */
 const PIN_SLACK = 8;
@@ -96,6 +97,7 @@ export function RoomView({ roomId }: { roomId: string }) {
                 label={dateLabel(a.createdAt, now)}
                 isNew={isNewSince(a.createdAt, baseline.current!)}
                 size="strip"
+                draggable={roomId === INBOX_ID && !readOnly}
                 onExpand={() => viewer.open({ kind: "doc", roomId, artifactId: a.id }, { activate: true })}
               />
             ))

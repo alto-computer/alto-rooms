@@ -1,12 +1,22 @@
-import { useState } from "react";
+import { useState, type DragEvent } from "react";
 import type { Room } from "@alto-rooms/protocol-ts";
-import { Calendar, Folder, PanelLeft, Plus, Search } from "lucide-react";
+import { Calendar, CircleAlert, Folder, PanelLeft, Plus, Search } from "lucide-react";
 import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useClient, useReadOnly, useRooms, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { localDate } from "@/lib/dates";
+import {
+  carriesArtifact,
+  draggingFromRoom,
+  endArtifactDrag,
+  INBOX_ID,
+  readArtifactPayload,
+  type ArtifactDragPayload,
+} from "@/lib/drag";
+import { moveErrorCopy } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { useBriefError } from "@/views/briefError";
 import { EditableTitle } from "@/views/EditableTitle";
 import logo from "@/assets/logo.svg";
 import { NewRoomRow } from "./NewRoomRow";
@@ -33,7 +43,22 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
   const { tabs, activeId, sidebarOpen } = useViewer();
   const viewer = useViewerStore();
   const readOnly = useReadOnly();
+  const client = useClient();
   const [creating, setCreating] = useState(false);
+  const moveFailed = useBriefError();
+  const [moveError, setMoveError] = useState("");
+
+  // Success needs no word: the SSE events move the doc in both lists.
+  const move = (p: ArtifactDragPayload, toRoomId: string) => {
+    client.moveArtifact(p.roomId, p.artifactId, toRoomId).then(
+      () => moveFailed.clear(),
+      (e: unknown) => {
+        console.warn("could not move the artifact", e);
+        setMoveError(moveErrorCopy(e));
+        moveFailed.flash();
+      },
+    );
+  };
 
   const active = tabs.find((t) => t.id === activeId);
   const activeRoomId = active?.kind === "room" ? active.roomId : null;
@@ -94,19 +119,88 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
         <ul aria-label="방" className="no-scrollbar mt-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
           {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
           {rooms.map((room) => (
-            <RoomRow key={room.id} room={room} active={room.id === activeRoomId} readOnly={readOnly} />
+            <RoomRow
+              key={room.id}
+              room={room}
+              active={room.id === activeRoomId}
+              readOnly={readOnly}
+              onMove={readOnly || !isDropTarget(room) ? undefined : move}
+            />
           ))}
         </ul>
+        {moveFailed.shown ? (
+          <p role="status" className="mt-2 flex items-center gap-1.5 px-2.5 text-[13px] text-[#c13515]">
+            <CircleAlert size={16} aria-hidden className="shrink-0" />
+            {moveError}
+          </p>
+        ) : null}
+        {readOnly ? null : (
+          <button
+            type="button"
+            onClick={() => viewer.openOnboarding()}
+            className="mt-2 self-start rounded-lg px-2.5 py-1.5 text-[13px] text-ink-3 hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+          >
+            에이전트로 정리하기
+          </button>
+        )}
       </div>
     </ShadcnSidebar>
   );
 }
 
-function RoomRow({ room, active, readOnly }: { room: Room; active: boolean; readOnly: boolean }) {
+/** Docs can be dropped on owned, available rooms other than the inbox. */
+const isDropTarget = (room: Room) => room.kind === "owned" && room.id !== INBOX_ID && room.status === "ok";
+
+/** Drop handlers for a room row that accepts artifacts; `over` drives the highlight. */
+function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomId: string) => void) | undefined) {
+  const [over, setOver] = useState(false);
+  if (!onMove) return { over: false, handlers: {} };
+  const accepts = (e: DragEvent) => carriesArtifact(e.dataTransfer) && draggingFromRoom() !== roomId;
+  const enter = (e: DragEvent) => {
+    if (!accepts(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setOver(true);
+  };
+  return {
+    over,
+    handlers: {
+      onDragEnter: enter,
+      onDragOver: enter,
+      onDragLeave: (e: DragEvent<HTMLElement>) => {
+        if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
+        setOver(false);
+      },
+      onDrop: (e: DragEvent) => {
+        setOver(false);
+        const p = readArtifactPayload(e.dataTransfer);
+        if (!p) return;
+        e.preventDefault();
+        endArtifactDrag();
+        if (p.roomId === roomId) return;
+        onMove(p, roomId);
+      },
+    },
+  };
+}
+
+function RoomRow({
+  room,
+  active,
+  readOnly,
+  onMove,
+}: {
+  room: Room;
+  active: boolean;
+  readOnly: boolean;
+  /** Set when the row is a drop target for artifacts. */
+  onMove?: (p: ArtifactDragPayload, toRoomId: string) => void;
+}) {
   const viewer = useViewerStore();
   const client = useClient();
   const [editing, setEditing] = useState(false);
   const unavailable = room.status === "unavailable";
+  const drop = useDropTarget(room.id, onMove);
 
   if (editing && !readOnly) {
     return (
@@ -136,7 +230,13 @@ function RoomRow({ room, active, readOnly }: { room: Room; active: boolean; read
       aria-current={active ? "page" : undefined}
       onClick={() => viewer.open({ kind: "room", roomId: room.id })}
       onDoubleClick={readOnly ? undefined : () => setEditing(true)}
-      className={cn(ITEM, ITEM_INTERACTIVE, active && "bg-[#ebebeb] hover:bg-[#ebebeb]")}
+      {...drop.handlers}
+      className={cn(
+        ITEM,
+        ITEM_INTERACTIVE,
+        active && "bg-[#ebebeb] hover:bg-[#ebebeb]",
+        drop.over && "bg-[#ebebeb] outline-1 outline-ink outline-solid hover:bg-[#ebebeb]",
+      )}
     >
       <Folder {...ICON} className={cn("shrink-0", active ? "fill-[#fff0f3]" : "fill-none")} />
       <span className={cn("truncate", unavailable && "opacity-50")}>{room.name}</span>

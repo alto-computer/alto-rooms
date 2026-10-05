@@ -311,3 +311,38 @@ describe("EmptyRoom", () => {
     expect(screen.queryByText("문제가 생겼어요")).toBeNull();
   });
 });
+
+describe("RoomView: drag from the inbox", () => {
+  it("inbox cards are draggable with the artifact payload; the expand button and click still open the doc", async () => {
+    const v = new ViewerStore(memoryStorage());
+    v.open({ kind: "room", roomId: "inbox" });
+    await renderWithStores(<RoomView roomId="inbox" />, {
+      viewer: v,
+      rooms: [room("inbox", "Inbox", { artifactCount: 1 })],
+      artifacts: { inbox: [artifact("x1", "떠도는 문서", longAgo, "inbox")] },
+    });
+    const card = cards()[0];
+    expect(card).toHaveAttribute("draggable", "true");
+    const data = new Map<string, string>();
+    fireEvent.dragStart(card, { dataTransfer: { setData: (t: string, d: string) => data.set(t, d), effectAllowed: "all" } });
+    expect(JSON.parse(data.get("application/x-rooms-artifact")!)).toEqual({ roomId: "inbox", artifactId: "x1" });
+    fireEvent.click(within(card).getByRole("button", { name: "떠도는 문서" }));
+    expect(v.getState().tabs).toContainEqual(expect.objectContaining({ kind: "doc", artifactId: "x1" }));
+  });
+
+  it("cards in other rooms, or in a read-only inbox, are not draggable", async () => {
+    await renderWithStores(<RoomView roomId="r1" />, {
+      viewer: viewerFor(longAgo),
+      rooms: [room("r1", "벤치마크", { artifactCount: 1 })],
+      artifacts: { r1: [artifact("a", "첫째", longAgo)] },
+    });
+    expect(cards()[0]).not.toHaveAttribute("draggable", "true");
+    cleanup();
+    await renderWithStores(<RoomView roomId="inbox" />, {
+      readOnly: true,
+      rooms: [room("inbox", "Inbox", { artifactCount: 1 })],
+      artifacts: { inbox: [artifact("x1", "떠도는 문서", longAgo, "inbox")] },
+    });
+    expect(cards()[0]).not.toHaveAttribute("draggable", "true");
+  });
+});
