@@ -5,6 +5,7 @@ import { resolveConnection, type Connection } from "@/lib/connection";
 import { StoresProvider } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
 import { ViewerStore } from "@/data/viewerStore";
+import { AppShell } from "@/shell/AppShell";
 
 type State =
   | { status: "pending" }
@@ -55,10 +56,10 @@ export default function App() {
 }
 
 function Connected({ connection }: { connection: Connection }) {
-  const [stores] = useState(() => ({
-    rooms: new RoomsStore(createRoomsClient(connection.baseUrl, connection.token)),
-    viewer: new ViewerStore(),
-  }));
+  const [stores] = useState(() => {
+    const client = createRoomsClient(connection.baseUrl, connection.token);
+    return { client, rooms: new RoomsStore(client), viewer: new ViewerStore() };
+  });
 
   useEffect(() => {
     stores.rooms.start();
@@ -77,11 +78,8 @@ function Connected({ connection }: { connection: Connection }) {
   }, [stores]);
 
   return (
-    <StoresProvider rooms={stores.rooms} viewer={stores.viewer}>
-      {/* Task 4 replaces this placeholder with the shell. */}
-      <main className="flex h-screen items-center justify-center bg-surface text-ink">
-        <h1 className="text-[17px] font-medium">Rooms</h1>
-      </main>
+    <StoresProvider rooms={stores.rooms} viewer={stores.viewer} client={stores.client}>
+      <AppShell />
     </StoresProvider>
   );
 }

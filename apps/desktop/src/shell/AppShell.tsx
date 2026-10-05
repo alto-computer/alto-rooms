@@ -1,0 +1,99 @@
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { Command, CommandDialog, CommandInput, CommandList } from "@/components/ui/command";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { useViewer, useViewerStore } from "@/data/hooks";
+import type { ViewerStore } from "@/data/viewerStore";
+import { cn } from "@/lib/utils";
+import { TabPlaceholder } from "@/views/Placeholder";
+import { Sidebar } from "./Sidebar";
+import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
+
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+/** The letter of a shortcut: `key` when it's latin, else the physical key (Korean IME gives "ㅠ" for B). */
+function shortcutLetter(e: KeyboardEvent): string {
+  if (/^[a-z]$/i.test(e.key)) return e.key.toLowerCase();
+  return e.code.startsWith("Key") ? e.code.slice(3).toLowerCase() : "";
+}
+
+/** ⌘B sidebar, ⌘W close tab, ⌘T new tab, ⌘K quick find. Bound on window. */
+function useShortcuts(viewer: ViewerStore, openFind: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || (!IS_MAC && e.ctrlKey);
+      if (!mod || e.shiftKey || e.altKey || e.isComposing) return;
+      const s = viewer.getState();
+      switch (shortcutLetter(e)) {
+        case "b":
+          e.preventDefault();
+          viewer.setSidebarOpen(!s.sidebarOpen);
+          break;
+        case "w":
+          e.preventDefault();
+          if (s.activeId) viewer.close(s.activeId);
+          break;
+        case "t":
+          e.preventDefault();
+          viewer.open({ kind: "new" });
+          break;
+        case "k":
+          e.preventDefault();
+          openFind();
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewer, openFind]);
+}
+
+/** ⌘K stub; Task 7 replaces it with QuickFind. */
+function QuickFindStub({ onClose }: { onClose: () => void }) {
+  return (
+    <CommandDialog open onOpenChange={(open) => !open && onClose()} title="찾기" description="방이나 문서 찾기">
+      <Command>
+        <CommandInput placeholder="방이나 문서 찾기" />
+        <CommandList />
+      </Command>
+    </CommandDialog>
+  );
+}
+
+const SIDEBAR_STYLE = { "--sidebar-width": "232px" } as CSSProperties;
+
+export function AppShell() {
+  const { tabs, activeId, sidebarOpen } = useViewer();
+  const viewer = useViewerStore();
+  const [findOpen, setFindOpen] = useState(false);
+  const openFind = useCallback(() => setFindOpen(true), []);
+  useShortcuts(viewer, openFind);
+
+  const active = tabs.find((t) => t.id === activeId);
+
+  return (
+    <TooltipProvider>
+      <SidebarProvider
+        open={sidebarOpen}
+        onOpenChange={(open) => viewer.setSidebarOpen(open)}
+        style={SIDEBAR_STYLE}
+        className="h-svh min-h-0 overflow-hidden bg-surface text-ink"
+      >
+        <Sidebar onFind={openFind} />
+        {/* Content column: padding 8px 8px 8px 0 (8px on the left too once the sidebar is gone). */}
+        <div className={cn("flex min-w-0 flex-1 flex-col py-2 pr-2", sidebarOpen ? "pl-0" : "pl-2")}>
+          <TabBar />
+          <main
+            id={TAB_PANEL_ID}
+            role="tabpanel"
+            aria-labelledby={active ? tabDomId(active.id) : undefined}
+            className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-[#ddd] bg-white"
+          >
+            {active ? <TabPlaceholder key={active.id} tab={active} /> : null}
+          </main>
+        </div>
+        {findOpen ? <QuickFindStub onClose={() => setFindOpen(false)} /> : null}
+      </SidebarProvider>
+    </TooltipProvider>
+  );
+}

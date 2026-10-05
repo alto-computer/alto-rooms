@@ -80,6 +80,18 @@ describe("ViewerStore", () => {
     expect(st.getState().tabs).toEqual([]);
   });
 
+  it("replace swaps a tab's id fields in place, keeping its id and position", () => {
+    const v = new ViewerStore(memoryStorage());
+    const j = v.open({ kind: "journal", date: "2026-10-04" });
+    v.open({ kind: "room", roomId: "r1" });
+    v.replace(j, { kind: "journal", date: "2026-10-05" });
+    expect(v.getState().tabs[1]).toEqual({ id: j, kind: "journal", date: "2026-10-05" });
+    const before = v.getState();
+    v.replace(j, { kind: "journal", date: "2026-10-05" });
+    v.replace("missing", { kind: "new" });
+    expect(v.getState()).toBe(before);
+  });
+
   it("closing an inactive tab keeps the active one", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const n = st.getState().tabs[0].id;

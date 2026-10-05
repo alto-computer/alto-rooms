@@ -1,14 +1,18 @@
-import { createContext, createElement, useContext, useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
-import type { Artifact, JournalDay } from "@alto-rooms/protocol-ts";
+import { createContext, createElement, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import type { Artifact, JournalDay, createRoomsClient } from "@alto-rooms/protocol-ts";
 import type { RoomsState, RoomsStore } from "./roomsStore";
 import type { ViewerState, ViewerStore } from "./viewerStore";
 
-type Stores = { rooms: RoomsStore; viewer: ViewerStore };
+/** The roomsd client. Writes (createRoom, renameRoom, linkFolder, saveNote) go through it; state comes back over SSE. */
+export type RoomsClient = ReturnType<typeof createRoomsClient>;
+
+type Stores = { rooms: RoomsStore; viewer: ViewerStore; client?: RoomsClient };
 
 const StoresContext = createContext<Stores | null>(null);
 
-export function StoresProvider({ rooms, viewer, children }: Stores & { children?: ReactNode }) {
-  return createElement(StoresContext.Provider, { value: { rooms, viewer } }, children);
+export function StoresProvider({ rooms, viewer, client, children }: Stores & { children?: ReactNode }) {
+  const value = useMemo(() => ({ rooms, viewer, client }), [rooms, viewer, client]);
+  return createElement(StoresContext.Provider, { value }, children);
 }
 
 function useStores(): Stores {
@@ -19,6 +23,12 @@ function useStores(): Stores {
 
 export const useRoomsStore = (): RoomsStore => useStores().rooms;
 export const useViewerStore = (): ViewerStore => useStores().viewer;
+
+export function useClient(): RoomsClient {
+  const { client } = useStores();
+  if (!client) throw new Error("StoresProvider has no client");
+  return client;
+}
 
 export function useRooms(): RoomsState {
   const store = useRoomsStore();

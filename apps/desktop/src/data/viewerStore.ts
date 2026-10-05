@@ -182,6 +182,15 @@ export class ViewerStore {
     this.set({ ...this.leaving(), tabs, activeId: next?.id ?? null });
   }
 
+  /** Replaces a tab's id fields in place (same id and position), e.g. the journal tab's date. */
+  replace(id: string, tab: TabInput): void {
+    const i = this.state.tabs.findIndex((t) => t.id === id);
+    if (i < 0 || sameTab(this.state.tabs[i], tab)) return;
+    const tabs = [...this.state.tabs];
+    tabs[i] = makeTab(id, tab);
+    this.set({ tabs });
+  }
+
   activate(id: string): void {
     if (id === this.state.activeId || !this.state.tabs.some((t) => t.id === id)) return;
     this.set({ ...this.leaving(), activeId: id });
