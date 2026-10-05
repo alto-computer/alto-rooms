@@ -98,6 +98,23 @@ describe("Sidebar: 에이전트로 정리하기", () => {
   });
 });
 
+describe("Sidebar: 에이전트로 정리하기 visibility", () => {
+  it("is hidden while there is no room besides inbox", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox")], artifacts: { inbox: [] } });
+    expect(screen.queryByRole("button", { name: "에이전트로 정리하기" })).toBeNull();
+  });
+
+  it("is hidden with no rooms at all", async () => {
+    await renderWithStores(<AppShell />, { rooms: [] });
+    expect(screen.queryByRole("button", { name: "에이전트로 정리하기" })).toBeNull();
+  });
+
+  it("shows once a room besides inbox exists", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox"), room("a", "가")], artifacts: { inbox: [] } });
+    expect(screen.getByRole("button", { name: "에이전트로 정리하기" })).toBeInTheDocument();
+  });
+});
+
 describe("Sidebar: drag to move", () => {
   it("dragging an inbox row onto an owned room calls moveArtifact with the payload, highlighting while over", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: ROOMS, artifacts: ARTIFACTS });

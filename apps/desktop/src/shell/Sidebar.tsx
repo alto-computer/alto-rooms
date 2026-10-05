@@ -134,7 +134,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             {moveError}
           </p>
         ) : null}
-        {readOnly ? null : (
+        {readOnly || rooms.every((r) => r.id === INBOX_ID) ? null : (
           <button
             type="button"
             onClick={() => viewer.openOnboarding()}
