@@ -317,14 +317,44 @@ describe("RoomsStore sync", () => {
     s.stop();
   });
 
-  it("ignores artifact events for rooms that are not watched", async () => {
+  it("does not load artifacts for rooms that are not watched (only their count moves)", async () => {
     const c = new FakeClient();
     c.rooms = { data: [room("r1")], seq: 1 };
     const s = await liveStore(c);
     const before = s.getState();
     c.emit({ seq: 2, type: "artifact.added", artifact: art("a1", "r1") });
-    expect(s.getState()).toBe(before);
+    expect(s.getState().artifacts).toBe(before.artifacts);
     expect(s.getState().artifacts.r1).toBeUndefined();
+    expect(s.getState().rooms[0].artifactCount).toBe(1);
+    s.stop();
+  });
+
+  it("keeps room.artifactCount in step with artifact events (roomsd sends no room.updated for them)", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [{ ...room("r1"), artifactCount: 1 }, room("r2")], seq: 3 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 3 });
+    const s = await liveStore(c);
+    await s.loadArtifacts("r1");
+    const count = (id: string) => s.getState().rooms.find((r) => r.id === id)?.artifactCount;
+    c.emit({ seq: 2, type: "artifact.added", artifact: art("a0") }); // covered by the snapshot
+    expect(count("r1")).toBe(1);
+    c.emit({ seq: 4, type: "artifact.added", artifact: art("a2") });
+    c.emit({ seq: 5, type: "artifact.added", artifact: art("a2") }); // duplicate: already listed
+    c.emit({ seq: 6, type: "artifact.updated", artifact: { ...art("a2"), title: "t" } });
+    expect(count("r1")).toBe(2);
+    c.emit({ seq: 7, type: "artifact.removed", roomId: "r1", artifactId: "a1" });
+    c.emit({ seq: 8, type: "artifact.removed", roomId: "r1", artifactId: "a1" }); // already gone
+    expect(count("r1")).toBe(1);
+    // Unwatched room: counted from the events alone, never below 0.
+    c.emit({ seq: 9, type: "artifact.added", artifact: art("b1", "r2") });
+    expect(count("r2")).toBe(1);
+    c.emit({ seq: 10, type: "artifact.removed", roomId: "r2", artifactId: "b1" });
+    c.emit({ seq: 11, type: "artifact.removed", roomId: "r2", artifactId: "b1" });
+    expect(count("r2")).toBe(0);
+    // Journal artifacts belong to no listed room.
+    const before = s.getState().rooms;
+    c.emit({ seq: 12, type: "artifact.added", artifact: art("j1", "journal") });
+    expect(s.getState().rooms).toBe(before);
     s.stop();
   });
 

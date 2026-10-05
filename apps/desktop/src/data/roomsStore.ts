@@ -261,10 +261,16 @@ export class RoomsStore {
       }
       case "artifact.added":
       case "artifact.updated":
-        this.applyArtifact(e.artifact.roomId, e);
+        this.batch(() => {
+          if (e.type === "artifact.added") this.countArtifact(e.artifact.roomId, e.artifact.id, 1, e.seq);
+          this.applyArtifact(e.artifact.roomId, e);
+        });
         return;
       case "artifact.removed":
-        this.applyArtifact(e.roomId, e);
+        this.batch(() => {
+          this.countArtifact(e.roomId, e.artifactId, -1, e.seq);
+          this.applyArtifact(e.roomId, e);
+        });
         return;
       case "journal.changed":
       case "note.removed":
@@ -287,6 +293,25 @@ export class RoomsStore {
       this.patch({ artifacts });
     }
     this.setError(roomKey(roomId), undefined);
+  }
+
+  /**
+   * Keeps `room.artifactCount` in step with artifact events: roomsd does not
+   * send room.updated when a room's documents change. Events already covered
+   * by the rooms snapshot are skipped, and a loaded list (no fetch in flight)
+   * tells whether the artifact is really new or really gone.
+   */
+  private countArtifact(roomId: string, artifactId: string, delta: 1 | -1, seq: number) {
+    if (seq <= this.roomsSeq) return;
+    const list = this.roomFetches.has(roomId) ? undefined : this.state.artifacts[roomId];
+    if (list && list.some((a) => a.id === artifactId) === (delta > 0)) return;
+    const rooms = this.state.rooms;
+    const i = rooms.findIndex((r) => r.id === roomId);
+    if (i < 0) return;
+    const r = rooms[i];
+    const artifactCount = Math.max(0, r.artifactCount + delta);
+    if (artifactCount === r.artifactCount) return;
+    this.patch({ rooms: rooms.map((x, j) => (j === i ? { ...r, artifactCount } : x)) });
   }
 
   private applyArtifact(roomId: string, e: RoomsEvent) {
