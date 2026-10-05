@@ -3,10 +3,14 @@ import { RoomsApiError } from "@alto-rooms/protocol-ts";
 /** Spec §3 `write_failed` copy; also the autosave error line. */
 export const SAVE_FAILED = "저장하지 못했어요. 다시 시도할게요";
 
+/** Spec §3 `invalid_room_name` copy; also an invalid note name. */
+export const INVALID_NAME = "쓸 수 없는 이름이에요";
+
 /** Spec §3 copy, verbatim, by `RoomsApiError.code`. */
 const COPY: Record<string, string> = {
-  invalid_room_name: "쓸 수 없는 이름이에요",
+  invalid_room_name: INVALID_NAME,
   room_exists: "같은 이름의 방이 있어요",
+  note_exists: "같은 이름의 노트가 있어요",
   unsupported_version: "앱을 업데이트해 주세요",
   write_failed: SAVE_FAILED,
   invalid_link_path: "폴더를 찾을 수 없어요",
@@ -19,4 +23,14 @@ export const GENERIC_ERROR = "문제가 생겼어요";
 export function errorCopy(e: unknown): string {
   if (e instanceof RoomsApiError && e.code && Object.hasOwn(COPY, e.code)) return COPY[e.code];
   return GENERIC_ERROR;
+}
+
+/**
+ * Copy for a failed note rename. roomsd reports a bad note name as the generic
+ * `invalid_input`; on a rename the date and the source come from the open tab,
+ * so it is the new name that was refused.
+ */
+export function noteNameErrorCopy(e: unknown): string {
+  if (e instanceof RoomsApiError && e.code === "invalid_input") return INVALID_NAME;
+  return errorCopy(e);
 }

@@ -249,7 +249,7 @@ export function createNoteSaver(opts: NoteSaverOptions): NoteSaver {
 /** Which note a saver writes; lets the registry rebind it to a new client and keep drafts. */
 export type NoteTarget = { date: string; name: string };
 
-type Entry = { saver: NoteSaver; views: number; unsubscribe: () => void; target?: NoteTarget };
+type Entry = { key: string; saver: NoteSaver; views: number; unsubscribe: () => void; target?: NoteTarget };
 const registry = new Map<string, Entry>();
 
 /**
@@ -264,9 +264,9 @@ const releasable = (e: Entry) => {
   return e.views === 0 && !s.inFlight && s.text === s.savedText;
 };
 
-function releaseIfIdle(key: string, e: Entry) {
-  if (registry.get(key) !== e || !releasable(e)) return;
-  registry.delete(key);
+function releaseIfIdle(e: Entry) {
+  if (registry.get(e.key) !== e || !releasable(e)) return;
+  registry.delete(e.key);
   e.unsubscribe();
   e.saver.dispose(); // clean: sends nothing, just stops it
 }
@@ -291,25 +291,49 @@ export function attachNoteSaver(key: string, create: () => NoteSaver, target?: N
     return { saver: existing.saver, fresh: false };
   }
   const saver = create();
-  const entry: Entry = { saver, views: 1, unsubscribe: () => {}, target };
+  const entry: Entry = { key, saver, views: 1, unsubscribe: () => {}, target };
   entry.unsubscribe = saver.subscribe(() => {
     clearDraftIfLanded(entry);
-    releaseIfIdle(key, entry);
+    releaseIfIdle(entry);
   });
   registry.set(key, entry);
   installQuitFlush();
   return { saver, fresh: true };
 }
 
-/** Detaches a view. The saver lives on until it is clean and idle. */
+/**
+ * Detaches a view. The saver lives on until it is clean and idle. A view
+ * mounted before a rename detaches with its old key; the saver is found by
+ * identity then.
+ */
 export function detachNoteSaver(key: string, saver: NoteSaver): void {
-  const e = registry.get(key);
-  if (!e || e.saver !== saver) return;
+  const byKey = registry.get(key);
+  const e = byKey?.saver === saver ? byKey : [...registry.values()].find((x) => x.saver === saver);
+  if (!e) return;
   e.views = Math.max(0, e.views - 1);
-  releaseIfIdle(key, e);
+  releaseIfIdle(e);
 }
 
 export type SaveNoteFn = (date: string, name: string, text: string) => Promise<{ updatedAt: string }>;
+
+/**
+ * The note's file was renamed: its live saver (if any) moves to `newKey`, now
+ * writes `target` through `saveNote`, and keeps its views, text and schedule.
+ * Call it after the rename landed and before the view switches to the new
+ * name, so that view attaches to this saver instead of loading a fresh one.
+ */
+export function renameNoteSaver(oldKey: string, newKey: string, target: NoteTarget, saveNote: SaveNoteFn): void {
+  const e = registry.get(oldKey);
+  if (!e) return;
+  e.saver.setSave((text) => saveNote(target.date, target.name, text));
+  e.target = target;
+  if (newKey === oldKey) return;
+  const other = registry.get(newKey);
+  if (other) console.warn("note: a saver was already live under the renamed note's key", newKey);
+  registry.delete(oldKey);
+  e.key = newKey;
+  registry.set(newKey, e);
+}
 
 /**
  * A new daemon connection: every live saver now saves through `saveNote`
@@ -432,7 +456,14 @@ const settled = (s: NoteSaver) => {
  * Resolves `true` when everything landed. Never rejects.
  */
 export function flushAllNoteSaversAndWait(timeoutMs = 2000): Promise<boolean> {
-  const savers = [...registry.values()].map((e) => e.saver);
+  return waitSettled(
+    [...registry.values()].map((e) => e.saver),
+    timeoutMs,
+  );
+}
+
+/** Flushes `savers` and resolves `true` once all have landed, or `false` after `timeoutMs`. */
+function waitSettled(savers: NoteSaver[], timeoutMs: number): Promise<boolean> {
   for (const s of savers) s.flush();
   if (savers.every(settled)) return Promise.resolve(true);
   return new Promise((resolve) => {
@@ -451,6 +482,16 @@ export function flushAllNoteSaversAndWait(timeoutMs = 2000): Promise<boolean> {
     };
     for (const s of savers) unsubs.push(s.subscribe(check));
   });
+}
+
+/**
+ * Saves one note now and resolves once it has landed (nothing unsaved,
+ * nothing in flight): `true`, or `false` after `timeoutMs`. `true` right away
+ * when the note has no live saver. Never rejects.
+ */
+export function flushNoteSaverAndWait(key: string, timeoutMs = 5000): Promise<boolean> {
+  const s = registry.get(key)?.saver;
+  return s ? waitSettled([s], timeoutMs) : Promise.resolve(true);
 }
 
 let quitFlushInstalled = false;

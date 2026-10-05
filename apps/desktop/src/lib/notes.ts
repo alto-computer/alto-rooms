@@ -23,8 +23,35 @@ export function findNote(notes: readonly Note[], name: string): Note | undefined
   return notes.find((n) => key(n.name) === k);
 }
 
-/** The new-note name: "계획" if there's no 계획 note yet, else "회고" if there's no 회고, else empty. */
-export function defaultNoteName(notes: readonly Note[]): string {
-  for (const candidate of ["계획", "회고"]) if (!findNote(notes, candidate)) return candidate;
-  return "";
+/** The name a new note starts with ("New Note", then "New Note 2", …) until it is renamed. */
+export const NEW_NOTE = "New Note";
+const DEFAULT_NAME = /^New Note(?: [1-9]\d*)?$/;
+
+/** The first `count` default names ("New Note", "New Note 2", …) not taken in `notes` (case-insensitively). */
+export function firstNewNoteNames(notes: readonly Note[], count: number): string[] {
+  const out: string[] = [];
+  for (let i = 1; out.length < count; i++) {
+    const candidate = i === 1 ? NEW_NOTE : `${NEW_NOTE} ${i}`;
+    if (!findNote(notes, candidate)) out.push(candidate);
+  }
+  return out;
+}
+
+/** The note's heading: "New Note" while it still has a default name, else its name without `.md`. */
+export function noteTitle(fileName: string): string {
+  const base = noteBase(fileName);
+  return DEFAULT_NAME.test(base) ? NEW_NOTE : base;
+}
+
+/*
+ * One-shot "put the cursor in the body" requests: a freshly created note asks
+ * for it, and its view takes it once the body has loaded.
+ */
+const bodyFocusRequests = new Set<string>();
+const focusKey = (date: string, fileName: string) => `${date}/${noteFileName(fileName).toLowerCase()}`;
+export function requestNoteBodyFocus(date: string, fileName: string): void {
+  bodyFocusRequests.add(focusKey(date, fileName));
+}
+export function takeNoteBodyFocus(date: string, fileName: string): boolean {
+  return bodyFocusRequests.delete(focusKey(date, fileName));
 }
