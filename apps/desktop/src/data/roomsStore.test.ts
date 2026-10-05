@@ -760,3 +760,24 @@ describe("RoomsStore watch ref-counting", () => {
     s.stop();
   });
 });
+
+describe("RoomsStore sync failures", () => {
+  it("counts consecutive failed syncs and resets on success", async () => {
+    vi.useFakeTimers();
+    const c = new FakeClient();
+    c.infoResult = new Error("down");
+    const s = new RoomsStore(c, { warn: () => {} });
+    s.start();
+    c.connect(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.getState()).toEqual(expect.objectContaining({ status: "error", syncFailures: 1 }));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(s.getState().syncFailures).toBe(2);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(s.getState().syncFailures).toBe(3);
+    c.infoResult = INFO;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(s.getState()).toEqual(expect.objectContaining({ status: "live", syncFailures: 0 }));
+    s.stop();
+  });
+});

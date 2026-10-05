@@ -1,29 +1,65 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { createRoomsClient } from "@alto-rooms/protocol-ts";
-import { installQuitFlushResponder, onBeforeQuitFlush } from "@/lib/appEvents";
+import { DAEMON_EXITED, installQuitFlushResponder, listenAll, onBeforeQuitFlush } from "@/lib/appEvents";
 import { resolveConnection, type Connection } from "@/lib/connection";
+import { rebindNoteSavers } from "@/lib/noteSaver";
 import { isTauri } from "@/lib/tauri";
-import { StoresProvider } from "@/data/hooks";
+import { StoresProvider, type RoomsClient } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
 import { ViewerStore } from "@/data/viewerStore";
 import { AppShell } from "@/shell/AppShell";
 
-type State =
-  | { status: "pending" }
-  | { status: "error" }
-  | { status: "ready"; connection: Connection };
+/** Consecutive failed syncs (the first failure plus 2 retries) after which the core counts as lost. */
+export const LOST_AFTER_SYNC_FAILURES = 3;
 
+type Phase = "pending" | "error" | "ready";
+type Stores = { client: RoomsClient; rooms: RoomsStore };
+
+/** Two connections are the same daemon session when both the URL and the token match. */
+const sameConnection = (a: Connection, b: Connection) => a.baseUrl === b.baseUrl && a.token === b.token;
+
+/**
+ * Connects to roomsd and keeps the stores for that connection.
+ *
+ * The core counts as lost when the daemon we spawned exits (`daemon://exited`)
+ * or when the rooms store stays in error through 2 retries. Then the full-panel
+ * error shows; "다시 시도" runs `connect` again (Rust respawns the daemon). A
+ * new connection (URL or token changed) gets a new client and stores, and live
+ * note savers are rebound to it so unsaved notes still land.
+ */
 export default function App() {
-  const [state, setState] = useState<State>({ status: "pending" });
+  const [phase, setPhase] = useState<Phase>("pending");
+  const [stores, setStores] = useState<Stores | null>(null);
+  // Viewer state is local (tabs, last visits): it survives reconnects.
+  const [viewer] = useState(() => new ViewerStore());
+  const current = useRef<{ connection: Connection; stores: Stores } | null>(null);
+  const attempt = useRef(0);
 
   const connect = useCallback(() => {
-    setState({ status: "pending" });
+    const mine = ++attempt.current;
+    setPhase("pending");
     resolveConnection().then(
-      (connection) => setState({ status: "ready", connection }),
+      (connection) => {
+        if (mine !== attempt.current) return;
+        let cur = current.current;
+        if (cur && sameConnection(cur.connection, connection)) {
+          cur.stores.rooms.stop(); // restarted below: resubscribe and sync now
+        } else {
+          cur?.stores.rooms.stop();
+          const client = createRoomsClient(connection.baseUrl, connection.token);
+          cur = { connection, stores: { client, rooms: new RoomsStore(client) } };
+          current.current = cur;
+          rebindNoteSavers((date, name, text) => client.saveNote(date, name, text));
+        }
+        cur.stores.rooms.start();
+        setStores(cur.stores);
+        setPhase("ready");
+      },
       (err) => {
+        if (mine !== attempt.current) return;
         console.error("connect failed:", err);
-        setState({ status: "error" });
+        setPhase("error");
       },
     );
   }, []);
@@ -32,14 +68,53 @@ export default function App() {
     connect();
   }, [connect]);
 
+  useEffect(
+    () => () => {
+      current.current?.stores.rooms.stop();
+    },
+    [],
+  );
+
   // Answer the native close/quit hook on every screen, so closing never waits for its timeout.
   useEffect(() => (isTauri() ? installQuitFlushResponder() : undefined), []);
 
-  if (state.status === "pending") {
-    return <main className="h-screen bg-surface" aria-busy="true" />;
-  }
+  // Quitting counts as leaving the active room tab (for "new" dots next time).
+  useEffect(() => {
+    const flush = () => viewer.flush();
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    const offQuit = onBeforeQuitFlush(flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      offQuit();
+    };
+  }, [viewer]);
 
-  if (state.status === "error") {
+  // Losing the core while connected.
+  useEffect(() => {
+    if (phase !== "ready" || !stores) return;
+    let lost = false;
+    const lose = () => {
+      if (lost) return;
+      lost = true;
+      stores.rooms.stop();
+      setPhase("error");
+    };
+    const check = () => {
+      const s = stores.rooms.getState();
+      if (s.status === "error" && s.syncFailures >= LOST_AFTER_SYNC_FAILURES) lose();
+    };
+    const unsubscribe = stores.rooms.subscribe(check);
+    check();
+    const unlisten = isTauri() ? listenAll({ [DAEMON_EXITED]: lose }) : () => {};
+    return () => {
+      unsubscribe();
+      unlisten();
+    };
+  }, [phase, stores]);
+
+  if (phase === "error") {
     return (
       <main className="flex h-screen flex-col items-center justify-center gap-4 bg-surface text-ink">
         <div className="flex items-center gap-2 text-[#c13515]">
@@ -57,35 +132,12 @@ export default function App() {
     );
   }
 
-  return <Connected key={state.connection.baseUrl} connection={state.connection} />;
-}
-
-function Connected({ connection }: { connection: Connection }) {
-  const [stores] = useState(() => {
-    const client = createRoomsClient(connection.baseUrl, connection.token);
-    return { client, rooms: new RoomsStore(client), viewer: new ViewerStore() };
-  });
-
-  useEffect(() => {
-    stores.rooms.start();
-    return () => stores.rooms.stop();
-  }, [stores]);
-
-  // Quitting counts as leaving the active room tab (for "new" dots next time).
-  useEffect(() => {
-    const flush = () => stores.viewer.flush();
-    window.addEventListener("pagehide", flush);
-    window.addEventListener("beforeunload", flush);
-    const offQuit = onBeforeQuitFlush(flush);
-    return () => {
-      window.removeEventListener("pagehide", flush);
-      window.removeEventListener("beforeunload", flush);
-      offQuit();
-    };
-  }, [stores]);
+  if (phase === "pending" || !stores) {
+    return <main className="h-screen bg-surface" aria-busy="true" />;
+  }
 
   return (
-    <StoresProvider rooms={stores.rooms} viewer={stores.viewer} client={stores.client}>
+    <StoresProvider rooms={stores.rooms} viewer={viewer} client={stores.client}>
       <AppShell />
     </StoresProvider>
   );

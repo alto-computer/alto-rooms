@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::Mutex;
@@ -10,6 +10,8 @@ use tokio::sync::Mutex;
 const INFO_URL: &str = "http://127.0.0.1:4317/v1/info";
 const BASE_URL: &str = "http://127.0.0.1:4317";
 const START_ERROR: &str = "Rooms 코어를 시작하지 못했어요";
+/** Emitted when the roomsd this app spawned exits on its own. */
+pub const DAEMON_EXITED: &str = "daemon://exited";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -237,16 +239,23 @@ pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connec
     };
     inner.conn = Some(conn.clone());
 
-    // Keep draining events; clear state if THIS child later dies.
+    // Keep draining events. If THIS child later dies on its own (not killed by us:
+    // kill paths take the child out of the slot first), clear state and tell the
+    // webview, which shows the core error and can connect (respawn) again.
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(ev) = rx.recv().await {
-            if let CommandEvent::Terminated(_) = ev {
+            if let CommandEvent::Terminated(payload) = ev {
                 let d = handle.state::<Daemon>();
                 let mut inner = d.inner.lock().await;
                 if should_clear(inner.child.as_ref().map(|c| c.pid()), pid) {
                     inner.child = None;
                     inner.conn = None;
+                    drop(inner);
+                    eprintln!("roomsd exited unexpectedly (code {:?}, signal {:?})", payload.code, payload.signal);
+                    if let Err(e) = handle.emit(DAEMON_EXITED, ()) {
+                        eprintln!("could not emit {DAEMON_EXITED}: {e}");
+                    }
                 }
                 break;
             }

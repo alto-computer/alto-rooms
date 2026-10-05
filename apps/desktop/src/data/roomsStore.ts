@@ -16,6 +16,8 @@ export type RoomsState = {
   days: Record<string, JournalDay | undefined>; // date -> day; undefined = not loaded
   /** Last fetch failure per scope, keyed `room:<id>` / `day:<date>`; cleared on success. */
   errors: Record<string, string | undefined>;
+  /** Consecutive failed full syncs (info/listRooms); 0 once one succeeds. */
+  syncFailures: number;
 };
 
 export type RoomsStoreOptions = {
@@ -59,7 +61,7 @@ type RoomFetch = { token: number; queue: RoomsEvent[]; promise: Promise<void> };
  * fetched) and reloads by itself when it comes back.
  */
 export class RoomsStore {
-  private state: RoomsState = { status: "connecting", info: null, rooms: [], artifacts: {}, days: {}, errors: {} };
+  private state: RoomsState = { status: "connecting", info: null, rooms: [], artifacts: {}, days: {}, errors: {}, syncFailures: 0 };
   private listeners = new Set<() => void>();
   private batchDepth = 0;
   private dirty = false;
@@ -516,7 +518,7 @@ export class RoomsStore {
       if (infoR.status === "rejected" || listR.status === "rejected") {
         // stay buffering until a retry succeeds
         this.warn("rooms: sync failed", infoR.status === "rejected" ? infoR.reason : (listR as PromiseRejectedResult).reason);
-        this.patch({ status: "error" });
+        this.patch({ status: "error", syncFailures: this.state.syncFailures + 1 });
         this.scheduleRetry();
         return;
       }
@@ -572,7 +574,7 @@ export class RoomsStore {
           }
         });
 
-        this.patch({ status: "live", info: infoR.value, rooms: listR.value.data, artifacts, days, errors });
+        this.patch({ status: "live", info: infoR.value, rooms: listR.value.data, artifacts, days, errors, syncFailures: 0 });
         for (const id of vanished) this.forgetRoom(id);
         for (const r of listR.value.data) this.syncCount(r.id);
         // Dormant watched rooms that are listed again reload on their own.

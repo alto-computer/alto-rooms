@@ -3,6 +3,7 @@
  *
  * - The macOS menu's "새 탭" (⌘T) and "탭 닫기" (⌘W) arrive as `menu://new-tab`
  *   and `menu://close-tab`.
+ * - `daemon://exited`: the roomsd we spawned died (App shows the core error).
  * - Before the window closes or the app quits, Rust emits `app://flush` and
  *   holds the close until we invoke `flush_done` (it gives up after 2.5s).
  *   We run the registered sync hooks, flush every note (capped at 2s), keep
@@ -15,6 +16,8 @@ import { flushAllNoteSaversAndWait, keepUnsavedNoteDrafts } from "./noteSaver";
 export const MENU_NEW_TAB = "menu://new-tab";
 export const MENU_CLOSE_TAB = "menu://close-tab";
 export const APP_FLUSH = "app://flush";
+/** The roomsd this app spawned has exited. */
+export const DAEMON_EXITED = "daemon://exited";
 /** How long the webview waits for notes to land before letting the window close. */
 export const FLUSH_CAP_MS = 2000;
 
