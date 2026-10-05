@@ -63,7 +63,8 @@ pub fn slug_key(slug: &str) -> String {
 pub fn validate_note_name(name: &str) -> Result<String, CoreError> {
     let trimmed = name.trim();
     // Strip exactly ONE trailing ".md" (case-insensitively)
-    let base = if trimmed.len() >= 3 && trimmed[trimmed.len()-3..].eq_ignore_ascii_case(".md") {
+    // Use safe byte slicing that respects UTF-8 boundaries
+    let base = if trimmed.get(trimmed.len().saturating_sub(3)..).map_or(false, |s| s.eq_ignore_ascii_case(".md")) {
         &trimmed[..trimmed.len()-3]
     } else {
         trimmed
@@ -196,5 +197,14 @@ mod tests {
             let path = Path::new(non_utf8);
             assert_eq!(classify_path(path, false), PathClass::Ignored);
         }
+    }
+
+    #[test]
+    fn note_name_handles_multibyte_chars_safely() {
+        // These should not panic on multi-byte character boundary checks
+        assert_eq!(validate_note_name("회a").unwrap(), "회a.md");
+        assert_eq!(validate_note_name("éé").unwrap(), "éé.md");
+        assert_eq!(validate_note_name("日本a").unwrap(), "日本a.md");
+        assert_eq!(validate_note_name("가.MD").unwrap(), "가.md");
     }
 }
