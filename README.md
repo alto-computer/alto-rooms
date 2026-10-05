@@ -13,14 +13,17 @@ Alto Rooms collects the HTML files your coding agents write and shows them in on
 
 Agents like Claude Code and Codex write specs, reports, and reviews as HTML. These files end up spread across repos and folders. Rooms gathers them into one place, where you can browse them.
 
+## Concepts
+
+- **Room**: a topic. One folder in `~/rooms`, or an existing folder you link.
+- **Artifact**: one HTML file in a room. It can be a symlink to a file that lives elsewhere.
+- **Journal**: one page per day. It shows the artifacts created that day, next to your own notes.
+
 ## How it works
 
-- A **room** is a folder in `~/rooms`.
-- Any `.html` file in a room shows up in the app within two seconds.
-- To add a file without moving it, put a symlink to it in a room.
-- You can also link an existing folder as a room. Rooms never writes into it.
+- Write an `.html` file into a room folder. It shows up in the app within two seconds.
+- Rooms never moves your files, and never writes into a folder you linked.
 - Drag rooms in the sidebar to reorder them.
-- **Journal** shows everything created on a given day, plus your own notes for that day.
 
 Rooms does not run agents or call any AI model. It only reads folders.
 
