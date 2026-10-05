@@ -191,6 +191,13 @@ export class ViewerStore {
     if (open !== this.state.sidebarOpen) this.set({ sidebarOpen: open });
   }
 
+  /** Records leaving the active room tab now (the app is quitting or hiding) and persists. */
+  flush(): void {
+    const p = this.leaving();
+    if (p.lastVisit) this.set(p);
+    else this.persist();
+  }
+
   isNew(a: Artifact): boolean {
     const created = Date.parse(a.createdAt);
     const since = Date.parse(this.state.lastVisit[a.roomId] ?? this.state.firstRunAt);

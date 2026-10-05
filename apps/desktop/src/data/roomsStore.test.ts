@@ -134,6 +134,99 @@ describe("RoomsStore sync", () => {
     s.stop();
   });
 
+  it("start() and onOpen only buffer; one connect causes exactly one listRooms", async () => {
+    vi.useFakeTimers();
+    const c = new FakeClient();
+    c.rooms = { data: [room("r1")], seq: 3 };
+    const s = new RoomsStore(c);
+    s.start();
+    c.onOpen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(c.calls.listRooms).toBe(0);
+    c.emit({ seq: 3, type: "resync", roomId: null });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(c.calls.listRooms).toBe(1);
+    expect(s.getState().status).toBe("live");
+
+    c.connect(3); // reconnect
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(c.calls.listRooms).toBe(2);
+    s.stop();
+  });
+
+  it("falls back to a sync 2s after start()/onOpen if no resync {null} arrives", async () => {
+    vi.useFakeTimers();
+    const c = new FakeClient();
+    c.rooms = { data: [room("r1")], seq: 3 };
+    const s = new RoomsStore(c);
+    s.start();
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(c.calls.listRooms).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(c.calls.listRooms).toBe(1);
+    expect(s.getState().status).toBe("live");
+
+    c.onOpen?.();
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(c.calls.listRooms).toBe(1);
+    c.emit({ seq: 2, type: "room.added", room: room("r2") }); // buffered, not applied
+    expect(s.getState().rooms.map((r) => r.id)).toEqual(["r1"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(c.calls.listRooms).toBe(2);
+    s.stop();
+  });
+
+  it("applies the snapshot and all queued events with a single notification", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [room("r1")], seq: 1 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
+    const s = await liveStore(c);
+    await s.loadArtifacts("r1");
+    const l = vi.fn();
+    s.subscribe(l);
+    c.hold();
+    c.rooms = { data: [room("r1"), room("r2")], seq: 2 };
+    c.connect(2);
+    c.emit({ seq: 3, type: "room.added", room: room("r3") });
+    c.emit({ seq: 4, type: "artifact.added", artifact: art("a2") });
+    c.emit({ seq: 5, type: "room.updated", room: room("r1", "One") });
+    c.releaseAll();
+    await flush();
+    expect(s.getState().rooms.map((r) => r.name)).toEqual(["One", "r2", "r3"]);
+    expect(ids(s)).toEqual(["a1", "a2"]);
+    expect(l).toHaveBeenCalledTimes(1);
+    s.stop();
+  });
+
+  it("prunes watched rooms that vanished while disconnected, except the journal room", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [room("r1"), room("r2")], seq: 1 };
+    c.artifacts.set("r1", { data: [art("a1")], seq: 1 });
+    c.artifacts.set("r2", { data: [art("b1", "r2")], seq: 1 });
+    c.artifacts.set("journal", { data: [art("j1", "journal")], seq: 1 });
+    const warn = vi.fn();
+    const s = await liveStore(c, { warn });
+    await s.loadArtifacts("r1");
+    await s.loadArtifacts("r2");
+    await s.loadArtifacts("journal"); // not in listRooms
+
+    c.rooms = { data: [room("r1")], seq: 5 }; // r2 deleted while disconnected
+    c.artifacts.delete("r2");
+    c.connect(5);
+    await flush();
+    expect("r2" in s.getState().artifacts).toBe(false);
+    expect(s.getState().errors["room:r2"]).toBeUndefined();
+    expect(ids(s, "journal")).toEqual(["j1"]);
+    expect(warn).not.toHaveBeenCalled();
+
+    // No longer watched: the next resync does not ask for it.
+    c.calls.listArtifacts = [];
+    c.connect(5);
+    await flush();
+    expect(c.calls.listArtifacts.sort()).toEqual(["journal", "r1"]);
+    s.stop();
+  });
+
   it("reconnect gap: snapshot replaces stale data and stale buffered events are dropped", async () => {
     const c = new FakeClient();
     c.rooms = { data: [room("r1")], seq: 5 };
@@ -147,7 +240,7 @@ describe("RoomsStore sync", () => {
     c.artifacts.set("r1", { data: [art("a2"), art("a3")], seq: 7 });
 
     c.connect(7);
-    c.emit({ seq: 4, type: "artifact.added", artifact: art("a1") });
+    c.emit({ seq: 6, type: "artifact.added", artifact: art("a1") }); // newer than old seq 5, older than new 7
     await flush();
     expect(ids(s)).toEqual(["a2", "a3"]);
     expect(s.getState().status).toBe("live");
@@ -374,6 +467,39 @@ describe("RoomsStore days", () => {
   });
 });
 
+describe("RoomsStore scope errors", () => {
+  it("sets errors[room:<id>] on a failed first load, retries on the next resync, and clears on success", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [room("r1")], seq: 1 };
+    c.artifacts.set("r1", new Error("boom"));
+    const s = await liveStore(c, { warn: vi.fn() });
+    await s.loadArtifacts("r1");
+    expect(s.getState().artifacts.r1).toBeUndefined();
+    expect(s.getState().errors["room:r1"]).toBe("boom");
+    expect(s.getState().status).toBe("live");
+
+    c.artifacts.set("r1", { data: [art("a1")], seq: 2 });
+    c.connect(2);
+    await flush();
+    expect(ids(s)).toEqual(["a1"]);
+    expect(s.getState().errors["room:r1"]).toBeUndefined();
+    s.stop();
+  });
+
+  it("sets errors[day:<date>] on a failed day load and clears it on success", async () => {
+    const c = new FakeClient();
+    const s = await liveStore(c, { warn: vi.fn() });
+    await s.loadDay("2026-10-05"); // FakeClient rejects unknown days
+    expect(s.getState().errors["day:2026-10-05"]).toBeTruthy();
+    c.days.set("2026-10-05", { data: day("2026-10-05"), seq: 1 });
+    c.connect(1);
+    await flush();
+    expect(s.getState().days["2026-10-05"]).toBeDefined();
+    expect(s.getState().errors["day:2026-10-05"]).toBeUndefined();
+    s.stop();
+  });
+});
+
 describe("RoomsStore errors", () => {
   it("goes to error when info() fails and retries with backoff 1s, 2s, 4s capped at 10s", async () => {
     vi.useFakeTimers();
@@ -438,6 +564,7 @@ describe("RoomsStore errors", () => {
     expect(ids(s)).toEqual(["a1"]);
     expect(s.getState().days["2026-10-05"]?.notes).toHaveLength(1);
     expect(warn).toHaveBeenCalledTimes(2);
+    expect(s.getState().errors).toEqual({ "room:r1": "boom", "day:2026-10-05": "404" });
     s.stop();
   });
 
@@ -447,6 +574,7 @@ describe("RoomsStore errors", () => {
     c.hold();
     const s = new RoomsStore(c);
     s.start();
+    c.connect(1);
     s.stop();
     expect(c.onEvent).toBeUndefined();
     c.releaseAll();

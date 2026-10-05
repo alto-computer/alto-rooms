@@ -14,6 +14,8 @@ export type RoomsState = {
   rooms: Room[]; // listRooms order
   artifacts: Record<string, Artifact[] | undefined>; // roomId -> createdAt ASC; undefined = not loaded
   days: Record<string, JournalDay | undefined>; // date -> day; undefined = not loaded
+  /** Last fetch failure per scope, keyed `room:<id>` / `day:<date>`; cleared on success. */
+  errors: Record<string, string | undefined>;
 };
 
 export type RoomsStoreOptions = {
@@ -22,6 +24,8 @@ export type RoomsStoreOptions = {
 };
 
 const DAY_DEBOUNCE_MS = 150;
+/** If the server's leading `resync {null}` doesn't arrive within this, sync anyway. */
+const RESYNC_FALLBACK_MS = 2000;
 const BACKOFF_BASE_MS = 1000; // 1s, 2s, 4s, 8s, then capped
 const BACKOFF_MAX_MS = 10_000;
 
@@ -29,6 +33,10 @@ const instant = (iso: string) => {
   const t = Date.parse(iso);
   return Number.isNaN(t) ? 0 : t;
 };
+
+const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const roomKey = (id: string) => `room:${id}`;
+const dayKey = (date: string) => `day:${date}`;
 
 /** createdAt ASC (compared as instants, offsets vary), then id. */
 function sortArtifacts(list: Artifact[]): Artifact[] {
@@ -45,8 +53,10 @@ type RoomFetch = { token: number; queue: RoomsEvent[]; promise: Promise<void> };
  * Scopes: rooms (one), artifacts (one per watched room), days (refetch-only).
  */
 export class RoomsStore {
-  private state: RoomsState = { status: "connecting", info: null, rooms: [], artifacts: {}, days: {} };
+  private state: RoomsState = { status: "connecting", info: null, rooms: [], artifacts: {}, days: {}, errors: {} };
   private listeners = new Set<() => void>();
+  private batchDepth = 0;
+  private dirty = false;
   private readonly warn: (...args: unknown[]) => void;
 
   private started = false;
@@ -54,11 +64,11 @@ export class RoomsStore {
 
   // Global sync.
   private syncGen = 0;
-  private syncing = false;
   private buffering = false;
   private queue: RoomsEvent[] = [];
   private retryAttempt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Rooms scope.
   private roomsSeq = 0;
@@ -93,12 +103,15 @@ export class RoomsStore {
     };
   };
 
-  /** Subscribe first (so events are buffered), then run a full sync. */
+  /**
+   * Subscribe and buffer. The full sync runs on the server's leading
+   * `resync {null}`, or after RESYNC_FALLBACK_MS if it never arrives.
+   */
   start(): void {
     if (this.started) return;
     this.started = true;
     this.unsubscribe = this.client.subscribe(this.onEvent, this.onOpen);
-    this.beginSync();
+    this.enterBuffering();
   }
 
   stop(): void {
@@ -107,10 +120,10 @@ export class RoomsStore {
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.syncGen++; // invalidates in-flight sync results
-    this.syncing = false;
     this.buffering = false;
     this.queue = [];
     this.clearRetry();
+    this.clearFallback();
     for (const t of this.dayTimers.values()) clearTimeout(t);
     this.dayTimers.clear();
     for (const roomId of this.roomFetches.keys()) this.bump(this.roomTokens, roomId);
@@ -142,7 +155,37 @@ export class RoomsStore {
   private setState(next: RoomsState) {
     if (next === this.state) return;
     this.state = next;
+    if (this.batchDepth > 0) this.dirty = true;
+    else this.notify();
+  }
+
+  private notify() {
     for (const l of [...this.listeners]) l();
+  }
+
+  /** Runs `fn` and notifies listeners at most once, after it returns. */
+  private batch(fn: () => void) {
+    this.batchDepth++;
+    try {
+      fn();
+    } finally {
+      this.batchDepth--;
+      if (this.batchDepth === 0 && this.dirty) {
+        this.dirty = false;
+        this.notify();
+      }
+    }
+  }
+
+  private setError(key: string, err: string | undefined) {
+    const errors = this.state.errors;
+    if (errors[key] === err && (err !== undefined || !(key in errors))) return;
+    if (err === undefined) {
+      const { [key]: _cleared, ...rest } = errors;
+      this.patch({ errors: rest });
+    } else {
+      this.patch({ errors: { ...errors, [key]: err } });
+    }
   }
 
   private patch(p: Partial<RoomsState>) {
@@ -165,10 +208,21 @@ export class RoomsStore {
 
   private onOpen = () => {
     if (!this.started) return;
-    // A fresh connection: buffer until the snapshot is in. The server's leading
-    // `resync {null}` restarts this sync; we start one anyway in case it is late.
-    if (!this.syncing) this.beginSync();
+    // A fresh connection: buffer until its leading `resync {null}` syncs us.
+    this.enterBuffering();
   };
+
+  /** Buffer events and wait for `resync {null}`; any in-flight sync is superseded. */
+  private enterBuffering() {
+    this.syncGen++;
+    this.buffering = true;
+    this.clearRetry();
+    this.clearFallback();
+    this.fallbackTimer = setTimeout(() => {
+      this.fallbackTimer = null;
+      this.beginSync();
+    }, RESYNC_FALLBACK_MS);
+  }
 
   private onEvent = (e: RoomsEvent) => {
     if (!this.started) return;
@@ -198,17 +252,10 @@ export class RoomsStore {
       }
       case "room.removed": {
         if (e.seq <= this.roomsSeq) return;
-        this.watchedRooms.delete(e.roomId);
-        this.artifactsSeq.delete(e.roomId);
-        if (this.roomFetches.has(e.roomId)) {
-          this.bump(this.roomTokens, e.roomId);
-          this.roomFetches.delete(e.roomId);
-        }
-        const { [e.roomId]: _gone, ...artifacts } = this.state.artifacts;
         const rooms = this.state.rooms.filter((r) => r.id !== e.roomId);
-        this.patch({
-          rooms: rooms.length !== this.state.rooms.length ? rooms : this.state.rooms,
-          artifacts: e.roomId in this.state.artifacts ? artifacts : this.state.artifacts,
+        this.batch(() => {
+          if (rooms.length !== this.state.rooms.length) this.patch({ rooms });
+          this.forgetRoom(e.roomId);
         });
         return;
       }
@@ -227,6 +274,19 @@ export class RoomsStore {
         this.dayChanged(e.note.date);
         return;
     }
+  }
+
+  /** Unwatch a room and drop its scope (seq, in-flight fetch, data, error). */
+  private forgetRoom(roomId: string) {
+    this.watchedRooms.delete(roomId);
+    this.artifactsSeq.delete(roomId);
+    this.bump(this.roomTokens, roomId);
+    this.roomFetches.delete(roomId);
+    if (roomId in this.state.artifacts) {
+      const { [roomId]: _gone, ...artifacts } = this.state.artifacts;
+      this.patch({ artifacts });
+    }
+    this.setError(roomKey(roomId), undefined);
   }
 
   private applyArtifact(roomId: string, e: RoomsEvent) {
@@ -272,16 +332,22 @@ export class RoomsStore {
         if (this.roomTokens.get(roomId) !== token) return;
         this.roomFetches.delete(roomId);
         if (!this.watchedRooms.has(roomId)) return;
-        this.artifactsSeq.set(roomId, snap.seq);
-        this.setArtifacts(roomId, sortArtifacts(snap.data));
-        for (const e of entry.queue) this.applyArtifact(roomId, e);
+        this.batch(() => {
+          this.artifactsSeq.set(roomId, snap.seq);
+          this.setArtifacts(roomId, sortArtifacts(snap.data));
+          this.setError(roomKey(roomId), undefined);
+          for (const e of entry.queue) this.applyArtifact(roomId, e);
+        });
       },
       (err) => {
         if (this.roomTokens.get(roomId) !== token) return;
         this.roomFetches.delete(roomId);
         this.warn(`rooms: failed to load artifacts for ${roomId}`, err);
         // Keep previous data; queued events still apply against the previous snapshot seq.
-        for (const e of entry.queue) this.applyArtifact(roomId, e);
+        this.batch(() => {
+          this.setError(roomKey(roomId), message(err));
+          for (const e of entry.queue) this.applyArtifact(roomId, e);
+        });
       },
     );
     this.roomFetches.set(roomId, entry);
@@ -294,12 +360,16 @@ export class RoomsStore {
       (snap) => {
         if (this.dayTokens.get(date) !== token) return;
         this.dayFetches.delete(date);
-        this.patch({ days: { ...this.state.days, [date]: snap.data } });
+        this.batch(() => {
+          this.patch({ days: { ...this.state.days, [date]: snap.data } });
+          this.setError(dayKey(date), undefined);
+        });
       },
       (err) => {
         if (this.dayTokens.get(date) !== token) return;
         this.dayFetches.delete(date);
         this.warn(`rooms: failed to load journal day ${date}`, err);
+        this.setError(dayKey(date), message(err));
       },
     );
     this.dayFetches.set(date, p);
@@ -311,8 +381,8 @@ export class RoomsStore {
   private beginSync() {
     if (!this.started) return;
     this.clearRetry();
+    this.clearFallback();
     const gen = ++this.syncGen;
-    this.syncing = true;
     this.buffering = true;
 
     // Standalone fetches started before this sync are superseded by it; the
@@ -336,7 +406,7 @@ export class RoomsStore {
       const dayRs = results.slice(2 + rooms.length) as PromiseSettledResult<Snapshot<JournalDay>>[];
 
       if (infoR.status === "rejected" || listR.status === "rejected") {
-        this.syncing = false; // stay buffering until a retry succeeds
+        // stay buffering until a retry succeeds
         this.warn("rooms: sync failed", infoR.status === "rejected" ? infoR.reason : (listR as PromiseRejectedResult).reason);
         this.patch({ status: "error" });
         this.scheduleRetry();
@@ -344,35 +414,63 @@ export class RoomsStore {
       }
 
       this.roomsSeq = listR.value.seq;
-      let artifacts = this.state.artifacts;
-      rooms.forEach((id, i) => {
-        const r = artRs[i];
-        if (this.roomTokens.get(id) !== roomToks[i] || !this.watchedRooms.has(id)) return;
-        if (r.status === "fulfilled") {
-          this.artifactsSeq.set(id, r.value.seq);
-          artifacts = { ...artifacts, [id]: sortArtifacts(r.value.data) };
-        } else {
-          this.warn(`rooms: failed to resync artifacts for ${id}`, r.reason);
-        }
-      });
-      let days = this.state.days;
-      dayList.forEach((d, i) => {
-        const r = dayRs[i];
-        if (this.dayTokens.get(d) !== dayToks[i]) return;
-        if (r.status === "fulfilled") days = { ...days, [d]: r.value.data };
-        else this.warn(`rooms: failed to resync journal day ${d}`, r.reason);
-      });
+      // Rooms gone from the list (e.g. deleted while disconnected) lose their
+      // scope. The journal room is never listed, so it is exempt.
+      const present = new Set(listR.value.data.map((r) => r.id));
+      present.add(infoR.value.journalRoomId);
 
       this.retryAttempt = 0;
-      this.syncing = false;
       this.buffering = false;
-      this.patch({ status: "live", info: infoR.value, rooms: listR.value.data, artifacts, days });
-
-      // Drain in arrival order under the per-scope rule. Nothing here can restart
-      // the sync (resync {null} is never queued), so the drain runs to completion.
       const queued = this.queue;
       this.queue = [];
-      for (const e of queued) this.apply(e);
+
+      // Snapshot + drain land as one state change: listeners hear it once.
+      this.batch(() => {
+        let artifacts = this.state.artifacts;
+        let errors = this.state.errors;
+        const vanished: string[] = [];
+        rooms.forEach((id, i) => {
+          const r = artRs[i];
+          if (this.roomTokens.get(id) !== roomToks[i] || !this.watchedRooms.has(id)) return;
+          if (!present.has(id)) {
+            vanished.push(id);
+            return;
+          }
+          if (r.status === "fulfilled") {
+            this.artifactsSeq.set(id, r.value.seq);
+            artifacts = { ...artifacts, [id]: sortArtifacts(r.value.data) };
+            if (roomKey(id) in errors) {
+              const { [roomKey(id)]: _ok, ...rest } = errors;
+              errors = rest;
+            }
+          } else {
+            this.warn(`rooms: failed to resync artifacts for ${id}`, r.reason);
+            errors = { ...errors, [roomKey(id)]: message(r.reason) };
+          }
+        });
+        let days = this.state.days;
+        dayList.forEach((d, i) => {
+          const r = dayRs[i];
+          if (this.dayTokens.get(d) !== dayToks[i]) return;
+          if (r.status === "fulfilled") {
+            days = { ...days, [d]: r.value.data };
+            if (dayKey(d) in errors) {
+              const { [dayKey(d)]: _ok, ...rest } = errors;
+              errors = rest;
+            }
+          } else {
+            this.warn(`rooms: failed to resync journal day ${d}`, r.reason);
+            errors = { ...errors, [dayKey(d)]: message(r.reason) };
+          }
+        });
+
+        this.patch({ status: "live", info: infoR.value, rooms: listR.value.data, artifacts, days, errors });
+        for (const id of vanished) this.forgetRoom(id);
+
+        // Drain in arrival order under the per-scope rule. Nothing here can restart
+        // the sync (resync {null} is never queued), so the drain runs to completion.
+        for (const e of queued) this.apply(e);
+      });
     });
   }
 
@@ -383,6 +481,11 @@ export class RoomsStore {
       this.retryTimer = null;
       this.beginSync();
     }, delay);
+  }
+
+  private clearFallback() {
+    if (this.fallbackTimer) clearTimeout(this.fallbackTimer);
+    this.fallbackTimer = null;
   }
 
   private clearRetry() {

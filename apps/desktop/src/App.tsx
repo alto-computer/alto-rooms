@@ -65,6 +65,17 @@ function Connected({ connection }: { connection: Connection }) {
     return () => stores.rooms.stop();
   }, [stores]);
 
+  // Quitting counts as leaving the active room tab (for "new" dots next time).
+  useEffect(() => {
+    const flush = () => stores.viewer.flush();
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    };
+  }, [stores]);
+
   return (
     <StoresProvider rooms={stores.rooms} viewer={stores.viewer}>
       {/* Task 4 replaces this placeholder with the shell. */}

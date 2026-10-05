@@ -103,6 +103,20 @@ describe("ViewerStore", () => {
     expect(st.getState().lastVisit.r1).toBe("2026-10-05T03:00:00.000Z");
   });
 
+  it("flush records lastVisit for the active room tab and persists it", () => {
+    const c = clock();
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, c.now);
+    st.flush(); // active tab is "new": nothing to record
+    expect(st.getState().lastVisit).toEqual({});
+    st.open({ kind: "room", roomId: "r1" });
+    c.set("2026-10-05T04:00:00Z");
+    st.flush();
+    expect(st.getState().lastVisit.r1).toBe("2026-10-05T04:00:00.000Z");
+    expect(st.getState().activeId).not.toBeNull();
+    expect(new ViewerStore(storage, c.now).getState().lastVisit.r1).toBe("2026-10-05T04:00:00.000Z");
+  });
+
   it("isNew compares instants, using firstRunAt for rooms never visited", () => {
     const c = clock("2026-10-05T00:00:00Z");
     const st = new ViewerStore(memoryStorage(), c.now);
