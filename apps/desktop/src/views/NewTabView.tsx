@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { useReadOnly, useRooms, useViewer, useViewerStore, useWatchArtifacts } from "@/data/hooks";
-import { dateLabel, isNewSince } from "@/lib/dates";
+import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { artifactDragSource, INBOX_ID } from "@/lib/drag";
 import { OnboardingCard } from "./OnboardingCard";
 import { wantsNewTab } from "@/lib/nav";
@@ -14,10 +14,10 @@ import { wantsNewTab } from "@/lib/nav";
  *
  * Only rooms whose `updatedAt` is after their baseline can have new docs, so
  * only those are loaded (and watched while the tab is open); the rest count 0.
- * The inbox is always watched, for "방을 기다리는 문서".
+ * The inbox is always watched, for "Waiting for a room".
  *
  * When no doc is new by createdAt but some rooms (inbox aside) have never been
- * visited, the subtitle counts those as "새로 정리된 방": an agent's links keep
+ * visited, the subtitle counts those as "newly sorted rooms": an agent's links keep
  * the originals' (old) createdAt, so after onboarding nothing reads as new.
  *
  * First run (synced, and no rooms besides inbox): the welcome page takes the
@@ -100,14 +100,14 @@ export function NewTabView() {
     <div className={shell}>
       {onboardingTabId !== null && onboardingTabId === activeId ? <OnboardingCard compact /> : null}
       <header className="flex flex-col gap-2">
-        <h1 className="text-[32px] font-medium text-ink">지난 방문 이후</h1>
+        <h1 className="text-[32px] font-medium text-ink">Since your last visit</h1>
         {settled ? (
           <p className="text-[17px] text-ink-2">
             {roomsWithNew > 0
-              ? `방 ${roomsWithNew}곳에 새 문서가 들어왔어요.`
+              ? `New docs in ${count(roomsWithNew, "room")}.`
               : neverVisited > 0
-                ? `새로 정리된 방 ${neverVisited}곳이 있어요.`
-                : "새로 들어온 문서가 없어요."}
+                ? `${count(neverVisited, "newly sorted room")}.`
+                : "No new docs."}
           </p>
         ) : null}
       </header>
@@ -124,9 +124,9 @@ export function NewTabView() {
               <span data-testid="new-room-name" className="text-[18px] font-medium text-ink">
                 {room.name}
               </span>
-              {newCount > 0 ? <span className="text-[14px] text-ink">새 문서 {newCount}</span> : null}
+              {newCount > 0 ? <span className="text-[14px] text-ink">{newCount} new</span> : null}
               <span className="text-[14px] text-ink-2">
-                {room.status === "unavailable" ? "폴더를 찾을 수 없어요" : `문서 ${room.artifactCount}`}
+                {room.status === "unavailable" ? "Folder not found" : count(room.artifactCount, "doc")}
               </span>
             </button>
           </li>
@@ -137,7 +137,7 @@ export function NewTabView() {
   );
 }
 
-/** "방을 기다리는 문서": inbox docs, newest first; rows open the doc and drag onto sidebar rooms. */
+/** "Waiting for a room": inbox docs, newest first; rows open the doc and drag onto sidebar rooms. */
 function InboxList({
   artifacts,
   draggable,
@@ -151,9 +151,9 @@ function InboxList({
   return (
     <section aria-labelledby="inbox-waiting" className="flex flex-col gap-2">
       <h2 id="inbox-waiting" className="text-[18px] font-medium text-ink">
-        방을 기다리는 문서
+        Waiting for a room
       </h2>
-      {draggable ? <p className="text-[13px] text-ink-3">카드를 왼쪽 방에 끌어다 놓으면 옮겨져요</p> : null}
+      {draggable ? <p className="text-[13px] text-ink-3">Drag a card onto a room on the left to move it</p> : null}
       <ul className="mt-1 flex flex-col gap-1">
         {artifacts.map((a) => (
           <li key={a.id}>

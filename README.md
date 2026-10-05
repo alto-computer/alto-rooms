@@ -100,7 +100,7 @@ cargo test             # Rust tests (from the repo root)
 
 ## Status
 
-This is an early version (0.1). It has been tested on macOS only. The app's interface is in Korean for now.
+This is an early version (0.1). It has been tested on macOS only.
 
 ## License
 

@@ -5,21 +5,24 @@ export function localDate(d: Date = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** `{M}월 {D}일` for a `YYYY-MM-DD` date (no timezone math: it is already local). */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+/** `Oct 5` for a `YYYY-MM-DD` date (no timezone math: it is already local). */
 export function monthDay(date: string): string {
   const [, m, d] = date.split("-").map(Number);
-  return `${m}월 ${d}일`;
+  return `${MONTHS[m - 1]} ${d}`;
 }
 
 /**
- * Card date label: `오늘` when `createdAt` falls on today's local date, else
+ * Card date label: `Today` when `createdAt` falls on today's local date, else
  * `MM·DD` (zero-padded, U+00B7). Any UTC offset in `createdAt` is converted to
  * local time first. Empty for an unparseable time.
  */
 export function dateLabel(createdAt: string, now: Date = new Date()): string {
   const d = new Date(createdAt);
   if (Number.isNaN(d.getTime())) return "";
-  if (localDate(d) === localDate(now)) return "오늘";
+  if (localDate(d) === localDate(now)) return "Today";
   return `${pad(d.getMonth() + 1)}·${pad(d.getDate())}`;
 }
 
@@ -38,7 +41,7 @@ export function isNewSince(createdAt: string, baseline: string): boolean {
  */
 
 /** Weekday letters, Sunday first (weeks run Sunday → Saturday). */
-export const WEEKDAY_LETTERS = ["일", "월", "화", "수", "목", "금", "토"] as const;
+export const WEEKDAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"] as const;
 
 function parts(date: string): [number, number, number] {
   const [y, m, d] = date.split("-").map(Number);
@@ -74,7 +77,12 @@ export function dayOfMonth(date: string): number {
   return parts(date)[2];
 }
 
-/** Journal heading: `{M}월 {D}일 {요일}요일`, e.g. `10월 5일 월요일`. */
+/** Journal heading: `{Weekday}, {Mon} {D}`, e.g. `Monday, Oct 5`. */
 export function journalTitle(date: string): string {
-  return `${monthDay(date)} ${WEEKDAY_LETTERS[weekdayIndex(date)]}요일`;
+  return `${WEEKDAYS[weekdayIndex(date)]}, ${monthDay(date)}`;
+}
+
+/** `1 doc`, `3 docs`: a count with its noun, singular for exactly one. */
+export function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }

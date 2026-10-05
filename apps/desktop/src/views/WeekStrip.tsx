@@ -8,7 +8,7 @@ const NAV =
 export function WeekStrip({ date, onChange }: { date: string; onChange: (date: string) => void }) {
   return (
     <div className="flex items-center gap-1">
-      <button type="button" aria-label="이전 주" className={NAV} onClick={() => onChange(addDays(date, -7))}>
+      <button type="button" aria-label="Previous week" className={NAV} onClick={() => onChange(addDays(date, -7))}>
         <span aria-hidden className="text-[20px] leading-none">‹</span>
       </button>
       {weekOf(date).map((d, i) => {
@@ -35,7 +35,7 @@ export function WeekStrip({ date, onChange }: { date: string; onChange: (date: s
           </button>
         );
       })}
-      <button type="button" aria-label="다음 주" className={NAV} onClick={() => onChange(addDays(date, 7))}>
+      <button type="button" aria-label="Next week" className={NAV} onClick={() => onChange(addDays(date, 7))}>
         <span aria-hidden className="text-[20px] leading-none">›</span>
       </button>
     </div>

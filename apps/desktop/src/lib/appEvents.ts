@@ -1,9 +1,9 @@
 /*
  * Native (Tauri) app events.
  *
- * - The macOS menu's "새 탭" (⌘T), "탭 닫기" (⌘W), "찾기" (⌘K) and "사이드바"
+ * - The macOS menu's "New Tab" (⌘T), "Close Tab" (⌘W), "Find" (⌘K) and "Toggle Sidebar"
  *   (⌘B) arrive as `menu://new-tab`, `menu://close-tab`, `menu://find` and
- *   `menu://toggle-sidebar`; "뒤로" (⌘[) and "앞으로" (⌘]) as `menu://back`
+ *   `menu://toggle-sidebar`; "Back" (⌘[) and "Forward" (⌘]) as `menu://back`
  *   and `menu://forward`.
  * - `daemon://exited`: the roomsd we spawned died (App shows the core error).
  * - Before the window closes or the app quits, Rust emits `app://flush` and

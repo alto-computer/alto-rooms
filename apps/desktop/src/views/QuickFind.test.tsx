@@ -29,14 +29,14 @@ describe("QuickFind", () => {
   it("typing finds a doc under 문서, and Enter opens its doc tab and closes", async () => {
     const onClose = vi.fn();
     const h = await setup(onClose);
-    const input = screen.getByPlaceholderText("방이나 문서 찾기");
+    const input = screen.getByPlaceholderText("Find a room or doc");
     await act(async () => {
       fireEvent.change(input, { target: { value: "현황" } });
     });
-    const group = await screen.findByRole("group", { name: "문서" });
+    const group = await screen.findByRole("group", { name: "Docs" });
     expect(within(group).getByText("벤치마크 현황")).toBeInTheDocument();
     expect(within(group).getByText("벤치마크")).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "방" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Rooms" })).toBeNull();
     await act(async () => {
       fireEvent.keyDown(input, { key: "Enter" });
     });
@@ -48,11 +48,11 @@ describe("QuickFind", () => {
   it("matches rooms (NFC, case-insensitive) and opens the room tab", async () => {
     const onClose = vi.fn();
     const h = await setup(onClose);
-    const input = screen.getByPlaceholderText("방이나 문서 찾기");
+    const input = screen.getByPlaceholderText("Find a room or doc");
     await act(async () => {
       fireEvent.change(input, { target: { value: "벤치".normalize("NFD") } });
     });
-    const group = await screen.findByRole("group", { name: "방" });
+    const group = await screen.findByRole("group", { name: "Rooms" });
     await act(async () => {
       fireEvent.click(within(group).getByText("벤치마크"));
     });
@@ -90,7 +90,7 @@ describe("QuickFind watching", () => {
   it("normalizes titles once per list, not on every keystroke", async () => {
     const h = await setup();
     await waitFor(() => expect(h.rooms.getState().artifacts.r2).toBeDefined());
-    const input = screen.getByPlaceholderText("방이나 문서 찾기");
+    const input = screen.getByPlaceholderText("Find a room or doc");
     await act(async () => {
       fireEvent.change(input, { target: { value: "현" } });
     });

@@ -74,7 +74,7 @@ function useShortcuts(viewer: ViewerStore, openFind: () => void) {
 /**
  * Back/forward in the active tab: ⌘[ / ⌘] and ⌘← / ⌘→ (not from a text field, where
  * they indent or move the caret) and the mouse's back/forward buttons (3/4). In
- * Tauri the native menu (보기 › 뒤로/앞으로) owns ⌘[ / ⌘], as with the other shortcuts.
+ * Tauri the native menu (View › Back/Forward) owns ⌘[ / ⌘], as with the other shortcuts.
  */
 function useHistoryNav(viewer: ViewerStore) {
   useEffect(() => {

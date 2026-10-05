@@ -57,7 +57,7 @@ describe("RoomView", () => {
       },
     });
     expect(screen.getByRole("heading", { level: 1, name: "벤치마크" })).toBeInTheDocument();
-    expect(screen.getByText("문서 3")).toBeInTheDocument();
+    expect(screen.getByText("3 docs")).toBeInTheDocument();
     expect(cards().map((c) => within(c).getByTestId("card-title").textContent)).toEqual(["셋째", "둘째", "첫 문서"]);
   });
 
@@ -79,7 +79,7 @@ describe("RoomView", () => {
     });
     const [fresh, old] = cards();
     expect(within(old).getByText("03·07")).toBeInTheDocument();
-    expect(within(fresh).getByText("오늘")).toBeInTheDocument();
+    expect(within(fresh).getByText("Today")).toBeInTheDocument();
   });
 
   it("the expand button opens a doc tab, and so does Enter on the card", async () => {
@@ -88,7 +88,7 @@ describe("RoomView", () => {
       artifacts: { r1: [artifact("a", "첫 문서", longAgo), artifact("b", "둘째", longAgo)] },
     });
     const [second, first] = cards();
-    fireEvent.click(within(first).getByRole("button", { name: "새 탭에서 크게 보기" }));
+    fireEvent.click(within(first).getByRole("button", { name: "Open in new tab" }));
     let active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
     expect(active).toEqual(expect.objectContaining({ kind: "doc", roomId: "r1", artifactId: "a" }));
 
@@ -128,8 +128,8 @@ describe("RoomView", () => {
       viewer,
     });
     const [fresh, old] = cards();
-    expect(within(old).queryByLabelText("새 문서 표시")).toBeNull();
-    expect(within(fresh).getByLabelText("새 문서 표시")).toBeInTheDocument();
+    expect(within(old).queryByLabelText("New doc")).toBeNull();
+    expect(within(fresh).getByLabelText("New doc")).toBeInTheDocument();
   });
 
   it("keeps the dot while the tab stays active, even when lastVisit is written for it", async () => {
@@ -139,11 +139,11 @@ describe("RoomView", () => {
       artifacts: { r1: [artifact("new", "새 문서", "2026-06-01T00:00:00Z")] },
       viewer,
     });
-    expect(within(cards()[0]).getByLabelText("새 문서 표시")).toBeInTheDocument();
+    expect(within(cards()[0]).getByLabelText("New doc")).toBeInTheDocument();
     // flush() records leaving the active room tab now, while RoomView stays mounted.
     act(() => viewer.flush());
     expect(Date.parse(viewer.getState().lastVisit.r1)).toBeGreaterThan(Date.parse("2026-06-01T00:00:00Z"));
-    expect(within(cards()[0]).getByLabelText("새 문서 표시")).toBeInTheDocument();
+    expect(within(cards()[0]).getByLabelText("New doc")).toBeInTheDocument();
   });
 
   it("clears the dot after leaving the room tab and coming back", async () => {
@@ -154,7 +154,7 @@ describe("RoomView", () => {
       viewer,
     });
     const roomTab = viewer.getState().activeId!;
-    expect(within(cards()[0]).getByLabelText("새 문서 표시")).toBeInTheDocument();
+    expect(within(cards()[0]).getByLabelText("New doc")).toBeInTheDocument();
     act(() => {
       viewer.open({ kind: "new" }); // leaves r1: records lastVisit, unmounts RoomView
     });
@@ -162,14 +162,14 @@ describe("RoomView", () => {
     // Coming back within the unwatch linger: the artifacts are still there, no reload.
     act(() => viewer.activate(roomTab));
     expect(cards()).toHaveLength(1);
-    expect(within(cards()[0]).queryByLabelText("새 문서 표시")).toBeNull();
+    expect(within(cards()[0]).queryByLabelText("New doc")).toBeNull();
   });
 
   it("an empty room shows the empty state with the path chip", async () => {
     await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [] } });
-    expect(screen.getByText("아직 아티팩트가 없어요")).toBeInTheDocument();
-    expect(screen.getByText("에이전트에게 이 폴더에 HTML로 저장해 달라고 하세요")).toBeInTheDocument();
-    expect(screen.getByAltText("물 위로 막 올라온 수달 Clew")).toBeInTheDocument();
+    expect(screen.getByText("No artifacts yet")).toBeInTheDocument();
+    expect(screen.getByText("Ask your agent to save HTML into this folder")).toBeInTheDocument();
+    expect(screen.getByAltText("Clew the otter, peeking out of the water")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\/h\/rooms\/r1/ })).toBeInTheDocument();
   });
 
@@ -192,13 +192,13 @@ describe("RoomView", () => {
     expect(iframe.style.transform).toMatch(/^scale\(/);
   });
 
-  it("shows 문제가 생겼어요 when the first load failed", async () => {
+  it("shows Something went wrong when the first load failed", async () => {
     await renderWithStores(<RoomView roomId="r1" />, {
       rooms: [room("r1", "벤치마크")],
       artifactErrors: { r1: new Error("boom") },
     });
-    expect(screen.getByText("문제가 생겼어요")).toBeInTheDocument();
-    expect(screen.queryByText("아직 아티팩트가 없어요")).toBeNull();
+    expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+    expect(screen.queryByText("No artifacts yet")).toBeNull();
   });
 
   it("an unavailable linked room says so under the subtitle and keeps its cards", async () => {
@@ -206,14 +206,14 @@ describe("RoomView", () => {
       rooms: [room("r1", "벤치마크", { kind: "linked", status: "unavailable", artifactCount: 1 })],
       artifacts: { r1: [artifact("a", "첫 문서", longAgo)] },
     });
-    expect(screen.getByText("폴더를 찾을 수 없어요")).toBeInTheDocument();
+    expect(screen.getByText("Folder not found")).toBeInTheDocument();
     expect(cards()).toHaveLength(1);
   });
 
   it("a removed room's panel says so", async () => {
     const h = await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [] } });
     act(() => h.emit({ type: "room.removed", roomId: "r1" }));
-    expect(screen.getByText("이 방은 더 이상 없어요")).toBeInTheDocument();
+    expect(screen.getByText("This room is gone")).toBeInTheDocument();
   });
 });
 
@@ -235,7 +235,7 @@ describe("ArtifactCard: lazy preview", () => {
     );
     try {
       await renderWithStores(
-        <ArtifactCard artifact={artifact("a", "첫 문서", longAgo)} info={info} label="오늘" isNew={false} size="strip" onOpen={() => {}} />,
+        <ArtifactCard artifact={artifact("a", "첫 문서", longAgo)} info={info} label="Today" isNew={false} size="strip" onOpen={() => {}} />,
       );
       expect(screen.queryByTitle("첫 문서")).toBeNull();
       act(() => fire(true));
@@ -259,12 +259,12 @@ describe("EmptyRoom", () => {
       fireEvent.click(chip);
     });
     expect(writeText).toHaveBeenCalledWith("/Users/x/rooms/벤치마크");
-    expect(screen.getByText("복사했어요")).toBeInTheDocument();
+    expect(screen.getByText("Copied")).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(1500));
-    expect(screen.queryByText("복사했어요")).toBeNull();
+    expect(screen.queryByText("Copied")).toBeNull();
   });
 
-  it("says 문제가 생겼어요 briefly when the clipboard fails", async () => {
+  it("says Something went wrong briefly when the clipboard fails", async () => {
     vi.useFakeTimers();
     const writeText = vi.fn(async () => {
       throw new Error("denied");
@@ -274,12 +274,12 @@ describe("EmptyRoom", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /\/Volumes\/ext\/bench/ }));
     });
-    expect(screen.queryByText("복사했어요")).toBeNull();
-    const msg = screen.getByText("문제가 생겼어요");
+    expect(screen.queryByText("Copied")).toBeNull();
+    const msg = screen.getByText("Something went wrong");
     expect(msg.closest("[role=status]")).toHaveClass("text-[#c13515]");
     expect(msg.closest("[role=status]")!.querySelector("svg")).not.toBeNull();
     act(() => vi.advanceTimersByTime(3000));
-    expect(screen.queryByText("문제가 생겼어요")).toBeNull();
+    expect(screen.queryByText("Something went wrong")).toBeNull();
   });
 });
 

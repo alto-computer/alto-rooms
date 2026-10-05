@@ -54,8 +54,8 @@ function journalViewer(date = today) {
   return viewer;
 }
 
-const agentRow = () => screen.getByRole("region", { name: "에이전트가 쓴 것" });
-const meRow = () => screen.getByRole("region", { name: "내가 쓴 것" });
+const agentRow = () => screen.getByRole("region", { name: "From agents" });
+const meRow = () => screen.getByRole("region", { name: "From me" });
 
 describe("JournalView: agent row", () => {
   it("puts the Dream card first labelled 복습, then the rest by createdAt with their room names", async () => {
@@ -75,12 +75,12 @@ describe("JournalView: agent row", () => {
     });
     const cards = within(agentRow()).getAllByTestId("artifact-card");
     expect(cards.map((c) => within(c).getByTestId("card-title").textContent)).toEqual(["어젯밤 꿈", "이른 문서", "메모", "나중 문서"]);
-    expect(within(cards[0]).getByText("복습")).toBeInTheDocument();
+    expect(within(cards[0]).getByText("Review")).toBeInTheDocument();
     expect(within(cards[1]).getByText("벤치마크")).toBeInTheDocument();
     expect(within(cards[2]).getByText("Journal")).toBeInTheDocument();
     expect(within(cards[3]).getByText("리서치")).toBeInTheDocument();
     expect(within(agentRow()).getByText("4")).toBeInTheDocument();
-    expect(within(agentRow()).getByText("에이전트")).toBeInTheDocument();
+    expect(within(agentRow()).getByText("Agents")).toBeInTheDocument();
   });
 
   it("shows another room's artifact with that room's name and opens it as a doc tab", async () => {
@@ -94,18 +94,18 @@ describe("JournalView: agent row", () => {
     const frame = card.querySelector("iframe")!;
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-popups");
     expect(frame.getAttribute("src")).toBe("http://files.test/r9/x.html");
-    fireEvent.click(within(card).getByRole("button", { name: "새 탭에서 크게 보기" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Open in new tab" }));
     const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
     expect(active).toMatchObject({ kind: "doc", roomId: "r9", artifactId: "a1" });
   });
 
-  it("labels an artifact whose room isn't listed 방", async () => {
+  it("labels an artifact whose room isn't listed Room", async () => {
     await renderWithStores(<Host />, {
       viewer: journalViewer(),
       days: { [today]: { artifacts: [artifact("a1", "gone-room", "x.html", "고아 문서", `${today}T01:00:00Z`)] } },
     });
     const card = within(agentRow()).getByTestId("artifact-card");
-    expect(within(card).getByText("방")).toBeInTheDocument();
+    expect(within(card).getByText("Room")).toBeInTheDocument();
   });
 
   it("does not treat a dream.html outside the journal room as the Dream", async () => {
@@ -123,12 +123,12 @@ describe("JournalView: agent row", () => {
     });
     const cards = within(agentRow()).getAllByTestId("artifact-card");
     expect(cards.map((c) => within(c).getByTestId("card-title").textContent)).toEqual(["첫째", "가짜 꿈"]);
-    expect(screen.queryByText("복습")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review")).not.toBeInTheDocument();
   });
 
   it("shows the load-failure copy when the day can't be loaded", async () => {
     await renderWithStores(<Host />, { viewer: journalViewer(), dayErrors: { [today]: new Error("boom") } });
-    expect(screen.getByText("문제가 생겼어요")).toBeInTheDocument();
+    expect(screen.getByText("Something went wrong")).toBeInTheDocument();
   });
 });
 
@@ -136,9 +136,9 @@ describe("JournalView: header and week strip", () => {
   it("titles the day and marks today", async () => {
     await renderWithStores(<Host />, { viewer: journalViewer() });
     const [, m, d] = today.split("-").map(Number);
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(new RegExp(`^${m}월 ${d}일 .요일$`));
-    expect(screen.getByText("오늘")).toBeInTheDocument();
-    expect(screen.getAllByText(/^[일월화수목금토]$/).map((e) => e.textContent)).toEqual(["일", "월", "화", "수", "목", "금", "토"]);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(new RegExp(`^[A-Z][a-z]+day, ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1]} ${d}$`));
+    expect(screen.getByText("Today")).toBeInTheDocument();
+    expect(screen.getAllByText(/^[SMTWF]$/).map((e) => e.textContent)).toEqual(["S", "M", "T", "W", "T", "F", "S"]);
   });
 
   it("moves by a week with ‹ › and selects a day by clicking it, in the same tab", async () => {
@@ -146,38 +146,38 @@ describe("JournalView: header and week strip", () => {
     await renderWithStores(<Host />, { viewer });
     const tabId = viewer.getState().tabs.find((t) => t.kind === "journal")!.id;
     const count = viewer.getState().tabs.length;
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("10월 5일 월요일");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Monday, Oct 5");
 
-    fireEvent.click(screen.getByRole("button", { name: "다음 주" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
     expect(viewer.getState().tabs.find((t) => t.id === tabId)).toMatchObject({ kind: "journal", date: "2026-10-12" });
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("10월 12일 월요일");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Monday, Oct 12");
 
-    fireEvent.click(screen.getByRole("button", { name: "이전 주" }));
-    fireEvent.click(screen.getByRole("button", { name: "이전 주" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous week" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous week" }));
     expect(viewer.getState().tabs.find((t) => t.id === tabId)).toMatchObject({ date: "2026-09-28" });
 
-    fireEvent.click(screen.getByRole("button", { name: "10월 3일" }));
+    fireEvent.click(screen.getByRole("button", { name: "Oct 3" }));
     expect(viewer.getState().tabs.find((t) => t.id === tabId)).toMatchObject({ date: "2026-10-03" });
-    expect(screen.getByRole("button", { name: "10월 3일" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("10월 3일 토요일");
+    expect(screen.getByRole("button", { name: "Oct 3" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Saturday, Oct 3");
     expect(viewer.getState().tabs.length).toBe(count);
   });
 
   it("shows 오늘 only for the local today", async () => {
     await renderWithStores(<Host />, { viewer: journalViewer(addDays(today, -1)) });
-    expect(screen.queryByText("오늘")).not.toBeInTheDocument();
+    expect(screen.queryByText("Today")).not.toBeInTheDocument();
   });
 });
 
 describe("JournalView: me row and new note", () => {
-  it("lists 새 노트 first, then notes by name (shown without .md), and opens a note tab with the file name", async () => {
+  it("lists New note first, then notes by name (shown without .md), and opens a note tab with the file name", async () => {
     const { viewer } = await renderWithStores(<Host />, {
       viewer: journalViewer(),
       days: { [today]: { notes: [note(today, "회고.md"), note(today, "계획.md")] } },
     });
     const buttons = within(meRow()).getAllByRole("button");
-    expect(buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["새 노트", "계획", "회고"]);
-    expect(within(meRow()).getByText("나")).toBeInTheDocument();
+    expect(buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["New note", "계획", "회고"]);
+    expect(within(meRow()).getByText("Me")).toBeInTheDocument();
     expect(within(meRow()).getByText("2")).toBeInTheDocument();
     expect(within(meRow()).getByText("회고")).toBeInTheDocument();
     fireEvent.click(within(meRow()).getByRole("button", { name: "회고" }));
@@ -191,13 +191,13 @@ describe("JournalView: me row and new note", () => {
     expect(within(meRow()).getByText("J")).toBeInTheDocument();
   });
 
-  it("새 노트 asks for no name: it creates New Note at once and opens it in a new tab, cursor in the body", async () => {
+  it("New note asks for no name: it creates New Note at once and opens it in a new tab, cursor in the body", async () => {
     const { viewer, client } = await renderWithStores(<Host />, { viewer: journalViewer() });
     const before = viewer.getState().tabs.length;
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+      fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
-    expect(screen.queryByLabelText("노트 이름")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Note name")).not.toBeInTheDocument();
     expect(client.getNote).toHaveBeenCalledWith(today, "New Note.md");
     expect(client.saveNote).toHaveBeenCalledTimes(1);
     expect(client.saveNote).toHaveBeenCalledWith(today, "New Note.md", "");
@@ -213,7 +213,7 @@ describe("JournalView: me row and new note", () => {
       days: { [today]: { notes: [note(today, "new note.md")] } },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+      fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
     expect(client.getNote).not.toHaveBeenCalledWith(today, "New Note.md");
     expect(client.saveNote).toHaveBeenCalledWith(today, "New Note 2.md", "");
@@ -225,7 +225,7 @@ describe("JournalView: me row and new note", () => {
       days: { [today]: { notes: [note(today, "New Note.md"), note(today, "NEW NOTE 2.md")] } },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+      fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
     expect(r.client.saveNote).toHaveBeenCalledWith(today, "New Note 3.md", "");
   });
@@ -236,7 +236,7 @@ describe("JournalView: me row and new note", () => {
       notes: { [`${today}/New Note.md`]: "이미 쓴 글" },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+      fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
     expect(client.getNote).toHaveBeenCalledWith(today, "New Note.md");
     expect(client.saveNote).not.toHaveBeenCalledWith(today, "New Note.md", expect.anything());
@@ -251,10 +251,10 @@ describe("JournalView: me row and new note", () => {
       notes: { [`${today}/New Note.md`]: new RoomsApiError(500, "boom") },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+      fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
     expect(client.saveNote).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent("문제가 생겼어요");
+    expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong");
     expect(viewer.getState().tabs.some((t) => t.kind === "note")).toBe(false);
   });
 
@@ -262,17 +262,17 @@ describe("JournalView: me row and new note", () => {
     const { client, viewer } = await renderWithStores(<Host />, { viewer: journalViewer() });
     client.saveNote.mockRejectedValueOnce(new RoomsApiError(500, "disk", "write_failed"));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+      fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
-    expect(screen.getByRole("alert")).toHaveTextContent("저장하지 못했어요. 다시 시도할게요");
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't save. Trying again");
     expect(viewer.getState().tabs.some((t) => t.kind === "note")).toBe(false);
   });
 
   it("a second click while creating does not create a second note", async () => {
     const { client } = await renderWithStores(<Host />, { viewer: journalViewer() });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
-      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+      fireEvent.click(screen.getByRole("button", { name: "New note" }));
+      fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
     expect(client.saveNote).toHaveBeenCalledTimes(1);
   });
@@ -287,9 +287,9 @@ describe("JournalView: me row and new note", () => {
     expect(active).toMatchObject({ kind: "note", date: today, name: "x.md.md" });
   });
 
-  it("hides 새 노트 in read-only mode", async () => {
+  it("hides New note in read-only mode", async () => {
     await renderWithStores(<Host />, { viewer: journalViewer(), readOnly: true, days: { [today]: { notes: [note(today, "계획.md")] } } });
-    expect(screen.queryByRole("button", { name: "새 노트" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New note" })).not.toBeInTheDocument();
     expect(within(meRow()).getByRole("button", { name: "계획" })).toBeInTheDocument();
   });
 });

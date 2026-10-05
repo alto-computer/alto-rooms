@@ -41,7 +41,7 @@ export function historyKey(e: KeyboardEvent): "back" | "forward" | null {
   return HISTORY_CODES[e.code] ?? null;
 }
 
-/** ⌘[ / ⌘]: the native menu's 뒤로/앞으로 accelerators (a menu item takes only one, so ⌘←/⌘→ stay with the page). */
+/** ⌘[ / ⌘]: the native menu's Back/Forward accelerators (a menu item takes only one, so ⌘←/⌘→ stay with the page). */
 export const isMenuHistoryKey = (e: KeyboardEvent) => e.code === "BracketLeft" || e.code === "BracketRight";
 
 /** An input, textarea or contenteditable element: typing goes there. */

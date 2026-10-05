@@ -25,7 +25,7 @@ const sameConnection = (a: Connection, b: Connection) => a.baseUrl === b.baseUrl
  *
  * The core counts as lost when the daemon we spawned exits (`daemon://exited`)
  * or when the rooms store stays in error through 2 retries. Then the full-panel
- * error shows; "다시 시도" runs `connect` again (Rust respawns the daemon). A
+ * error shows; "Try again" runs `connect` again (Rust respawns the daemon). A
  * new connection (URL or token changed) gets a new client and stores, and live
  * note savers are rebound to it so unsaved notes still land.
  */
@@ -130,14 +130,14 @@ export default function App() {
       <main className="flex h-screen flex-col items-center justify-center gap-4 bg-surface text-ink">
         <div className="flex items-center gap-2 text-[#c13515]">
           <AlertCircle size={20} aria-hidden />
-          <p className="text-[17px] font-medium">Rooms 코어를 시작하지 못했어요</p>
+          <p className="text-[17px] font-medium">Couldn't start the Rooms core</p>
         </div>
         <button
           type="button"
           onClick={connect}
           className="rounded-lg bg-[#ff385c] px-4 py-2 text-[14px] font-medium text-white focus-visible:outline-2 focus-visible:outline-ink"
         >
-          다시 시도
+          Try again
         </button>
       </main>
     );

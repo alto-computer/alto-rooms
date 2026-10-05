@@ -79,7 +79,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
           <span className="text-[17px] font-medium text-ink">Rooms</span>
           <button
             type="button"
-            aria-label="사이드바 접기 (⌘B)"
+            aria-label="Hide sidebar (⌘B)"
             onClick={() => viewer.setSidebarOpen(false)}
             className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
           >
@@ -90,7 +90,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
         <nav className="mt-4 flex flex-col gap-0.5">
           <button type="button" onClick={onFind} className={cn(ITEM, ITEM_INTERACTIVE)}>
             <Search {...ICON} className="shrink-0 text-ink-2" />
-            <span className="truncate">찾기</span>
+            <span className="truncate">Find</span>
           </button>
           <button
             type="button"
@@ -104,11 +104,11 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
         </nav>
 
         <div className="mt-5 flex min-h-7 items-center justify-between pl-2.5">
-          <span className="text-[12px] text-ink-3">방</span>
+          <span className="text-[12px] text-ink-3">Your rooms</span>
           {readOnly ? null : (
             <button
               type="button"
-              aria-label="새 방"
+              aria-label="New room"
               onClick={() => setCreating(true)}
               className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
             >
@@ -117,7 +117,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
           )}
         </div>
 
-        <ul aria-label="방" className="no-scrollbar mt-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
+        <ul aria-label="Rooms" className="no-scrollbar mt-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
           {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
           {rooms.map((room) => (
             <RoomRow
@@ -141,7 +141,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             onClick={() => viewer.openOnboarding()}
             className="mt-2 self-start rounded-lg px-2.5 py-1.5 text-[13px] text-ink-3 hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
           >
-            에이전트로 정리하기
+            Sort with an agent
           </button>
         )}
       </div>
@@ -211,7 +211,7 @@ function RoomRow({
           <EditableTitle
             value={room.name}
             defaultEditing
-            ariaLabel="방 이름"
+            ariaLabel="Room name"
             onSave={async (next) => {
               await client.renameRoom(room.id, next);
             }}
@@ -250,7 +250,7 @@ function RoomRow({
       {unavailable ? (
         <Tooltip>
           <TooltipTrigger asChild>{row}</TooltipTrigger>
-          <TooltipContent side="right">폴더를 찾을 수 없어요</TooltipContent>
+          <TooltipContent side="right">Folder not found</TooltipContent>
         </Tooltip>
       ) : (
         row

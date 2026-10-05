@@ -23,13 +23,13 @@ test("Review Focus 4: a hostile artifact can't navigate the app or write to room
   });
 
   // The strip preview runs the script…
-  await page.getByRole("list", { name: "방" }).getByRole("button", { name: "보안" }).click();
+  await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "보안" }).click();
   const c = page.getByTestId("artifact-card").filter({ hasText: "수상한 문서" });
   await expect(c).toBeVisible({ timeout: 2000 });
   await expect(c.locator("iframe")).toHaveAttribute("sandbox", "allow-scripts allow-popups");
   // …and so does the full doc tab.
   await c.hover();
-  await c.getByRole("button", { name: "새 탭에서 크게 보기" }).click();
+  await c.getByRole("button", { name: "Open in new tab" }).click();
   await expect(page.getByRole("tab", { name: "수상한 문서", selected: true })).toBeVisible();
 
   await expect.poll(() => ran).toBeGreaterThanOrEqual(2); // strip preview + doc tab
@@ -39,6 +39,6 @@ test("Review Focus 4: a hostile artifact can't navigate the app or write to room
   const rooms = await daemon.listRooms();
   expect(rooms.map((r) => r.name)).not.toContain("x");
   expect(await daemon.exists("x")).toBe(false);
-  // The app ignored the message: still on the doc tab, nothing else opened.
-  await expect(page.getByRole("tab")).toHaveCount(3);
+  // The app ignored the message: still on the doc tab, nothing else opened (room tab + doc tab).
+  await expect(page.getByRole("tab")).toHaveCount(2);
 });

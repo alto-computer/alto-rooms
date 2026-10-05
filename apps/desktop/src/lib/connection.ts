@@ -16,5 +16,5 @@ declare global {
 export async function resolveConnection(): Promise<Connection> {
   if (isTauri()) return invoke<Connection>("connect");
   if (window.__ROOMS_DEV__) return window.__ROOMS_DEV__;
-  throw new Error("Rooms 연결 정보가 없어요");
+  throw new Error("Missing Rooms connection info");
 }

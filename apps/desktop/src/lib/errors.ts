@@ -1,23 +1,23 @@
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 
 /** Spec §3 `write_failed` copy; also the autosave error line. */
-export const SAVE_FAILED = "저장하지 못했어요. 다시 시도할게요";
+export const SAVE_FAILED = "Couldn't save. Trying again";
 
 /** Spec §3 `invalid_room_name` copy; also an invalid note name. */
-export const INVALID_NAME = "쓸 수 없는 이름이에요";
+export const INVALID_NAME = "That name can't be used";
 
 /** Spec §3 copy, verbatim, by `RoomsApiError.code`. */
 const COPY: Record<string, string> = {
   invalid_room_name: INVALID_NAME,
-  room_exists: "같은 이름의 방이 있어요",
-  note_exists: "같은 이름의 노트가 있어요",
-  unsupported_version: "앱을 업데이트해 주세요",
+  room_exists: "A room with that name already exists",
+  note_exists: "A note with that name already exists",
+  unsupported_version: "Please update the app",
   write_failed: SAVE_FAILED,
-  invalid_link_path: "폴더를 찾을 수 없어요",
-  overlapping_room: "이미 연결된 폴더와 겹쳐요",
+  invalid_link_path: "Folder not found",
+  overlapping_room: "This overlaps a folder that is already linked",
 };
 
-export const GENERIC_ERROR = "문제가 생겼어요";
+export const GENERIC_ERROR = "Something went wrong";
 
 /** User-facing copy for any thrown value. */
 export function errorCopy(e: unknown): string {
@@ -36,7 +36,7 @@ export function noteNameErrorCopy(e: unknown): string {
 }
 
 /** Spec copy for a refused move (linked/journal room, bad id): roomsd says `invalid_input`. */
-export const MOVE_REFUSED = "옮길 수 없는 문서예요";
+export const MOVE_REFUSED = "This doc can't be moved";
 
 /**
  * Copy for a failed artifact move. `invalid_input` is scoped to moves here

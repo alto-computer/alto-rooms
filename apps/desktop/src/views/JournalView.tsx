@@ -37,16 +37,16 @@ const byCreated = (a: Artifact, b: Artifact) => {
 
 type AgentCard = { artifact: Artifact; label: string };
 
-/** Dream first ("복습"), then the rest by createdAt (then id), each labelled with its source room. */
+/** Dream first ("Review"), then the rest by createdAt (then id), each labelled with its source room. */
 export function agentCards(artifacts: readonly Artifact[], date: string, info: Info, rooms: readonly Room[]): AgentCard[] {
   const isDream = (a: Artifact) => a.roomId === info.journalRoomId && a.relPath === `${date}/dream.html`;
   const label = (a: Artifact) => {
     if (a.roomId === info.journalRoomId) return "Journal";
-    return rooms.find((r) => r.id === a.roomId)?.name ?? "방";
+    return rooms.find((r) => r.id === a.roomId)?.name ?? "Room";
   };
   const dream = artifacts.filter(isDream);
   const rest = artifacts.filter((a) => !isDream(a)).sort(byCreated);
-  return [...dream.map((artifact) => ({ artifact, label: "복습" })), ...rest.map((artifact) => ({ artifact, label: label(artifact) }))];
+  return [...dream.map((artifact) => ({ artifact, label: "Review" })), ...rest.map((artifact) => ({ artifact, label: label(artifact) }))];
 }
 
 function RowLabel({ avatar, name, count }: { avatar: ReactNode; name: string; count: number }) {
@@ -63,7 +63,7 @@ function RowLabel({ avatar, name, count }: { avatar: ReactNode; name: string; co
 const MAX_NEW_NOTE_TRIES = 50;
 
 /**
- * 새 노트: no name asked. Creates the first free default name ("New Note",
+ * New note: no name asked. Creates the first free default name ("New Note",
  * "New Note 2", …) and opens it in a new tab with the cursor in the body.
  * Never saves over a note: a name in the day list is skipped, and since that
  * list may lag behind the disk, the rest are confirmed with getNote (404 = free).
@@ -107,13 +107,13 @@ function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly No
     <div className="flex w-[160px] shrink-0 flex-col gap-2">
       <button
         type="button"
-        aria-label="새 노트"
+        aria-label="New note"
         aria-busy={busy || undefined}
         onClick={() => void create()}
         className="flex h-[150px] w-[160px] shrink-0 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#ddd] bg-white text-ink-2 hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
         <Plus size={22} aria-hidden />
-        <span className="text-[15px]">새 노트</span>
+        <span className="text-[15px]">New note</span>
       </button>
       {error ? (
         <p role="alert" className="flex items-center gap-1.5 text-[14px] text-[#c13515]">
@@ -182,14 +182,14 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   } else {
     body = (
       <>
-        <section aria-label="에이전트가 쓴 것" className="flex flex-col gap-4">
+        <section aria-label="From agents" className="flex flex-col gap-4">
           <RowLabel
             avatar={
               <span className="grid size-6 place-items-center overflow-hidden rounded-full bg-[#f2f2f2]">
                 <img src={otterAvatar} alt="" className="size-5" />
               </span>
             }
-            name="에이전트"
+            name="Agents"
             count={cards.length}
           />
           <div data-scroll-root className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto overflow-y-hidden px-12 pt-2.5 pb-1">
@@ -208,14 +208,14 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
               : null}
           </div>
         </section>
-        <section aria-label="내가 쓴 것" className="flex flex-col gap-4">
+        <section aria-label="From me" className="flex flex-col gap-4">
           <RowLabel
             avatar={
               <span aria-hidden={!initial} className="grid size-6 place-items-center rounded-full bg-[#222] text-[12px] text-white">
                 {initial}
               </span>
             }
-            name="나"
+            name="Me"
             count={notes.length}
           />
           <div className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto px-12 pt-2.5 pb-1">
@@ -234,7 +234,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-baseline gap-3">
           <h1 className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>
-          {isToday ? <span className="text-[17px] text-ink-2">오늘</span> : null}
+          {isToday ? <span className="text-[17px] text-ink-2">Today</span> : null}
         </div>
         <WeekStrip date={date} onChange={setDate} />
       </header>

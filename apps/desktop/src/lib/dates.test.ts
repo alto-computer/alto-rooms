@@ -15,7 +15,7 @@ describe("dateLabel", () => {
   const now = new Date(2026, 9, 5, 15, 0, 0); // local 2026-10-05 15:00
 
   it("says 오늘 for a local time earlier today", () => {
-    expect(dateLabel(new Date(2026, 9, 5, 9, 30).toISOString(), now)).toBe("오늘");
+    expect(dateLabel(new Date(2026, 9, 5, 9, 30).toISOString(), now)).toBe("Today");
   });
 
   it("is MM·DD (zero-padded, U+00B7) for other days", () => {
@@ -28,9 +28,9 @@ describe("dateLabel", () => {
   it("uses the local date at the midnight boundaries", () => {
     const justAfterMidnight = new Date(2026, 9, 5, 0, 0, 30);
     expect(dateLabel(new Date(2026, 9, 4, 23, 59, 59).toISOString(), justAfterMidnight)).toBe("10·04");
-    expect(dateLabel(new Date(2026, 9, 5, 0, 0, 0).toISOString(), justAfterMidnight)).toBe("오늘");
+    expect(dateLabel(new Date(2026, 9, 5, 0, 0, 0).toISOString(), justAfterMidnight)).toBe("Today");
     const justBeforeMidnight = new Date(2026, 9, 5, 23, 59, 59);
-    expect(dateLabel(new Date(2026, 9, 5, 0, 0, 0).toISOString(), justBeforeMidnight)).toBe("오늘");
+    expect(dateLabel(new Date(2026, 9, 5, 0, 0, 0).toISOString(), justBeforeMidnight)).toBe("Today");
     expect(dateLabel(new Date(2026, 9, 6, 0, 0, 0).toISOString(), justBeforeMidnight)).toBe("10·06");
   });
 
@@ -38,7 +38,7 @@ describe("dateLabel", () => {
     const earlyToday = new Date(2026, 9, 5, 0, 30); // local 00:30 today
     const lateYesterday = new Date(2026, 9, 4, 23, 30); // local 23:30 yesterday
     for (const off of [-12 * 60, -5 * 60, -150, 0, 330, 9 * 60, 14 * 60]) {
-      expect(dateLabel(withOffset(earlyToday, off), now)).toBe("오늘");
+      expect(dateLabel(withOffset(earlyToday, off), now)).toBe("Today");
       expect(dateLabel(withOffset(lateYesterday, off), now)).toBe("10·04");
     }
   });
@@ -106,7 +106,7 @@ describe("calendar-date math (YYYY-MM-DD, local calendar)", () => {
   });
 
   it("weeks run Sunday → Saturday", () => {
-    expect(WEEKDAY_LETTERS).toEqual(["일", "월", "화", "수", "목", "금", "토"]);
+    expect(WEEKDAY_LETTERS).toEqual(["S", "M", "T", "W", "T", "F", "S"]);
     expect(weekdayIndex("2026-10-05")).toBe(1); // Monday
     expect(weekdayIndex("2026-10-04")).toBe(0); // Sunday
     expect(weekOf("2026-10-05")).toEqual(["2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10"]);
@@ -118,8 +118,8 @@ describe("calendar-date math (YYYY-MM-DD, local calendar)", () => {
   });
 
   it("titles a day as {M}월 {D}일 {요일}요일", () => {
-    expect(journalTitle("2026-10-05")).toBe("10월 5일 월요일");
-    expect(journalTitle("2026-10-04")).toBe("10월 4일 일요일");
-    expect(journalTitle("2027-01-02")).toBe("1월 2일 토요일");
+    expect(journalTitle("2026-10-05")).toBe("Monday, Oct 5");
+    expect(journalTitle("2026-10-04")).toBe("Sunday, Oct 4");
+    expect(journalTitle("2027-01-02")).toBe("Saturday, Jan 2");
   });
 });

@@ -53,7 +53,7 @@ const warn = (...args: unknown[]) => console.warn(...args);
  * move to the new name. The view re-renders with that name and keeps the saver.
  */
 export function NoteView({ tabId, date, name }: { tabId?: string; date: string; name: string }) {
-  // `name` is the on-disk file name (e.g. `계획.md`, `x.md.md`): the API gets it
+  // `name` is the on-disk file name (e.g. `Plan.md`, `x.md.md`): the API gets it
   // unchanged; one `.md` is stripped only for display.
   const title = noteBase(name);
   const fileName = noteFileName(name);
@@ -82,7 +82,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   }, [client, date, name, fileName]);
   const st = useSaverState(saver);
 
-  // Initial load (and "다시 시도").
+  // Initial load (and "Try again").
   const [load, setLoad] = useState<"loading" | "ready" | "error">("loading");
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -210,7 +210,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             value={title}
             onSave={rename}
             copyError={noteNameErrorCopy}
-            ariaLabel="노트 이름"
+            ariaLabel="Note name"
             readOnly={readOnly}
             className="w-full truncate text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink"
           />
@@ -225,7 +225,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[14px] text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
           >
             <ExternalLink size={15} aria-hidden />
-            다른 편집기로 열기
+            Open in another editor
           </button>
         )}
       </header>
@@ -238,7 +238,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             onClick={() => setAttempt((n) => n + 1)}
             className="rounded-md px-1.5 text-ink underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ink"
           >
-            다시 시도
+            Try again
           </button>
         </p>
       ) : null}
@@ -250,7 +250,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
       ) : null}
       {offer ? (
         <p role="status" className="flex items-center gap-3 text-[14px] text-ink-2">
-          저장되지 않았던 글이 있어요
+          You have unsaved text
           <button
             type="button"
             onClick={() => {
@@ -259,7 +259,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             }}
             className="rounded-md px-1.5 text-ink underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ink"
           >
-            되살리기
+            Restore
           </button>
           <button
             type="button"
@@ -269,7 +269,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             }}
             className="rounded-md px-1.5 text-ink-2 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ink"
           >
-            버리기
+            Discard
           </button>
         </p>
       ) : null}
@@ -280,7 +280,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
         </p>
       ) : null}
       <textarea
-        aria-label="노트"
+        aria-label="Note"
         data-note-editor=""
         ref={textareaRef}
         value={st.text}

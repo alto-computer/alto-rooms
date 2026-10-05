@@ -7,7 +7,7 @@ import { pickFolder } from "@/lib/native";
 /**
  * The inline "new room" row at the top of the room list. Enter creates the
  * room and opens its tab right away (the list itself updates from SSE);
- * Escape cancels. Below it, "기존 폴더 연결…" links an existing folder.
+ * Escape cancels. Below it, "Link a folder…" links an existing folder.
  */
 export function NewRoomRow({ onDone }: { onDone: () => void }) {
   const client = useClient();
@@ -64,7 +64,7 @@ export function NewRoomRow({ onDone }: { onDone: () => void }) {
       <div className="flex min-h-9 items-center gap-2.5 rounded-lg bg-white px-2.5 text-[15px] shadow-[0_0_0_2px_#222]">
         <Folder size={17} strokeWidth={1.75} aria-hidden className="shrink-0" />
         <label htmlFor={inputId} className="sr-only">
-          새 방 이름
+          New room name
         </label>
         <input
           ref={inputRef}
@@ -105,7 +105,7 @@ export function NewRoomRow({ onDone }: { onDone: () => void }) {
         disabled={busy}
         className="self-start rounded-lg px-2.5 py-1.5 text-[14px] text-ink-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-ink disabled:opacity-60"
       >
-        기존 폴더 연결…
+        Link a folder…
       </button>
     </li>
   );

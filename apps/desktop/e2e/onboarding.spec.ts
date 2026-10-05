@@ -1,6 +1,6 @@
 /*
  * Plan 3 onboarding: the first-run card on a fresh home, and moving an inbox
- * doc onto a room by dragging its "방을 기다리는 문서" row onto the sidebar.
+ * doc onto a room by dragging its "Waiting for a room" row onto the sidebar.
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -9,10 +9,10 @@ import type { Page } from "@playwright/test";
 import { APP_ORIGIN, artifactHtml, expect, test, today } from "./fixtures";
 
 const SCREENS = path.join(import.meta.dirname, "__screens__");
-const HEADING = "Rooms에 오신 걸 환영해요";
-const MARKER = "<!-- rooms-onboarding v3 -->";
+const HEADING = "Welcome to Rooms";
+const MARKER = "<!-- rooms-onboarding v4 -->";
 
-const waitingList = (page: Page) => page.getByRole("region", { name: "방을 기다리는 문서" });
+const waitingList = (page: Page) => page.getByRole("region", { name: "Waiting for a room" });
 
 test("a fresh home shows the welcome page, and roomsd wrote ONBOARD.md with the marker", async ({ page, daemon }) => {
   await page.goto("/");
@@ -21,10 +21,10 @@ test("a fresh home shows the welcome page, and roomsd wrote ONBOARD.md with the 
   expect(onboard.split("\n")[0]).toBe(MARKER);
 
   // The chip shows the one-liner pointing at this home's ONBOARD.md; 복사 copies it.
-  const line = `${daemon.home}/ONBOARD.md 를 읽고 따라 해줘`;
+  const line = `Read ${daemon.home}/ONBOARD.md and follow it.`;
   await expect(page.getByTestId("welcome-prompt")).toHaveText(line);
   const copy = page.getByTestId("welcome-copy");
-  await expect(copy).toHaveText("복사");
+  await expect(copy).toHaveText("Copy");
   const cards = page.getByTestId("example-card");
   await expect(cards).toHaveCount(3);
 
@@ -40,13 +40,13 @@ test("a fresh home shows the welcome page, and roomsd wrote ONBOARD.md with the 
 
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: APP_ORIGIN });
   await copy.click();
-  await expect(copy).toHaveText("복사했어요");
+  await expect(copy).toHaveText("Copied");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(line);
-  await expect(copy).toHaveText("복사");
+  await expect(copy).toHaveText("Copy");
 
   // An example card copies its own text.
-  const example = "오늘 대화를 복습용 HTML로 만들어서 오늘 Journal에 넣어줘";
-  await page.getByRole("button", { name: `예시 복사: ${example}`, exact: true }).click();
+  const example = "Turn today's conversation into an HTML review and put it in today's Journal";
+  await page.getByRole("button", { name: `Copy example: ${example}`, exact: true }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(example);
 
   // Narrow: the pile falls back to a straight stacked column inside the panel.
@@ -60,7 +60,7 @@ test("a fresh home shows the welcome page, and roomsd wrote ONBOARD.md with the 
   expect(boxes[2]!.y).toBeGreaterThan(boxes[1]!.y + boxes[1]!.height - 1);
   await expectNoHorizontalOverflow(page);
   await cards.nth(2).scrollIntoViewIfNeeded(); // show the stacked cards and the tips box
-  await page.getByRole("complementary", { name: "팁" }).scrollIntoViewIfNeeded();
+  await page.getByRole("complementary", { name: "Tip" }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(SCREENS, "onboarding-narrow.png") });
 });
 
@@ -97,7 +97,7 @@ test("dragging an inbox row onto room a moves the link, keeps the original and i
     await page.goto("/");
     const row = waitingList(page).getByTestId("inbox-row").filter({ hasText: "기다리는 문서" });
     await expect(row).toBeVisible();
-    const target = page.getByRole("list", { name: "방" }).getByRole("button", { name: "a", exact: true });
+    const target = page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "a", exact: true });
     await expect(target).toBeVisible();
 
     await row.dragTo(target);

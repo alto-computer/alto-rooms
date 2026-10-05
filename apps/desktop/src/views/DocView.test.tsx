@@ -39,7 +39,7 @@ describe("DocView", () => {
     await act(async () => {
       fake.emit({ type: "artifact.removed", roomId: "r1", artifactId: "a1" });
     });
-    expect(screen.getByText("이 문서는 더 이상 없어요")).toBeInTheDocument();
+    expect(screen.getByText("This doc is gone")).toBeInTheDocument();
     expect(document.querySelector("iframe")).toBeNull();
   });
 
@@ -48,7 +48,7 @@ describe("DocView", () => {
       rooms: [room("r1", "방")],
       artifactErrors: { r1: new Error("boom") },
     });
-    expect(screen.getByText("문제가 생겼어요")).toBeInTheDocument();
+    expect(screen.getByText("Something went wrong")).toBeInTheDocument();
   });
 });
 
@@ -61,6 +61,6 @@ describe("DocView: removed room", () => {
     await act(async () => {
       fake.emit({ type: "room.removed", roomId: "r1" });
     });
-    expect(screen.getByText("이 문서는 더 이상 없어요")).toBeInTheDocument();
+    expect(screen.getByText("This doc is gone")).toBeInTheDocument();
   });
 });

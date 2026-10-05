@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 
 const INFO_URL: &str = "http://127.0.0.1:4317/v1/info";
 const BASE_URL: &str = "http://127.0.0.1:4317";
-const START_ERROR: &str = "Rooms 코어를 시작하지 못했어요";
+const START_ERROR: &str = "Couldn't start the Rooms core";
 /** Emitted when the roomsd this app spawned exits on its own. */
 pub const DAEMON_EXITED: &str = "daemon://exited";
 
@@ -212,7 +212,7 @@ fn reuse(home: String) -> Result<Connection, String> {
         let got_c = std::fs::canonicalize(&home).unwrap_or_else(|_| PathBuf::from(&home));
         if want_c != got_c {
             return Err(format!(
-                "실행 중인 Rooms 코어의 홈({})이 ROOMS_HOME({})과 달라요",
+                "The running Rooms core uses home {}, but ROOMS_HOME is {}",
                 got_c.display(),
                 want_c.display()
             ));
@@ -324,11 +324,11 @@ pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connec
     Ok(conn)
 }
 
-/// First char of `$USER`, uppercased; "나" when unavailable.
+/// First char of `$USER`, uppercased; "Me" when unavailable.
 pub fn initial_from(user: Option<&str>) -> String {
     user.and_then(|u| u.chars().next())
         .map(|c| c.to_uppercase().collect())
-        .unwrap_or_else(|| "나".to_string())
+        .unwrap_or_else(|| "Me".to_string())
 }
 
 #[tauri::command]
@@ -473,8 +473,8 @@ mod tests {
     #[test]
     fn initial_uppercases_or_falls_back() {
         assert_eq!(initial_from(Some("jamie")), "J");
-        assert_eq!(initial_from(Some("")), "나");
-        assert_eq!(initial_from(None), "나");
+        assert_eq!(initial_from(Some("")), "Me");
+        assert_eq!(initial_from(None), "Me");
     }
 
     #[test]

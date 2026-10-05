@@ -45,18 +45,18 @@ async function beforeSync(ui: ReactNode) {
 }
 
 describe("info === null is read-only", () => {
-  it("Journal hides 새 노트 until the first sync", async () => {
+  it("Journal hides New note until the first sync", async () => {
     const { rooms, sync } = await beforeSync(<JournalView date={DATE} />);
     expect(rooms.getState().info).toBeNull();
     expect(rooms.getState().days[DATE]).toBeDefined();
-    expect(screen.queryByRole("button", { name: "새 노트" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
     await sync();
-    expect(screen.getByRole("button", { name: "새 노트" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New note" })).toBeInTheDocument();
   });
 
   it("the note body is read-only until the first sync", async () => {
     const { sync } = await beforeSync(<NoteView date={DATE} name="계획.md" />);
-    const body = screen.getByRole("textbox", { name: "노트" });
+    const body = screen.getByRole("textbox", { name: "Note" });
     expect(body).toHaveValue("본문");
     expect(body).toHaveAttribute("readonly");
     await sync();

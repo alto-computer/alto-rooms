@@ -1,7 +1,7 @@
 import { useRef, type ReactNode } from "react";
 import { CircleAlert } from "lucide-react";
 import { useArtifacts, useClient, useReadOnly, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
-import { dateLabel, isNewSince } from "@/lib/dates";
+import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { ArtifactCard } from "./ArtifactCard";
 import { EditableTitle } from "./EditableTitle";
@@ -13,7 +13,7 @@ function Centered({ children }: { children: ReactNode }) {
 }
 
 /**
- * A room tab: editable name, `문서 {n}`, and a grid of artifact cards that wraps
+ * A room tab: editable name, `{n} docs`, and a grid of artifact cards that wraps
  * to the window's width and scrolls vertically (newest first), or the empty state.
  *
  * AppShell mounts this per activation (keyed by tab id, active tab only), so
@@ -37,7 +37,7 @@ export function RoomView({ roomId }: { roomId: string }) {
 
   if (!room) {
     // Before the first sync we can't tell; afterwards the room is gone.
-    return info ? <Centered>이 방은 더 이상 없어요</Centered> : <div className="flex-1 bg-surface" />;
+    return info ? <Centered>This room is gone</Centered> : <div className="flex-1 bg-surface" />;
   }
 
   let body: ReactNode;
@@ -82,19 +82,19 @@ export function RoomView({ roomId }: { roomId: string }) {
           key={room.id}
           value={room.name}
           readOnly={readOnly}
-          ariaLabel="방 이름"
-          hint="Enter 또는 바깥을 누르면 저장"
+          ariaLabel="Room name"
+          hint="Press Enter or click outside to save"
           onSave={async (next) => {
             await client.renameRoom(room.id, next);
           }}
           className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink"
           inputClassName="-ml-2 w-full max-w-[560px] rounded-lg px-2 py-0.5 outline-2 outline-solid outline-[#222]"
         />
-        <p className="text-[16px] text-ink-2">문서 {room.artifactCount}</p>
+        <p className="text-[16px] text-ink-2">{count(room.artifactCount, "doc")}</p>
         {room.status === "unavailable" ? (
           <p className="mt-1 flex items-center gap-1.5 text-[14px] text-[#c13515]">
             <CircleAlert size={16} aria-hidden />
-            폴더를 찾을 수 없어요
+            Folder not found
           </p>
         ) : null}
       </header>

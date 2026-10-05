@@ -18,24 +18,24 @@ export function onboardPromptPath(home: string): string {
 
 /** The first-run prompt; the chip shows and copies exactly this. */
 export function onboardPrompt(home: string): string {
-  return `${onboardPromptPath(home)} 를 읽고 따라 해줘`;
+  return `Read ${onboardPromptPath(home)} and follow it.`;
 }
 
 /** The short re-run prompt for an agent that already has the rooms skill. */
-export const COMPACT_PROMPT = "rooms 정리해줘";
+export const COMPACT_PROMPT = "Sort my rooms";
 
-/** "에이전트에게 이렇게 말해 보세요": each card copies its own text. */
+/** "Try telling your agent": each card copies its own text. */
 export const EXAMPLE_PROMPTS: readonly { icon: LucideIcon; text: string }[] = [
-  { icon: FileText, text: "이번 결과를 HTML 리포트로 만들어서 알맞은 방에 넣어줘" },
-  { icon: RefreshCw, text: "rooms 다시 정리해줘. 30일치로" },
-  { icon: Calendar, text: "오늘 대화를 복습용 HTML로 만들어서 오늘 Journal에 넣어줘" },
+  { icon: FileText, text: "Turn this result into an HTML report and put it in the right room" },
+  { icon: RefreshCw, text: "Sort my rooms again, going back 30 days" },
+  { icon: Calendar, text: "Turn today's conversation into an HTML review and put it in today's Journal" },
 ];
 
 /**
  * Hands the user one line to paste into an agent. Full form on first run (no
  * rooms besides inbox): a welcome page with the prompt, the concepts, example
  * prompts and tips. Compact at the top of the New tab when opened from the
- * sidebar's "에이전트로 정리하기": there it offers both the ONBOARD prompt
+ * sidebar's "Sort with an agent": there it offers both the ONBOARD prompt
  * (first time, or another agent without the skill) and the short re-run line.
  * Renders nothing before the first sync.
  */
@@ -46,16 +46,16 @@ export function OnboardingCard({ compact = false }: { compact?: boolean }) {
   if (compact) {
     return (
       <section
-        aria-label="에이전트로 다시 정리하기"
+        aria-label="Sort again with an agent"
         className="flex flex-col items-start gap-2 rounded-[14px] border border-[#ddd] bg-white px-5 py-[18px]"
       >
-        <p className="text-[15px] font-medium text-ink">에이전트로 다시 정리하기</p>
+        <p className="text-[15px] font-medium text-ink">Sort again with an agent</p>
         <div className="flex max-w-full flex-col items-start gap-1">
-          <p className="text-[13px] text-[#929292]">처음이거나 다른 에이전트라면</p>
+          <p className="text-[13px] text-[#929292]">First time, or a different agent</p>
           <CopyChip text={onboardPrompt(info.home)} />
         </div>
         <div className="flex max-w-full flex-col items-start gap-1">
-          <p className="text-[13px] text-[#929292]">스킬이 이미 있으면</p>
+          <p className="text-[13px] text-[#929292]">If the skill is already installed</p>
           <CopyChip text={COMPACT_PROMPT} />
         </div>
       </section>
@@ -74,61 +74,61 @@ function Welcome({ home }: { home: string }) {
     <div data-testid="welcome" className="@container mx-auto flex w-full max-w-[760px] flex-col gap-10">
       <header className="flex flex-col items-start gap-3">
         <img src={clewPeek} alt="" width={120} className="mb-1 h-auto w-[120px]" />
-        <h1 className="text-[32px] font-medium tracking-[-0.01em] text-ink">Rooms에 오신 걸 환영해요</h1>
-        <p className="text-[17px] text-ink-2">에이전트가 만든 HTML을 주제별 방에 모아 보는 곳이에요.</p>
+        <h1 className="text-[32px] font-medium tracking-[-0.01em] text-ink">Welcome to Rooms</h1>
+        <p className="text-[17px] text-ink-2">Rooms gathers the HTML your agents write into topic rooms.</p>
       </header>
 
       <StartSection home={home} />
 
       <section aria-labelledby="welcome-concepts" className="flex flex-col gap-4">
         <h2 id="welcome-concepts" className={H2}>
-          알아두면 좋은 것
+          Good to know
         </h2>
         <ul data-testid="welcome-concepts" className="grid grid-cols-1 gap-3 @min-[640px]:grid-cols-3">
-          <Concept icon={Folder} name="방">
-            주제별 폴더예요. <code className="font-mono text-[13px]">~/rooms/&lt;방&gt;/</code>에 HTML이 들어오면 바로 카드가 돼요.
+          <Concept icon={Folder} name="Rooms">
+            One folder per topic. Any HTML in <code className="font-mono text-[13px]">~/rooms/&lt;room&gt;/</code> becomes a card right away.
           </Concept>
           <Concept icon={Calendar} name="Journal">
-            날짜별로 그날 만든 문서와 내 계획·회고 노트를 모아요.
+            Each day's docs, next to your own plan and review notes.
           </Concept>
           <Concept icon={Inbox} name="inbox">
-            방을 못 정한 문서가 기다리는 곳. 왼쪽 방으로 끌어다 놓으면 옮겨져요.
+            Docs without a room wait here. Drag one onto a room on the left to move it.
           </Concept>
         </ul>
       </section>
 
       <section aria-labelledby="welcome-examples" className="flex flex-col gap-4">
         <h2 id="welcome-examples" className={H2}>
-          에이전트에게 이렇게 말해 보세요
+          Try telling your agent
         </h2>
         <ExamplePile />
       </section>
 
-      <aside aria-label="팁" className="flex flex-col gap-2 rounded-[14px] border border-[#ddd] bg-[#f7f7f7] px-5 py-4">
+      <aside aria-label="Tip" className="flex flex-col gap-2 rounded-[14px] border border-[#ddd] bg-[#f7f7f7] px-5 py-4">
         <p className="flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.08em] text-ink-2">
-          <Lightbulb size={16} strokeWidth={1.75} aria-hidden />팁
+          <Lightbulb size={16} strokeWidth={1.75} aria-hidden />Tip
         </p>
         <p className="text-[14px] text-ink">
-          ⌘K로 방과 문서를 찾고, ⌘B로 사이드바를 접어요. 카드에 마우스를 올리고 ↗를 누르면 새 탭에서 크게 열려요.
+          ⌘K finds rooms and docs. ⌘B hides the sidebar. Hover a card and press ↗ to open it in a new tab.
         </p>
       </aside>
     </div>
   );
 }
 
-/** "시작하기": the prompt chip and the page's one primary action, 복사. Both copy the prompt. */
+/** "Get started": the prompt chip and the page's one primary action, Copy. Both copy the prompt. */
 function StartSection({ home }: { home: string }) {
   const { copied, failed, copy } = useCopy();
   const prompt = onboardPrompt(home);
   return (
     <section aria-labelledby="welcome-start" className="flex flex-col gap-3">
       <h2 id="welcome-start" className={H2}>
-        시작하기
+        Get started
       </h2>
       <div className="flex max-w-full items-center gap-2">
         <button
           type="button"
-          aria-label="프롬프트 복사"
+          aria-label="Copy prompt"
           data-testid="welcome-prompt"
           onClick={() => void copy(prompt)}
           className={cn(
@@ -141,7 +141,7 @@ function StartSection({ home }: { home: string }) {
         </button>
         <button
           type="button"
-          aria-label="프롬프트 복사"
+          aria-label="Copy prompt"
           data-testid="welcome-copy"
           onClick={() => void copy(prompt)}
           className={cn(
@@ -149,12 +149,12 @@ function StartSection({ home }: { home: string }) {
             FOCUS,
           )}
         >
-          {copied ? "복사했어요" : "복사"}
+          {copied ? "Copied" : "Copy"}
         </button>
       </div>
       {failed.shown ? <CopyStatus copied={false} failed /> : null}
       <p className="text-[14px] text-ink-2">
-        Claude Code나 Codex에 붙여넣으면, 에이전트가 최근 14일 동안 만든 HTML을 찾아 주제별 방으로 정리해요. 원본은 그대로 두고 링크만 만들어요.
+        Paste this into Claude Code or Codex. Your agent finds the HTML it wrote in the last 14 days and sorts it into topic rooms. It only adds links; your files stay where they are.
       </p>
     </section>
   );
@@ -203,7 +203,7 @@ function ExampleCard({ icon: Icon, text, tilt }: { icon: LucideIcon; text: strin
   return (
     <button
       type="button"
-      aria-label={`예시 복사: ${text}`}
+      aria-label={`Copy example: ${text}`}
       data-testid="example-card"
       onClick={() => void copy(text)}
       className={cn(
@@ -217,7 +217,7 @@ function ExampleCard({ icon: Icon, text, tilt }: { icon: LucideIcon; text: strin
       <Icon size={18} strokeWidth={1.75} className="mt-[3px] shrink-0 text-ink" aria-hidden />
       <span>{text}</span>
       <span role="status" className={cn("absolute right-3 bottom-1 text-[12px]", failed.shown ? "text-[#c13515]" : "text-ink-3")}>
-        {failed.shown ? GENERIC_ERROR : copied ? "복사했어요" : null}
+        {failed.shown ? GENERIC_ERROR : copied ? "Copied" : null}
       </span>
     </button>
   );

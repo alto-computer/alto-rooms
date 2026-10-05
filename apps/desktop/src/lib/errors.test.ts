@@ -5,34 +5,34 @@ import { errorCopy, moveErrorCopy, noteNameErrorCopy } from "./errors";
 describe("errorCopy", () => {
   it("maps codes to spec §3 copy", () => {
     const c = (code: string) => errorCopy(new RoomsApiError(400, "x", code));
-    expect(c("invalid_room_name")).toBe("쓸 수 없는 이름이에요");
-    expect(c("room_exists")).toBe("같은 이름의 방이 있어요");
-    expect(c("unsupported_version")).toBe("앱을 업데이트해 주세요");
-    expect(c("write_failed")).toBe("저장하지 못했어요. 다시 시도할게요");
-    expect(c("invalid_link_path")).toBe("폴더를 찾을 수 없어요");
-    expect(c("overlapping_room")).toBe("이미 연결된 폴더와 겹쳐요");
-    expect(c("note_exists")).toBe("같은 이름의 노트가 있어요");
+    expect(c("invalid_room_name")).toBe("That name can't be used");
+    expect(c("room_exists")).toBe("A room with that name already exists");
+    expect(c("unsupported_version")).toBe("Please update the app");
+    expect(c("write_failed")).toBe("Couldn't save. Trying again");
+    expect(c("invalid_link_path")).toBe("Folder not found");
+    expect(c("overlapping_room")).toBe("This overlaps a folder that is already linked");
+    expect(c("note_exists")).toBe("A note with that name already exists");
   });
 
   it("for a note name, invalid_input is the invalid-name copy; the rest map as usual", () => {
-    expect(noteNameErrorCopy(new RoomsApiError(400, "invalid input: note name", "invalid_input"))).toBe("쓸 수 없는 이름이에요");
-    expect(noteNameErrorCopy(new RoomsApiError(409, "x", "note_exists"))).toBe("같은 이름의 노트가 있어요");
-    expect(noteNameErrorCopy(new Error("x"))).toBe("문제가 생겼어요");
-    expect(errorCopy(new RoomsApiError(400, "x", "invalid_input"))).toBe("문제가 생겼어요");
+    expect(noteNameErrorCopy(new RoomsApiError(400, "invalid input: note name", "invalid_input"))).toBe("That name can't be used");
+    expect(noteNameErrorCopy(new RoomsApiError(409, "x", "note_exists"))).toBe("A note with that name already exists");
+    expect(noteNameErrorCopy(new Error("x"))).toBe("Something went wrong");
+    expect(errorCopy(new RoomsApiError(400, "x", "invalid_input"))).toBe("Something went wrong");
   });
 
   it("falls back for anything else", () => {
-    expect(errorCopy(new RoomsApiError(500, "x", "nope"))).toBe("문제가 생겼어요");
-    expect(errorCopy(new RoomsApiError(500, "x"))).toBe("문제가 생겼어요");
-    expect(errorCopy(new Error("x"))).toBe("문제가 생겼어요");
-    expect(errorCopy("x")).toBe("문제가 생겼어요");
+    expect(errorCopy(new RoomsApiError(500, "x", "nope"))).toBe("Something went wrong");
+    expect(errorCopy(new RoomsApiError(500, "x"))).toBe("Something went wrong");
+    expect(errorCopy(new Error("x"))).toBe("Something went wrong");
+    expect(errorCopy("x")).toBe("Something went wrong");
   });
 });
 
 describe("moveErrorCopy", () => {
-  it("invalid_input is 옮길 수 없는 문서예요; the rest map as usual", () => {
-    expect(moveErrorCopy(new RoomsApiError(400, "linked room", "invalid_input"))).toBe("옮길 수 없는 문서예요");
-    expect(moveErrorCopy(new RoomsApiError(500, "x", "write_failed"))).toBe("저장하지 못했어요. 다시 시도할게요");
-    expect(moveErrorCopy(new Error("x"))).toBe("문제가 생겼어요");
+  it("invalid_input is This doc can't be moved; the rest map as usual", () => {
+    expect(moveErrorCopy(new RoomsApiError(400, "linked room", "invalid_input"))).toBe("This doc can't be moved");
+    expect(moveErrorCopy(new RoomsApiError(500, "x", "write_failed"))).toBe("Couldn't save. Trying again");
+    expect(moveErrorCopy(new Error("x"))).toBe("Something went wrong");
   });
 });

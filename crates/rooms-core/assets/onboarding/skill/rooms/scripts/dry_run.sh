@@ -236,7 +236,7 @@ for p, x in by.items():
         assert x["linked"] and x["in_linked_room"] is None and x["in_worktree"] is False, x
 PY
 
-# SKILL.md "만들 때마다" duplicate check, verbatim apart from the placeholders.
+# SKILL.md "Every time you write one" duplicate check, verbatim apart from the placeholders.
 dup_check() {
   find "$HOME_DIR" -path "$HOME_DIR/.rooms" -prune -o -type l -exec sh -c '[ "$(realpath "$1")" = "$(realpath "$2")" ] && echo "$1"' _ {} "$1" \;
 }

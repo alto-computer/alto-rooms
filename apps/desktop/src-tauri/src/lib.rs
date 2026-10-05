@@ -18,7 +18,7 @@ const MENU_BACK: &str = "back";
 const MENU_FORWARD: &str = "forward";
 
 /// App menu (About, Hide, Quit ⌘Q), Edit (predefined, so text editing keys keep
-/// working), 파일 (새 탭 ⌘T, 탭 닫기 ⌘W, 창 닫기 ⇧⌘W) and 보기 (찾기 ⌘K, 사이드바 ⌘B).
+/// working), File (New Tab ⌘T, Close Tab ⌘W, Close Window ⇧⌘W) and View (Find ⌘K, Toggle Sidebar ⌘B, Back ⌘[, Forward ⌘]).
 /// Quit is our own item, not the predefined one, so it can flush notes before
 /// exiting. The webview applies its focus rule to every `menu://…` event.
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -39,22 +39,22 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .paste()
         .select_all()
         .build()?;
-    let new_tab = MenuItemBuilder::with_id(MENU_NEW_TAB, "새 탭").accelerator("CmdOrCtrl+T").build(app)?;
-    let close_tab = MenuItemBuilder::with_id(MENU_CLOSE_TAB, "탭 닫기").accelerator("CmdOrCtrl+W").build(app)?;
-    let close_window = MenuItemBuilder::with_id(MENU_CLOSE_WINDOW, "창 닫기")
+    let new_tab = MenuItemBuilder::with_id(MENU_NEW_TAB, "New Tab").accelerator("CmdOrCtrl+T").build(app)?;
+    let close_tab = MenuItemBuilder::with_id(MENU_CLOSE_TAB, "Close Tab").accelerator("CmdOrCtrl+W").build(app)?;
+    let close_window = MenuItemBuilder::with_id(MENU_CLOSE_WINDOW, "Close Window")
         .accelerator("CmdOrCtrl+Shift+W")
         .build(app)?;
-    let file_menu = SubmenuBuilder::new(app, "파일")
+    let file_menu = SubmenuBuilder::new(app, "File")
         .item(&new_tab)
         .item(&close_tab)
         .separator()
         .item(&close_window)
         .build()?;
-    let find = MenuItemBuilder::with_id(MENU_FIND, "찾기").accelerator("CmdOrCtrl+K").build(app)?;
-    let sidebar = MenuItemBuilder::with_id(MENU_TOGGLE_SIDEBAR, "사이드바").accelerator("CmdOrCtrl+B").build(app)?;
-    let back = MenuItemBuilder::with_id(MENU_BACK, "뒤로").accelerator("CmdOrCtrl+[").build(app)?;
-    let forward = MenuItemBuilder::with_id(MENU_FORWARD, "앞으로").accelerator("CmdOrCtrl+]").build(app)?;
-    let view_menu = SubmenuBuilder::new(app, "보기")
+    let find = MenuItemBuilder::with_id(MENU_FIND, "Find").accelerator("CmdOrCtrl+K").build(app)?;
+    let sidebar = MenuItemBuilder::with_id(MENU_TOGGLE_SIDEBAR, "Toggle Sidebar").accelerator("CmdOrCtrl+B").build(app)?;
+    let back = MenuItemBuilder::with_id(MENU_BACK, "Back").accelerator("CmdOrCtrl+[").build(app)?;
+    let forward = MenuItemBuilder::with_id(MENU_FORWARD, "Forward").accelerator("CmdOrCtrl+]").build(app)?;
+    let view_menu = SubmenuBuilder::new(app, "View")
         .item(&find)
         .item(&sidebar)
         .separator()
@@ -147,7 +147,7 @@ pub fn run() {
     }
 
     // Paths that flush notes first (one round through flush::FlushGate, 2.5 s fallback):
-    // - window close: red button, 파일 → 창 닫기 (⇧⌘W)  — CloseRequested
+    // - window close: red button, File → Close Window (⇧⌘W)  — CloseRequested
     // - app menu Quit (⌘Q)                              — on_menu_event
     // - Dock "Quit", `quit app` Apple Event, logout      — applicationShouldTerminate: (terminate.rs)
     // - a code-less ExitRequested before any round      — below

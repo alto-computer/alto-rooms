@@ -8,7 +8,7 @@ export function noteBase(name: string): string {
 /**
  * The file roomsd reads/writes for a note name: exactly one trailing `.md`
  * (any case) stripped, NFC, then `.md` appended. So `x.md.md` stays `x.md.md`
- * and `계획` becomes `계획.md`. Pass the on-disk name to the API unchanged.
+ * and `Plan` becomes `Plan.md`. Pass the on-disk name to the API unchanged.
  */
 export function noteFileName(name: string): string {
   return `${noteBase(name.trim()).normalize("NFC")}.md`;

@@ -26,7 +26,7 @@ export type ViewerState = {
   lastVisit: Record<string, string>; // roomId -> ISO time the user last LEFT that room tab
   firstRunAt: string; // rooms never visited use this as their last visit
   /**
-   * Transient (never persisted): the New tab opened via "에이전트로 정리하기",
+   * Transient (never persisted): the New tab opened via "Sort with an agent",
    * which shows the compact onboarding card. Cleared once it stops being active.
    */
   onboardingTabId: string | null;

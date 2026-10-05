@@ -62,13 +62,13 @@ export function QuickFind({ open, onClose }: { open: boolean; onClose: () => voi
   const done = () => onClose();
 
   return (
-    <CommandDialog open={open} onOpenChange={(o) => !o && onClose()} title="찾기" description="방이나 문서 찾기">
+    <CommandDialog open={open} onOpenChange={(o) => !o && onClose()} title="Find" description="Find a room or doc">
       <Command shouldFilter={false}>
-        <CommandInput placeholder="방이나 문서 찾기" value={query} onValueChange={setQuery} />
+        <CommandInput placeholder="Find a room or doc" value={query} onValueChange={setQuery} />
         <CommandList>
-          <CommandEmpty>결과가 없어요</CommandEmpty>
+          <CommandEmpty>No results</CommandEmpty>
           {roomHits.length > 0 ? (
-            <CommandGroup heading="방">
+            <CommandGroup heading="Rooms">
               {roomHits.map((r) => (
                 <CommandItem
                   key={r.id}
@@ -85,7 +85,7 @@ export function QuickFind({ open, onClose }: { open: boolean; onClose: () => voi
             </CommandGroup>
           ) : null}
           {docHits.length > 0 ? (
-            <CommandGroup heading="문서">
+            <CommandGroup heading="Docs">
               {docHits.map((d) => (
                 <CommandItem
                   key={`${d.roomId}/${d.id}`}

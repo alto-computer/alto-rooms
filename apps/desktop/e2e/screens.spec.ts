@@ -37,7 +37,7 @@ test("screens for visual review", async ({ page, daemon }) => {
   await daemon.saveNote(date, "회고", "오늘은 리포트를 끝냈다.");
 
   await page.goto("/");
-  const rooms = page.getByRole("list", { name: "방" });
+  const rooms = page.getByRole("list", { name: "Rooms" });
 
   // Room strip with 3+ cards.
   await rooms.getByRole("button", { name: "벤치마크" }).click();
@@ -47,42 +47,42 @@ test("screens for visual review", async ({ page, daemon }) => {
 
   // Empty room.
   await rooms.getByRole("button", { name: "연구 도구" }).click();
-  await expect(page.getByText("아직 아티팩트가 없어요")).toBeVisible();
+  await expect(page.getByText("No artifacts yet")).toBeVisible();
   await settle(page);
   await shot(page, "empty-room");
 
   // Journal: dream, a room artifact, two notes.
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await expect(page.getByRole("region", { name: "에이전트가 쓴 것" }).getByTestId("artifact-card")).toHaveCount(6);
-  await expect(page.getByRole("region", { name: "내가 쓴 것" }).getByRole("button", { name: "회고" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "From agents" }).getByTestId("artifact-card")).toHaveCount(6);
+  await expect(page.getByRole("region", { name: "From me" }).getByRole("button", { name: "회고" })).toBeVisible();
   await settle(page);
   await shot(page, "journal");
 
   // Note tab.
-  await page.getByRole("region", { name: "내가 쓴 것" }).getByRole("button", { name: "계획" }).click();
-  await expect(page.getByRole("textbox", { name: "노트" })).toHaveValue(/벤치마크 리포트/);
+  await page.getByRole("region", { name: "From me" }).getByRole("button", { name: "계획" }).click();
+  await expect(page.getByRole("textbox", { name: "Note" })).toHaveValue(/벤치마크 리포트/);
   await settle(page);
   await shot(page, "note-tab");
 
   // New tab.
-  await page.getByRole("button", { name: "새 탭", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "지난 방문 이후" })).toBeVisible();
+  await page.getByRole("button", { name: "New tab", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Since your last visit" })).toBeVisible();
   await settle(page);
   await shot(page, "new-tab");
 
   // Collapsed sidebar (on a room, so the strip shows at full width).
   await rooms.getByRole("button", { name: "벤치마크" }).click();
   await page.keyboard.press(`${MOD}+b`);
-  await expect(page.getByRole("button", { name: "사이드바 펼치기 (⌘B)" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show sidebar (⌘B)" })).toBeVisible();
   await settle(page);
   await shot(page, "collapsed-sidebar");
   await page.keyboard.press(`${MOD}+b`);
-  await expect(page.getByRole("button", { name: "사이드바 접기 (⌘B)" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Hide sidebar (⌘B)" })).toBeVisible();
   await settle(page);
 
   // QuickFind open, with a query that hits a room and documents.
   await page.keyboard.press(`${MOD}+k`);
-  const input = page.getByPlaceholder("방이나 문서 찾기");
+  const input = page.getByPlaceholder("Find a room or doc");
   await expect(input).toBeVisible();
   await input.fill("리포트");
   await expect(page.getByRole("option", { name: /주간 리포트/ })).toBeVisible();

@@ -33,7 +33,7 @@ const SIZES = {
 export type ArtifactCardProps = {
   artifact: Artifact;
   info: Info;
-  /** Date text (`오늘` / `MM·DD`) in the strip, or a room name in the journal. */
+  /** Date text (`Today` / `MM·DD`) in the strip, or a room name in the journal. */
   label: string;
   isNew: boolean;
   size: "strip" | "journal";
@@ -144,13 +144,13 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, dragg
           <span data-testid="card-title" className="min-w-0 truncate text-[15px] font-medium text-ink">
             {artifact.title}
           </span>
-          {isNew ? <span role="img" aria-label="새 문서 표시" className="size-1.5 shrink-0 rounded-full bg-[#222]" /> : null}
+          {isNew ? <span role="img" aria-label="New doc" className="size-1.5 shrink-0 rounded-full bg-[#222]" /> : null}
           <span className={cn("ml-auto shrink-0 whitespace-nowrap", s.label)}>{label}</span>
         </div>
       </div>
       <button
         type="button"
-        aria-label="새 탭에서 크게 보기"
+        aria-label="Open in new tab"
         onClick={() => onOpen(true)}
         className={cn(
           "absolute flex items-center justify-center rounded-lg border border-[#ddd] bg-white text-ink shadow-float",

@@ -19,8 +19,8 @@ const ICONS: Record<Tab["kind"], LucideIcon> = {
 
 /** Before the first sync we can't tell yet. */
 const PENDING = "…";
-const GONE_ROOM = "없는 방";
-const GONE_DOC = "없는 문서";
+const GONE_ROOM = "Missing room";
+const GONE_DOC = "Missing doc";
 
 /** Room names come from RoomsState by id on every render; tabs never cache them. */
 function RoomLabel({ roomId }: { roomId: string }) {
@@ -51,7 +51,7 @@ function TabLabel({ tab }: { tab: Tab }) {
     case "note":
       return <>{noteBase(tab.name)}</>;
     case "new":
-      return <>새 탭</>;
+      return <>New tab</>;
   }
 }
 
@@ -118,16 +118,16 @@ export function TabBar() {
   return (
     <div className="flex min-w-0 items-center gap-1 px-1 pb-2">
       {sidebarOpen ? null : (
-        <button type="button" aria-label="사이드바 펼치기 (⌘B)" onClick={() => viewer.setSidebarOpen(true)} className={ICON_BUTTON}>
+        <button type="button" aria-label="Show sidebar (⌘B)" onClick={() => viewer.setSidebarOpen(true)} className={ICON_BUTTON}>
           <PanelLeft size={17} strokeWidth={1.75} aria-hidden />
         </button>
       )}
-      <button type="button" aria-label="뒤로 (⌘[)" disabled={!viewer.canGoBack()} onClick={() => viewer.back()} className={ICON_BUTTON}>
+      <button type="button" aria-label="Back (⌘[)" disabled={!viewer.canGoBack()} onClick={() => viewer.back()} className={ICON_BUTTON}>
         <ArrowLeft size={17} strokeWidth={1.75} aria-hidden />
       </button>
       <button
         type="button"
-        aria-label="앞으로 (⌘])"
+        aria-label="Forward (⌘])"
         disabled={!viewer.canGoForward()}
         onClick={() => viewer.forward()}
         className={cn(ICON_BUTTON, "mr-1")}
@@ -137,7 +137,7 @@ export function TabBar() {
       <div
         ref={listRef}
         role="tablist"
-        aria-label="탭"
+        aria-label="Tabs"
         className={cn("flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", fade)}
       >
         {tabs.map((tab) => (
@@ -150,7 +150,7 @@ export function TabBar() {
           />
         ))}
       </div>
-      <button type="button" aria-label="새 탭" onClick={() => viewer.open({ kind: "new" })} className={ICON_BUTTON}>
+      <button type="button" aria-label="New tab" onClick={() => viewer.open({ kind: "new" })} className={ICON_BUTTON}>
         <Plus size={17} strokeWidth={1.75} aria-hidden />
       </button>
     </div>
@@ -193,7 +193,7 @@ function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boole
       </button>
       <button
         type="button"
-        aria-label="탭 닫기"
+        aria-label="Close tab"
         onClick={onClose}
         onAuxClick={middle}
         className={cn(

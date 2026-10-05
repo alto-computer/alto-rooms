@@ -18,12 +18,12 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
 
   // The store forgets a removed room's artifacts; its documents are gone too.
   const roomGone = info !== null && roomId !== info.journalRoomId && !rooms.some((r) => r.id === roomId);
-  if (roomGone) return <Centered>이 문서는 더 이상 없어요</Centered>;
+  if (roomGone) return <Centered>This doc is gone</Centered>;
   if (artifacts === undefined) {
     return loadError ? <Centered>{GENERIC_ERROR}</Centered> : <div className="flex-1 bg-white" />;
   }
   const artifact = artifacts.find((a) => a.id === artifactId);
-  if (!artifact) return <Centered>이 문서는 더 이상 없어요</Centered>;
+  if (!artifact) return <Centered>This doc is gone</Centered>;
   if (!info) return <div className="flex-1 bg-white" />;
 
   return (

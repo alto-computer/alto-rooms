@@ -49,7 +49,7 @@ describe("AppShell in Tauri", () => {
     expect(keyOn(window, "b").defaultPrevented).toBe(false);
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     expect(keyOn(window, "k").defaultPrevented).toBe(false);
-    expect(screen.queryByPlaceholderText("방이나 문서 찾기")).toBeNull();
+    expect(screen.queryByPlaceholderText("Find a room or doc")).toBeNull();
   });
 
   it("menu://find and menu://toggle-sidebar open quick find and toggle the sidebar", async () => {
@@ -60,19 +60,19 @@ describe("AppShell in Tauri", () => {
     menu("menu://toggle-sidebar");
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     menu("menu://find");
-    expect(screen.getByPlaceholderText("방이나 문서 찾기")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Find a room or doc")).toBeInTheDocument();
   });
 
   it("from a text field the menu's ⌘K still finds, but its ⌘B does nothing", async () => {
     const h = await renderWithStores(<AppShell />, { rooms });
-    fireEvent.click(screen.getByRole("button", { name: "새 방" }));
-    screen.getByLabelText("새 방 이름").focus();
+    fireEvent.click(screen.getByRole("button", { name: "New room" }));
+    screen.getByLabelText("New room name").focus();
     await act(async () => {});
     menu("menu://toggle-sidebar");
     expect(h.viewer.getState().sidebarOpen).toBe(true);
-    expect(screen.getByLabelText("새 방 이름")).toBeInTheDocument();
+    expect(screen.getByLabelText("New room name")).toBeInTheDocument();
     menu("menu://find");
-    expect(screen.getByPlaceholderText("방이나 문서 찾기")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Find a room or doc")).toBeInTheDocument();
   });
 
   it("menu://back and menu://forward walk the active tab's history; the page leaves ⌘[ to the menu", async () => {
@@ -115,14 +115,14 @@ describe("AppShell in Tauri", () => {
   it("the menu's ⌘W follows the text-field rule", async () => {
     const h = await renderWithStores(<AppShell />, { rooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
-    fireEvent.click(screen.getByRole("button", { name: "새 방" }));
-    const input = screen.getByLabelText("새 방 이름");
+    fireEvent.click(screen.getByRole("button", { name: "New room" }));
+    const input = screen.getByLabelText("New room name");
     input.focus();
     await act(async () => {});
     const before = h.viewer.getState().tabs.length;
     menu("menu://close-tab");
     menu("menu://new-tab");
     expect(h.viewer.getState().tabs).toHaveLength(before);
-    expect(screen.getByLabelText("새 방 이름")).toBeInTheDocument();
+    expect(screen.getByLabelText("New room name")).toBeInTheDocument();
   });
 });

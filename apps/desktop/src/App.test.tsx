@@ -40,7 +40,7 @@ vi.mock("@alto-rooms/protocol-ts", async (importOriginal) => {
 });
 
 const conn = (token = "t1"): Connection => ({ baseUrl: "http://127.0.0.1:4317", token, home: "/h" });
-const CORE_ERROR = "Rooms 코어를 시작하지 못했어요";
+const CORE_ERROR = "Couldn't start the Rooms core";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -82,17 +82,17 @@ const nativeEvent = (event: string) =>
   });
 
 describe("App: losing the daemon", () => {
-  it("daemon://exited shows the core error; 다시 시도 connects again", async () => {
+  it("daemon://exited shows the core error; Try again connects again", async () => {
     await connected();
-    expect(screen.getByRole("button", { name: "새 탭" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New tab" })).toBeInTheDocument();
     await nativeEvent("daemon://exited");
     expect(screen.getByText(CORE_ERROR)).toBeInTheDocument();
     resolveConnection.mockResolvedValueOnce(conn());
-    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await settle();
     expect(resolveConnection).toHaveBeenCalledTimes(2);
     expect(screen.queryByText(CORE_ERROR)).toBeNull();
-    expect(screen.getByRole("button", { name: "새 탭" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New tab" })).toBeInTheDocument();
   });
 
   it("shows the core error once the store stays in error through 2 retries", async () => {
@@ -117,7 +117,7 @@ describe("App: losing the daemon", () => {
     vi.mocked(console.warn).mockRestore();
   });
 
-  it("다시 시도 after a sync-failure loss on the same connection recovers once a sync succeeds", async () => {
+  it("Try again after a sync-failure loss on the same connection recovers once a sync succeeds", async () => {
     await connected();
     const realInfo = clients[0].client.info;
     clients[0].client.info = async () => {
@@ -131,7 +131,7 @@ describe("App: losing the daemon", () => {
     expect(screen.getByText(CORE_ERROR)).toBeInTheDocument();
     clients[0].client.info = realInfo;
     resolveConnection.mockResolvedValueOnce(conn());
-    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await settle();
     expect(screen.queryByText(CORE_ERROR)).toBeNull();
     await act(async () => {
@@ -139,7 +139,7 @@ describe("App: losing the daemon", () => {
     });
     await settle();
     expect(screen.queryByText(CORE_ERROR)).toBeNull();
-    expect(screen.getByRole("button", { name: "새 탭" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New tab" })).toBeInTheDocument();
     expect(clients).toHaveLength(1); // same connection: the client is kept
     vi.mocked(console.warn).mockRestore();
   });
@@ -161,7 +161,7 @@ describe("App: losing the daemon", () => {
     await nativeEvent("daemon://exited");
 
     resolveConnection.mockResolvedValueOnce(conn("t2"));
-    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await settle();
     expect(clients).toHaveLength(2);
     expect(clients[1].client.saveNote).toHaveBeenCalledWith("2026-10-05", "계획.md", "살릴 글");
@@ -172,7 +172,7 @@ describe("App: losing the daemon", () => {
     await connected("t1");
     await nativeEvent("daemon://exited");
     resolveConnection.mockResolvedValueOnce(conn("t1"));
-    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await settle();
     expect(clients).toHaveLength(1);
     expect(screen.queryByText(CORE_ERROR)).toBeNull();

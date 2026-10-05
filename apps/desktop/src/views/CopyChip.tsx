@@ -4,7 +4,7 @@ import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { useBriefError } from "./briefError";
 
-/** How long "복사했어요" stays after copying. */
+/** How long "Copied" stays after copying. */
 export const COPIED_MS = 1500;
 
 /**
@@ -36,7 +36,7 @@ export function useCopy(): { copied: boolean; failed: ReturnType<typeof useBrief
   return { copied, failed, copy };
 }
 
-/** The status line under a copy target: "복사했어요", or a brief 문제가 생겼어요. */
+/** The status line under a copy target: "Copied", or a brief "Something went wrong". */
 export function CopyStatus({ copied, failed }: { copied: boolean; failed: boolean }) {
   return failed ? (
     <p role="status" className="flex min-h-5 items-center gap-1.5 text-[14px] text-[#c13515]">
@@ -45,15 +45,15 @@ export function CopyStatus({ copied, failed }: { copied: boolean; failed: boolea
     </p>
   ) : (
     <p role="status" className="min-h-5 text-[14px] text-ink-3">
-      {copied ? "복사했어요" : null}
+      {copied ? "Copied" : null}
     </p>
   );
 }
 
 /**
  * A mono chip that copies `text` on click (showing `label`, default `text`),
- * followed by its status line: "복사했어요" for COPIED_MS, or a brief
- * 문제가 생겼어요 when the clipboard refuses.
+ * followed by its status line: "Copied" for COPIED_MS, or a brief
+ * "Something went wrong" when the clipboard refuses.
  */
 export function CopyChip({ text, label = text, className }: { text: string; label?: string; className?: string }) {
   const { copied, failed, copy } = useCopy();

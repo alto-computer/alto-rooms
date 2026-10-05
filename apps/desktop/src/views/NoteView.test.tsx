@@ -18,7 +18,7 @@ vi.mock("@/lib/native", () => ({
 }));
 
 const DATE = "2026-10-05";
-const ERROR_COPY = "저장하지 못했어요. 다시 시도할게요";
+const ERROR_COPY = "Couldn't save. Trying again";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -48,7 +48,7 @@ async function renderNote(opts: Parameters<typeof renderWithStores>[1] = {}) {
   return r;
 }
 
-const textarea = () => screen.getByRole("textbox", { name: "노트" }) as HTMLTextAreaElement;
+const textarea = () => screen.getByRole("textbox", { name: "Note" }) as HTMLTextAreaElement;
 const type = (text: string) => fireEvent.change(textarea(), { target: { value: text } });
 
 describe("NoteView: loading", () => {
@@ -64,21 +64,21 @@ describe("NoteView: loading", () => {
     await renderNote({ notes: { [`${DATE}/계획.md`]: new RoomsApiError(404, "nope", "not_found") } });
     expect(textarea()).toHaveValue("");
     expect(textarea()).not.toBeDisabled();
-    expect(screen.queryByText("문제가 생겼어요")).not.toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
   });
 
   it("on any other error, shows the copy, keeps the textarea disabled, and retries on request", async () => {
     const { client, state } = await renderNote({ notes: { [`${DATE}/계획.md`]: new RoomsApiError(500, "boom") } });
-    expect(screen.getByText("문제가 생겼어요")).toBeInTheDocument();
+    expect(screen.getByText("Something went wrong")).toBeInTheDocument();
     expect(textarea()).toBeDisabled();
     type("이건 저장되면 안 돼요");
     await advance(5000);
     expect(client.saveNote).not.toHaveBeenCalled();
 
     state.notes[`${DATE}/계획.md`] = "서버 내용";
-    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await advance(0);
-    expect(screen.queryByText("문제가 생겼어요")).not.toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
     expect(textarea()).not.toBeDisabled();
     expect(textarea()).toHaveValue("서버 내용");
   });
@@ -323,31 +323,31 @@ describe("NoteView: external changes", () => {
 });
 
 describe("NoteView: other editor and read-only", () => {
-  it("다른 편집기로 열기 opens the .md under the journal folder", async () => {
+  it("Open in another editor opens the .md under the journal folder", async () => {
     await renderNote();
-    fireEvent.click(screen.getByRole("button", { name: "다른 편집기로 열기" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open in another editor" }));
     expect(openInEditor).toHaveBeenCalledWith("/h/journal/2026-10-05/계획.md");
   });
 
-  it("says 문제가 생겼어요 briefly when the other editor can't be opened", async () => {
+  it("says Something went wrong briefly when the other editor can't be opened", async () => {
     await renderNote();
     vi.mocked(openInEditor).mockRejectedValueOnce(new Error("no app"));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "다른 편집기로 열기" }));
+      fireEvent.click(screen.getByRole("button", { name: "Open in another editor" }));
     });
-    const msg = screen.getByText("문제가 생겼어요");
+    const msg = screen.getByText("Something went wrong");
     expect(msg.closest("[role=status]")).toHaveClass("text-[#c13515]");
     expect(msg.closest("[role=status]")!.querySelector("svg")).not.toBeNull();
     await advance(3000);
-    expect(screen.queryByText("문제가 생겼어요")).toBeNull();
+    expect(screen.queryByText("Something went wrong")).toBeNull();
   });
 
   it("is read-only in read-only mode, without editing affordances", async () => {
     const { client } = await renderNote({ readOnly: true });
     expect(textarea()).toHaveAttribute("readonly");
     fireEvent.click(screen.getByRole("heading", { level: 1, name: "계획" }));
-    expect(screen.queryByRole("textbox", { name: "노트 이름" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "다른 편집기로 열기" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Note name" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open in another editor" })).not.toBeInTheDocument();
     type("못 써요");
     await advance(5000);
     expect(client.saveNote).not.toHaveBeenCalled();
@@ -364,7 +364,7 @@ describe("NoteView: drafts kept at quit", () => {
     const fake = await renderNote();
     await advance(0);
     expect(textarea()).toHaveValue("종료 전에 못 저장한 글");
-    expect(screen.queryByText("저장되지 않았던 글이 있어요")).toBeNull();
+    expect(screen.queryByText("You have unsaved text")).toBeNull();
     expect(localStorage.getItem(DRAFT)).not.toBeNull(); // kept until it lands
     await advance(800);
     expect(fake.client.saveNote).toHaveBeenCalledWith(DATE, "계획.md", "종료 전에 못 저장한 글");
@@ -373,32 +373,32 @@ describe("NoteView: drafts kept at quit", () => {
     expect(localStorage.getItem(DRAFT)).toBeNull();
   });
 
-  it("disk changed since the draft: keeps the disk text and offers 되살리기 / 버리기", async () => {
+  it("disk changed since the draft: keeps the disk text and offers Restore / Discard", async () => {
     keep("옛 초안", "그때의 디스크 본문");
     const fake = await renderNote();
     await advance(0);
     expect(textarea()).toHaveValue("원래 내용");
-    expect(screen.getByText("저장되지 않았던 글이 있어요")).toBeInTheDocument();
+    expect(screen.getByText("You have unsaved text")).toBeInTheDocument();
     await advance(5000);
     expect(fake.client.saveNote).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "되살리기" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
     expect(textarea()).toHaveValue("옛 초안");
-    expect(screen.queryByText("저장되지 않았던 글이 있어요")).toBeNull();
+    expect(screen.queryByText("You have unsaved text")).toBeNull();
     await advance(800);
     expect(fake.state.notes[`${DATE}/계획.md`]).toBe("옛 초안");
     await advance(0);
     expect(localStorage.getItem(DRAFT)).toBeNull();
   });
 
-  it("버리기 deletes the draft and leaves the text alone", async () => {
+  it("Discard deletes the draft and leaves the text alone", async () => {
     keep("옛 초안", "그때의 디스크 본문");
     const fake = await renderNote();
     await advance(0);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "버리기" }));
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     });
-    expect(screen.queryByText("저장되지 않았던 글이 있어요")).toBeNull();
+    expect(screen.queryByText("You have unsaved text")).toBeNull();
     expect(textarea()).toHaveValue("원래 내용");
     expect(localStorage.getItem(DRAFT)).toBeNull();
     await advance(5000);
@@ -450,7 +450,7 @@ async function renderNoteTab(name: string, opts: Parameters<typeof renderWithSto
 }
 
 const heading = () => screen.getByRole("heading", { level: 1 });
-const titleInput = () => screen.getByRole("textbox", { name: "노트 이름" });
+const titleInput = () => screen.getByRole("textbox", { name: "Note name" });
 async function renameTo(next: string, key = "Enter") {
   fireEvent.click(heading());
   fireEvent.change(titleInput(), { target: { value: next } });
@@ -474,7 +474,7 @@ describe("NoteView: title", () => {
     });
     await renameTo("New Note");
     expect(client.renameNote).toHaveBeenCalledWith(DATE, "New Note 2.md", "New Note");
-    expect(screen.getByRole("alert")).toHaveTextContent("같은 이름의 노트가 있어요");
+    expect(screen.getByRole("alert")).toHaveTextContent("A note with that name already exists");
     expect(titleInput()).toHaveValue("New Note");
   });
 
@@ -501,11 +501,11 @@ describe("NoteView: title", () => {
     const OLD = `alto-rooms.note-draft.v1:${DATE}/new note.md`;
     localStorage.setItem(OLD, JSON.stringify({ v: 1, text: "예전 초안", baseHash: textHash("다른 본문") }));
     await renderNoteTab("New Note.md");
-    expect(screen.getByText("저장되지 않았던 글이 있어요")).toBeInTheDocument(); // the conflict offer
+    expect(screen.getByText("You have unsaved text")).toBeInTheDocument(); // the conflict offer
     await renameTo("회고");
     await advance(0);
     expect(localStorage.getItem(OLD)).toBeNull();
-    expect(screen.queryByText("저장되지 않았던 글이 있어요")).not.toBeInTheDocument();
+    expect(screen.queryByText("You have unsaved text")).not.toBeInTheDocument();
   });
 
   it("refuses when a live saver already holds the new name, without renaming the file", async () => {
@@ -520,7 +520,7 @@ describe("NoteView: title", () => {
     other.edit("살아 있는 글");
     await renameTo("회고");
     expect(client.renameNote).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent("문제가 생겼어요");
+    expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong");
     expect(viewer.getState().tabs.find((t) => t.id === tabId)).toMatchObject({ name: "New Note.md" });
     expect(other.getState().text).toBe("살아 있는 글");
     other.stop();
@@ -540,7 +540,7 @@ describe("NoteView: title", () => {
     expect(client.renameNote).toHaveBeenCalledWith(DATE, "New Note.md", "회고");
     expect(viewer.getState().tabs.find((t) => t.id === tabId)).toMatchObject({ kind: "note", date: DATE, name: "회고.md" });
     expect(heading()).toHaveTextContent(/^회고$/);
-    expect(screen.queryByRole("textbox", { name: "노트 이름" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Note name" })).not.toBeInTheDocument();
     expect(textarea()).not.toBeDisabled();
     type("새 글");
     await advance(800);
@@ -591,22 +591,22 @@ describe("NoteView: title", () => {
     expect(state.notes[`${DATE}/회고.md`]).toBe("첫 줄\n방금 쓴 줄");
   });
 
-  it("a taken name shows 같은 이름의 노트가 있어요 and stays in edit mode", async () => {
+  it("a taken name shows A note with that name already exists and stays in edit mode", async () => {
     const { client, viewer, tabId } = await renderNoteTab("New Note.md", {
       notes: { [`${DATE}/New Note.md`]: "", [`${DATE}/회고.md`]: "다른 노트" },
     });
     await renameTo("회고");
     expect(client.renameNote).toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent("같은 이름의 노트가 있어요");
+    expect(screen.getByRole("alert")).toHaveTextContent("A note with that name already exists");
     expect(titleInput()).toHaveValue("회고");
     expect(viewer.getState().tabs.find((t) => t.id === tabId)).toMatchObject({ name: "New Note.md" });
   });
 
-  it("an invalid name shows 쓸 수 없는 이름이에요 and stays in edit mode", async () => {
+  it("an invalid name shows That name can't be used and stays in edit mode", async () => {
     const { client } = await renderNoteTab("New Note.md");
     client.renameNote.mockRejectedValueOnce(new RoomsApiError(400, "invalid input: note name", "invalid_input"));
     await renameTo("a/b");
-    expect(screen.getByRole("alert")).toHaveTextContent("쓸 수 없는 이름이에요");
+    expect(screen.getByRole("alert")).toHaveTextContent("That name can't be used");
     expect(titleInput()).toHaveValue("a/b");
   });
 

@@ -8,7 +8,7 @@ export async function pickFolder(): Promise<string | null> {
     const picked = await open({ directory: true, multiple: false });
     return typeof picked === "string" ? picked : null;
   }
-  return window.prompt("폴더 경로");
+  return window.prompt("Folder path");
 }
 
 export async function openInEditor(absPath: string): Promise<void> {
