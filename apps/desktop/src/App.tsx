@@ -44,16 +44,20 @@ export default function App() {
     resolveConnection().then(
       (connection) => {
         if (mine !== attempt.current) return;
-        let cur = current.current;
-        if (cur && sameConnection(cur.connection, connection)) {
-          cur.stores.rooms.stop(); // restarted below: resubscribe and sync now
+        const prev = current.current;
+        prev?.stores.rooms.stop();
+        // Every (re)connect gets a fresh store (no leftover error state); the
+        // client is kept for the same connection and rebuilt for a new one.
+        let client: RoomsClient;
+        if (prev && sameConnection(prev.connection, connection)) {
+          client = prev.stores.client;
         } else {
-          cur?.stores.rooms.stop();
-          const client = createRoomsClient(connection.baseUrl, connection.token);
-          cur = { connection, stores: { client, rooms: new RoomsStore(client) } };
-          current.current = cur;
-          rebindNoteSavers((date, name, text) => client.saveNote(date, name, text));
+          const c = createRoomsClient(connection.baseUrl, connection.token);
+          client = c;
+          rebindNoteSavers((date, name, text) => c.saveNote(date, name, text));
         }
+        const cur = { connection, stores: { client, rooms: new RoomsStore(client) } };
+        current.current = cur;
         cur.stores.rooms.start();
         setStores(cur.stores);
         setPhase("ready");

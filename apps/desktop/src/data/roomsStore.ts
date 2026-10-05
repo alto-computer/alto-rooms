@@ -119,6 +119,9 @@ export class RoomsStore {
   start(): void {
     if (this.started) return;
     this.started = true;
+    // A restart begins from scratch: no stale error or failure count.
+    this.retryAttempt = 0;
+    this.patch({ status: "connecting", syncFailures: 0 });
     this.unsubscribe = this.client.subscribe(this.onEvent, this.onOpen);
     this.enterBuffering();
   }

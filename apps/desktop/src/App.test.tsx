@@ -117,6 +117,33 @@ describe("App: losing the daemon", () => {
     vi.mocked(console.warn).mockRestore();
   });
 
+  it("다시 시도 after a sync-failure loss on the same connection recovers once a sync succeeds", async () => {
+    await connected();
+    const realInfo = clients[0].client.info;
+    clients[0].client.info = async () => {
+      throw new Error("connection refused");
+    };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await act(async () => {
+      clients[0].emit({ type: "resync", roomId: null });
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.getByText(CORE_ERROR)).toBeInTheDocument();
+    clients[0].client.info = realInfo;
+    resolveConnection.mockResolvedValueOnce(conn());
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    await settle();
+    expect(screen.queryByText(CORE_ERROR)).toBeNull();
+    await act(async () => {
+      clients[0].emit({ type: "resync", roomId: null });
+    });
+    await settle();
+    expect(screen.queryByText(CORE_ERROR)).toBeNull();
+    expect(screen.getByRole("button", { name: "새 탭" })).toBeInTheDocument();
+    expect(clients).toHaveLength(1); // same connection: the client is kept
+    vi.mocked(console.warn).mockRestore();
+  });
+
   it("a new connection (token changed) rebuilds the client and rebinds live note savers", async () => {
     await connected("t1");
     // A note that could not be saved through the old client.

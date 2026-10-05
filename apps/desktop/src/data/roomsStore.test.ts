@@ -781,3 +781,20 @@ describe("RoomsStore sync failures", () => {
     s.stop();
   });
 });
+
+describe("RoomsStore restart", () => {
+  it("start() after stop() resets status and syncFailures", async () => {
+    vi.useFakeTimers();
+    const c = new FakeClient();
+    c.infoResult = new Error("down");
+    const s = new RoomsStore(c, { warn: () => {} });
+    s.start();
+    c.connect(0);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(s.getState().syncFailures).toBe(3);
+    s.stop();
+    s.start();
+    expect(s.getState()).toEqual(expect.objectContaining({ status: "connecting", syncFailures: 0 }));
+    s.stop();
+  });
+});
