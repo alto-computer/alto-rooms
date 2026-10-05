@@ -85,6 +85,24 @@ export function fakeClient(
       state.notes[`${date}/${file}`] = body;
       return { date, name: file, relPath: `${date}/${file}`, updatedAt: new Date().toISOString(), author: "me" as const };
     }),
+    // Like roomsd: 404 if the source is gone, 409 note_exists if another note folds to the target name.
+    renameNote: vi.fn(async (date: string, from: string, to: string) => {
+      const src = `${date}/${noteFile(from)}`;
+      const file = noteFile(to);
+      const dst = `${date}/${file}`;
+      if (!(src in state.notes)) throw new RoomsApiError(404, "not found", "not_found");
+      if (Object.keys(state.notes).some((k) => k !== src && k.toLowerCase() === dst.toLowerCase())) {
+        throw new RoomsApiError(409, "note exists", "note_exists");
+      }
+      const body = state.notes[src];
+      delete state.notes[src];
+      state.notes[dst] = body;
+      const updatedAt = new Date().toISOString();
+      const renamed = { date, name: file, relPath: dst, updatedAt, author: "me" as const };
+      const day = state.days[date];
+      if (day?.notes) day.notes = day.notes.map((n) => (n.name === noteFile(from) ? renamed : n));
+      return renamed;
+    }),
     fileUrl: (i: Info, a: Artifact) => `${i.filesOrigin}/${a.roomId}/${a.relPath}`,
     subscribe: (cb: (e: RoomsEvent) => void) => {
       onEvent = cb;

@@ -20,6 +20,8 @@ export type EditableTitleProps = {
   defaultEditing?: boolean;
   /** Read-only: plain text, never editable. */
   readOnly?: boolean;
+  /** Maps a rejected save to its copy (default: `errorCopy`). */
+  copyError?: (e: unknown) => string;
 };
 
 /**
@@ -38,6 +40,7 @@ export function EditableTitle({
   hint,
   defaultEditing = false,
   readOnly = false,
+  copyError = errorCopy,
 }: EditableTitleProps) {
   const [editing, setEditing] = useState(defaultEditing && !readOnly);
   const [draft, setDraft] = useState(value);
@@ -109,7 +112,7 @@ export function EditableTitle({
     } catch (e) {
       if (!live.current) return;
       failedDraft.current = draft;
-      setError(errorCopy(e));
+      setError(copyError(e));
     } finally {
       savingRef.current = false;
       if (live.current) setSaving(false);

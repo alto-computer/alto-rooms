@@ -36,3 +36,33 @@ test("AC-11: 새 노트 opens New Note with the cursor in the body; typing autos
   await page.waitForTimeout(1500);
   expect(await daemon.read(`journal/${date}/New Note.md`)).toContain("- 할 일");
 });
+
+test("renaming a note from its heading moves the file and keeps the body typed just before", async ({ page, daemon }) => {
+  const date = today();
+  await openJournal(page);
+  await page.getByRole("button", { name: "새 노트" }).click();
+  const body = page.getByRole("textbox", { name: "노트" });
+  await expect(body).toBeFocused();
+  await page.keyboard.type("방금 쓴 글");
+  // Rename at once, before the autosave debounce fires.
+  await page.getByRole("heading", { level: 1, name: "New Note" }).click();
+  const title = page.getByRole("textbox", { name: "노트 이름" });
+  await title.fill("회고");
+  await title.press("Enter");
+  await expect(page.getByRole("tab", { name: "회고", selected: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "회고" })).toBeVisible();
+  await expect.poll(() => daemon.read(`journal/${date}/회고.md`).catch(() => null)).toBe("방금 쓴 글");
+  await expect(daemon.read(`journal/${date}/New Note.md`)).rejects.toThrow();
+
+  // A second new note is New Note again (the first was renamed); renaming it to 회고 is refused.
+  await page.getByRole("tab", { name: /^Journal · / }).click();
+  const me = page.getByRole("region", { name: "내가 쓴 것" });
+  await expect(me.getByRole("button", { name: "회고" })).toBeVisible();
+  await page.getByRole("button", { name: "새 노트" }).click();
+  await expect(page.getByRole("tab", { name: "New Note", selected: true })).toBeVisible();
+  await page.getByRole("heading", { level: 1, name: "New Note" }).click();
+  await page.getByRole("textbox", { name: "노트 이름" }).fill("회고");
+  await page.getByRole("textbox", { name: "노트 이름" }).press("Enter");
+  await expect(page.getByText("같은 이름의 노트가 있어요")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "노트 이름" })).toHaveValue("회고");
+});

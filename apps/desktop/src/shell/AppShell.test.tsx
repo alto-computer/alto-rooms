@@ -1,4 +1,4 @@
-import { RoomsApiError } from "@alto-rooms/protocol-ts";
+import { RoomsApiError, type Note } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fakeClient, memoryStorage, renderWithStores, room } from "@/test/fakes";
@@ -329,5 +329,43 @@ describe("AppShell: gone rooms and docs, and before the first sync", () => {
     );
     expect(activeTab()).toHaveTextContent("…");
     expect(screen.queryByRole("button", { name: "새 방" })).toBeNull();
+  });
+});
+
+describe("AppShell: a new note, then its name", () => {
+  it("새 노트 opens New Note in a new tab with the cursor in the body; renaming it updates the tab and the Journal card", async () => {
+    const date = "2026-10-05";
+    const viewer = new ViewerStore(memoryStorage());
+    const journalId = viewer.open({ kind: "journal", date });
+    const h = await renderWithStores(<AppShell />, { viewer, days: { [date]: { notes: [] } } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "새 노트" }));
+    });
+    expect(activeTab()).toHaveTextContent("New Note");
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "노트" })).toHaveFocus());
+    // roomsd announces the new note; the store refetches the day.
+    h.state.days[date] = { notes: [(await h.client.saveNote.mock.results[0].value) as Note] };
+    await act(async () => {
+      h.emit({ type: "note.saved", note: h.state.days[date].notes![0] });
+    });
+
+    fireEvent.click(screen.getByRole("heading", { level: 1, name: "New Note" }));
+    const input = screen.getByRole("textbox", { name: "노트 이름" });
+    fireEvent.change(input, { target: { value: "회고" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+    await waitFor(() => expect(activeTab()).toHaveTextContent("회고"));
+    expect(screen.getByRole("heading", { level: 1, name: "회고" })).toBeInTheDocument();
+    const renamed = h.state.days[date].notes![0];
+    await act(async () => {
+      h.emit({ type: "note.removed", date, name: "New Note.md" });
+      h.emit({ type: "note.saved", note: renamed });
+    });
+
+    act(() => viewer.activate(journalId));
+    const me = screen.getByRole("region", { name: "내가 쓴 것" });
+    await waitFor(() => expect(within(me).getByRole("button", { name: "회고" })).toBeInTheDocument());
+    expect(within(me).queryByRole("button", { name: "New Note" })).not.toBeInTheDocument();
   });
 });

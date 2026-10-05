@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
-import { useClient, useJournalDay, useReadOnly, useRooms, useRoomsStore } from "@/data/hooks";
-import { GENERIC_ERROR, SAVE_FAILED } from "@/lib/errors";
+import { useClient, useJournalDay, useReadOnly, useRooms, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { GENERIC_ERROR, noteNameErrorCopy, SAVE_FAILED } from "@/lib/errors";
 import type { NoteDraft } from "@/lib/drafts";
 import { useBriefError } from "./briefError";
+import { EditableTitle } from "./EditableTitle";
 import { openInEditor } from "@/lib/native";
 import {
   attachNoteSaver,
@@ -12,11 +13,13 @@ import {
   clearNoteDraft,
   createNoteSaver,
   detachNoteSaver,
+  flushNoteSaverAndWait,
   noteSaverKey,
+  renameNoteSaver,
   type NoteSaver,
   type NoteSaverState,
 } from "@/lib/noteSaver";
-import { findNote, noteBase, noteFileName } from "@/lib/notes";
+import { findNote, noteFileName, noteTitle, takeNoteBodyFocus } from "@/lib/notes";
 
 const NOT_READY: NoteSaverState = {
   text: "",
@@ -43,13 +46,18 @@ const warn = (...args: unknown[]) => console.warn(...args);
  * nothing typed into an unloaded note can overwrite it. External changes
  * (the day's note list shows a newer `updatedAt`) reload the body only while
  * there are no unsaved edits and the textarea isn't focused.
+ *
+ * The heading renames the note in place: the body is saved first (so nothing
+ * typed is lost), then the file is renamed, then the live saver and the tab
+ * move to the new name. The view re-renders with that name and keeps the saver.
  */
-export function NoteView({ date, name }: { date: string; name: string }) {
+export function NoteView({ tabId, date, name }: { tabId?: string; date: string; name: string }) {
   // `name` is the on-disk file name (e.g. `계획.md`, `x.md.md`): the API gets it
   // unchanged; one `.md` is stripped only for display.
-  const title = noteBase(name);
+  const title = noteTitle(name);
   const fileName = noteFileName(name);
   const client = useClient();
+  const viewer = useViewerStore();
   const store = useRoomsStore();
   const { info } = useRooms();
   const readOnly = useReadOnly();
@@ -67,7 +75,9 @@ export function NoteView({ date, name }: { date: string; name: string }) {
       name,
     });
     setSaver(s);
-    return () => detachNoteSaver(key, s);
+    // Detached a microtask later: on a rename the re-render attaches under the
+    // new key first, so the live saver is kept rather than released and reloaded.
+    return () => queueMicrotask(() => detachNoteSaver(key, s));
   }, [client, date, name, fileName]);
   const st = useSaverState(saver);
 
@@ -150,7 +160,30 @@ export function NoteView({ date, name }: { date: string; name: string }) {
     };
   }, [saver, load, remoteUpdatedAt, focused, st, client, date, name]);
 
-  const editable = load === "ready" && !readOnly;
+  // A new note asks for the cursor in its body once it has loaded.
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (load === "ready" && !readOnly && takeNoteBodyFocus(date, name)) textareaRef.current?.focus();
+  }, [load, readOnly, date, name]);
+
+  const [renaming, setRenaming] = useState(false);
+  const rename = async (next: string) => {
+    const key = noteSaverKey(date, fileName);
+    setRenaming(true);
+    try {
+      // Never lose body text: whatever is typed or in flight lands under the old name first.
+      if (!(await flushNoteSaverAndWait(key))) throw new RoomsApiError(500, "note body not saved", "write_failed");
+      const renamed = await client.renameNote(date, name, next);
+      const to = renamed?.name || noteFileName(next);
+      renameNoteSaver(key, noteSaverKey(date, to), { date, name: to }, (d, n, text) => client.saveNote(d, n, text));
+      const id = tabId ?? viewer.getState().tabs.find((t) => t.kind === "note" && t.date === date && t.name === name)?.id;
+      if (id) viewer.replace(id, { kind: "note", date, name: to });
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const editable = load === "ready" && !readOnly && !renaming;
   const openFailed = useBriefError();
   const openElsewhere = (absPath: string) => {
     openInEditor(absPath).then(openFailed.clear, (err) => {
@@ -162,7 +195,16 @@ export function NoteView({ date, name }: { date: string; name: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 bg-white px-12 py-10">
       <header className="flex items-center gap-4">
-        <h1 className="min-w-0 flex-1 truncate text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{title}</h1>
+        <div className="min-w-0 flex-1">
+          <EditableTitle
+            value={title}
+            onSave={rename}
+            copyError={noteNameErrorCopy}
+            ariaLabel="노트 이름"
+            readOnly={readOnly}
+            className="w-full truncate text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink"
+          />
+        </div>
         {readOnly ? null : (
           <button
             type="button"
@@ -230,9 +272,10 @@ export function NoteView({ date, name }: { date: string; name: string }) {
       <textarea
         aria-label="노트"
         data-note-editor=""
+        ref={textareaRef}
         value={st.text}
         disabled={load !== "ready"}
-        readOnly={readOnly}
+        readOnly={readOnly || renaming}
         onChange={(e) => {
           if (editable) saver?.edit(e.target.value);
         }}

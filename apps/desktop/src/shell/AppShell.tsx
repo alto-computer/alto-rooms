@@ -81,7 +81,7 @@ function TabView({ tab }: { tab: Tab }) {
     case "journal":
       return <JournalView tabId={tab.id} date={tab.date} />;
     case "note":
-      return <NoteView date={tab.date} name={tab.name} />;
+      return <NoteView tabId={tab.id} date={tab.date} name={tab.name} />;
     case "new":
       return <NewTabView />;
   }
