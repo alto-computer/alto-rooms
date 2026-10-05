@@ -234,8 +234,8 @@ impl Index {
             let new = Artifact { id: new_id.clone(), room_id: to_room.into(), rel_path: to_rel.into(), ..old };
             Ok((Change::Removed { room_id: from_room.into(), artifact_id: old_id.clone() }, Change::Added(new)))
         })();
-        match r {
-            Ok(c) => { self.conn.execute_batch("COMMIT").map_err(err)?; Ok(c) }
+        match r.and_then(|c| self.conn.execute_batch("COMMIT").map(|()| c).map_err(err)) {
+            Ok(c) => Ok(c),
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
         }
     }

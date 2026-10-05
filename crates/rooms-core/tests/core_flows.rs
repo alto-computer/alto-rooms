@@ -826,3 +826,54 @@ fn move_artifact_under_the_watcher_yields_one_remove_one_add() {
     assert_eq!(core.list_artifacts(&r.id).unwrap(), vec![moved]);
     assert!(core.list_artifacts(&"inbox".to_string()).unwrap().is_empty());
 }
+
+#[test]
+fn move_artifact_relative_symlink_from_a_subfolder_keeps_pointing_at_the_original() {
+    let (_d, core) = home();
+    let a = core.create_room("a").unwrap();
+    let b = core.create_room("b").unwrap();
+    // The original sits in a hidden (never scanned) folder of home, so `../../.originals/x.html`
+    // resolves from `b/sub` but not from `a`.
+    fs::create_dir_all(core.home().join(".originals")).unwrap();
+    let orig = core.home().join(".originals/x.html");
+    fs::write(&orig, "<title>X</title>").unwrap();
+    let sub = core.home().join("b/sub");
+    fs::create_dir_all(&sub).unwrap();
+    symlink("../../.originals/x.html", sub.join("x.html")).unwrap();
+    core.rescan_room(&b.id);
+    let x = core.list_artifacts(&b.id).unwrap().remove(0);
+    let moved = core.move_artifact(&b.id, &x.id, &a.id).unwrap();
+    let dst = core.home().join("a/x.html");
+    assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
+    assert_eq!(fs::canonicalize(&dst).unwrap(), orig);
+    assert!(fs::symlink_metadata(sub.join("x.html")).is_err());
+    assert_eq!(moved.created_at, x.created_at);
+    let mut rx = core.subscribe();
+    core.rescan_room(&a.id);
+    core.rescan_room(&b.id);
+    assert!(drain(&mut rx).is_empty());
+    assert_eq!(core.list_artifacts(&a.id).unwrap(), vec![moved]);
+}
+
+#[test]
+fn move_artifact_relative_sibling_symlink_is_not_retargeted_to_a_same_named_file() {
+    let (_d, core) = home();
+    let a = core.create_room("a").unwrap();
+    let b = core.create_room("b").unwrap();
+    fs::create_dir_all(core.home().join("b/sub")).unwrap();
+    fs::write(core.home().join("b/sub/page.html"), "<title>B page</title>").unwrap();
+    fs::write(core.home().join("a/page.html"), "<title>A page</title>").unwrap();
+    symlink("page.html", core.home().join("b/sub/link.html")).unwrap();
+    core.rescan_room(&a.id);
+    core.rescan_room(&b.id);
+    let l = core.list_artifacts(&b.id).unwrap().into_iter().find(|x| x.rel_path == "sub/link.html").unwrap();
+    let moved = core.move_artifact(&b.id, &l.id, &a.id).unwrap();
+    let dst = core.home().join("a/link.html");
+    assert_eq!(fs::canonicalize(&dst).unwrap(), fs::canonicalize(core.home().join("b/sub/page.html")).unwrap());
+    assert_eq!(fs::read_to_string(&dst).unwrap(), "<title>B page</title>");
+    assert_eq!((moved.created_at.as_str(), moved.title.as_str()), (l.created_at.as_str(), l.title.as_str()));
+    let mut rx = core.subscribe();
+    core.rescan_room(&a.id);
+    core.rescan_room(&b.id);
+    assert!(drain(&mut rx).is_empty());
+}

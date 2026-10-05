@@ -85,6 +85,11 @@ fn free_name(dir: &Path, base: &str) -> String {
     (2..).map(|i| format!("{stem} ({i}){ext}")).find(|n| !taken(n)).unwrap()
 }
 
+// Test-only seam: when set on the calling thread, `move_artifact`'s index step fails after the
+// filesystem move, exercising the rollback. Compiles to nothing outside `cfg(test)`.
+#[cfg(test)]
+thread_local! { static FAIL_REASSIGN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
 enum HomeChange { Added(RoomId), Renamed(RoomId), Removed(RoomId) }
 
 /// One real (non-symlink) directory directly under home.
@@ -638,34 +643,62 @@ impl RoomsCore {
         let src = from_root.join(&art.rel_path);
         let meta = std::fs::symlink_metadata(&src).map_err(|_| CoreError::NotFound)?;
         let is_html = |p: &Path| p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"));
-        let plain_file = if meta.file_type().is_symlink() {
+        // How the entry moves: a plain file or an absolute symlink is renamed. A relative symlink
+        // would resolve differently from its new folder (broken, or silently a same-named
+        // sibling there), so it is recreated at the destination pointing at its absolute canonical
+        // target, and the old link is removed only once the index step succeeded.
+        enum How { PlainFile, AbsLink, RelLink(PathBuf) }
+        let how = if meta.file_type().is_symlink() {
             let ok = std::fs::metadata(&src).is_ok_and(|m| m.is_file()) && std::fs::canonicalize(&src).is_ok_and(|t| is_html(&t));
             if !ok { return Err(CoreError::InvalidInput("symlink does not point to an html file".into())); }
-            false
+            if std::fs::read_link(&src)?.is_relative() { How::RelLink(std::fs::canonicalize(&src)?) } else { How::AbsLink }
         } else if meta.is_file() {
-            true
+            How::PlainFile
         } else {
             return Err(CoreError::InvalidInput("not a file".into()));
         };
         let base = Path::new(&art.rel_path).file_name().map(|n| n.to_string_lossy().to_string()).ok_or(CoreError::NotFound)?;
         let to_rel = free_name(&to_root, &base);
         let dst = to_root.join(&to_rel);
-        std::fs::rename(&src, &dst)?;
-        // A plain file's stored target is its own canonical path, which just changed; a symlink's
-        // target (the original) did not.
-        let new_target = if plain_file { std::fs::canonicalize(&dst).ok().map(|p| p.to_string_lossy().to_string()) } else { None };
+        match &how {
+            How::RelLink(target) => std::os::unix::fs::symlink(target, &dst)?,
+            How::PlainFile | How::AbsLink => std::fs::rename(&src, &dst)?,
+        }
+        // The stored target is the canonical path the entry resolves to: a plain file's own path
+        // changed; a relative link's target is restated (same path); an absolute link's is kept.
+        let new_target = match &how {
+            How::PlainFile => std::fs::canonicalize(&dst).ok(),
+            How::RelLink(target) => Some(target.clone()),
+            How::AbsLink => None,
+        }.map(|p| p.to_string_lossy().to_string());
         let mut inner = self.inner.lock().unwrap();
-        match inner.index.reassign(from_room, &art.rel_path, to_room, &to_rel, new_target.as_deref()) {
+        #[cfg(test)]
+        let fail = FAIL_REASSIGN.with(|c| c.get());
+        #[cfg(not(test))]
+        let fail = false;
+        let res = if fail { Err(CoreError::WriteFailed("injected".into())) }
+            else { inner.index.reassign(from_room, &art.rel_path, to_room, &to_rel, new_target.as_deref()) };
+        match res {
             Ok((removed, added)) => {
                 let Change::Added(moved) = &added else { unreachable!("reassign returns Added second") };
                 let moved = moved.clone();
                 self.emit_changes(&mut inner, vec![removed, added]);
+                drop(inner);
+                if matches!(how, How::RelLink(_)) {
+                    if let Err(e) = std::fs::remove_file(&src) {
+                        eprintln!("rooms-core: removing moved link {} failed: {e}", src.display());
+                    }
+                }
                 Ok(moved)
             }
             Err(e) => {
                 drop(inner);
-                if let Err(back) = std::fs::rename(&dst, &src) {
-                    eprintln!("rooms-core: moving {} back to {} failed: {back}", dst.display(), src.display());
+                let undo = match how {
+                    How::RelLink(_) => std::fs::remove_file(&dst),
+                    How::PlainFile | How::AbsLink => std::fs::rename(&dst, &src),
+                };
+                if let Err(back) = undo {
+                    eprintln!("rooms-core: undoing the move of {} to {} failed: {back}", src.display(), dst.display());
                 }
                 Err(e)
             }
@@ -845,6 +878,47 @@ mod tests {
             EventKind::ArtifactRemoved { artifact_id, .. }, EventKind::ArtifactAdded { artifact }, EventKind::JournalChanged { .. },
         ] if artifact_id == &a.id && artifact == &moved), "{evs:?}");
         assert_eq!(rels(&core, &r.id), vec!["a.html".to_string()]);
+    }
+
+    /// Makes the index step of `move_artifact` fail on this thread (after the filesystem move).
+    fn with_failing_reassign<T>(f: impl FnOnce() -> T) -> T {
+        FAIL_REASSIGN.with(|c| c.set(true));
+        let out = f();
+        FAIL_REASSIGN.with(|c| c.set(false));
+        out
+    }
+
+    #[test]
+    fn failed_index_step_puts_the_entry_back_and_changes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let r = core.create_room("r").unwrap();
+        let o = tempfile::tempdir().unwrap();
+        let orig = std::fs::canonicalize(o.path()).unwrap().join("x.html");
+        std::fs::write(&orig, "<title>x</title>").unwrap();
+        let inbox: RoomId = "inbox".into();
+        std::os::unix::fs::symlink(&orig, core.home().join("inbox/abs.html")).unwrap();
+        std::fs::create_dir_all(core.home().join("inbox/sub")).unwrap();
+        std::os::unix::fs::symlink("../abs.html", core.home().join("inbox/sub/rel.html")).unwrap();
+        std::fs::write(core.home().join("inbox/plain.html"), "<title>p</title>").unwrap();
+        core.rescan_room(&inbox);
+        let before = core.list_artifacts(&inbox).unwrap();
+        assert_eq!(before.len(), 3);
+        let mut rx = core.subscribe();
+        for a in &before {
+            let e = with_failing_reassign(|| core.move_artifact(&inbox, &a.id, &r.id)).unwrap_err();
+            assert!(matches!(e, CoreError::WriteFailed(_)), "{e:?}");
+        }
+        assert_eq!(std::fs::read_link(core.home().join("inbox/abs.html")).unwrap(), orig);
+        assert_eq!(std::fs::read_link(core.home().join("inbox/sub/rel.html")).unwrap(), Path::new("../abs.html"));
+        assert_eq!(std::fs::read_to_string(core.home().join("inbox/plain.html")).unwrap(), "<title>p</title>");
+        assert!(std::fs::read_dir(core.home().join("r")).unwrap().next().is_none());
+        assert_eq!(core.list_artifacts(&inbox).unwrap(), before);
+        assert!(core.list_artifacts(&r.id).unwrap().is_empty());
+        assert!(rx.try_recv().is_err(), "no events");
+        core.rescan_room(&inbox);
+        core.rescan_room(&r.id);
+        assert!(rx.try_recv().is_err(), "rescans find nothing to change");
     }
 
     #[test]
