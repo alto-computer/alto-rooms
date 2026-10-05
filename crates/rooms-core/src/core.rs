@@ -14,6 +14,14 @@ struct Inner {
     state: StateStore,
     index: Index,
     seq: u64,
+    /// Rooms whose root was missing/unreadable at the last rescan (drives one room.updated per transition).
+    unavailable: HashSet<RoomId>,
+}
+
+/// A room root is usable only if it is a directory we can list. Scanning anything else would
+/// look empty and wipe the room's index rows (losing first-seen createdAt).
+fn root_available(root: &Path) -> bool {
+    root.is_dir() && std::fs::read_dir(root).is_ok()
 }
 
 #[derive(Clone)]
@@ -61,7 +69,7 @@ impl RoomsCore {
         state.save()?;
         let index = Index::open(&dot.join("index.sqlite"))?;
         let (tx, _) = broadcast::channel(1024);
-        Ok(RoomsCore { inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, seq: 0 })), tx, home })
+        Ok(RoomsCore { inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, seq: 0, unavailable: HashSet::new() })), tx, home })
     }
 
     pub fn home(&self) -> &Path { &self.home }
@@ -95,7 +103,7 @@ impl RoomsCore {
             name: r.name.clone(),
             kind: r.kind,
             path: r.path.to_string_lossy().to_string(),
-            status: if r.path.is_dir() { RoomStatus::Ok } else { RoomStatus::Unavailable },
+            status: if inner.unavailable.contains(&r.id) || !r.path.is_dir() { RoomStatus::Unavailable } else { RoomStatus::Ok },
             artifact_count: list.len() as u32,
             updated_at: list.iter().map(|a| a.updated_at.clone()).max(),
         }
@@ -124,11 +132,34 @@ impl RoomsCore {
 
     fn try_rescan_room(&self, room: &RoomId) -> Result<(), CoreError> {
         let Some((root, kind)) = self.room_root(room) else { return Ok(()) };
+        if !root_available(&root) {
+            // Keep the rows; only flag the room (spec §2: 방은 유지, status unavailable, 이벤트 발행).
+            let mut inner = self.inner.lock().unwrap();
+            if inner.state.find(room).is_some() && inner.unavailable.insert(room.clone()) {
+                self.emit_room_updated(&mut inner, room);
+            }
+            return Ok(());
+        }
         let entries = scan_room(&root, kind == RoomKind::Linked, kind == RoomKind::Journal);
         let mut inner = self.inner.lock().unwrap();
         let ch = inner.index.backfill(room, &entries)?;
         self.emit_changes(&mut inner, ch);
+        if inner.unavailable.remove(room) { self.emit_room_updated(&mut inner, room); }
         Ok(())
+    }
+
+    fn emit_room_updated(&self, inner: &mut Inner, room: &RoomId) {
+        if let Some(rec) = inner.state.find(room).cloned() {
+            let room_v = Self::to_room(inner, &rec);
+            self.emit(inner, EventKind::RoomUpdated { room: room_v });
+        }
+    }
+
+    /// Rescans every room currently flagged unavailable (the watcher calls this periodically so a
+    /// returning folder is picked up even though nothing watches its path while it is gone).
+    pub fn rescan_unavailable(&self) {
+        let ids: Vec<RoomId> = { self.inner.lock().unwrap().unavailable.iter().cloned().collect() };
+        for id in ids { self.rescan_room(&id); }
     }
 
     pub fn rescan_room(&self, room: &RoomId) {

@@ -271,3 +271,83 @@ fn dropping_watch_handle_stops_watching() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+fn drain(rx: &mut tokio::sync::broadcast::Receiver<RoomsEvent>) -> Vec<RoomsEvent> {
+    let mut v = Vec::new();
+    while let Ok(e) = rx.try_recv() { v.push(e); }
+    v
+}
+
+fn room_updates(evs: &[RoomsEvent]) -> Vec<RoomStatus> {
+    evs.iter().filter_map(|e| match &e.kind { EventKind::RoomUpdated { room } => Some(room.status), _ => None }).collect()
+}
+
+#[test]
+fn unavailable_linked_root_keeps_rows_and_emits_one_update_per_transition() {
+    let (_d, core) = home();
+    let team = tempfile::tempdir().unwrap();
+    let root = team.path().join("research");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("a.html"), "<title>A</title>").unwrap();
+    let r = core.link_folder(&root, Some("r")).unwrap();
+    let created = core.list_artifacts(&r.id).unwrap()[0].created_at.clone();
+    let mut rx = core.subscribe();
+
+    fs::rename(&root, team.path().join("away")).unwrap();
+    core.rescan_room(&r.id);
+    core.rescan_room(&r.id);
+    let evs = drain(&mut rx);
+    assert_eq!(room_updates(&evs), vec![RoomStatus::Unavailable], "{evs:?}");
+    assert!(!evs.iter().any(|e| matches!(e.kind, EventKind::ArtifactRemoved { .. })), "{evs:?}");
+    let arts = core.list_artifacts(&r.id).unwrap();
+    assert_eq!(arts.len(), 1);
+    assert_eq!(arts[0].created_at, created);
+    let listed = core.list_rooms().into_iter().find(|x| x.id == r.id).unwrap();
+    assert_eq!(listed.status, RoomStatus::Unavailable);
+
+    fs::rename(team.path().join("away"), &root).unwrap();
+    core.rescan_room(&r.id);
+    core.rescan_room(&r.id);
+    let evs = drain(&mut rx);
+    assert_eq!(room_updates(&evs), vec![RoomStatus::Ok], "{evs:?}");
+    assert_eq!(core.list_rooms().into_iter().find(|x| x.id == r.id).unwrap().status, RoomStatus::Ok);
+    assert_eq!(core.list_artifacts(&r.id).unwrap()[0].created_at, created);
+}
+
+#[test]
+fn unreadable_linked_root_is_unavailable_not_empty() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_d, core) = home();
+    let team = tempfile::tempdir().unwrap();
+    let root = team.path().join("research");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("a.html"), "").unwrap();
+    let r = core.link_folder(&root, Some("r")).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o000)).unwrap();
+    core.rescan_room(&r.id);
+    let status = core.list_rooms().into_iter().find(|x| x.id == r.id).unwrap().status;
+    let n = core.list_artifacts(&r.id).unwrap().len();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!((status, n), (RoomStatus::Unavailable, 1));
+}
+
+#[test]
+fn linked_root_missing_at_startup_is_watched_once_it_returns() {
+    let d = tempfile::tempdir().unwrap();
+    let team = tempfile::tempdir().unwrap();
+    let root = team.path().join("research");
+    fs::create_dir_all(&root).unwrap();
+    let id = {
+        let core = RoomsCore::open(d.path()).unwrap();
+        core.link_folder(&root, Some("r")).unwrap().id
+    };
+    fs::rename(&root, team.path().join("away")).unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let mut rx = core.subscribe();
+    wait_for(&mut rx, |k| matches!(k, EventKind::RoomUpdated { room } if room.id == id && room.status == RoomStatus::Unavailable), Duration::from_secs(3));
+    fs::rename(team.path().join("away"), &root).unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::RoomUpdated { room } if room.id == id && room.status == RoomStatus::Ok), Duration::from_secs(5));
+    std::thread::sleep(Duration::from_millis(400));
+    fs::write(root.join("new.html"), "<title>N</title>").unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.room_id == id), Duration::from_secs(3));
+}
