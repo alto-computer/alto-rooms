@@ -37,3 +37,15 @@ Do these before Plan 2 depends on live updates. Each item came out of a task rev
 - Watcher helper threads hold weak references, so dropping the handle and the core closes the channel (Task 3).
 - Watcher overflow or error runs `resync_all`: home folders, then every room, then `resync` (Task 3).
 - A failed linked watch is logged once (Task 3).
+
+## Plan 2 (desktop) — parked during review
+- Artifact previews run on the app's main thread (WKWebView has no site isolation); one runaway artifact can freeze the UI. Consider static thumbnails for strips.
+- `reuse()` trusts any local process answering `version "1"` on 4317 (multi-user Macs); token-file checks prove the file, not the responder.
+- Terminate/Dock-quit flush hooks tao's private `TaoAppDelegateParent`; a tao upgrade that renames it silently disables that flush (logged).
+- Quit-flush budget: notes get ~1.6 s, draft-file writes the last 400 ms; a slower disk exits without the draft.
+- Draft conflict bar is not dismissed when a later save lands; 되살리기 then overwrites the newer text.
+- No Window submenu (⌘M, full screen); app/Edit menu labels are English.
+- Journal artifacts are not searchable in ⌘K; QuickFind only iterates rooms.
+- Raw SIGTERM to a possibly-reaped sidecar pid (tiny window); Ctrl-C in `tauri dev` kills roomsd via the process group (dev only).
+- WKWebView `allow-popups` / `target=_blank` behavior inside artifacts: verify manually.
+- Manual-test doc test counts drift (now 237 vitest / 23 src-tauri).
