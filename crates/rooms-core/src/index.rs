@@ -1,10 +1,10 @@
 use crate::error::CoreError;
-use crate::meta::{file_mtime, file_times, read_meta, title_or_filename};
+use crate::meta::{file_mtime, file_times, read_meta, title_or_filename, Meta};
 use crate::rules::{artifact_id, local_day, PathClass};
 use crate::walk::ScanEntry;
 use rooms_protocol::{Artifact, Author, Source};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 pub struct Index {
@@ -19,6 +19,26 @@ pub fn journal_folder_day(room_id: &str, rel_path: &str) -> Option<String> {
     if room_id != rooms_protocol::JOURNAL_ROOM_ID { return None; }
     let (first, _) = rel_path.split_once('/')?;
     crate::rules::validate_iso_date(first).ok().map(|_| first.to_string())
+}
+
+#[derive(Debug, Clone)]
+pub struct Fingerprint { pub target: String, pub updated_at: String, pub created_day: String }
+
+#[derive(Debug, Clone)]
+pub struct FileFacts { pub rel_path: String, pub target: String, pub meta: Meta, pub file_created: String, pub updated: String }
+
+/// Phase 2 of a rescan, run WITHOUT the core lock: reads the file head only when its fingerprint
+/// (target + mtime, plus the journal folder day) changed. `None` = not an artifact or unchanged.
+pub fn read_entry(room_id: &str, e: &ScanEntry, fp: Option<&Fingerprint>) -> Option<FileFacts> {
+    if e.class != PathClass::Artifact { return None; }
+    let target = e.target.to_string_lossy().to_string();
+    if let Some(fp) = fp {
+        let day_ok = journal_folder_day(room_id, &e.rel_path).map(|d| d == fp.created_day).unwrap_or(true);
+        if day_ok && fp.target == target && file_mtime(&e.target).as_deref() == Some(fp.updated_at.as_str()) { return None; }
+    }
+    let meta = read_meta(&e.target);
+    let (file_created, updated) = file_times(&e.target);
+    Some(FileFacts { rel_path: e.rel_path.clone(), target, meta, file_created, updated })
 }
 
 #[derive(Debug, Clone)]
@@ -90,27 +110,68 @@ impl Index {
         })
     }
 
-    pub fn upsert_one(&mut self, room_id: &str, e: &ScanEntry) -> Result<Option<Change>, CoreError> {
-        if e.class != PathClass::Artifact { return Ok(None); }
-        let id = artifact_id(room_id, &e.rel_path);
-        let existing: Option<(String, String, String, String, String)> = self.conn.query_row(
-            "SELECT created_at, title, updated_at, created_day, target FROM artifacts WHERE id = ?1", params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional().map_err(err)?;
-        // Cheap path: same target and same mtime → nothing to re-read (unless a journal row's day is stale).
-        if let Some((_, _, old_updated, old_day, old_target)) = &existing {
-            let day_ok = journal_folder_day(room_id, &e.rel_path).map(|d| &d == old_day).unwrap_or(true);
-            if day_ok && *old_target == e.target.to_string_lossy() && file_mtime(&e.target).as_ref() == Some(old_updated) {
-                return Ok(None);
+    pub fn remove_one(&mut self, room_id: &str, rel_path: &str) -> Result<Option<Change>, CoreError> {
+        let id = artifact_id(room_id, rel_path);
+        let day: Option<String> = self.conn.query_row("SELECT created_day FROM artifacts WHERE id = ?1", params![id], |r| r.get(0))
+            .optional().map_err(err)?;
+        if let Some(d) = &day { self.touch(d); }
+        let n = self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id]).map_err(err)?;
+        Ok((n > 0).then(|| Change::Removed { room_id: room_id.into(), artifact_id: id }))
+    }
+
+    pub fn fingerprints(&self, room_id: &str) -> Result<HashMap<String, Fingerprint>, CoreError> {
+        let mut st = self.conn.prepare("SELECT rel_path, target, updated_at, created_day FROM artifacts WHERE room_id = ?1").map_err(err)?;
+        let rows = st.query_map(params![room_id], |r| Ok((r.get::<_, String>(0)?, Fingerprint { target: r.get(1)?, updated_at: r.get(2)?, created_day: r.get(3)? }))).map_err(err)?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>().map_err(err)
+    }
+
+    pub fn room_summary(&self, room_id: &str) -> Result<(u32, Option<String>), CoreError> {
+        self.conn.query_row("SELECT COUNT(*), MAX(updated_at) FROM artifacts WHERE room_id = ?1", params![room_id],
+            |r| Ok((r.get::<_, i64>(0)? as u32, r.get(1)?))).map_err(err)
+    }
+
+    /// Phase 3, run under the core lock: one transaction. Upserts `facts`, removes rows not in `present`.
+    pub fn apply(&mut self, room_id: &str, facts: &[FileFacts], present: &HashSet<String>) -> Result<Vec<Change>, CoreError> {
+        let mut changes = Vec::new();
+        self.conn.execute_batch("BEGIN").map_err(err)?;
+        let r = (|| -> Result<(), CoreError> {
+            for f in facts { if let Some(c) = self.upsert_facts(room_id, f)? { changes.push(c); } }
+            let existing: Vec<String> = {
+                let mut st = self.conn.prepare("SELECT rel_path FROM artifacts WHERE room_id = ?1").map_err(err)?;
+                let rows = st.query_map(params![room_id], |r| r.get(0)).map_err(err)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?
+            };
+            for rel in existing.into_iter().filter(|r| !present.contains(r)) {
+                if let Some(c) = self.remove_one(room_id, &rel)? { changes.push(c); }
             }
+            Ok(())
+        })();
+        match r {
+            Ok(()) => { self.conn.execute_batch("COMMIT").map_err(err)?; Ok(changes) }
+            Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
         }
-        let existing = existing.map(|(c, t, u, d, _)| (c, t, u, d));
-        let meta = read_meta(&e.target);
-        let (file_created, updated) = file_times(&e.target);
+    }
+
+    /// Kept for callers and tests: the three phases in one call (used where no lock split matters).
+    pub fn backfill(&mut self, room_id: &str, entries: &[ScanEntry]) -> Result<Vec<Change>, CoreError> {
+        let fps = self.fingerprints(room_id)?;
+        let facts: Vec<FileFacts> = entries.iter().filter_map(|e| read_entry(room_id, e, fps.get(&e.rel_path))).collect();
+        let present: HashSet<String> = entries.iter().filter(|e| e.class == PathClass::Artifact).map(|e| e.rel_path.clone()).collect();
+        self.apply(room_id, &facts, &present)
+    }
+
+    fn upsert_facts(&mut self, room_id: &str, f: &FileFacts) -> Result<Option<Change>, CoreError> {
+        let id = artifact_id(room_id, &f.rel_path);
+        let existing: Option<(String, String, String, String)> = self.conn.query_row(
+            "SELECT created_at, title, updated_at, created_day FROM artifacts WHERE id = ?1", params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional().map_err(err)?;
+        let meta = f.meta.clone();
+        let (file_created, updated) = (f.file_created.clone(), f.updated.clone());
         let created = meta.created.clone()
             .or_else(|| existing.as_ref().map(|x| x.0.clone()))
             .unwrap_or(file_created);
-        let title = title_or_filename(&meta, &e.rel_path);
-        let day = match (journal_folder_day(room_id, &e.rel_path), &existing) {
+        let title = title_or_filename(&meta, &f.rel_path);
+        let day = match (journal_folder_day(room_id, &f.rel_path), &existing) {
             (Some(d), _) => d,
             (None, Some(x)) if x.0 == created => x.3.clone(),
             _ => local_day(&created).unwrap_or_default(),
@@ -122,9 +183,9 @@ impl Index {
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
              ON CONFLICT(id) DO UPDATE SET target=excluded.target, title=excluded.title, created_at=excluded.created_at,
                created_day=excluded.created_day, created_ts=excluded.created_ts, updated_at=excluded.updated_at, source=excluded.source",
-            params![id, room_id, e.rel_path, e.target.to_string_lossy(), title, created, day, ts, updated, source],
+            params![id, room_id, f.rel_path, f.target, title, created, day, ts, updated, source],
         ).map_err(err)?;
-        let a = Artifact { id, room_id: room_id.into(), rel_path: e.rel_path.clone(), title: title.clone(),
+        let a = Artifact { id, room_id: room_id.into(), rel_path: f.rel_path.clone(), title: title.clone(),
             created_at: created, updated_at: updated.clone(), author: Author::Agent, source: meta.source };
         let change = match existing {
             None => Change::Added(a),
@@ -133,42 +194,6 @@ impl Index {
         };
         self.touch(&day);
         Ok(Some(change))
-    }
-
-    pub fn remove_one(&mut self, room_id: &str, rel_path: &str) -> Result<Option<Change>, CoreError> {
-        let id = artifact_id(room_id, rel_path);
-        let day: Option<String> = self.conn.query_row("SELECT created_day FROM artifacts WHERE id = ?1", params![id], |r| r.get(0))
-            .optional().map_err(err)?;
-        if let Some(d) = &day { self.touch(d); }
-        let n = self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id]).map_err(err)?;
-        Ok((n > 0).then(|| Change::Removed { room_id: room_id.into(), artifact_id: id }))
-    }
-
-    pub fn backfill(&mut self, room_id: &str, entries: &[ScanEntry]) -> Result<Vec<Change>, CoreError> {
-        let mut changes = Vec::new();
-        self.conn.execute_batch("BEGIN").map_err(err)?;
-        let r = self.backfill_inner(room_id, entries, &mut changes);
-        match r {
-            Ok(()) => { self.conn.execute_batch("COMMIT").map_err(err)?; Ok(changes) }
-            Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); Err(e) }
-        }
-    }
-
-    fn backfill_inner(&mut self, room_id: &str, entries: &[ScanEntry], changes: &mut Vec<Change>) -> Result<(), CoreError> {
-        let mut seen = HashSet::new();
-        for e in entries.iter().filter(|e| e.class == PathClass::Artifact) {
-            seen.insert(e.rel_path.clone());
-            if let Some(c) = self.upsert_one(room_id, e)? { changes.push(c); }
-        }
-        let existing: Vec<String> = {
-            let mut st = self.conn.prepare("SELECT rel_path FROM artifacts WHERE room_id = ?1").map_err(err)?;
-            let rows = st.query_map(params![room_id], |r| r.get(0)).map_err(err)?;
-            rows.filter_map(Result::ok).collect()
-        };
-        for rel in existing.into_iter().filter(|r| !seen.contains(r)) {
-            if let Some(c) = self.remove_one(room_id, &rel)? { changes.push(c); }
-        }
-        Ok(())
     }
 
     pub fn list(&self, room_id: &str) -> Result<Vec<Artifact>, CoreError> {
@@ -332,5 +357,43 @@ mod tests {
         let db = d.path().join("index.sqlite");
         fs::write(&db, b"not a database").unwrap();
         assert!(Index::open(&db).is_ok());
+    }
+
+    #[test]
+    fn read_entry_skips_unchanged_and_apply_removes_missing() {
+        let (d, room) = setup();
+        let mut ix = Index::open(&d.path().join("index.sqlite")).unwrap();
+        fs::write(room.join("a.html"), "<title>A</title>").unwrap();
+        fs::write(room.join("b.html"), "<title>B</title>").unwrap();
+        ix.backfill("r1", &scan_room(&room, false, false)).unwrap();
+        let fps = ix.fingerprints("r1").unwrap();
+        let entries = scan_room(&room, false, false);
+        // unchanged -> no facts (no file read)
+        assert!(entries.iter().all(|e| read_entry("r1", e, fps.get(&e.rel_path)).is_none()));
+        // b disappears from `present` -> removed
+        let present: HashSet<String> = ["a.html".to_string()].into();
+        let ch = ix.apply("r1", &[], &present).unwrap();
+        assert!(matches!(&ch[..], [Change::Removed { .. }]), "{ch:?}");
+        assert_eq!(ix.room_summary("r1").unwrap().0, 1);
+    }
+
+    #[test]
+    fn rollback_clears_touched_days() {
+        let (d, room) = setup();
+        let mut ix = Index::open(&d.path().join("index.sqlite")).unwrap();
+        fs::write(room.join("a.html"), "").unwrap();
+        ix.backfill("r1", &scan_room(&room, false, false)).unwrap();
+        let _ = ix.take_touched_days();
+        ix.conn.execute_batch("DROP TABLE artifacts").unwrap(); // force the next apply to fail
+        let fact = FileFacts { rel_path: "x.html".into(), target: "/x".into(), meta: Default::default(),
+            file_created: "2026-10-05T00:00:00+09:00".into(), updated: "2026-10-05T00:00:00+09:00".into() };
+        assert!(ix.apply("r1", &[fact], &["x.html".to_string()].into()).is_err());
+        assert!(ix.take_touched_days().is_empty());
+    }
+
+    #[test]
+    fn journal_folder_day_rejects_loose_dates() {
+        assert_eq!(journal_folder_day("journal", "2026-10-05/a.html").as_deref(), Some("2026-10-05"));
+        assert_eq!(journal_folder_day("journal", "+026-10-05/a.html"), None);
     }
 }

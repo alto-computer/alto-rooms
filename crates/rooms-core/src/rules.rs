@@ -79,8 +79,10 @@ pub fn validate_note_name(name: &str) -> Result<String, CoreError> {
 }
 
 pub fn validate_iso_date(d: &str) -> Result<(), CoreError> {
-    if d.len() != 10 { return Err(CoreError::InvalidInput("date".into())); }
-    chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map(|_| ()).map_err(|_| CoreError::InvalidInput("date".into()))
+    let bad = || CoreError::InvalidInput("date".into());
+    let parsed = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| bad())?;
+    if parsed.format("%Y-%m-%d").to_string() != d { return Err(bad()); }
+    Ok(())
 }
 
 pub fn artifact_id(room_id: &str, rel_path: &str) -> String {
@@ -154,6 +156,14 @@ mod tests {
         assert!(validate_iso_date("2026-10-05").is_ok());
         assert!(validate_iso_date("2026-02-30").is_err());
         assert!(validate_iso_date("2026-10-5").is_err());
+    }
+
+    #[test]
+    fn iso_date_must_be_canonical() {
+        assert!(validate_iso_date("2026-10-05").is_ok());
+        for bad in [" 2026-10-5", "+026-10-05", "2026-1-005", "2026-13-01"] {
+            assert!(validate_iso_date(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
