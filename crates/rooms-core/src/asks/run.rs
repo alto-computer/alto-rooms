@@ -67,7 +67,10 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .process_group(0).kill_on_drop(true);
     if let Some(p) = &spec.path_env { cmd.env("PATH", p); }
-    let mut child = cmd.spawn()?;
+    // macOS has no pipe2: std makes each pipe, then marks it close-on-exec. Two concurrent spawns
+    // could leak one child's pipe ends into the other (and its long-lived descendants), so spawn one at a time.
+    static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let mut child = { let _g = SPAWN.lock().unwrap_or_else(|e| e.into_inner()); cmd.spawn()? };
     let pid = child.id().map(|p| p as i32);
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut stderr = child.stderr.take().expect("piped stderr");
@@ -88,34 +91,57 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
         let (mut out, mut buf) = (Vec::new(), [0u8; 8192]);
         let deadline = tokio::time::sleep(limits.timeout);
         tokio::pin!(deadline);
-        let reason = loop {
+        // The leader can exit while a descendant still holds stdout, so its exit is raced too.
+        enum Next { Eof, Exit(i32), Stop(Reason) }
+        let code_of = |s: std::io::Result<std::process::ExitStatus>| s.ok().and_then(|s| s.code()).unwrap_or(-1);
+        let next = loop {
             tokio::select! {
                 n = stdout.read(&mut buf) => match n {
-                    Ok(0) | Err(_) => break None,
+                    Ok(0) | Err(_) => break Next::Eof,
                     Ok(n) => {
                         out.extend_from_slice(&buf[..n]);
-                        if out.len() > limits.max_stdout { out.truncate(limits.max_stdout); break Some(Reason::TooLong); }
+                        if out.len() > limits.max_stdout { out.truncate(limits.max_stdout); break Next::Stop(Reason::TooLong); }
                     }
                 },
-                _ = &mut deadline => break Some(Reason::Timeout),
-                Some(r) = rx.recv() => break Some(r),
+                status = child.wait() => break Next::Exit(code_of(status)),
+                _ = &mut deadline => break Next::Stop(Reason::Timeout),
+                Some(r) = rx.recv() => break Next::Stop(r),
             }
         };
+        // Leader gone: take what stdout still has for ≤ 200 ms, never waiting on a descendant.
+        let next = match next {
+            Next::Exit(code) => {
+                let drain_until = tokio::time::Instant::now() + Duration::from_millis(200);
+                loop {
+                    match tokio::time::timeout_at(drain_until, stdout.read(&mut buf)).await {
+                        Ok(Ok(n)) if n > 0 => {
+                            out.extend_from_slice(&buf[..n]);
+                            if out.len() > limits.max_stdout { out.truncate(limits.max_stdout); break Next::Stop(Reason::TooLong); }
+                        }
+                        _ => break Next::Exit(code),
+                    }
+                }
+            }
+            n => n,
+        };
         let stdout_text = String::from_utf8_lossy(&out).into_owned();
+        // A descendant may still hold stderr open; do not wait for it.
+        async fn stderr_tail(err_task: &mut tokio::task::JoinHandle<String>) -> String {
+            match tokio::time::timeout(Duration::from_millis(200), &mut *err_task).await {
+                Ok(t) => t.unwrap_or_default(),
+                Err(_) => { err_task.abort(); String::new() }
+            }
+        }
         // After stdout EOF the child may still run (or hold descendants): keep racing
         // its exit against the deadline and kill requests.
-        let reason = match reason {
-            Some(r) => Some(r),
-            None => loop {
+        let reason = match next {
+            Next::Stop(r) => Some(r),
+            Next::Exit(code) => return Outcome::Exited { code, stdout: stdout_text, stderr_tail: stderr_tail(&mut err_task).await },
+            Next::Eof => loop {
                 tokio::select! {
                     status = child.wait() => {
-                        let code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
-                        // A descendant may still hold stderr open; do not wait for it.
-                        let stderr_tail = match tokio::time::timeout(Duration::from_millis(200), &mut err_task).await {
-                            Ok(t) => t.unwrap_or_default(),
-                            Err(_) => { err_task.abort(); String::new() }
-                        };
-                        return Outcome::Exited { code, stdout: stdout_text, stderr_tail };
+                        let code = code_of(status);
+                        return Outcome::Exited { code, stdout: stdout_text, stderr_tail: stderr_tail(&mut err_task).await };
                     }
                     _ = &mut deadline => break Some(Reason::Timeout),
                     Some(r) = rx.recv() => break Some(r),
@@ -220,5 +246,15 @@ mod tests {
         let r = spawn_agent(spec("sleep 30 >/dev/null & exit 0", Limits::default())).unwrap();
         let out = within_5s(r.done).await.unwrap();
         assert!(matches!(out, Outcome::Exited { code: 0, .. }), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn exit_does_not_wait_for_a_descendant_holding_stdout() {
+        let r = spawn_agent(spec("printf done; sleep 30 & exit 0", Limits::default())).unwrap();
+        let out = within_5s(r.done).await.unwrap();
+        match out {
+            Outcome::Exited { code: 0, stdout, .. } => assert_eq!(stdout, "done"),
+            other => panic!("{other:?}"),
+        }
     }
 }
