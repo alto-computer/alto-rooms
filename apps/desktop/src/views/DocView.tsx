@@ -3,6 +3,7 @@ import { useArtifacts, useClient, useRooms, useScopeError } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { PluginSlot } from "@/plugins/PluginSlot";
+import { AskBar } from "@/ask/AskBar";
 import { DocSkeleton } from "./DocSkeleton";
 
 function Centered({ children }: { children: ReactNode }) {
@@ -41,6 +42,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
           className={cn("absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out", loaded ? "opacity-100" : "opacity-0")}
         />
         {loaded ? null : <DocSkeleton />}
+        <AskBar artifact={artifact} />
       </div>
       <PluginSlot slot="artifact.sidePanel" context={{ artifact }} />
     </div>
