@@ -1,0 +1,179 @@
+//! Runs one agent CLI: no shell, its own process group, stdin /dev/null, with limits (spec R8, S6).
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Limits { pub timeout: Duration, pub max_stdout: usize, pub stderr_tail: usize, pub kill_grace: Duration }
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { timeout: Duration::from_secs(600), max_stdout: 1_048_576, stderr_tail: 4_096, kill_grace: Duration::from_secs(3) }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reason { Cancelled, Timeout, TooLong, Shutdown }
+
+#[derive(Debug)]
+pub(crate) enum Outcome {
+    Exited { code: i32, stdout: String, stderr_tail: String },
+    Killed { reason: Reason, stdout: String },
+}
+
+#[derive(Clone)]
+pub(crate) struct Killer(mpsc::UnboundedSender<Reason>);
+impl Killer { pub fn kill(&self, r: Reason) { let _ = self.0.send(r); } }
+
+pub(crate) struct Running { pub killer: Killer, pub done: tokio::task::JoinHandle<Outcome> }
+
+pub(crate) struct SpawnSpec { pub argv: Vec<String>, pub cwd: PathBuf, pub path_env: Option<String>, pub limits: Limits }
+
+/// Lossy UTF-8, ANSI escapes (CSI `ESC [ … final` and two-char `ESC x`) removed, trimmed.
+pub(crate) fn clean_output(bytes: &[u8]) -> String {
+    let s = String::from_utf8_lossy(bytes);
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '\x1b' { out.push(c); continue; }
+        match it.next() {
+            Some('[') => { for d in it.by_ref() { if ('\x40'..='\x7e').contains(&d) { break; } } }
+            _ => {}
+        }
+    }
+    out.trim().to_string()
+}
+
+fn signal_group(pid: i32, sig: i32) {
+    // SAFETY: killpg(2) on the process group we created for this child (process_group(0)).
+    unsafe { libc::killpg(pid, sig); }
+}
+
+pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
+    let mut cmd = tokio::process::Command::new(&spec.argv[0]);
+    cmd.args(&spec.argv[1..]).current_dir(&spec.cwd)
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .process_group(0).kill_on_drop(true);
+    if let Some(p) = &spec.path_env { cmd.env("PATH", p); }
+    let mut child = cmd.spawn()?;
+    let pid = child.id().map(|p| p as i32);
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    let (tx, mut rx) = mpsc::unbounded_channel::<Reason>();
+    let limits = spec.limits;
+    let done = tokio::spawn(async move {
+        let tail_max = limits.stderr_tail;
+        let err_task = tokio::spawn(async move {
+            let (mut tail, mut buf) = (Vec::new(), [0u8; 4096]);
+            while let Ok(n) = stderr.read(&mut buf).await {
+                if n == 0 { break; }
+                tail.extend_from_slice(&buf[..n]);
+                if tail.len() > tail_max * 2 { tail.drain(..tail.len() - tail_max); }
+            }
+            let start = tail.len().saturating_sub(tail_max);
+            String::from_utf8_lossy(&tail[start..]).into_owned()
+        });
+        let (mut out, mut buf) = (Vec::new(), [0u8; 8192]);
+        let deadline = tokio::time::sleep(limits.timeout);
+        tokio::pin!(deadline);
+        let reason = loop {
+            tokio::select! {
+                n = stdout.read(&mut buf) => match n {
+                    Ok(0) | Err(_) => break None,
+                    Ok(n) => {
+                        out.extend_from_slice(&buf[..n]);
+                        if out.len() > limits.max_stdout { out.truncate(limits.max_stdout); break Some(Reason::TooLong); }
+                    }
+                },
+                _ = &mut deadline => break Some(Reason::Timeout),
+                Some(r) = rx.recv() => break Some(r),
+            }
+        };
+        let stdout_text = String::from_utf8_lossy(&out).into_owned();
+        match reason {
+            None => {
+                let code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
+                let stderr_tail = err_task.await.unwrap_or_default();
+                Outcome::Exited { code, stdout: stdout_text, stderr_tail }
+            }
+            Some(reason) => {
+                if let Some(pid) = pid {
+                    signal_group(pid, libc::SIGTERM);
+                    let grace = if reason == Reason::Shutdown { Duration::from_millis(300) } else { limits.kill_grace };
+                    if tokio::time::timeout(grace, child.wait()).await.is_err() { signal_group(pid, libc::SIGKILL); }
+                }
+                let _ = child.wait().await;
+                err_task.abort();
+                Outcome::Killed { reason, stdout: stdout_text }
+            }
+        }
+    });
+    Ok(Running { killer: Killer(tx), done })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(script: &str, limits: Limits) -> SpawnSpec {
+        SpawnSpec { argv: vec!["/bin/sh".into(), "-c".into(), script.into()], cwd: std::env::temp_dir(), path_env: None, limits }
+    }
+
+    #[test]
+    fn clean_output_strips_ansi_and_trims() {
+        assert_eq!(clean_output(b"\x1b[2mdim\x1b[0m pong\x1b[0m\n"), "dim pong");
+        assert_eq!(clean_output("한글".as_bytes()), "한글");
+        assert_eq!(clean_output(b"\xff ok"), "\u{FFFD} ok");
+        assert_eq!(clean_output(b""), "");
+    }
+
+    #[tokio::test]
+    async fn exit_code_stdout_and_stderr_tail() {
+        let r = spawn_agent(spec("printf '한'; printf '글\\n'; echo oops >&2; exit 3", Limits::default())).unwrap();
+        match r.done.await.unwrap() {
+            Outcome::Exited { code, stdout, stderr_tail } => {
+                assert_eq!(code, 3);
+                assert_eq!(clean_output(stdout.as_bytes()), "한글");
+                assert_eq!(stderr_tail.trim(), "oops");
+            }
+            _ => panic!("expected exit"),
+        }
+    }
+
+    #[tokio::test]
+    async fn argv_is_not_a_shell() {
+        let s = SpawnSpec { argv: vec!["/bin/echo".into(), "a; echo HACKED".into()], cwd: std::env::temp_dir(), path_env: None, limits: Limits::default() };
+        match spawn_agent(s).unwrap().done.await.unwrap() {
+            Outcome::Exited { stdout, .. } => assert_eq!(stdout.trim(), "a; echo HACKED"),
+            _ => panic!(),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_kills_the_whole_group_and_keeps_partial_stdout() {
+        let r = spawn_agent(spec("echo part; sleep 30 & sleep 30", Limits::default())).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        r.killer.kill(Reason::Cancelled);
+        let out = tokio::time::timeout(Duration::from_secs(5), r.done).await.expect("killed in time").unwrap();
+        match out { Outcome::Killed { reason: Reason::Cancelled, stdout } => assert_eq!(stdout.trim(), "part"), _ => panic!() }
+    }
+
+    #[tokio::test]
+    async fn timeout_and_too_long() {
+        let quick = Limits { timeout: Duration::from_millis(300), ..Limits::default() };
+        assert!(matches!(spawn_agent(spec("sleep 30", quick)).unwrap().done.await.unwrap(), Outcome::Killed { reason: Reason::Timeout, .. }));
+        let small = Limits { max_stdout: 10, ..Limits::default() };
+        match spawn_agent(spec("yes", small)).unwrap().done.await.unwrap() {
+            Outcome::Killed { reason: Reason::TooLong, stdout } => assert!(stdout.len() <= 10),
+            _ => panic!(),
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_program_is_a_spawn_error() {
+        let s = SpawnSpec { argv: vec!["definitely-not-a-cli-xyz".into()], cwd: std::env::temp_dir(), path_env: Some("/nonexistent".into()), limits: Limits::default() };
+        assert_eq!(spawn_agent(s).err().unwrap().kind(), std::io::ErrorKind::NotFound);
+    }
+}
