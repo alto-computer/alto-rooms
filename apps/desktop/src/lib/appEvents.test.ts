@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { onBeforeQuitFlush, runQuitFlush } from "./appEvents";
+import { onBeforeQuitFlush, onQuitFlushAsync, runQuitFlush } from "./appEvents";
 import { setDraftStoreForTests, tauriDraftStore, textHash } from "./drafts";
 import { attachNoteSaver, createNoteSaver, flushAllNoteSaversAndWait, noteSaverKey, resetNoteSavers, type NoteSaver } from "./noteSaver";
 
@@ -89,6 +89,32 @@ describe("runQuitFlush", () => {
     expect(done).toHaveBeenCalledTimes(1);
     expect(err).toHaveBeenCalled();
     err.mockRestore();
+    off();
+  });
+});
+
+describe("runQuitFlush async hooks", () => {
+  it("waits for an async hook that finishes in time, alongside the notes", async () => {
+    const order: string[] = [];
+    const off = onQuitFlushAsync(async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      order.push("plugins");
+    });
+    const done = vi.fn(async () => void order.push("done"));
+    const p = runQuitFlush(2000, done);
+    await vi.advanceTimersByTimeAsync(200);
+    await p;
+    expect(order).toEqual(["plugins", "done"]);
+    off();
+  });
+
+  it("does not wait past the note window for a hook that never finishes", async () => {
+    const off = onQuitFlushAsync(() => new Promise<void>(() => {}));
+    const done = vi.fn(async () => {});
+    const p = runQuitFlush(2000, done);
+    await vi.advanceTimersByTimeAsync(1600);
+    await p;
+    expect(done).toHaveBeenCalledTimes(1);
     off();
   });
 });

@@ -6,6 +6,8 @@ import { AppShell } from "@/shell/AppShell";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { plugin } from "@/test/plugins";
 import { DocView } from "@/views/DocView";
+import { EnableCard } from "./EnableCard";
+import { flushAllPlugins } from "./host";
 
 afterEach(() => {
   cleanup();
@@ -244,5 +246,85 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     });
     await act(async () => {});
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("an open plugin when the plugin changes", () => {
+  async function openEcho(h: Awaited<ReturnType<typeof openDoc>>) {
+    const { f, posted } = await openPanel();
+    fromFrame(f, { rooms: 1, type: "ready" });
+    return { f, posted, h };
+  }
+
+  async function change(h: Awaited<ReturnType<typeof openDoc>>, patch: Partial<PluginInfo> | null) {
+    if (patch === null) h.state.plugins.splice(0, 1);
+    else Object.assign(h.state.plugins[0], patch);
+    await act(async () => {
+      h.emit({ type: "plugins.changed" });
+    });
+    await act(async () => {});
+  }
+
+  const closeMessage = (posted: { mock: { calls: unknown[][] } }) =>
+    posted.mock.calls.map((c) => c[0] as { type?: string; id?: string }).find((m) => m.type === "beforeClose");
+
+  it("an update (new rev) asks beforeClose, then reloads the frame", async () => {
+    const { f, posted, h } = await openEcho(await openDoc());
+    await change(h, { rev: "r2" });
+    const close = closeMessage(posted)!;
+    expect(close).toBeTruthy();
+    expect(frame("Echo")).toBe(f);
+    fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
+    await act(async () => {});
+    expect(frame("Echo")).not.toBe(f);
+  });
+
+  it("new permissions close it after beforeClose and the enable card asks again", async () => {
+    const h = await renderWithStores(
+      <>
+        <DocView roomId="r1" artifactId="a1" />
+        <EnableCard />
+      </>,
+      { rooms: [room("r1", "Bench")], artifacts: { r1: [doc] }, plugins: [plugin()] },
+    );
+    await act(async () => {});
+    const { f, posted } = await openEcho(h);
+    await change(h, { needsApproval: true, permissions: ["clipboard"] });
+    const close = closeMessage(posted)!;
+    expect(close).toBeTruthy();
+    fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
+    await act(async () => {});
+    expect(screen.queryByTitle("Echo")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "New plugin: Echo" })).toBeInTheDocument();
+  });
+
+  it("a plugin tab whose manifest breaks says it can't load, after beforeClose", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "plugin", pluginId: "echo" });
+    const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()], viewer });
+    await act(async () => {});
+    const f = frame("Echo");
+    const posted = vi.spyOn(f.contentWindow!, "postMessage");
+    fromFrame(f, { rooms: 1, type: "ready" });
+    await change(h, { status: "invalid", reason: "manifest.json is not valid JSON" });
+    const close = closeMessage(posted)!;
+    fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
+    await act(async () => {});
+    expect(within(screen.getByRole("tabpanel")).getByText("This plugin can't load")).toBeInTheDocument();
+  });
+
+  it("a deleted plugin's frame goes away at once", async () => {
+    const { h } = await openEcho(await openDoc());
+    await change(h, null);
+    expect(screen.queryByTitle("Echo")).toBeNull();
+  });
+
+  it("quitting asks every open frame to save", async () => {
+    const { f, posted } = await openEcho(await openDoc());
+    const flushing = flushAllPlugins(1500);
+    const close = closeMessage(posted)!;
+    expect(close).toBeTruthy();
+    fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
+    await flushing;
   });
 });
