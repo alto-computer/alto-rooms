@@ -118,6 +118,87 @@ pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String
     Ok(([("content-type", ct), ("x-content-type-options", "nosniff")], bytes).into_response())
 }
 
+// ---- plugins ----
+
+/// Plugin data errors carry their own codes: `invalid_path` 400, `too_large` 413.
+fn plugin_err(e: CoreError) -> Response {
+    match &e {
+        CoreError::InvalidInput(c) if c == "invalid_path" || c == "too_large" => {
+            let status = if c == "too_large" { StatusCode::PAYLOAD_TOO_LARGE } else { StatusCode::BAD_REQUEST };
+            (status, Json(ApiError { error: c.clone(), message: c.replace('_', " ") })).into_response()
+        }
+        _ => ApiErr(e).into_response(),
+    }
+}
+
+pub async fn list_plugins(State(st): State<AppState>) -> Result<Json<Vec<PluginInfo>>, ApiErr> {
+    Ok(Json(blocking(&st, |c| Ok(c.plugins())).await?))
+}
+
+#[derive(Deserialize)] pub struct EnableBody { enabled: bool }
+pub async fn set_plugin_enabled(State(st): State<AppState>, Path(id): Path<String>, Json(b): Json<EnableBody>) -> Result<Json<PluginInfo>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.set_plugin_enabled(&id, b.enabled)).await?))
+}
+
+#[derive(Deserialize)] pub struct PrefixQuery { #[serde(default)] prefix: String }
+pub async fn list_plugin_data(State(st): State<AppState>, Path(id): Path<String>, axum::extract::Query(q): axum::extract::Query<PrefixQuery>) -> Response {
+    match blocking(&st, move |c| c.list_plugin_data(&id, &q.prefix)).await {
+        Ok(v) => Json(v).into_response(),
+        Err(ApiErr(e)) => plugin_err(e),
+    }
+}
+
+pub async fn get_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Response {
+    match blocking(&st, move |c| c.read_plugin_data(&id, &path)).await {
+        Ok(Some(t)) => ([("content-type", "text/plain; charset=utf-8")], t).into_response(),
+        Ok(None) => ApiErr(CoreError::NotFound).into_response(),
+        Err(ApiErr(e)) => plugin_err(e),
+    }
+}
+
+pub async fn put_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>, body: String) -> Response {
+    match blocking(&st, move |c| c.write_plugin_data(&id, &path, &body)).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(ApiErr(e)) => plugin_err(e),
+    }
+}
+
+pub async fn delete_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Response {
+    match blocking(&st, move |c| c.delete_plugin_data(&id, &path)).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(ApiErr(e)) => plugin_err(e),
+    }
+}
+
+pub async fn artifact_by_file_key(State(st): State<AppState>, Path(key): Path<String>) -> Result<Json<Artifact>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.artifact_by_file_key(&key).ok_or(CoreError::NotFound)).await?))
+}
+
+/// A plugin asset with the plugin's own CSP: sources limited to `/_plugins/<id>/`, no network, no
+/// frames, and sandbox tokens from its declared permissions (never popups or same-origin).
+pub async fn plugin_file(State(st): State<AppState>, Path((id, rel)): Path<(String, String)>) -> Response {
+    let (id2, rel2) = (id.clone(), rel.clone());
+    let found = blocking(&st, move |c| {
+        let p = c.plugins().into_iter().find(|p| p.id == id2).ok_or(CoreError::NotFound)?;
+        Ok((c.resolve_plugin_file(&id2, &rel2)?, p.permissions))
+    })
+    .await;
+    let (path, perms) = match found {
+        Ok(v) => v,
+        Err(_) => return ApiErr(CoreError::NotFound).into_response(),
+    };
+    let Ok(bytes) = tokio::fs::read(&path).await else { return ApiErr(CoreError::NotFound).into_response() };
+    let src = format!("{}/_plugins/{}/", st.files_origin, id);
+    let sandbox = if perms.iter().any(|p| p == "downloads") { "sandbox allow-scripts allow-downloads" } else { "sandbox allow-scripts" };
+    let csp = format!(
+        "{sandbox}; default-src 'none'; script-src {src}; style-src {src} 'unsafe-inline'; img-src {src} data: blob:; font-src {src}; connect-src 'none'; frame-src 'none'; form-action 'none'"
+    );
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let mut r = ([("content-type", content_type(&ext)), ("x-content-type-options", "nosniff")], bytes).into_response();
+    if let Ok(v) = HeaderValue::from_str(&csp) { r.headers_mut().insert(axum::http::header::CONTENT_SECURITY_POLICY, v); }
+    r
+}
+
 fn content_type(ext: &str) -> &'static str {
     match ext {
         "html" | "htm" => "text/html; charset=utf-8",
@@ -132,6 +213,9 @@ fn content_type(ext: &str) -> &'static str {
         "webp" => "image/webp",
         "woff" => "font/woff",
         "woff2" => "font/woff2",
+        "wasm" => "application/wasm",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
         _ => "application/octet-stream",
     }
 }

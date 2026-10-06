@@ -416,3 +416,126 @@ async fn room_move_reorders_and_needs_the_token() {
     let r = app.oneshot(post("/v1/rooms/nope/move", r#"{"to":0}"#, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
 }
+
+// ---- plugins ----
+
+fn send(method: &str, uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
+    let mut b = Request::builder().method(method).uri(uri).header("host", API_HOST).header("content-type", "application/json");
+    if let Some(t) = token { b = b.header("authorization", format!("Bearer {t}")); }
+    b.body(Body::from(body.to_string())).unwrap()
+}
+
+fn install_echo(home: &std::path::Path, permissions: &str) {
+    let dir = home.join(".rooms/plugins/echo");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("manifest.json"), format!(
+        r#"{{"id":"echo","name":"Echo","version":"0.1.0","minAppVersion":"0.3.0","permissions":{permissions},"slots":{{"tab":{{"title":"Echo","sidebar":true}}}}}}"#)).unwrap();
+    std::fs::write(dir.join("index.html"), "<p>echo</p>").unwrap();
+    std::fs::write(dir.join("font.woff2"), "w").unwrap();
+}
+
+async fn text(r: axum::response::Response) -> String {
+    String::from_utf8(r.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap()
+}
+
+#[tokio::test]
+async fn plugins_list_and_enable() {
+    let (d, app, _) = app(false, "127.0.0.1:5000");
+    install_echo(d.path(), r#"["rooms.read"]"#);
+    let r = app.clone().oneshot(get("/v1/plugins", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!(v[0]["id"], "echo");
+    assert_eq!(v[0]["needsApproval"], true);
+    assert_eq!(v[0]["slots"]["tab"]["sidebar"], true);
+    let r = app.clone().oneshot(send("PATCH", "/v1/plugins/echo", r#"{"enabled":true}"#, None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    let r = app.clone().oneshot(send("PATCH", "/v1/plugins/echo", r#"{"enabled":true}"#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!((v["enabled"].clone(), v["needsApproval"].clone()), (serde_json::json!(true), serde_json::json!(false)));
+    let r = app.oneshot(send("PATCH", "/v1/plugins/nope", r#"{"enabled":true}"#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn plugin_data_round_trip_errors_and_privacy() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    install_echo(d.path(), "[]");
+    let r = app.clone().oneshot(send("GET", "/v1/plugins/echo/data/a.txt", "", Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND, "not enabled yet");
+    st.core.set_plugin_enabled("echo", true).unwrap();
+    let r = app.clone().oneshot(send("PUT", "/v1/plugins/echo/data/notes/a.txt", "hello", Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    let r = app.clone().oneshot(send("GET", "/v1/plugins/echo/data/notes/a.txt", "", None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "plugin data is private");
+    let r = app.clone().oneshot(send("GET", "/v1/plugins/echo/data/notes/a.txt", "", Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(text(r).await, "hello");
+    let r = app.clone().oneshot(send("GET", "/v1/plugins/echo/data?prefix=notes/", "", Some("t0k"))).await.unwrap();
+    assert_eq!(body_json(r).await, serde_json::json!(["notes/a.txt"]));
+    let r = app.clone().oneshot(send("GET", "/v1/plugins/echo/data/missing.txt", "", Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let r = app.clone().oneshot(send("PUT", "/v1/plugins/echo/data/..%2Ftoken", "x", Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(r).await["error"], "invalid_path");
+    let big = "x".repeat(10 * 1024 * 1024 + 1);
+    let r = app.clone().oneshot(send("PUT", "/v1/plugins/echo/data/big.txt", &big, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let nine = "x".repeat(9 * 1024 * 1024);
+    let r = app.clone().oneshot(send("PUT", "/v1/plugins/echo/data/nine.txt", &nine, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT, "under the limit is fine");
+    let r = app.clone().oneshot(send("DELETE", "/v1/plugins/echo/data/notes/a.txt", "", Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    let r = app.oneshot(send("GET", "/v1/plugins/echo/data/notes/a.txt", "", Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn artifact_by_file_key() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.html"), "<title>x</title>").unwrap();
+    st.core.backfill_all().unwrap();
+    let key = st.core.list_artifacts(&room.id).unwrap()[0].file_key.clone();
+    let r = app.clone().oneshot(get(&format!("/v1/artifacts/by-file-key/{key}"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await["title"], "x");
+    let r = app.oneshot(get("/v1/artifacts/by-file-key/0000000000000000", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn plugin_assets_get_their_own_narrow_csp() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    install_echo(d.path(), r#"["downloads"]"#);
+    st.core.set_plugin_enabled("echo", true).unwrap();
+    st.core.write_plugin_data("echo", "secret.txt", "s").unwrap();
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.html"), "<p>hi</p>").unwrap();
+    let files = build_files_router(st);
+    let r = files.clone().oneshot(get("/_plugins/echo/index.html", FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let p = "http://127.0.0.1:4318/_plugins/echo/";
+    assert_eq!(r.headers()["content-security-policy"], format!(
+        "sandbox allow-scripts allow-downloads; default-src 'none'; script-src {p}; style-src {p} 'unsafe-inline'; img-src {p} data: blob:; font-src {p}; connect-src 'none'; frame-src 'none'; form-action 'none'"));
+    let r = files.clone().oneshot(get("/_plugins/echo/font.woff2", FILES_HOST)).await.unwrap();
+    assert_eq!(r.headers()["content-type"], "font/woff2");
+    let r = files.clone().oneshot(get("/_plugins/echo/data/secret.txt", FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let r = files.clone().oneshot(get("/_plugins/nope/index.html", FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let r = files.oneshot(get(&format!("/{}/x.html", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(r.headers()["content-security-policy"], "sandbox allow-scripts allow-popups");
+}
+
+#[tokio::test]
+async fn plugin_csp_without_downloads_has_no_extra_sandbox_tokens() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    install_echo(d.path(), "[]");
+    let files = build_files_router(st);
+    let r = files.oneshot(get("/_plugins/echo/index.html", FILES_HOST)).await.unwrap();
+    let csp = r.headers()["content-security-policy"].to_str().unwrap().to_string();
+    assert!(csp.starts_with("sandbox allow-scripts; "), "{csp}");
+    assert!(!csp.contains("allow-popups") && !csp.contains("allow-same-origin"));
+}
