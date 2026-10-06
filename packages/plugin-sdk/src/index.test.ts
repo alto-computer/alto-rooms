@@ -162,6 +162,17 @@ describe("lifecycle", () => {
     expect(order).toEqual(["save"]);
   });
 
+  it("storage.onChange fires with the path from dataChanged and stops after unsubscribe", async () => {
+    const rooms = await ready();
+    const seen: string[] = [];
+    const off = rooms.storage.onChange((p) => seen.push(p));
+    host.deliver({ rooms: 1, type: "dataChanged", path: "d/a.jsonl" });
+    host.deliver({ rooms: 1, type: "dataChanged", path: "d/a.jsonl" }, window);
+    off();
+    host.deliver({ rooms: 1, type: "dataChanged", path: "d/b.jsonl" });
+    expect(seen).toEqual(["d/a.jsonl"]);
+  });
+
   it("answers ping with pong", async () => {
     await ready();
     host.deliver({ rooms: 1, type: "ping", id: "p1" });

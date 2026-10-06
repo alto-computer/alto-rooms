@@ -163,6 +163,23 @@ describe("artifact side panel", () => {
     );
   });
 
+  it("tells the frame when its own plugin's data changes, and no other plugin's", async () => {
+    const h = await openDoc();
+    const { posted } = await openPanel();
+    h.emit({ type: "plugin.data.changed", pluginId: "other", path: "drawings/a.jsonl" });
+    expect(posted).not.toHaveBeenCalled();
+    h.emit({ type: "plugin.data.changed", pluginId: "echo", path: "drawings/a.jsonl" });
+    expect(posted).toHaveBeenLastCalledWith({ rooms: 1, type: "dataChanged", path: "drawings/a.jsonl" }, "*");
+  });
+
+  it("stops relaying data changes once the frame is gone", async () => {
+    const h = await openDoc();
+    const { posted } = await openPanel();
+    cleanup();
+    h.emit({ type: "plugin.data.changed", pluginId: "echo", path: "a.jsonl" });
+    expect(posted.mock.calls.filter((c) => (c[0] as { type?: string }).type === "dataChanged")).toEqual([]);
+  });
+
   it("ignores messages from any other window", async () => {
     const h = await openDoc();
     const { posted } = await openPanel();
