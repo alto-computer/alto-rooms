@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Rooms Plugins v1 — Spec</title>
+<style>
+  :root {
+    --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --border: #e7e5e4;
+    --accent: #2563eb; --accent-bg: #eff6ff;
+    --ok: #16a34a; --warn: #ca8a04; --bad: #dc2626;
+    --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+    --sans: -apple-system, 'Inter', 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.65; font-size: 15px; }
+  .layout { display: grid; grid-template-columns: 240px 1fr; max-width: 1400px; margin: 0 auto; min-height: 100vh; }
+  nav.toc { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 32px 20px; border-right: 1px solid var(--border); background: white; font-size: 13px; }
+  nav.toc h4 { margin: 0 0 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  nav.toc a { display: block; padding: 6px 8px; color: var(--fg); text-decoration: none; border-radius: 4px; margin-bottom: 2px; }
+  nav.toc a:hover { background: var(--accent-bg); color: var(--accent); }
+  nav.toc .badge { float: right; font-size: 11px; }
+  main { padding: 48px 64px; max-width: 900px; }
+  h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 22px; margin: 56px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  h2 .num { color: var(--muted); font-variant-numeric: tabular-nums; }
+  h2 .badge { margin-left: auto; font-size: 14px; padding: 4px 10px; border-radius: 999px; font-weight: 500; }
+  .badge-ok { background: #dcfce7; color: #166534; }
+  .badge-warn { background: #fef3c7; color: #92400e; }
+  .badge-bad { background: #fee2e2; color: #991b1b; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  code { font-family: var(--mono); font-size: 0.9em; background: #f4f4f5; padding: 2px 6px; border-radius: 3px; }
+  pre { background: #1c1917; color: #fafaf9; padding: 16px 20px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.55; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: #f4f4f5; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+  mark.ambiguous { background: #fef08a; padding: 2px 6px; border-radius: 3px; font-weight: 500; }
+  mark.ambiguous::before { content: "❓ "; }
+  .review-box { background: var(--accent-bg); border-left: 4px solid var(--accent); padding: 14px 18px; margin: 20px 0; border-radius: 0 6px 6px 0; }
+  .review-box h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); }
+  .qa { border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 16px 0; background: white; }
+  .qa .q { font-weight: 600; margin: 0 0 8px; color: var(--accent); }
+  .qa .a { margin: 0; }
+  svg.diagram { display: block; max-width: 100%; height: auto; margin: 20px auto; background: white; border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 32px; }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { padding: 6px 0 6px 28px; position: relative; }
+  .checklist li::before { content: "☐"; position: absolute; left: 0; color: var(--muted); font-size: 18px; }
+  .seam { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 16px 20px; margin: 20px 0; background: white; }
+  .seam .seam-title { font-weight: 700; margin: 0 0 4px; font-family: var(--mono); font-size: 14px; color: var(--accent); }
+  .seam .seam-sub { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+  .seam h5 { margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .seam pre { margin: 6px 0; }
+  .seam table { margin: 6px 0 0; }
+  .contract-row th { width: 160px; white-space: nowrap; }
+  .flow { border: 1px solid var(--border); border-top: 4px solid var(--accent); border-radius: 8px; padding: 8px 24px 20px; margin: 24px 0; background: white; }
+  .flow > h3 { color: var(--accent); }
+  .flow .slot { margin: 18px 0; padding-left: 14px; border-left: 3px solid var(--border); }
+  .flow .slot > h4 { margin: 0 0 6px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <h4>Spec Sections</h4>
+  <a href="#s0">0. Overview <span class="badge">🟡</span></a>
+  <a href="#s1">1. Requirements <span class="badge">🟡</span></a>
+  <a href="#s2">2. Business Logic &amp; Policy <span class="badge">🟡</span></a>
+  <a href="#s3">3. Error Handling <span class="badge">🟡</span></a>
+  <a href="#s4">4. Architecture (macro) <span class="badge">🟡</span></a>
+  <a href="#s5">5. Seams (edge) <span class="badge">🟡</span></a>
+  <a href="#s6">6. Contracts (node) <span class="badge">🟡</span></a>
+  <a href="#s7">7. Core Flows <span class="badge">🟡</span></a>
+  <a href="#s8">8. End-to-End <span class="badge">🟡</span></a>
+  <a href="#s9">9. Testing <span class="badge">🟡</span></a>
+  <a href="#s10">10. Senior Review <span class="badge">🟢</span></a>
+  <a href="#s11">11. Open Questions <span class="badge">🟡</span></a>
+  <h4 style="margin-top:24px">Legend</h4>
+  <div style="font-size:12px; line-height:1.7;">🟢 done · 🟡 draft · 🔴 blocked<br><mark class="ambiguous">text</mark> = open ambiguity</div>
+  <h4 style="margin-top:24px">Design</h4>
+  <div style="font-size:12px; line-height:1.7;">
+    <a href="plugins/2026-10-05-plugins-slots.html">slots</a>
+    <a href="plugins/2026-10-05-plugins-anatomy.html">anatomy</a>
+    <a href="plugins/2026-10-06-plugins-design.html">design drafts</a>
+  </div>
+</nav>
+
+<main>
+
+<h1>Rooms Plugins v1</h1>
+<div class="meta">Spec · 2026-10-06 · author: jun-hash (with Claude Code) · repo: alto-computer/alto-rooms</div>
+
+<!-- ============================================== -->
+<h2 id="s0"><span class="num">0.</span> Overview <span class="badge badge-warn">🟡</span></h2>
+
+<h3>Problem</h3>
+<p>Rooms는 Room · Artifact · Journal만 제공한다. 사람마다 그 위에 원하는 경험이 다르다 — 문서 옆에 Excalidraw로 필기하며 읽기, 장기·중기·단기 목표와 TODO를 관리하는 보드 등. 이것들을 기본 경험으로 넣으면 앱이 무거워지고 모두에게 같은 방식을 강요한다. 지금은 사용자나 기여자가 앱을 고치지 않고 화면을 확장할 방법이 없다.</p>
+
+<h3>Goal (1줄)</h3>
+<p><strong>앱을 고치지 않고, 샌드박스 iframe 플러그인이 정해진 자리(slot)에 화면을 더하고 자기 데이터를 파일로 저장할 수 있다.</strong></p>
+
+<h3>원칙</h3>
+<ul>
+  <li><strong>화면 확장 = 플러그인, 내용 생성 = 에이전트.</strong> Dream 같은 생성은 사용자의 에이전트(astack·스킬)가 하고 결과를 폴더에 파일로 넣는다. 플러그인은 UI/UX만 확장한다.</li>
+  <li><strong>앱은 플러그인 코드를 import하지 않는다.</strong> 실행 시 <code>~/rooms/.rooms/plugins/&lt;id&gt;/</code>를 읽어 띄울 뿐. 우리가 만드는 Excalidraw·Goals도 별도 저장소에서 공개 SDK만 쓴다 (dogfooding).</li>
+  <li><strong>좁게 열고 필요할 때 넓힌다.</strong> 샌드박스(Logseq·Figma식) + 선언형 slot(VS Code식) + 좁은 메시지 API. Obsidian식 전권 실행은 하지 않는다 — 플러그인이 쓰기 토큰을 가져가면 안 된다.</li>
+  <li><strong>파일이 진실.</strong> 플러그인 데이터도 Home 아래 평범한 파일. 에이전트도 읽고 쓸 수 있다.</li>
+</ul>
+
+<h3>Out of scope (v1)</h3>
+<ul>
+  <li>slot: Journal 위젯(B), ⌘K 명령(D), 설정 페이지(E), 문서 탭 액션 버튼 — 모두 같은 구조로 나중에 추가 가능</li>
+  <li>플러그인 마켓·레지스트리·자동 업데이트, 설치 UI (v1 설치 = 폴더 복사)</li>
+  <li>플러그인 끄기·제거 UI (v1은 폴더 삭제 / §11)</li>
+  <li>네트워크 접근, Artifact 본문 읽기, 다른 플러그인 데이터, 방·노트 쓰기 API</li>
+  <li>플러그인끼리 통신, 탭 사이 드래그</li>
+</ul>
+
+<h3>Glossary</h3>
+<table>
+  <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+  <tbody>
+    <tr><td><code>Plugin</code></td><td>폴더 하나: <code>manifest.json</code> + <code>entry</code> HTML + 자산 + <code>data/</code>. 위치 <code>~/rooms/.rooms/plugins/&lt;id&gt;/</code>.</td></tr>
+    <tr><td><code>Slot</code></td><td>앱 화면에서 플러그인 iframe이 들어갈 수 있는 정해진 자리. v1: <code>artifact.sidePanel</code>, <code>tab</code> (+ 그 탭을 여는 사이드바 항목).</td></tr>
+    <tr><td><code>Manifest</code></td><td>플러그인의 선언: id·이름·버전·minAppVersion·entry·permissions·slots.</td></tr>
+    <tr><td><code>PluginHost</code></td><td>앱 쪽 코드. 목록·켜짐 확인 카드·slot 렌더·브리지·종료 전 flush 담당. 플러그인의 유일한 상대.</td></tr>
+    <tr><td><code>Bridge</code></td><td>플러그인 iframe ↔ PluginHost 사이 <code>postMessage</code> 프로토콜 (<code>{ rooms: 1, … }</code>).</td></tr>
+    <tr><td><code>plugin-sdk</code></td><td><code>packages/plugin-sdk</code>: manifest 타입·브리지 클라이언트. 플러그인이 import하는 유일한 Rooms 코드.</td></tr>
+    <tr><td><code>fileKey</code></td><td>Artifact가 가리키는 <strong>원본 파일</strong>의 안정 키. <strong>처음 인덱싱할 때</strong> sha256(그때의 realpath) 앞 16 hex로 정하고 index에 저장, 이후 Rooms가 옮기면(<code>move_artifact</code>) 행과 함께 그대로 따라간다. 두 방에 링크된 같은 원본은 같은 키. (<code>sourceKey</code>에서 개명 — <code>Artifact.source</code>가 이미 "만든 에이전트" 뜻이라 혼동)</td></tr>
+    <tr><td><code>Permission</code></td><td>manifest에 선언하는 추가 능력: <code>rooms.read</code>, <code>clipboard</code>, <code>downloads</code>. 저장(<code>storage.*</code>)은 항상 허용.</td></tr>
+  </tbody>
+</table>
+
+<div class="review-box"><h4>리뷰 시 확인할 점</h4>Goal이 "UI만 확장, 앱은 플러그인을 모름"을 정확히 말하는가? Out of scope에 빠진 게 v1 사용 사례(Excalidraw, Goals)를 막지 않는가?</div>
+
+<!-- ============================================== -->
+<h2 id="s1"><span class="num">1.</span> Requirements <span class="badge badge-warn">🟡</span></h2>
+
+<h3>User Stories</h3>
+<ul>
+  <li><strong>US-1.</strong> As a 사용자, I want 문서를 보면서 옆 패널에 Excalidraw로 필기하기를, so that 읽으며 생각을 그 문서에 붙여 둔다.</li>
+  <li><strong>US-2.</strong> As a 사용자, I want 사이드바의 Goals로 장기·중기·단기 목표와 TODO를 관리하고 관련 문서를 붙이기를, so that 문서들이 무엇을 위한 것인지 한눈에 본다.</li>
+  <li><strong>US-3.</strong> As a 사용자, I want 새 플러그인이 처음 보일 때 무엇을 할 수 있는지 보고 켤지 정하기를, so that 모르는 코드가 몰래 돌지 않는다.</li>
+  <li><strong>US-4.</strong> As a 기여자, I want SDK 하나와 폴더 규칙만으로 플러그인을 만들기를, so that Rooms 코드를 몰라도 내 UI를 붙인다.</li>
+  <li><strong>US-5.</strong> As a 사용자의 에이전트, I want 플러그인 데이터를 평범한 파일로 읽고 쓰기를, so that "이 리포트를 이 목표에 붙여줘"를 처리한다.</li>
+</ul>
+
+<h3>Acceptance Criteria</h3>
+<table>
+  <thead><tr><th>#</th><th>Given</th><th>When</th><th>Then</th></tr></thead>
+  <tbody>
+    <tr><td>AC-1</td><td>앱 실행 중</td><td><code>~/rooms/.rooms/plugins/goals/</code>에 유효한 플러그인을 복사</td><td>2초 안에 "New plugin: Goals" 카드가 뜨고, 선언한 permission이 쉬운 말로 나열됨. 켜기 전엔 iframe이 하나도 열리지 않음</td></tr>
+    <tr><td>AC-2</td><td>AC-1 카드</td><td>Turn on</td><td>사이드바 "Plugins" 구역에 Goals가 나타남. 켜짐이 <code>state.json</code>에 저장돼 재시작 후에도 유지</td></tr>
+    <tr><td>AC-3</td><td>AC-1 카드</td><td>Not now</td><td>카드가 사라지고 아무것도 렌더되지 않음. 이 앱 실행 동안 다시 묻지 않음 (재시작 시 다시 물음)</td></tr>
+    <tr><td>AC-4</td><td>Excalidraw 켜짐, 문서 탭</td><td>✎ Notes 클릭</td><td>문서 오른쪽에 패널이 열리고 <code>context</code>로 그 문서의 <code>fileKey</code>를 받음. 열림·너비는 보는 사람별로 기억</td></tr>
+    <tr><td>AC-5</td><td>AC-4에서 필기</td><td>그 문서를 다른 방으로 옮긴 뒤 다시 엶</td><td>같은 필기가 열림 (fileKey 불변)</td></tr>
+    <tr><td>AC-6</td><td>필기 직후 (디바운스 대기 중)</td><td>⌘Q</td><td>종료 전 <code>beforeClose</code>를 받고 저장을 마친 뒤 종료. 다음 실행에 마지막 획이 있음 (cap 안에서)</td></tr>
+    <tr><td>AC-7</td><td>Excalidraw 패널</td><td>⤓ PNG</td><td>PNG 파일이 다운로드됨 (<code>downloads</code> permission)</td></tr>
+    <tr><td>AC-8</td><td>Goals 탭</td><td>목표에 "+ Link doc" → 문서 선택 → 칩 클릭</td><td>칩이 <code>fileKey</code>로 저장되고, 클릭 시 그 문서가 현재 탭에서 열림</td></tr>
+    <tr><td>AC-9</td><td>임의 플러그인</td><td><code>storage.write("../../token", …)</code> / 네트워크 fetch / <code>rooms.read</code> 없이 <code>rooms.list</code></td><td>각각 <code>invalid_path</code> / CSP 차단 / <code>permission_denied</code>. 토큰·다른 플러그인 데이터에 닿지 못함</td></tr>
+    <tr><td>AC-10</td><td>manifest가 깨졌거나 <code>minAppVersion</code>이 앱보다 높음</td><td>앱 실행</td><td>그 플러그인만 로드되지 않음(목록에 status·reason). 앱과 다른 플러그인은 정상</td></tr>
+    <tr><td>AC-11</td><td>플러그인이 응답하지 않음(무한 루프 등)</td><td>그 slot을 엶</td><td>메시지에 응답하지 않으면(ping 3 s) 그 영역만 "This plugin stopped responding"으로 바뀜. <strong>CPU를 독점하는 플러그인은 v1에서 앱 전체를 멈출 수 있다</strong> — WKWebView가 iframe을 같은 메인 스레드에서 돌리기 때문 (§11)</td></tr>
+    <tr><td>AC-12</td><td>플러그인 폴더 삭제</td><td>—</td><td>사이드바·패널에서 사라지고 그 플러그인 탭은 "Missing plugin". <code>data/</code>도 함께 사라짐 (A 결정)</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s2"><span class="num">2.</span> Business Logic &amp; Policy <span class="badge badge-warn">🟡</span></h2>
+
+<h3>Core Rules</h3>
+<ol>
+  <li><strong>발견:</strong> roomsd가 <code>&lt;home&gt;/.rooms/plugins/*/manifest.json</code>을 스캔(시작 시 + 폴더 감시). 폴더 이름 = manifest <code>id</code>여야 함.</li>
+  <li><strong>켜짐:</strong> 처음 본 유효 플러그인은 <code>pending</code>. 사용자가 Turn on 하면 <code>state.json</code>의 <code>plugins.enabled</code>에 id 추가. 켜진 것만 iframe을 연다.</li>
+  <li><strong>재확인:</strong> 켠 뒤 manifest의 <code>permissions</code>가 늘어나면 다시 <code>pending</code> (새 권한만 표시해 묻는다). 버전만 바뀌면 묻지 않는다.</li>
+  <li><strong>실행:</strong> entry를 files origin(<code>127.0.0.1:4318/_plugins/&lt;id&gt;/…</code>)에서 <code>sandbox="allow-scripts"</code> iframe으로 연다. <code>allow-same-origin</code>은 절대 없음 → opaque origin (localStorage·쿠키·부모 접근 불가).</li>
+  <li><strong>권한 → iframe 속성:</strong> <code>clipboard</code> → <code>allow="clipboard-read; clipboard-write"</code>, <code>downloads</code> → <code>sandbox</code>에 <code>allow-downloads</code>. <code>rooms.read</code> → 브리지 <code>rooms.list</code>·<code>artifacts.list</code> 허용. 선언 안 한 능력은 열지 않는다.</li>
+  <li><strong>네트워크·출처:</strong> files origin은 Artifact(신뢰 못 함)와 플러그인을 함께 서빙하므로 <code>'self'</code>를 쓰지 않는다. <code>/_plugins/&lt;id&gt;/*</code> 응답 헤더는 플러그인마다:<br><code>Content-Security-Policy: sandbox allow-scripts[ allow-downloads]; default-src 'none'; script-src {P}; style-src {P} 'unsafe-inline'; img-src {P} data: blob:; font-src {P}; connect-src 'none'; frame-src 'none'; form-action 'none'</code> (<code>{P}</code> = <code>http://127.0.0.1:4318/_plugins/&lt;id&gt;/</code>, 경로 한정). 헤더의 <code>sandbox</code> 토큰은 iframe 속성과 같은 manifest 권한에서 도출 — 지금 모든 응답에 붙는 <code>sandbox allow-scripts allow-popups</code>를 <code>/_plugins</code>에는 적용하지 않는다. 글꼴 등 자산은 플러그인이 직접 동봉.</li>
+  <li><strong>저장:</strong> <code>storage.*</code>는 <code>&lt;plugin&gt;/data/</code> 안의 상대 경로만. UTF-8 텍스트, 파일당 ≤ 10 MB. 원자적 쓰기(tmp → rename).</li>
+  <li><strong>열기:</strong> <code>open</code>은 현재 탭에서 navigate (⌘ 등 수정키 없음 — 플러그인은 새 탭을 강제하지 못함). 대상은 room 또는 <code>fileKey</code>.</li>
+  <li><strong>종료 전 저장:</strong> <code>app://flush</code> 때 열린 모든 플러그인 iframe에 <code>beforeClose</code>를 보내고 ack를 기다린다(전체 1.5 s cap, 노트 flush cap 2 s 안에서 병렬).</li>
+  <li><strong>사이드바:</strong> <code>tab</code> slot에 <code>sidebar: true</code>면 사이드바 "Plugins" 구역에 항목이 생긴다. Plugins 구역은 그런 플러그인이 하나라도 켜져 있을 때만 보인다.</li>
+</ol>
+
+<h3>Cross-field &amp; Temporal Invariants</h3>
+<table>
+  <thead><tr><th>종류</th><th>불변식</th><th>근거</th></tr></thead>
+  <tbody>
+    <tr><td>관계형</td><td>같은 시점에 같은 realpath를 가리키는 Artifact들은 같은 <code>fileKey</code>를 가진다.</td><td>두 방에 링크된 같은 원본이 같은 필기를 공유 (AC-5).</td></tr>
+    <tr><td>시간</td><td><code>fileKey</code>는 index 행에 저장되고 Rooms의 이동(<code>move_artifact</code> → <code>index.reassign</code>)·재시작·재스캔에도 바뀌지 않는다. Rooms 밖(Finder 등)에서 파일을 옮기거나 이름을 바꾸면 새 Artifact로 보고 새 키를 받는다.</td><td>일반 파일 Artifact는 이동 시 실제 경로가 바뀌므로 realpath를 매번 계산하면 깨진다 (Q1). 밖에서 옮긴 경우의 끊김은 수용.</td></tr>
+    <tr><td>관계형</td><td>iframe <code>sandbox</code>/<code>allow</code> 속성 ⊆ manifest <code>permissions</code>에서 도출된 집합.</td><td>선언 안 한 능력이 열리지 않게 (AC-9).</td></tr>
+    <tr><td>관계형</td><td>manifest 폴더 이름 == <code>id</code>, <code>id</code>는 <code>^[a-z0-9][a-z0-9-]{1,39}$</code>.</td><td>경로·URL에 그대로 쓰기 위해.</td></tr>
+    <tr><td>시간</td><td>플러그인 iframe은 <code>enabled</code>가 된 뒤에만 생성된다. <code>pending</code> 동안 그 플러그인 코드는 한 줄도 실행되지 않는다.</td><td>US-3.</td></tr>
+    <tr><td>시간</td><td>한 iframe의 요청에 대한 응답은 같은 iframe에만 간다 (요청 <code>id</code> + <code>event.source</code>).</td><td>플러그인끼리 데이터가 섞이지 않게.</td></tr>
+    <tr><td>관계형</td><td>한 창에서 한 플러그인의 iframe은 동시에 최대 1개. 앱은 활성 탭 하나만 마운트하므로 사이드 패널·플러그인 탭이 둘 다 살아 있을 수 없다; 이 성질이 깨지는 변경(분할 화면 등)은 이 불변식부터 고친다.</td><td>같은 <code>data/</code> 파일에 두 인스턴스가 쓰는 lost update 방지 (Q4). 바깥(에이전트) 수정과의 경합은 last-writer-wins로 수용 (§11).</td></tr>
+  </tbody>
+</table>
+
+<h3>State Diagram (플러그인 상태, roomsd 기준)</h3>
+<svg class="diagram" viewBox="0 0 720 220">
+  <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c1917"/></marker></defs>
+  <g font-family="-apple-system,sans-serif" font-size="13">
+    <circle cx="40" cy="100" r="6" fill="#1c1917"/>
+    <rect x="90" y="75" width="120" height="50" rx="6" fill="#fef3c7" stroke="#ca8a04" stroke-width="1.5"/><text x="150" y="105" text-anchor="middle">pending</text>
+    <rect x="320" y="75" width="120" height="50" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/><text x="380" y="105" text-anchor="middle">enabled</text>
+    <rect x="550" y="20" width="140" height="50" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/><text x="620" y="50" text-anchor="middle">invalid</text>
+    <rect x="550" y="140" width="140" height="50" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="620" y="170" text-anchor="middle">gone (folder removed)</text>
+    <line x1="46" y1="100" x2="88" y2="100" stroke="#1c1917" stroke-width="1.5" marker-end="url(#ar)"/><text x="66" y="90" text-anchor="middle" font-size="11">found</text>
+    <line x1="210" y1="92" x2="318" y2="92" stroke="#1c1917" stroke-width="1.5" marker-end="url(#ar)"/><text x="264" y="84" text-anchor="middle" font-size="11">Turn on</text>
+    <line x1="318" y1="112" x2="212" y2="112" stroke="#1c1917" stroke-width="1.5" marker-end="url(#ar)"/><text x="264" y="130" text-anchor="middle" font-size="11">permissions grew</text>
+    <line x1="440" y1="85" x2="548" y2="50" stroke="#1c1917" stroke-width="1.5" marker-end="url(#ar)"/><text x="495" y="58" text-anchor="middle" font-size="11">manifest broken</text>
+    <line x1="440" y1="115" x2="548" y2="160" stroke="#1c1917" stroke-width="1.5" marker-end="url(#ar)"/><text x="495" y="152" text-anchor="middle" font-size="11">deleted</text>
+    <text x="150" y="160" text-anchor="middle" font-size="11" fill="#78716c">Not now = 이 실행 동안만 숨김 (state 불변)</text>
+  </g>
+</svg>
+
+<h3>Decision Table (slot 렌더 여부)</h3>
+<table>
+  <thead><tr><th>조건</th><th>결과</th></tr></thead>
+  <tbody>
+    <tr><td>status ≠ ok (invalid · minAppVersion 초과)</td><td>렌더 안 함, 카드도 안 띄움 (목록 API에만 reason)</td></tr>
+    <tr><td>ok · pending · 이번 실행에 Not now 안 함</td><td>켜짐 확인 카드</td></tr>
+    <tr><td>ok · enabled · slot 선언 있음</td><td>해당 자리에 iframe</td></tr>
+    <tr><td>ok · enabled · 응답 없음(ping 3 s 무응답)</td><td>그 영역만 "This plugin stopped responding" + Reload</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s3"><span class="num">3.</span> Error Handling <span class="badge badge-warn">🟡</span></h2>
+
+<h3>Error Matrix</h3>
+<table>
+  <thead><tr><th>조건</th><th>처리</th><th>사용자에게</th><th>로깅</th></tr></thead>
+  <tbody>
+    <tr><td>manifest JSON 깨짐 / 필수 필드 없음 / id ≠ 폴더명</td><td>status <code>invalid</code>, reason 기록</td><td>없음 (조용히 제외)</td><td>roomsd stderr <code>plugin invalid: &lt;id&gt; &lt;reason&gt;</code></td></tr>
+    <tr><td><code>minAppVersion</code> &gt; 앱 버전</td><td>status <code>incompatible</code></td><td>없음</td><td>client warn</td></tr>
+    <tr><td>브리지: 잘못된 경로 (<code>..</code>, 절대경로, 금지 문자)</td><td>reject <code>invalid_path</code></td><td>플러그인이 처리</td><td>debug</td></tr>
+    <tr><td>브리지: 권한 없는 메서드</td><td>reject <code>permission_denied</code></td><td>플러그인이 처리</td><td>warn <code>plugin &lt;id&gt; called &lt;method&gt; without &lt;perm&gt;</code></td></tr>
+    <tr><td>브리지: 모르는 메서드 / 잘못된 메시지 모양</td><td>reject <code>unknown_method</code> / 무시</td><td>—</td><td>debug</td></tr>
+    <tr><td><code>storage.write</code> &gt; 10 MB</td><td>reject <code>too_large</code></td><td>플러그인이 처리</td><td>warn</td></tr>
+    <tr><td><code>storage.read</code> 없는 파일</td><td>resolve <code>null</code> (에러 아님)</td><td>—</td><td>—</td></tr>
+    <tr><td>roomsd 쓰기 실패 (디스크 등)</td><td>reject <code>write_failed</code></td><td>플러그인이 처리 (Excalidraw: 재시도 배지)</td><td>error</td></tr>
+    <tr><td><code>open</code> 대상 없음 (fileKey 매칭 실패)</td><td>reject <code>not_found</code></td><td>플러그인이 칩을 "missing"으로</td><td>debug</td></tr>
+    <tr><td>iframe 무응답 (ping 3 s)</td><td>오버레이 + Reload 버튼</td><td>"This plugin stopped responding"</td><td>warn</td></tr>
+    <tr><td><code>beforeClose</code> ack가 cap(1.5 s) 안에 없음</td><td>기다리지 않고 종료 진행</td><td>없음 (데이터 손실 가능 — 플러그인 책임)</td><td>warn</td></tr>
+  </tbody>
+</table>
+
+<h3>Recovery / Retry Policy</h3>
+<p>호스트는 재시도하지 않는다. 브리지 에러는 항상 플러그인에게 그대로 돌려주고, 재시도·표시는 플러그인이 정한다. iframe Reload는 사용자가 누를 때만. 앱은 플러그인 실패로 절대 멈추지 않는다.</p>
+
+<!-- ============================================== -->
+<h2 id="s4"><span class="num">4.</span> Architecture (macro) <span class="badge badge-warn">🟡</span></h2>
+<p class="meta">① 축: "플러그인이 무엇인가(roomsd 레지스트리·데이터)" vs "플러그인을 어떻게 띄우고 중계하나(PluginHost)" vs "플러그인 쪽 계약(SDK)". ② 허리: 플러그인과 앱은 브리지 메시지 하나로만 만난다. ③ 의존: 플러그인 → SDK → (메시지) → PluginHost → RoomsClient → roomsd. 역방향 import 없음. ④ 덩어리마다 facade 하나.</p>
+
+<h3>Module Map</h3>
+<table>
+  <thead><tr><th>위치</th><th>모듈</th><th>책임</th></tr></thead>
+  <tbody>
+    <tr><td><code>crates/rooms-core</code></td><td><code>plugins.rs</code></td><td>스캔·manifest 검증·status·enabled(state.json)·data 경로 해석·원자 쓰기. <code>fileKey</code> 계산(index).</td></tr>
+    <tr><td><code>crates/roomsd</code></td><td>routes</td><td><code>/v1/plugins</code>, <code>/v1/plugins/{id}</code>, <code>/v1/plugins/{id}/data/…</code>, files <code>/_plugins/{id}/…</code> (CSP), 이벤트 <code>plugins.changed</code>.</td></tr>
+    <tr><td><code>crates/rooms-protocol</code> · <code>packages/protocol-ts</code></td><td>types</td><td><code>PluginInfo</code>, <code>Artifact.fileKey</code>, 이벤트 타입, 클라이언트 메서드.</td></tr>
+    <tr><td><code>packages/plugin-sdk</code> (신규)</td><td><code>connect()</code></td><td>플러그인 측 브리지 클라이언트 + manifest/메시지 타입. 의존성 0.</td></tr>
+    <tr><td><code>apps/desktop/src/plugins/</code> (신규)</td><td><code>PluginHost</code>, <code>PluginFrame</code>, <code>bridge.ts</code>, <code>EnableCard</code></td><td>목록 구독·켜짐 카드·slot에 iframe·메시지 검증/중계·flush.</td></tr>
+    <tr><td><code>apps/desktop/src</code> 기존</td><td>DocView, Sidebar, TabView, viewerStore</td><td>slot 자리만 제공(<code>&lt;PluginSlot&gt;</code>), 탭 kind <code>plugin</code> 추가.</td></tr>
+    <tr><td>별도 저장소</td><td><code>rooms-plugin-excalidraw</code>, <code>rooms-plugin-goals</code></td><td>SDK만 사용. 빌드 결과 폴더를 <code>~/rooms/.rooms/plugins/</code>에 복사해 설치.</td></tr>
+  </tbody>
+</table>
+
+<h3>Module Dependency Diagram</h3>
+<svg class="diagram" viewBox="0 0 760 330">
+  <defs><marker id="a2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker></defs>
+  <g font-family="-apple-system,sans-serif" font-size="13">
+    <rect x="20" y="20" width="230" height="110" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="135" y="44" text-anchor="middle" font-weight="600">Plugin (별도 repo)</text>
+    <rect x="40" y="58" width="190" height="56" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/>
+    <text x="135" y="82" text-anchor="middle">plugin UI code</text><text x="135" y="100" text-anchor="middle" fill="#78716c" font-size="12">imports plugin-sdk only</text>
+    <rect x="290" y="20" width="200" height="110" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/>
+    <text x="390" y="64" text-anchor="middle" font-weight="600">PluginHost</text><text x="390" y="84" text-anchor="middle" font-size="12" fill="#78716c">apps/desktop/src/plugins</text><text x="390" y="104" text-anchor="middle" font-size="12" fill="#78716c">bridge · frames · enable card</text>
+    <rect x="530" y="20" width="210" height="110" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/>
+    <text x="635" y="64" text-anchor="middle" font-weight="600">App shell</text><text x="635" y="84" text-anchor="middle" font-size="12" fill="#78716c">DocView · Sidebar · TabView</text><text x="635" y="104" text-anchor="middle" font-size="12" fill="#78716c">&lt;PluginSlot&gt; 자리만</text>
+    <rect x="290" y="190" width="200" height="60" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/>
+    <text x="390" y="216" text-anchor="middle" font-weight="600">RoomsClient</text><text x="390" y="236" text-anchor="middle" font-size="12" fill="#78716c">protocol-ts</text>
+    <rect x="290" y="270" width="200" height="50" rx="6" fill="#f4f4f5" stroke="#78716c" stroke-width="1.5"/>
+    <text x="390" y="300" text-anchor="middle" font-weight="600">roomsd + rooms-core</text>
+    <rect x="530" y="270" width="210" height="50" rx="6" fill="#f4f4f5" stroke="#78716c" stroke-width="1.5"/>
+    <text x="635" y="292" text-anchor="middle">~/rooms/.rooms/plugins/&lt;id&gt;/</text><text x="635" y="310" text-anchor="middle" font-size="12" fill="#78716c">manifest · entry · data/</text>
+    <line x1="250" y1="75" x2="288" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a2)"/><text x="269" y="66" text-anchor="middle" font-size="11">S1</text>
+    <line x1="530" y1="75" x2="492" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a2)"/><text x="511" y="66" text-anchor="middle" font-size="11">S2</text>
+    <line x1="390" y1="130" x2="390" y2="188" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a2)"/><text x="402" y="164" font-size="11">S3</text>
+    <line x1="390" y1="250" x2="390" y2="268" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a2)"/>
+    <line x1="490" y1="295" x2="528" y2="295" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a2)"/><text x="509" y="286" text-anchor="middle" font-size="11">S4</text>
+  </g>
+</svg>
+
+<h3>Cluster Facades</h3>
+<table>
+  <thead><tr><th>덩어리</th><th>단일 facade</th><th>호출자가 몰라도 되는 내부</th></tr></thead>
+  <tbody>
+    <tr><td>플러그인 측</td><td><code>connect()</code> → <code>RoomsPlugin</code></td><td>postMessage·요청 id·타임아웃·ready 핸드셰이크</td></tr>
+    <tr><td>앱 셸 측</td><td><code>&lt;PluginSlot slot context /&gt;</code> · <code>usePluginItems()</code></td><td>켜짐 상태·iframe 속성·브리지·무응답 감지</td></tr>
+    <tr><td>중계</td><td><code>handleBridgeCall(plugin, call)</code></td><td>권한 검사·경로 검증·RoomsClient 호출·에러 코드 매핑</td></tr>
+    <tr><td>코어</td><td><code>RoomsCore::plugins()</code> / <code>plugin_data(id)</code></td><td>스캔·검증·state.json·원자 쓰기·경로 탈출 차단</td></tr>
+  </tbody>
+</table>
+
+<h3>명명 규칙</h3>
+<table>
+  <thead><tr><th>종류</th><th>패턴</th><th>예시</th></tr></thead>
+  <tbody>
+    <tr><td>slot 이름</td><td><code>area.place</code>, 앱 쪽 명사</td><td><code>artifact.sidePanel</code>, <code>tab</code></td></tr>
+    <tr><td>브리지 메서드</td><td><code>namespace.verb</code></td><td><code>storage.write</code>, <code>artifacts.list</code>, <code>open</code></td></tr>
+    <tr><td>permission</td><td>능력 이름</td><td><code>rooms.read</code>, <code>clipboard</code>, <code>downloads</code></td></tr>
+    <tr><td>에러 코드</td><td>snake_case, 원인</td><td><code>permission_denied</code>, <code>invalid_path</code>, <code>too_large</code></td></tr>
+  </tbody>
+</table>
+
+<div class="review-box"><h4>리뷰 시 확인할 점</h4>플러그인과 앱이 브리지 메시지 하나로만 만나는가? App shell은 플러그인 존재를 <code>&lt;PluginSlot&gt;</code> 자리로만 아는가 — DocView가 Excalidraw를 알게 되면 축이 틀린 것.</div>
+
+<!-- ============================================== -->
+<h2 id="s5"><span class="num">5.</span> Seams (edge) <span class="badge badge-warn">🟡</span></h2>
+<p class="meta">§4 화살표 S1–S4. 각 블록 call-site 먼저 → frozen signature → 3줄 계약.</p>
+
+<h3>Seam Index</h3>
+<svg class="diagram" viewBox="0 0 700 120">
+  <defs><marker id="a3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker></defs>
+  <g font-family="-apple-system,sans-serif" font-size="13">
+    <rect x="10" y="40" width="110" height="40" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="65" y="65" text-anchor="middle">Plugin</text>
+    <rect x="190" y="40" width="130" height="40" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="255" y="65" text-anchor="middle">PluginHost</text>
+    <rect x="390" y="40" width="130" height="40" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="455" y="65" text-anchor="middle">RoomsClient</text>
+    <rect x="580" y="40" width="110" height="40" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="635" y="65" text-anchor="middle">roomsd</text>
+    <rect x="190" y="0" width="130" height="28" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="255" y="19" text-anchor="middle" font-size="12">App shell</text>
+    <line x1="120" y1="60" x2="188" y2="60" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a3)"/><text x="154" y="52" text-anchor="middle" font-size="11">S1</text>
+    <line x1="255" y1="28" x2="255" y2="38" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a3)"/><text x="268" y="36" font-size="11">S2</text>
+    <line x1="320" y1="60" x2="388" y2="60" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a3)"/><text x="354" y="52" text-anchor="middle" font-size="11">S3</text>
+    <line x1="520" y1="60" x2="578" y2="60" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a3)"/><text x="549" y="52" text-anchor="middle" font-size="11">S4</text>
+  </g>
+</svg>
+
+<div class="seam">
+  <p class="seam-title">S1 · plugin → PluginHost (bridge, via plugin-sdk)</p>
+  <p class="seam-sub">플러그인이 앱에 닿는 유일한 길. 공개 API의 전부.</p>
+  <h5>Call-site (Excalidraw 플러그인)</h5>
+<pre><code>import { connect } from "@alto-rooms/plugin-sdk";
+
+const rooms = await connect();               // ready 핸드셰이크
+rooms.onContext(async (ctx) =&gt; {
+  if (ctx.slot !== "artifact.sidePanel") return;
+  const saved = await rooms.storage.read(`notes/${ctx.artifact.fileKey}.excalidraw`);
+  scene.load(saved ? JSON.parse(saved) : EMPTY);
+});
+const save = debounce(() =&gt;
+  rooms.storage.write(`notes/${current.fileKey}.excalidraw`, JSON.stringify(scene.serialize())), 400);
+rooms.onBeforeClose(async () =&gt; { await save.flush(); });   // ack은 SDK가 보냄</code></pre>
+  <h5>Call-site (Goals 플러그인)</h5>
+<pre><code>const rooms = await connect();
+const goals = JSON.parse((await rooms.storage.read("goals.json")) ?? "{}");
+const picks = await rooms.artifacts.list(roomId);   // rooms.read 필요; 각 항목에 fileKey
+await rooms.open({ fileKey: chip.fileKey });         // 현재 탭에서 열기</code></pre>
+  <h5>Frozen signature (packages/plugin-sdk)</h5>
+<pre><code>export function connect(opts?: { timeoutMs?: number }): Promise&lt;RoomsPlugin&gt;;
+
+export interface RoomsPlugin {
+  readonly pluginId: string;
+  onContext(cb: (ctx: PluginContext) =&gt; void): () =&gt; void;      // 즉시 1회 + 변경마다
+  onBeforeClose(cb: () =&gt; Promise&lt;void&gt; | void): () =&gt; void;
+  storage: {
+    read(path: string): Promise&lt;string | null&gt;;
+    write(path: string, text: string): Promise&lt;void&gt;;
+    list(prefix?: string): Promise&lt;string[]&gt;;      // data/ 기준 상대 경로, 정렬됨
+    delete(path: string): Promise&lt;void&gt;;           // 없으면 no-op
+  };
+  rooms: { list(): Promise&lt;PluginRoom[]&gt; };         // rooms.read
+  artifacts: { list(roomId: string): Promise&lt;PluginArtifact[]&gt; };   // rooms.read
+  open(target: { roomId: string } | { fileKey: string }): Promise&lt;void&gt;;
+}
+
+export type PluginContext =
+  | { slot: "artifact.sidePanel"; artifact: PluginArtifact }
+  | { slot: "tab" };
+
+export interface PluginRoom { id: string; name: string }
+export interface PluginArtifact { roomId: string; artifactId: string; fileKey: string; title: string; createdAt: string }
+
+export class PluginError extends Error {
+  code: "permission_denied" | "invalid_path" | "too_large" | "not_found" | "write_failed" | "unknown_method" | "timeout";
+}</code></pre>
+  <h5>Wire (SDK 내부, 문서화만 — 플러그인은 직접 쓰지 않음)</h5>
+<pre><code>host → plugin  { rooms: 1, type: "context", context: PluginContext }
+host → plugin  { rooms: 1, type: "beforeClose", id }
+plugin → host  { rooms: 1, type: "ready" } | { rooms: 1, type: "beforeClose.done", id } | { rooms: 1, type: "pong", id }
+plugin → host  { rooms: 1, id, method, params }      →   host → plugin { rooms: 1, id, result } | { rooms: 1, id, error: { code, message } }
+host → plugin  { rooms: 1, type: "ping", id }        // 무응답 감지</code></pre>
+  <h5>경계 계약</h5>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ 메서드 이름 + JSON params (경로·텍스트·roomId·target) / ↑ JSON 결과 또는 <code>{code,message}</code>. 토큰·URL·전체 state는 절대 건너가지 않음.</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>플러그인이 자기 UI 상태와 저장 시점을 소유. 호스트는 무상태 중계자 (요청마다 권한·경로 검사).</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>호스트: <code>event.source === frame.contentWindow</code>인 메시지만 받고 그 iframe에만 응답, <code>context</code>는 ready 직후 1회 + 변경 시마다, <code>fileKey</code>는 §2 불변식대로 안정. SDK: <code>event.source === window.parent</code>가 아닌 메시지는 전부 버린다 (옆 Artifact iframe이 <code>parent.frames[i]</code>로 context·응답을 위조하는 것 차단). 플러그인: <code>beforeClose</code>에 cap 안에 ack.</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S2 · App shell → PluginHost</p>
+  <p class="seam-sub">셸은 "여기가 자리다"만 말한다. 어떤 플러그인이 오는지 모른다.</p>
+  <h5>Call-site</h5>
+<pre><code>// DocView.tsx — 문서 탭
+&lt;div className="flex"&gt;
+  &lt;iframe … artifact /&gt;
+  &lt;PluginSlot slot="artifact.sidePanel" context={{ artifact }} /&gt;   {/* 켜진 플러그인 없으면 null; 토글 버튼도 이 안에서 그림 */}
+&lt;/div&gt;
+
+// Sidebar.tsx
+const items = usePluginItems();          // [{ pluginId, title, icon }] — 켜졌고 sidebar:true인 것만
+items.map((it) =&gt; &lt;button onClick={(e) =&gt; viewer.go({ kind: "plugin", pluginId: it.pluginId }, wantsNewTab(e))}&gt;…)
+
+// AppShell TabView
+case "plugin": return &lt;PluginSlot slot="tab" pluginId={tab.pluginId} context={{}} /&gt;;</code></pre>
+  <h5>Frozen signature</h5>
+<pre><code>export function PluginSlot(props:
+  | { slot: "artifact.sidePanel"; context: { artifact: Artifact } }   // 닫힘: 문서 오른쪽 위 "✎ {title}" 토글만 / 열림: 패널
+  | { slot: "tab"; pluginId: string; context: Record&lt;string, never&gt; }
+): JSX.Element | null;
+// 사이드 패널의 열림·너비·선택된 플러그인은 viewerStore.pluginPanel = { open, width, pluginId }
+// 하나에 저장 (보는 사람 단위, 탭·문서와 무관). 셸은 이 상태를 모른다.
+
+export function usePluginItems(): { pluginId: string; title: string; icon: PluginIcon }[];
+
+// viewerStore Tab union 추가
+| { id: string; kind: "plugin"; pluginId: string }</code></pre>
+  <h5>경계 계약</h5>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ slot 이름 + 그 자리의 맥락(열린 Artifact) / ↑ 렌더 결과(또는 null).</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>PluginHost가 켜짐 상태·iframe 수명을 소유. 사이드 패널 토글 버튼과 패널은 <code>&lt;PluginSlot slot="artifact.sidePanel"&gt;</code>이 함께 그리고, 열림·너비는 viewerStore의 <code>pluginPanel</code> 하나(탭과 무관)에 저장. 셸은 자리만 놓는다.</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>켜진 플러그인이 없으면 자리는 아무것도 그리지 않음(레이아웃 영향 0). 같은 자리에 여러 플러그인이 있으면 패널 머리에 탭으로 전환.</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S3 · PluginHost → RoomsClient</p>
+  <p class="seam-sub">브리지 요청을 roomsd 호출로 바꾼다. 토큰은 여기서만 쓰인다.</p>
+  <h5>Call-site (bridge.ts)</h5>
+<pre><code>case "storage.write": return client.putPluginData(plugin.id, params.path, params.text);
+case "artifacts.list": requirePermission(plugin, "rooms.read");
+                       return (await client.listArtifacts(params.roomId)).map(toPluginArtifact);
+case "open":           return viewer.navigate(await resolveTarget(params));   // fileKey → {roomId, artifactId}</code></pre>
+  <h5>Frozen signature (protocol-ts 추가분)</h5>
+<pre><code>listPlugins(): Promise&lt;PluginInfo[]&gt;;
+setPluginEnabled(id: string, enabled: boolean): Promise&lt;PluginInfo&gt;;
+getPluginData(id: string, path: string): Promise&lt;string | null&gt;;        // 404 → null
+putPluginData(id: string, path: string, text: string): Promise&lt;void&gt;;
+listPluginData(id: string, prefix?: string): Promise&lt;string[]&gt;;
+deletePluginData(id: string, path: string): Promise&lt;void&gt;;
+pluginEntryUrl(info: Info, plugin: PluginInfo): string;               // files origin /_plugins/&lt;id&gt;/&lt;entry&gt;
+findArtifactByFileKey(fileKey: string): Promise&lt;Artifact | null&gt;;</code></pre>
+  <h5>경계 계약</h5>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ plugin id + 상대 경로 + 텍스트 / ↑ 텍스트·목록·Artifact.</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>RoomsClient가 토큰·HTTP를 소유. PluginHost는 권한 판단만.</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>roomsd가 경로 탈출·크기·id 검증을 다시 한다 (호스트 검사와 이중). 호스트 버그가 있어도 <code>data/</code> 밖은 못 씀.</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S4 · roomsd → filesystem (plugins dir)</p>
+  <p class="seam-sub">플러그인 = 폴더. 코어는 읽기 + <code>data/</code> 쓰기만.</p>
+  <h5>Call-site (routes.rs)</h5>
+<pre><code>let list = st.core.plugins();                                  // GET /v1/plugins
+st.core.write_plugin_data(&amp;id, &amp;rel, &amp;body)?;                   // PUT /v1/plugins/{id}/data/{*rel}
+let path = st.core.resolve_plugin_file(&amp;id, &amp;rel)?;             // files /_plugins/{id}/{*rel}</code></pre>
+  <h5>Frozen signature (rooms-core)</h5>
+<pre><code>pub fn plugins(&amp;self) -&gt; Vec&lt;PluginInfo&gt;;
+pub fn set_plugin_enabled(&amp;self, id: &amp;str, enabled: bool) -&gt; Result&lt;PluginInfo, CoreError&gt;;
+pub fn read_plugin_data(&amp;self, id: &amp;str, rel: &amp;str) -&gt; Result&lt;Option&lt;String&gt;, CoreError&gt;;
+pub fn write_plugin_data(&amp;self, id: &amp;str, rel: &amp;str, text: &amp;str) -&gt; Result&lt;(), CoreError&gt;;
+pub fn list_plugin_data(&amp;self, id: &amp;str, prefix: &amp;str) -&gt; Result&lt;Vec&lt;String&gt;, CoreError&gt;;
+pub fn delete_plugin_data(&amp;self, id: &amp;str, rel: &amp;str) -&gt; Result&lt;(), CoreError&gt;;
+pub fn resolve_plugin_file(&amp;self, id: &amp;str, rel: &amp;str) -&gt; Result&lt;PathBuf, CoreError&gt;;   // data/ 제외
+pub fn artifact_by_file_key(&amp;self, file_key: &amp;str) -&gt; Option&lt;Artifact&gt;;</code></pre>
+  <h5>경계 계약</h5>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ id + 상대 경로 (+ 텍스트) / ↑ 파일 내용·경로·<code>PluginInfo</code>.</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>코어가 enabled(state.json)와 data 파일을 소유. 플러그인 코드 파일은 사용자가 소유(코어는 읽기만).</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>모든 경로는 canonicalize 후 <code>&lt;plugin&gt;/data/</code>(데이터) 또는 <code>&lt;plugin&gt;/</code>(자산, data/ 제외) 안에 있어야 함. symlink 탈출 차단. 자산 응답엔 §2의 CSP.</td></tr>
+  </tbody></table>
+</div>
+
+<div class="review-box"><h4>리뷰 시 확인할 점 (seam 스멜)</h4>S1 call-site만 보고 플러그인을 쓸 수 있는가? <code>open</code>이 <code>fileKey</code>를 받는 게 맞는가 (artifactId는 방 이동에 바뀜)? S2에서 셸이 플러그인 이름을 알게 되는 곳이 없는가?</div>
+
+<!-- ============================================== -->
+<h2 id="s6"><span class="num">6.</span> Contracts (node) <span class="badge badge-warn">🟡</span></h2>
+
+<h3>6.1 manifest.json</h3>
+<table>
+  <thead><tr><th>필드</th><th>타입</th><th>Invariants / Validation (rooms-core)</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td><code>string</code></td><td><code>^[a-z0-9][a-z0-9-]{1,39}$</code>, 폴더 이름과 같음</td></tr>
+    <tr><td><code>name</code></td><td><code>string</code></td><td>1–40자</td></tr>
+    <tr><td><code>version</code></td><td><code>string</code></td><td>semver</td></tr>
+    <tr><td><code>minAppVersion</code></td><td><code>string</code></td><td>semver; 앱 &lt; 이 값이면 <code>incompatible</code></td></tr>
+    <tr><td><code>description</code></td><td><code>string?</code></td><td>≤ 200자, 켜짐 카드에 표시</td></tr>
+    <tr><td><code>entry</code></td><td><code>string?</code></td><td>기본 <code>index.html</code>; 폴더 안 상대 경로, <code>data/</code> 아래 금지</td></tr>
+    <tr><td><code>permissions</code></td><td><code>("rooms.read"|"clipboard"|"downloads")[]</code></td><td>모르는 값 → invalid; 중복 제거</td></tr>
+    <tr><td><code>slots</code></td><td><code>{ "artifact.sidePanel"?: { title }, "tab"?: { title, icon?, sidebar? } }</code></td><td>최소 1개; 모르는 slot 키 → 무시하고 경고(미래 호환); title 1–24자; icon ∈ 허용 목록(lucide 이름 12개)</td></tr>
+  </tbody>
+</table>
+
+<h3>6.2 브리지 메서드 (호스트 응답)</h3>
+<table>
+  <thead><tr><th>메서드</th><th>params</th><th>result / 보장</th></tr></thead>
+  <tbody>
+    <tr><td><code>storage.read</code></td><td><code>{ path }</code></td><td><code>string | null</code>. 없으면 null</td></tr>
+    <tr><td><code>storage.write</code></td><td><code>{ path, text }</code></td><td><code>null</code>. 원자적. 중간 폴더 자동 생성. 같은 입력 반복 = 같은 결과 (idempotent)</td></tr>
+    <tr><td><code>storage.list</code></td><td><code>{ prefix? }</code></td><td><code>string[]</code> 파일만, <code>/</code> 구분 상대 경로, 사전순</td></tr>
+    <tr><td><code>storage.delete</code></td><td><code>{ path }</code></td><td><code>null</code>. 없으면 no-op</td></tr>
+    <tr><td><code>rooms.list</code></td><td>—</td><td><code>PluginRoom[]</code> 사이드바 순서 (inbox 포함)</td></tr>
+    <tr><td><code>artifacts.list</code></td><td><code>{ roomId }</code></td><td><code>PluginArtifact[]</code> 최신순</td></tr>
+    <tr><td><code>open</code></td><td><code>{ roomId } | { fileKey }</code></td><td><code>null</code>. 현재 탭 navigate. fileKey가 여러 방에 있으면 사이드바 순서상 첫 방</td></tr>
+  </tbody>
+</table>
+<p><strong>경로 규칙 (호스트·코어 공통):</strong> 1–200자, 세그먼트 <code>[A-Za-z0-9._-]+</code>를 <code>/</code>로 연결, <code>.</code>/<code>..</code>/빈 세그먼트·선행 <code>/</code> 금지, 깊이 ≤ 8. 텍스트 ≤ 10 MB (UTF-8 바이트).</p>
+
+<h3>6.3 Errors</h3>
+<table>
+  <thead><tr><th>입력 조건</th><th>code</th><th>HTTP (roomsd)</th></tr></thead>
+  <tbody>
+    <tr><td>경로 규칙 위반</td><td><code>invalid_path</code></td><td>400</td></tr>
+    <tr><td>텍스트 &gt; 10 MB</td><td><code>too_large</code></td><td>413</td></tr>
+    <tr><td>permission 없음</td><td><code>permission_denied</code></td><td>— (호스트에서 차단)</td></tr>
+    <tr><td>플러그인 미설치·invalid·pending</td><td><code>not_found</code></td><td>404</td></tr>
+    <tr><td>roomId / fileKey 없음</td><td><code>not_found</code></td><td>404</td></tr>
+    <tr><td>디스크 쓰기 실패</td><td><code>write_failed</code></td><td>500</td></tr>
+    <tr><td>응답 없음 (SDK 측, 기본 10 s)</td><td><code>timeout</code></td><td>—</td></tr>
+    <tr><td>모르는 메서드</td><td><code>unknown_method</code></td><td>—</td></tr>
+  </tbody>
+</table>
+
+<h3>Pre / Post</h3>
+<ul>
+  <li><strong>Pre:</strong> 플러그인 status <code>ok</code> + <code>enabled</code>; iframe이 <code>ready</code>를 보냄.</li>
+  <li><strong>Post (write):</strong> 파일이 디스크에 완전히 있음(부분 쓰기 없음). 이벤트는 내지 않음 — 플러그인 데이터는 자기만 본다(외부 수정 감지는 v2).</li>
+  <li><strong>Post (setPluginEnabled):</strong> state.json 저장 + <code>plugins.changed</code> 이벤트.</li>
+</ul>
+
+<!-- ============================================== -->
+<h2 id="s7"><span class="num">7.</span> Core Flows <span class="badge badge-warn">🟡</span></h2>
+
+<h3>Flow Index</h3>
+<table>
+  <thead><tr><th>#</th><th>흐름</th><th>한 줄 책임</th><th>진입점</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>발견 → 켜기</td><td>폴더에 들어온 플러그인을 묻고 켠다</td><td><code>RoomsCore::plugins</code> → <code>EnableCard</code></td></tr>
+    <tr><td>2</td><td>slot 렌더 + 브리지</td><td>자리에 iframe을 열고 요청을 중계</td><td><code>&lt;PluginSlot&gt;</code> / <code>handleBridgeCall</code></td></tr>
+    <tr><td>3</td><td>종료 전 저장</td><td>앱 종료 시 플러그인 저장을 기다림</td><td><code>runQuitFlush</code> → <code>PluginHost.flushAll</code></td></tr>
+  </tbody>
+</table>
+
+<div class="flow">
+  <h3>흐름 1: 발견 → 켜기</h3>
+  <div class="slot"><h4>① 트리거 &amp; 타이밍</h4><p>roomsd 시작 시 스캔 + <code>.rooms/plugins/</code> 감시(디바운스 300 ms) → <code>plugins.changed</code>. 앱은 시작 시와 이벤트마다 <code>listPlugins()</code>.</p></div>
+  <div class="slot"><h4>② 워크플로우</h4>
+    <svg class="diagram" viewBox="0 0 700 150"><defs><marker id="a4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c1917"/></marker></defs>
+      <g font-family="-apple-system,sans-serif" font-size="12">
+        <rect x="10" y="50" width="110" height="44" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="65" y="76" text-anchor="middle">폴더 복사</text>
+        <rect x="150" y="50" width="120" height="44" rx="6" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="210" y="70" text-anchor="middle">scan + validate</text><text x="210" y="86" text-anchor="middle" fill="#78716c">rooms-core</text>
+        <polygon points="330,72 370,48 410,72 370,96" fill="white" stroke="#78716c" stroke-width="1.5"/><text x="370" y="76" text-anchor="middle">ok?</text>
+        <rect x="440" y="20" width="120" height="40" rx="6" fill="#fef3c7" stroke="#ca8a04" stroke-width="1.5"/><text x="500" y="44" text-anchor="middle">EnableCard</text>
+        <rect x="440" y="90" width="120" height="40" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/><text x="500" y="114" text-anchor="middle">invalid (조용히)</text>
+        <rect x="590" y="20" width="100" height="40" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/><text x="640" y="44" text-anchor="middle">enabled</text>
+        <line x1="120" y1="72" x2="148" y2="72" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a4)"/>
+        <line x1="270" y1="72" x2="328" y2="72" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a4)"/>
+        <line x1="400" y1="62" x2="438" y2="42" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a4)"/><text x="418" y="44" font-size="11">yes</text>
+        <line x1="400" y1="82" x2="438" y2="108" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a4)"/><text x="418" y="112" font-size="11">no</text>
+        <line x1="560" y1="40" x2="588" y2="40" stroke="#1c1917" stroke-width="1.5" marker-end="url(#a4)"/><text x="574" y="32" text-anchor="middle" font-size="11">Turn on</text>
+      </g></svg>
+  </div>
+  <div class="slot"><h4>③ 입력 &amp; 출처</h4><table><thead><tr><th>입력</th><th>출처</th><th>전제</th></tr></thead><tbody>
+    <tr><td><code>manifest.json</code></td><td>플러그인 폴더</td><td>폴더 이름 = id</td></tr>
+    <tr><td><code>plugins.enabled</code>, <code>plugins.grants</code></td><td><code>state.json</code></td><td>없으면 빈 목록</td></tr>
+    <tr><td>앱 버전</td><td><code>Info.version</code></td><td>—</td></tr></tbody></table></div>
+  <div class="slot"><h4>④ 주요 결정</h4><table><thead><tr><th>결정</th><th>방식</th><th>근거</th></tr></thead><tbody>
+    <tr><td>켤지</td><td>사용자 (카드)</td><td>US-3. 자동 켜기 없음</td></tr>
+    <tr><td>다시 물을지</td><td>결정론: 현재 permissions ⊄ 허락한 permissions(<code>grants[id]</code>)</td><td>권한이 늘 때만 묻기</td></tr>
+    <tr><td>카드 순서</td><td>결정론: id 사전순, 한 번에 하나</td><td>여러 개 동시 설치해도 차례로</td></tr></tbody></table></div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4><p>manifest 오류·버전 초과 → status만 바뀌고 카드·렌더 없음. <code>setPluginEnabled</code> 실패 → 카드에 "Couldn't turn it on" + 다시 시도.</p></div>
+  <div class="slot"><h4>⑥ 동작 결과</h4><p>enabled → <code>usePluginItems</code>·<code>&lt;PluginSlot&gt;</code>가 그 플러그인을 포함. Not now → 메모리에만 기록(이번 실행 동안 카드 숨김).</p></div>
+  <div class="slot"><h4>⑦ 연결</h4><p>S4(스캔·state) → S3(listPlugins/setPluginEnabled) → S2(셸 자리).</p></div>
+</div>
+
+<div class="flow">
+  <h3>흐름 2: slot 렌더 + 브리지</h3>
+  <div class="slot"><h4>① 트리거 &amp; 타이밍</h4><p>문서 탭에서 ✎ Notes 열림 / 플러그인 탭 활성화 시 iframe 생성. 패널을 닫거나 탭을 떠나면 iframe 제거(<code>beforeClose</code> 먼저). 같은 패널에서 문서만 바뀌면 iframe 유지 + <code>context</code> 재전송.</p></div>
+  <div class="slot"><h4>② 워크플로우</h4><ol>
+    <li>PluginSlot이 <code>pluginEntryUrl</code>로 iframe 생성 (sandbox·allow는 permissions에서 도출).</li>
+    <li>SDK <code>connect()</code>가 <code>ready</code> 전송 → 호스트가 <code>event.source</code>로 iframe 식별 → <code>context</code> 전송.</li>
+    <li>요청 <code>{id, method, params}</code> → <code>handleBridgeCall</code>: 모양 검증 → 권한 → 경로 → RoomsClient → 응답.</li>
+    <li>호스트가 5 s마다 <code>ping</code>; 3 s 안에 <code>pong</code> 없으면 무응답 오버레이.</li></ol></div>
+  <div class="slot"><h4>③ 입력 &amp; 출처</h4><p>PluginInfo(목록), 열린 Artifact(DocView), viewerStore(패널 열림·너비), 메시지(iframe).</p></div>
+  <div class="slot"><h4>④ 주요 결정</h4><table><thead><tr><th>결정</th><th>방식</th><th>근거</th></tr></thead><tbody>
+    <tr><td>메시지 출처 확인</td><td><code>event.source === frame.contentWindow</code> (origin은 opaque "null"이라 못 씀)</td><td>다른 iframe(Artifact 포함) 위장 차단</td></tr>
+    <tr><td><code>open</code>의 fileKey 해석</td><td>코어 <code>artifact_by_file_key</code>, 여러 개면 사이드바 순서 첫 방</td><td>결정론적</td></tr>
+    <tr><td>패널에 여러 플러그인</td><td>머리에 탭; 마지막 선택 기억</td><td>자리 하나를 공유</td></tr></tbody></table></div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4><p>§3 매트릭스. 모양이 틀린 메시지는 응답 없이 무시(잡음에 응답하지 않음).</p>
+    <p><strong>열려 있는 동안 플러그인이 바뀌면</strong> (<code>plugins.changed</code> → PluginHost가 다시 목록을 받아 비교, 결정은 PluginHost):</p>
+    <table><thead><tr><th>변화</th><th>열린 iframe 처리</th></tr></thead><tbody>
+      <tr><td><code>rev</code>만 바뀜 (코드·manifest 갱신, 권한 그대로)</td><td><code>beforeClose</code>(cap) → 새로 로드</td></tr>
+      <tr><td>권한이 늘어 pending</td><td><code>beforeClose</code>(cap) → 제거 → 그 자리에 켜짐 카드</td></tr>
+      <tr><td>invalid / incompatible</td><td><code>beforeClose</code>(cap) → 제거 → "This plugin can't load"</td></tr>
+      <tr><td>폴더 삭제(gone)</td><td>즉시 제거(파일이 없어 저장할 곳도 없음) → 탭은 "Missing plugin"</td></tr>
+    </tbody></table>
+    <p><code>PluginInfo.rev</code> = manifest와 entry 파일의 mtime·크기로 만든 해시 (코어가 계산).</p></div>
+  <div class="slot"><h4>⑥ 동작 결과</h4><p>플러그인 화면이 자리에 보이고, 데이터는 <code>data/</code>에 파일로 쌓인다.</p></div>
+  <div class="slot"><h4>⑦ 연결</h4><p>S2 → S1 ↔ S3 → S4.</p></div>
+</div>
+
+<div class="flow">
+  <h3>흐름 3: 종료 전 저장</h3>
+  <div class="slot"><h4>① 트리거 &amp; 타이밍</h4><p>기존 <code>app://flush</code> (창 닫기·⌘Q). 지금 <code>onBeforeQuitFlush</code>는 동기 훅만 받으므로, <code>appEvents</code>에 <strong>비동기 훅</strong> <code>onQuitFlushAsync(fn: () =&gt; Promise&lt;void&gt;)</code>를 추가하고 <code>runQuitFlush</code>가 이를 노트 flush와 <strong>병렬로 시작해 함께 await</strong>한다. 예산: 노트 몫 1.6 s 창을 공유하고 플러그인은 그 안에서 1.5 s cap (draft 400 ms·Rust 2.5 s 한도는 그대로). 패널 닫기·탭 떠나기도 같은 <code>beforeClose</code>(cap 1.5 s, 넘으면 그냥 제거).</p></div>
+  <div class="slot"><h4>② 워크플로우</h4><ol><li>runQuitFlush가 등록된 훅 실행 → <code>PluginHost.flushAll()</code>.</li><li>열린 iframe마다 <code>beforeClose{id}</code> → <code>beforeClose.done{id}</code> 대기 (Promise.allSettled + 타임아웃).</li><li>완료 또는 cap → flush_done.</li></ol></div>
+  <div class="slot"><h4>③ 입력 &amp; 출처</h4><p>열린 iframe 목록(PluginHost 소유).</p></div>
+  <div class="slot"><h4>④ 주요 결정</h4><p>cap 초과 시 기다리지 않음(결정론). 앱 종료를 플러그인이 막을 수 없다.</p></div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4><p>무응답·에러 → warn 로그, 종료 진행.</p></div>
+  <div class="slot"><h4>⑥ 동작 결과</h4><p>디바운스 중이던 마지막 저장이 디스크에 반영된 뒤 종료 (AC-6).</p></div>
+  <div class="slot"><h4>⑦ 연결</h4><p><code>onQuitFlushAsync</code>(신규, appEvents) → <code>PluginHost.flushAll</code> → S1 <code>beforeClose</code>.</p></div>
+</div>
+
+<!-- ============================================== -->
+<h2 id="s8"><span class="num">8.</span> End-to-End Scenario <span class="badge badge-warn">🟡</span></h2>
+<div style="background:white;border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin:16px 0;">
+<strong>입력:</strong> 사용자가 <code>rooms-plugin-excalidraw</code>를 빌드해 <code>~/rooms/.rooms/plugins/excalidraw/</code>에 복사 (permissions: clipboard, downloads). 이어서 Latency report 문서에 필기 → 문서를 Benchmarks에서 Research 방으로 옮김 → ⌘Q.
+</div>
+<table>
+  <thead><tr><th>#</th><th>From</th><th>Event</th><th>To</th><th>Side effect</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>—</td><td>폴더 감시</td><td>excalidraw: pending</td><td><code>plugins.changed</code></td></tr>
+    <tr><td>2</td><td>pending</td><td>카드 "can copy & paste, can save files you export" → Turn on</td><td>enabled</td><td>state.json <code>plugins.enabled+=excalidraw</code>, <code>grants.excalidraw=[clipboard,downloads]</code></td></tr>
+    <tr><td>3</td><td>문서 탭</td><td>✎ Notes</td><td>패널 열림</td><td>iframe(sandbox allow-scripts allow-downloads, allow clipboard) → ready → context{fileKey:"9f2c…"}</td></tr>
+    <tr><td>4</td><td>필기</td><td>400 ms 디바운스</td><td>—</td><td><code>data/notes/9f2c….excalidraw</code> 원자 쓰기</td></tr>
+    <tr><td>5</td><td>사이드바</td><td>문서를 Research로 이동</td><td>새 artifactId</td><td>fileKey 그대로 "9f2c…" → 패널이 같은 필기를 계속 보임</td></tr>
+    <tr><td>6</td><td>필기 직후</td><td>⌘Q</td><td>종료</td><td>beforeClose → 플러그인이 save.flush() → done → flush_done</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s9"><span class="num">9.</span> Testing <span class="badge badge-warn">🟡</span></h2>
+<table>
+  <thead><tr><th>Layer</th><th>What</th><th>Tool</th></tr></thead>
+  <tbody>
+    <tr><td>Unit (Rust)</td><td>manifest 검증 표, 경로 규칙(탈출·symlink·깊이), 원자 쓰기, enabled/grants 재확인 규칙, fileKey 안정성(일반 파일·심볼릭 링크 각각 이동·재시작·재스캔), <code>rev</code> 계산</td><td>cargo test</td></tr>
+    <tr><td>API</td><td><code>/v1/plugins*</code> 토큰·404·413, files <code>/_plugins</code>의 정확한 CSP 헤더(경로 한정·sandbox 토큰)·data/ 차단, Artifact 경로 응답은 기존 CSP 유지</td><td>roomsd tests/api.rs</td></tr>
+    <tr><td>Unit (TS)</td><td>bridge: 출처 확인·권한·에러 매핑·응답 라우팅; PluginSlot 속성 도출·토글; EnableCard 문구; SDK 타임아웃·beforeClose ack·<strong>형제 프레임이 보낸 가짜 context/응답 무시</strong>; 열린 중 변경(rev·권한·invalid·gone) 처리; <code>onQuitFlushAsync</code> 병렬·cap</td><td>vitest</td></tr>
+    <tr><td>E2E</td><td>repo 안 <code>e2e/fixtures/plugins/echo</code>(SDK만 쓰는 최소 플러그인)로: 카드 → 켜기 → 패널 → storage 왕복 → 권한 거부 → 무응답 오버레이. Chromium + WebKit</td><td>Playwright</td></tr>
+    <tr><td>Manual</td><td>Excalidraw·Goals 실제 플러그인으로 AC-4~8</td><td>manual-test.html</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s10"><span class="num">10.</span> Senior Review <span class="badge badge-ok">🟢</span></h2>
+
+<h3>10.1 진입점-우선 워크스루</h3>
+<table>
+  <thead><tr><th>#</th><th>말할 것</th><th>가리킬 곳</th></tr></thead>
+  <tbody>
+    <tr><td>1. 진입점</td><td>"플러그인 개발자는 <code>connect()</code> 하나만 안다. 앱 셸은 <code>&lt;PluginSlot&gt;</code>과 <code>usePluginItems()</code>만 안다."</td><td>§4 Cluster Facades</td></tr>
+    <tr><td>2. 분리</td><td>"플러그인과 앱은 버전 붙은 메시지 하나로만 만난다(S1). 토큰은 S3 뒤에만 있고, roomsd가 경로를 다시 검증한다(S4)."</td><td>§5</td></tr>
+    <tr><td>3. 동작</td><td>"폴더 복사 → 카드로 묻기 → 켜면 자리에 iframe → 요청은 권한·경로 검사 후 파일로 → 종료 전 beforeClose."</td><td>§7, §8</td></tr>
+    <tr><td>4. 계약</td><td>"경로·크기·권한·fileKey 불변식이 어떤 입력에도 결과를 정한다."</td><td>§6, §2</td></tr>
+  </tbody>
+</table>
+<div class="review-box"><h4>성공 기준</h4><ul class="checklist">
+  <li><strong>인터페이스</strong> — <code>connect()</code>·<code>PluginSlot</code> 시그니처만 보고 쓸 수 있다.</li>
+  <li><strong>데이터 흐름</strong> — 플러그인 데이터는 플러그인 → 호스트 → roomsd → <code>data/</code> 한 방향, 토큰은 호스트 뒤에만.</li>
+  <li><strong>동작</strong> — 켜짐·렌더·저장·종료가 진입점 + seam만으로 예측된다.</li></ul></div>
+
+<h3>10.2 Senior Q&amp;A</h3>
+<p class="meta">senior-review subagent 질문 + 답 (2026-10-06). 답에 따라 본문을 고쳤다.</p>
+<div class="qa"><p class="q">Q1. fileKey breaks when plain files move</p><p class="a"><strong>A.</strong> 맞다. 일반 파일 Artifact는 <code>move_artifact</code>가 파일을 실제로 옮겨 realpath가 바뀐다. 그래서 fileKey는 매번 계산하지 않고 <strong>처음 인덱싱할 때 정해 index 행에 저장</strong>하며, <code>index.reassign</code>이 행을 옮길 때 그대로 따라간다(§0 Glossary, §2 불변식 수정). Rooms 밖에서 옮기거나 이름을 바꾼 경우만 새 키 — 수용.</p></div>
+<div class="qa"><p class="q">Q2. Can an iframe freeze the whole WKWebView?</p><p class="a"><strong>A.</strong> 약속을 낮춘다. WKWebView는 iframe을 같은 메인 스레드에서 돌리므로 CPU를 독점하는 플러그인은 앱 전체를 멈출 수 있다. v1의 무응답 감지는 "메시지 루프가 멈췄지만 페이지는 살아 있는" 경우만 다룬다(AC-11 수정). 프로세스 분리(플러그인별 Tauri webview)는 실제 런타임 측정 후 v2 결정(§11).</p></div>
+<div class="qa"><p class="q">Q3. Does the SDK verify inbound message source?</p><p class="a"><strong>A.</strong> 예, 필수로 넣는다. SDK는 <code>event.source !== window.parent</code>인 메시지를 모두 버린다 — 옆 Artifact iframe이 <code>parent.frames[i]</code>로 context·응답·beforeClose를 위조하는 것을 막는다. §5 S1 상대편 보장에 추가했고, §9 SDK 단위 테스트에 "형제 프레임에서 온 가짜 context 무시"를 넣는다.</p></div>
+<div class="qa"><p class="q">Q4. Concurrent instances of one plugin</p><p class="a"><strong>A.</strong> v1에서는 생기지 않게 불변식으로 묶는다: 앱은 활성 탭 하나만 마운트하므로 한 창에서 한 플러그인 iframe은 최대 1개다(§2 추가). 따라서 조건부 쓰기·etag는 넣지 않는다(YAGNI). 에이전트가 밖에서 같은 파일을 고치는 경합은 last-writer-wins로 수용하고 §11의 변경 알림 질문으로 남긴다.</p></div>
+<div class="qa"><p class="q">Q5. Who owns the "✎ Notes" toggle?</p><p class="a"><strong>A.</strong> <code>&lt;PluginSlot slot="artifact.sidePanel"&gt;</code>이 토글 버튼과 패널을 함께 그린다(닫혀 있으면 문서 오른쪽 위 토글만). 열림·너비·선택된 플러그인은 viewerStore의 <code>pluginPanel</code> 하나에 보는 사람 단위로 저장하며 탭·문서와 무관하다. 셸은 자리만 놓고 이 상태를 모른다(§5 S2 수정).</p></div>
+<div class="qa"><p class="q">Q6. runQuitFlush only supports sync hooks</p><p class="a"><strong>A.</strong> 계약을 바꾼다. <code>appEvents</code>에 <code>onQuitFlushAsync(fn: () =&gt; Promise&lt;void&gt;)</code>를 추가하고, <code>runQuitFlush</code>가 이를 노트 flush와 병렬로 시작해 함께 await한다. 플러그인은 노트의 1.6 s 창을 공유하며 그 안에서 1.5 s cap; draft 400 ms와 Rust 2.5 s 한도는 그대로(§7 흐름 3 수정).</p></div>
+<div class="qa"><p class="q">Q7. Plugin CSP vs files-origin global header</p><p class="a"><strong>A.</strong> <code>'self'</code>를 쓰지 않고 경로 한정 출처 <code>http://127.0.0.1:4318/_plugins/&lt;id&gt;/</code>만 허용, <code>frame-src 'none'</code>·<code>connect-src 'none'</code>. <code>/_plugins/*</code>에는 지금의 전역 <code>sandbox allow-scripts allow-popups</code>를 적용하지 않고, manifest 권한에서 도출한 <code>sandbox</code> 토큰(필요 시 <code>allow-downloads</code>, popups 없음)을 붙인다. 정확한 헤더는 §2 규칙 6.</p></div>
+<div class="qa"><p class="q">Q8. Manifest/code changes while a frame is open</p><p class="a"><strong>A.</strong> 결정은 PluginHost가 <code>plugins.changed</code> 후 비교해서 한다: 코드·manifest만 갱신(<code>rev</code> 변경) → beforeClose 후 다시 로드, 권한 증가 → beforeClose 후 제거하고 켜짐 카드, invalid → beforeClose 후 "can't load", 폴더 삭제 → 즉시 제거. <code>PluginInfo.rev</code>(manifest·entry의 mtime·크기 해시)를 코어가 준다(§7 흐름 2 ⑤ 추가).</p></div>
+
+<!-- ============================================== -->
+<h2 id="s11"><span class="num">11.</span> Open Questions <span class="badge badge-warn">🟡</span></h2>
+<ul>
+  <li><mark class="ambiguous">켠 플러그인을 끄는 방법 — v1은 폴더 삭제뿐. 설정 페이지(E) 전까지 사이드바 항목 우클릭 "Turn off" 정도는 넣을까?</mark></li>
+  <li><mark class="ambiguous">에이전트가 <code>data/</code> 파일을 밖에서 고치면 열려 있는 플러그인은 모른다(v1은 이벤트 없음). Goals를 열어 둔 채 에이전트가 목표를 붙이는 흐름이 중요하면 <code>data.changed</code> context 이벤트가 필요.</mark></li>
+  <li><mark class="ambiguous">CPU를 독점하는 플러그인으로부터 앱을 지킬지: v1은 같은 웹뷰 iframe이라 못 막는다. 필요하면 v2에서 플러그인마다 별도 Tauri webview(프로세스 분리)로 옮긴다 — 실제 Tauri 런타임에서 <code>while(true)</code> 플러그인으로 먼저 측정.</mark></li>
+  <li><mark class="ambiguous">Excalidraw 필기를 문서 위에 겹쳐(overlay) 그리는 모드는 v1 밖으로 둬도 되나? (지금은 옆 패널만)</mark></li>
+</ul>
+
+</main>
+</div>
+<script>
+  const links = document.querySelectorAll('nav.toc a[href^="#"]');
+  const sections = Array.from(links).map(a => document.querySelector(a.getAttribute('href')));
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => { l.style.background = ''; l.style.color = ''; });
+        const active = document.querySelector(`nav.toc a[href="#${e.target.id}"]`);
+        if (active) { active.style.background = 'var(--accent-bg)'; active.style.color = 'var(--accent)'; }
+      }
+    });
+  }, { rootMargin: '-40% 0px -55% 0px' });
+  sections.forEach(s => s && io.observe(s));
+</script>
+</body>
+</html>

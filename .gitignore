@@ -12,3 +12,6 @@ apps/desktop/playwright-report
 
 # python
 __pycache__/
+
+# brainstorm visual companion
+.superpowers/
