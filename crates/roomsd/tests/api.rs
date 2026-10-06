@@ -672,3 +672,17 @@ async fn tools_list_is_private_and_call_maps_errors() {
     assert_eq!(r.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(body_json(r).await["error"], "too_large");
 }
+
+#[tokio::test]
+async fn rooms_mcp_shaped_request_passes_the_guard() {
+    // rooms-mcp (ureq) sends Host + Bearer + User-Agent and no Origin; it must reach the tool routes.
+    let (d, app, _st) = app(false, "127.0.0.1:5000");
+    install_drawer(d.path());
+    let req = |method: &str, uri: &str, body: &str| Request::builder().method(method).uri(uri)
+        .header("host", API_HOST).header("authorization", "Bearer t0k").header("user-agent", "ureq/2")
+        .header("accept", "*/*").header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
+    let r = app.clone().oneshot(req("GET", "/v1/tools", "")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let r = app.oneshot(req("POST", "/v1/tools/call", r#"{"pluginId":"nope","name":"x","input":{}}"#)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND, "past the guard, rejected by the handler");
+}

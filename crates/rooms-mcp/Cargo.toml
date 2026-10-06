@@ -1,0 +1,10 @@
+[package]
+name = "rooms-mcp"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+rooms-protocol = { path = "../rooms-protocol" }
+serde_json.workspace = true
+ureq = { version = "2", features = ["json"] }
+dirs = "5"
