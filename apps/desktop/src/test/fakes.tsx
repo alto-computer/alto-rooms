@@ -1,4 +1,4 @@
-import type { Artifact, Info, JournalDay, PluginInfo, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskTurn, Info, JournalDay, PluginInfo, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
@@ -50,6 +50,8 @@ export function fakeClient(
     pluginData?: Record<string, string>;
     /** `Info.home` (default `/h`). */
     home?: string;
+    /** Ask threads by file key. */
+    asks?: Record<string, AskTurn[]>;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -61,6 +63,7 @@ export function fakeClient(
     notes: opts.notes ?? {},
     plugins: opts.plugins ?? [],
     pluginData: opts.pluginData ?? {},
+    asks: opts.asks ?? {},
   };
   const info: Info = {
     version: "0",
@@ -154,6 +157,16 @@ export function fakeClient(
       if (!a) throw new RoomsApiError(404, "not found", "not_found");
       return { ...a, roomId: toRoomId };
     }),
+    startAsk: vi.fn(async (req: { roomId: string; artifactId: string; question: string }): Promise<AskTurn> => {
+      const a = state.artifacts[req.roomId]?.find((x) => x.id === req.artifactId);
+      if (!a) throw new RoomsApiError(404, "이 문서를 찾을 수 없어요", "not_found");
+      return {
+        id: `ask-${req.question}`, fileKey: a.fileKey, question: req.question, answer: "", agent: a.source.agent ?? "claude-code",
+        mode: a.source.session ? "resume" : "new", status: "running", error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null,
+      };
+    }),
+    askThread: vi.fn(async (fileKey: string) => state.asks[fileKey] ?? []),
+    cancelAsk: vi.fn(async () => {}),
     fileUrl: (i: Info, a: Artifact) => `${i.filesOrigin}/${a.roomId}/${a.relPath}`,
     subscribe: (cb: (e: RoomsEvent) => void) => {
       onEvent = cb;

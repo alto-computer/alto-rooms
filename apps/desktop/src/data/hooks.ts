@@ -1,4 +1,5 @@
 import { createContext, createElement, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { AsksStore, type AsksState } from "@/ask/asksStore";
 import { PluginsStore, type PluginsState } from "@/plugins/pluginsStore";
 import type { Artifact, JournalDay, createRoomsClient } from "@alto-rooms/protocol-ts";
 import type { RoomsState, RoomsStore } from "./roomsStore";
@@ -9,7 +10,7 @@ export type RoomsClient = ReturnType<typeof createRoomsClient>;
 
 type Stores = { rooms: RoomsStore; viewer: ViewerStore; client?: RoomsClient };
 
-const StoresContext = createContext<(Stores & { plugins: PluginsStore }) | null>(null);
+const StoresContext = createContext<(Stores & { plugins: PluginsStore; asks: AsksStore }) | null>(null);
 
 export function StoresProvider({ rooms, viewer, client, children }: Stores & { children?: ReactNode }) {
   // The plugin list rides the rooms event stream (plugins.changed, resync).
@@ -18,11 +19,16 @@ export function StoresProvider({ rooms, viewer, client, children }: Stores & { c
     plugins.start();
     return () => plugins.stop();
   }, [plugins]);
-  const value = useMemo(() => ({ rooms, viewer, client, plugins }), [rooms, viewer, client, plugins]);
+  const asks = useMemo(() => new AsksStore(client, rooms), [client, rooms]);
+  useEffect(() => {
+    asks.start();
+    return () => asks.stop();
+  }, [asks]);
+  const value = useMemo(() => ({ rooms, viewer, client, plugins, asks }), [rooms, viewer, client, plugins, asks]);
   return createElement(StoresContext.Provider, { value }, children);
 }
 
-function useStores(): Stores & { plugins: PluginsStore } {
+function useStores(): Stores & { plugins: PluginsStore; asks: AsksStore } {
   const s = useContext(StoresContext);
   if (!s) throw new Error("StoresProvider is missing");
   return s;
@@ -31,6 +37,14 @@ function useStores(): Stores & { plugins: PluginsStore } {
 export const useRoomsStore = (): RoomsStore => useStores().rooms;
 export const useViewerStore = (): ViewerStore => useStores().viewer;
 export const usePluginsStore = (): PluginsStore => useStores().plugins;
+
+export const useAsksStore = (): AsksStore => useStores().asks;
+
+/** Whether the ask bar is open, and ask threads by file key. */
+export function useAsks(): AsksState {
+  const store = useAsksStore();
+  return useSyncExternalStore(store.subscribe, store.getState);
+}
 
 /** The plugin list (with app compatibility) and this run's dismissed enable cards. */
 export function usePlugins(): PluginsState {
