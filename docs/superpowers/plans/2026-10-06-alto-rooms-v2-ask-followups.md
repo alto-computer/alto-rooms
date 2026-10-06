@@ -61,3 +61,10 @@ Deferred minor findings and rulings from the subagent-driven execution of `2026-
 - Task 1: minor (deferred): makedirs may create a mistyped rooms_home; fixed tmp name + read-modify-write races; write failure aborts the run before printing candidates
 - Task 5: minor (deferred): repeat copy within 1.5 s shows no new toast (effect-driven); textarea scrollbar always hidden; dead cn-toast class; test helper param unused; corrupt-sidecar test relies on setup dir
 - sources::lookup canonicalizes every key on an exact miss (O(n) per ask); sources.json is 0600 (mkstemp)
+
+## v2.2 (Claude Bash copies + Aside scanner) — deferred minors
+- Measured on real data (2026-10-06): 121/157 room docs (77%) linked; 10 older than the 14-day window; 26 not in logs (written inside room folders, produced by scripts, or moved via git from a worktree).
+- Shell parser: `cd` inside `( … )` leaks; `env -C DIR` doesn't change cwd for relative paths; long `sudo --user root` form; literal `$` inside single quotes makes a path unknown; mid-word `#` edge cases.
+- Aside: relative paths dropped (no cwd in logs); `path.join` and reassigned consts not followed; sessions resumed days after their folder date are skipped.
+- Codex loose detection unchanged (a later `cat` of a file could still look like a loose write when no explicit write exists).
+- Not yet verified: `codex exec fork` on a thread created in Codex Desktop.
