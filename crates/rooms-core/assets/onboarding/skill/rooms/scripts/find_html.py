@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# rooms-onboarding v5
+# rooms-onboarding v6
 """List existing .html files that an AI agent wrote recently.
 
-Reads Claude Code and Codex session logs and <home>/.rooms/state.json (all
-read-only), prints JSON to stdout.
+Reads Claude Code, Codex and Aside session logs and <home>/.rooms/state.json
+(all read-only), prints JSON to stdout.
 Python 3.9+ standard library only. This script never writes anything, except
 with --record-sources: then it writes <home>/.rooms/sources.json (which agent
 conversation last wrote each file) and nothing else.
@@ -13,6 +13,7 @@ import html as htmllib
 import json
 import os
 import re
+import shlex
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,25 @@ TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 TS_RE = re.compile(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)")
 TZ_RE = re.compile(r"^(?:\.\d+)?\s*(Z|[+-]\d\d(?::?\d\d)?)?")
 ORCA_RE = re.compile(r"/orca/workspaces/([^/]+)/([^/]+)(?:/|$)")
+
+SHELL_PUNCT = "();<>|&\n"
+SHELL_SEPARATORS = set("();|&\n")
+SHELL_REDIRECTS = set("<>&|")
+SHELL_FALLBACK_RE = re.compile(r"[();<>|&\n]+|(#[^\n]*)|([^\s();<>|&]+)")
+HEREDOC_RE = re.compile(r"(?<!<)<<-?\s*(['\"]?)(\w+)\1")
+COPY_CMDS = {"cp", "mv", "install"}
+
+JS_STR = r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|`(?:[^`\\]|\\.)*`"
+JS_NAME = r"[A-Za-z_$][\w$]*"
+JS_TERM_RE = re.compile(r"\s*(?:(%s)|(%s))[ \t]*" % (JS_STR, JS_NAME))
+JS_EVENT_RE = re.compile(
+    r"\b(?:const|let|var)\s+(%s)\s*=|\b(?:writeFile|appendFile)(?:Sync)?\s*\(" % JS_NAME)
+JS_DECL_END_RE = re.compile(r"[ \t]*(?:;|\r?\n|$)")
+JS_ARG_END_RE = re.compile(r"\s*[,)]")
+JS_TEMPLATE_SPLIT_RE = re.compile(r"\$\{\s*(.*?)\s*\}")
+JS_ESCAPE_RE = re.compile(r"\\(.)")
+ASIDE_DAY_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
+WRITE_TOOL_RE = re.compile(r"write|edit", re.I)
 
 
 def parse_ts(s):
@@ -46,12 +66,203 @@ def parse_ts(s):
         return None
 
 
+def parse_epoch_ms(v):
+    """A datetime from epoch milliseconds (Aside), or an ISO string via parse_ts."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        try:
+            return datetime.fromtimestamp(v / 1000, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    return parse_ts(v)
+
+
 def fmt(dt):
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def is_html(p):
     return isinstance(p, str) and p.lower().endswith((".html", ".htm"))
+
+
+def resolve(path, base):
+    """`path` made absolute (with ~ expanded) against `base`; None when it can't be."""
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        if not base:
+            return None
+        path = os.path.join(base, path)
+    return os.path.normpath(path)
+
+
+# ---- shell commands (Claude Code Bash, Aside bash) ----
+
+def strip_heredocs(command):
+    """`command` without here-document bodies (their text is data, not commands)."""
+    out, end = [], None
+    for line in command.split("\n"):
+        if end is not None:
+            if line.strip() == end:
+                end = None
+            continue
+        m = HEREDOC_RE.search(line)
+        if m:
+            end = m.group(2)
+        out.append(line)
+    return "\n".join(out)
+
+
+def shell_tokens(command):
+    """Words and operator tokens; a command shlex can't parse falls back to a plain split."""
+    text = strip_heredocs(command)
+    # shlex drops a comment together with its newline; doubling newlines keeps the separator
+    lex = shlex.shlex(text.replace("\n", "\n\n"), posix=True, punctuation_chars=SHELL_PUNCT)
+    lex.whitespace, lex.whitespace_split = " \t\r", True
+    try:
+        return list(lex)
+    except ValueError:
+        return [m.group(0).strip("'\"") for m in SHELL_FALLBACK_RE.finditer(text)
+                if not m.group(1)]
+
+
+def is_op(token, chars):
+    return bool(token) and set(token) <= chars
+
+
+def shell_segments(tokens):
+    """Simple commands, split on `&&`, `||`, `;`, `|`, `&`, parentheses and newlines."""
+    seg = []
+    for t in tokens:
+        if is_op(t, SHELL_SEPARATORS):
+            if seg:
+                yield seg
+            seg = []
+        else:
+            seg.append(t)
+    if seg:
+        yield seg
+
+
+def split_redirects(words):
+    """(argv, output redirect targets) of one simple command."""
+    argv, targets, it = [], [], iter(words)
+    for w in it:
+        if is_op(w, SHELL_REDIRECTS):
+            target = next(it, "")
+            if ">" in w:
+                targets.append(target)
+        else:
+            argv.append(w)
+    return argv, targets
+
+
+def copy_dests(args, cwd):
+    """Destinations of `cp`/`mv`/`install` args: `-t DIR`, or the last arg (a dir gets basenames)."""
+    target, srcs, flags, it = None, [], True, iter(args)
+    for a in it:
+        if flags and a == "--":
+            flags = False
+        elif flags and a == "-t":
+            target = next(it, None)
+        elif flags and a.startswith("--target-directory="):
+            target = a.split("=", 1)[1]
+        elif not (flags and a.startswith("-") and a != "-"):
+            srcs.append(a)
+    if target is None:
+        if len(srcs) < 2:
+            return []
+        *srcs, target = srcs
+        d = resolve(target, cwd)
+        if not (target.endswith("/") or len(srcs) > 1 or (d and os.path.isdir(d))):
+            return [target]
+    return [os.path.join(target, os.path.basename(s.rstrip("/"))) for s in srcs]
+
+
+def change_dir(args, cwd):
+    if not args:
+        return os.path.expanduser("~")
+    return None if args[0] == "-" else resolve(args[0], cwd)
+
+
+def shell_writes(command, cwd):
+    """Absolute .html paths a shell command writes: cp/mv/install, tee and `>`/`>>` targets.
+
+    Relative paths follow `cd` from `cwd`; they are dropped when the directory is unknown.
+    """
+    if not isinstance(command, str):
+        return
+    for words in shell_segments(shell_tokens(command)):
+        argv, targets = split_redirects(words)
+        prog = os.path.basename(argv[0]) if argv else ""
+        if prog == "cd":
+            cwd = change_dir(argv[1:], cwd)
+        elif prog in COPY_CMDS:
+            targets += copy_dests(argv[1:], cwd)
+        elif prog == "tee":
+            targets += [a for a in argv[1:] if not a.startswith("-")]
+        for t in targets:
+            p = is_html(t) and resolve(t, cwd)
+            if p:
+                yield p
+
+
+# ---- JavaScript (Aside repl) ----
+
+def js_string(literal, syms):
+    """The value of a JS string literal; a template may only use `${NAME}` of known names."""
+    body = literal[1:-1]
+    if literal[0] != "`":
+        return JS_ESCAPE_RE.sub(r"\1", body)
+    parts = JS_TEMPLATE_SPLIT_RE.split(body)  # odd items are ${...} expressions
+    out = []
+    for i, part in enumerate(parts):
+        v = syms.get(part) if i % 2 else JS_ESCAPE_RE.sub(r"\1", part)
+        if v is None:
+            return None
+        out.append(v)
+    return "".join(out)
+
+
+def js_expr(code, pos, syms):
+    """(value, end) of `term (+ term)*` at `pos`, a term being a string literal or known name.
+
+    The value is None when any term is unknown.
+    """
+    parts = []
+    while True:
+        m = JS_TERM_RE.match(code, pos)
+        if not m:
+            return None, pos
+        lit, name = m.groups()
+        v = js_string(lit, syms) if lit else syms.get(name)
+        if v is None:
+            return None, m.end()
+        parts.append(v)
+        pos = m.end()
+        if not code.startswith("+", pos):
+            return "".join(parts), pos
+        pos += 1
+
+
+def js_writes(code, syms):
+    """Absolute .html paths passed to writeFile/appendFile(Sync) in `code`.
+
+    `syms` holds string consts/lets/vars and is updated in place, so it carries across the
+    calls of one session (Aside's repl keeps state between calls).
+    """
+    if not isinstance(code, str):
+        return
+    for m in JS_EVENT_RE.finditer(code):
+        value, end = js_expr(code, m.end(), syms)
+        name = m.group(1)
+        if name:
+            if value is not None and JS_DECL_END_RE.match(code, end):
+                syms[name] = value
+            else:
+                syms.pop(name, None)  # now something we can't follow
+        elif value is not None and JS_ARG_END_RE.match(code, end):
+            p = is_html(value) and resolve(value, None)
+            if p:
+                yield p
 
 
 class Collector:
@@ -88,8 +299,8 @@ def safe_lines(f, col):
             return
 
 
-def scan_claude_file(path, col):
-    stem = os.path.splitext(os.path.basename(path))[0]
+def json_records(path, col, wanted):
+    """Decoded JSON lines of `path` for which `wanted(line)`; failures are counted."""
     try:
         f = open(path, "r", encoding="utf-8", errors="replace")
     except OSError:
@@ -97,33 +308,82 @@ def scan_claude_file(path, col):
         return
     with f:
         for line in safe_lines(f, col):
-            if ".htm" not in line and ".HTM" not in line:
+            if not wanted(line):
                 continue
             try:
-                rec = json.loads(line)
+                yield json.loads(line)
             except (ValueError, RecursionError):
                 col.read_errors += 1
+
+
+def mentions_html(line):
+    return ".htm" in line or ".HTM" in line
+
+
+def claude_tool_writes(block, cwd):
+    """(path, explicit) for one Claude Code tool_use block. Bash copies are loose."""
+    name, inp = block.get("name"), block.get("input") or {}
+    if name in CLAUDE_WRITE_TOOLS:
+        p = inp.get("file_path") or inp.get("notebook_path")
+        if is_html(p):
+            yield p, True
+    elif name == "Bash":
+        for p in shell_writes(inp.get("command"), cwd):
+            yield p, False
+
+
+def scan_claude_file(path, col):
+    stem = os.path.splitext(os.path.basename(path))[0]
+    for rec in json_records(path, col, mentions_html):
+        try:
+            if rec.get("type") != "assistant":
                 continue
-            try:
-                if rec.get("type") != "assistant":
+            ts = parse_ts(rec.get("timestamp"))
+            cwd = rec.get("cwd")
+            sid = rec.get("sessionId") or stem
+            content = (rec.get("message") or {}).get("content")
+            if not isinstance(content, list):
+                continue
+            for it in content:
+                if not isinstance(it, dict) or it.get("type") != "tool_use":
                     continue
-                ts = parse_ts(rec.get("timestamp"))
-                cwd = rec.get("cwd")
-                sid = rec.get("sessionId") or stem
-                content = (rec.get("message") or {}).get("content")
-                if not isinstance(content, list):
+                for p, explicit in claude_tool_writes(it, cwd):
+                    col.add(p, ts, "claude-code", sid, cwd, explicit=explicit)
+        except (AttributeError, TypeError):
+            col.read_errors += 1
+
+
+def aside_call_writes(call, syms):
+    """(path, explicit) for one Aside toolCall; `syms` is the session's repl symbol table."""
+    name, args = call.get("name") or "", call.get("arguments")
+    if not isinstance(args, dict):
+        return
+    if name == "repl":
+        for p in js_writes(args.get("code"), syms):
+            yield p, True
+    elif name == "bash":
+        for p in shell_writes(args.get("command"), None):
+            yield p, False
+    p = args.get("path") or args.get("file_path")
+    p = is_html(p) and WRITE_TOOL_RE.search(name) and resolve(p, None)
+    if p:
+        yield p, True
+
+
+def scan_aside_file(path, sid, col):
+    syms = {}
+    for rec in json_records(path, col, lambda line: '"assistant"' in line):
+        try:
+            if rec.get("role") != "assistant":
+                continue
+            ts = parse_epoch_ms(rec.get("timestamp"))
+            for call in rec.get("content") or []:
+                if not isinstance(call, dict) or call.get("type") != "toolCall":
                     continue
-                for it in content:
-                    if not isinstance(it, dict) or it.get("type") != "tool_use":
-                        continue
-                    if it.get("name") not in CLAUDE_WRITE_TOOLS:
-                        continue
-                    inp = it.get("input") or {}
-                    p = inp.get("file_path") or inp.get("notebook_path")
-                    if is_html(p):
-                        col.add(p, ts, "claude-code", sid, cwd, explicit=True)
-            except (AttributeError, TypeError):
-                col.read_errors += 1
+                for p, explicit in aside_call_writes(call, syms):
+                    col.add(p, ts, "aside", sid, os.path.dirname(p), explicit=explicit)
+        except (AttributeError, TypeError):
+            col.read_errors += 1
 
 
 def codex_texts(payload):
@@ -261,6 +521,20 @@ def codex_files(root, cutoff_dt, cutoff_epoch, col):
                     pass
 
 
+def aside_files(root, cutoff_dt):
+    """(messages.jsonl, session id) under <root>/<account>/sessions/<YYYY-MM-DD>_<id>/."""
+    floor = (cutoff_dt - timedelta(days=1)).date().isoformat()
+    for account in sorted(_dirs(root)):
+        sessions = os.path.join(root, account, "sessions")
+        for name in sorted(_dirs(sessions)):
+            day, _, sid = name.partition("_")
+            if not sid or not ASIDE_DAY_RE.match(day) or day < floor:
+                continue
+            p = os.path.join(sessions, name, "messages.jsonl")
+            if os.path.isfile(p):
+                yield p, sid
+
+
 def _dirs(p):
     try:
         return [e.name for e in os.scandir(p) if e.is_dir()]
@@ -282,6 +556,9 @@ def is_noise(raw, real, home_dir, rooms_home):
         if under(p, os.path.join(home_dir, ".claude")) or under(p, os.path.join(home_dir, ".codex")):
             return True
         if under(p, rooms_home):
+            return True
+        # Aside's own state (session scratch, tmp); only its artifacts are documents
+        if under(p, os.path.join(home_dir, ".aside")) and "artifacts" not in segs:
             return True
         codex_docs = os.path.join(home_dir, "Documents", "Codex")
         if under(p, codex_docs):
@@ -391,8 +668,8 @@ def find_links(home, wanted):
 def source_entry(path, writes):
     """The sources.json entry for one file, or None when it has no session.
 
-    `writes` is sorted by time. The last explicit write wins over loose Codex
-    shell matches, which may only mention the path (e.g. a session that `cat`s it).
+    `writes` is sorted by time. The last explicit write wins over loose shell
+    matches (Codex mentions, Bash copies), which may only mention or copy the path.
     """
     explicit = [w for w in writes if w[4]]
     ts, agent, session, cwd, _ = (explicit or writes)[-1]
@@ -462,6 +739,7 @@ def main(argv=None):
     ap.add_argument("--home", default="~/rooms")
     ap.add_argument("--claude-dir", default="~/.claude/projects")
     ap.add_argument("--codex-dir", default="~/.codex/sessions")
+    ap.add_argument("--aside-dir", default="~/.aside/u")
     ap.add_argument("--include-noise", action="store_true")
     ap.add_argument("--record-sources", action="store_true",
                     help="write <home>/.rooms/sources.json: which conversation wrote each file")
@@ -478,6 +756,8 @@ def main(argv=None):
         scan_claude_file(p, col)
     for p in codex_files(os.path.expanduser(a.codex_dir), cutoff, cutoff_epoch, col):
         scan_codex_file(p, col)
+    for p, sid in aside_files(os.path.expanduser(a.aside_dir), cutoff):
+        scan_aside_file(p, sid, col)
 
     noise = missing = 0
     merged = {}
@@ -490,7 +770,7 @@ def main(argv=None):
             noise += 1
             continue
         if real is None:
-            # Codex shell matches are loose guesses; only explicit writes count
+            # shell matches are loose guesses; only explicit writes count
             if any(w[4] for w in h["writes"]):
                 missing += 1
             continue
