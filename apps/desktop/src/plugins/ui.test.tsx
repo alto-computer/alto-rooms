@@ -358,6 +358,48 @@ describe("an open plugin when the plugin changes", () => {
     expect(within(screen.getByRole("tabpanel")).getByText("This plugin can't load")).toBeInTheDocument();
   });
 
+  it("while closing for new permissions it keeps what was approved: same src, same sandbox, no new methods, no reload", async () => {
+    const { f, posted, h } = await openEcho(await openDoc());
+    // A real permission bump also changes the manifest bytes, so rev changes too.
+    await change(h, { rev: "r2", permissions: ["rooms.read", "downloads"], needsApproval: true });
+    expect(frame("Echo")).toBe(f);
+    expect(f.getAttribute("sandbox")).toBe("allow-scripts");
+    fromFrame(f, { rooms: 1, id: "q1", method: "rooms.list", params: {} });
+    await act(async () => {});
+    expect(posted).toHaveBeenCalledWith(
+      { rooms: 1, id: "q1", error: { code: "permission_denied", message: "needs the rooms.read permission" } },
+      "*",
+    );
+    const closes = posted.mock.calls.map((c) => c[0] as { type?: string; id?: string }).filter((m) => m.type === "beforeClose");
+    expect(closes).toHaveLength(1);
+    fromFrame(f, { rooms: 1, type: "beforeClose.done", id: closes[0].id });
+    await act(async () => {});
+    expect(screen.queryByTitle("Echo")).toBeNull();
+  });
+
+  it("a manifest that breaks while open keeps the frame on its page until it has closed", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "plugin", pluginId: "echo" });
+    const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()], viewer });
+    await act(async () => {});
+    const f = frame("Echo");
+    fromFrame(f, { rooms: 1, type: "ready" });
+    await change(h, { status: "invalid", entry: "", rev: "", permissions: [] });
+    expect(frame("Echo")).toBe(f);
+    expect(f.getAttribute("src")).toBe("http://files.test/_plugins/echo/index.html");
+  });
+
+  it("after the panel was closed, turning the plugin off leaves no toggle and opens no frame", async () => {
+    const { f, posted, h } = await openEcho(await openDoc());
+    fireEvent.click(screen.getByRole("button", { name: "Close Echo" }));
+    const close = closeMessage(posted)!;
+    fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
+    await act(async () => {});
+    await change(h, { enabled: false });
+    expect(screen.queryByRole("button", { name: "Open Echo" })).toBeNull();
+    expect(screen.queryByTitle("Echo")).toBeNull();
+  });
+
   it("a deleted plugin's frame goes away at once", async () => {
     const { h } = await openEcho(await openDoc());
     await change(h, null);

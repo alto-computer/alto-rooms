@@ -22,6 +22,9 @@ const PING_EVERY_MS = 5000;
 const PONG_WITHIN_MS = 3000;
 export const CLOSE_CAP_MS = 1500;
 
+/** The parts of a plugin a running frame keeps from the moment it loaded. */
+const snapshot = (p: HostPlugin) => ({ rev: p.rev, entry: p.entry, permissions: p.permissions });
+
 type Inbound = { rooms?: unknown; type?: unknown; id?: unknown; method?: unknown; params?: unknown };
 
 type Props = {
@@ -43,10 +46,15 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [reload, setReload] = useState(0);
   // The rev the frame was loaded at: an update reloads only after beforeClose.
-  const [shownRev, setShownRev] = useState(plugin.rev);
+  // What the frame was loaded with, approved at the time. src, sandbox/allow and the bridge's
+  // permission checks use this, never the live manifest: a closing plugin keeps what was approved.
+  const [loadedAs, setLoadedAs] = useState(() => snapshot(plugin));
+  const shownRev = loadedAs.rev;
   const [stalled, setStalled] = useState(false);
   const ready = useRef(false);
   const latest = useRef({ plugin, context });
+  const loadedAsRef = useRef(loadedAs);
+  loadedAsRef.current = loadedAs;
   latest.current = { plugin, context };
   const waiters = useRef(new Map<string, () => void>());
   const seq = useRef(0);
@@ -105,7 +113,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
       if (typeof d.id !== "string" || typeof d.method !== "string") return;
       const id = d.id;
       handleBridgeCall(
-        latest.current.plugin,
+        { ...latest.current.plugin, permissions: loadedAsRef.current.permissions },
         { id, method: d.method, params: d.params },
         {
           client,
@@ -129,17 +137,18 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
   }, [client, viewer, rooms, post, sendContext]);
 
   useEffect(() => {
-    if (plugin.rev === shownRev) return;
+    // Only a plugin that may still run reloads on an update; one that must stop just closes.
+    if (!active || plugin.rev === shownRev) return;
     let live = true;
     void beforeClose(CLOSE_CAP_MS).then(() => {
       if (!live) return;
       ready.current = false;
-      setShownRev(plugin.rev);
+      setLoadedAs(snapshot(latest.current.plugin));
     });
     return () => {
       live = false;
     };
-  }, [plugin.rev, shownRev, beforeClose]);
+  }, [active, plugin.rev, shownRev, beforeClose]);
 
   const closedRef = useRef(onClosed);
   closedRef.current = onClosed;
@@ -179,14 +188,14 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
     };
   }, [plugin.id, beforeClose, post]);
 
-  const attrs = frameAttrs(plugin);
+  const attrs = frameAttrs({ ...plugin, permissions: loadedAs.permissions });
   return (
     <div className="relative min-h-0 flex-1 bg-white">
       <iframe
         key={`${shownRev}:${reload}`}
         ref={frameRef}
         title={plugin.name}
-        src={client.pluginEntryUrl(info, plugin)}
+        src={client.pluginEntryUrl(info, { ...plugin, entry: loadedAs.entry })}
         sandbox={attrs.sandbox}
         allow={attrs.allow}
         className="absolute inset-0 size-full border-0 bg-white"

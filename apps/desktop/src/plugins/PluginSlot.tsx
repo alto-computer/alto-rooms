@@ -27,16 +27,19 @@ function Message({ children }: { children: ReactNode }) {
  * longer run (new permissions, broken manifest, turned off): its frame gets
  * beforeClose, then goes. A deleted plugin has nothing left to save and goes at once.
  */
-function useRetiring(store: PluginsStore, list: HostPlugin[], showing: HostPlugin | undefined) {
+function useRetiring(store: PluginsStore, list: HostPlugin[], showing: HostPlugin | undefined, live = true) {
   const last = useRef<string | null>(null);
   const [closed, setClosed] = useState<string | null>(null);
   useEffect(() => {
     if (showing) {
       last.current = showing.id;
       setClosed(null);
+    } else if (!live) {
+      // No frame is mounted, so there is nothing left to close.
+      last.current = null;
     }
-  }, [showing]);
-  const prev = !showing && last.current ? list.find((p) => p.id === last.current) : undefined;
+  }, [showing, live]);
+  const prev = live && !showing && last.current ? list.find((p) => p.id === last.current) : undefined;
   const retiring = prev && !store.usable(prev) && closed !== prev.id ? prev : undefined;
   const done = () => {
     if (!retiring) return;
@@ -81,7 +84,7 @@ function SidePanel({ artifact }: { artifact: Artifact }) {
 
   const candidates = list.filter((p) => p.slots.artifactSidePanel && store.usable(p));
   const usable = candidates.find((p) => p.id === panel.pluginId) ?? candidates[0];
-  const { retiring, done } = useRetiring(store, list, panel.open ? usable : undefined);
+  const { retiring, done } = useRetiring(store, list, panel.open ? usable : undefined, panel.open);
   const current = usable ?? retiring;
   if (!current || !info) return null;
   const title = current.slots.artifactSidePanel!.title;
