@@ -70,9 +70,14 @@ Rooms ignores hidden files, `node_modules`, `dist`, `build`, and anything listed
 
 ## Plugins
 
-Plugins add UI: a panel beside documents (for example, sketching notes) or a tab of their own (for example, a goals board). They run sandboxed, ask before they run, and keep their data as files.
+Plugins add UI: a panel beside documents or a tab of their own. They run sandboxed and keep their data as files.
 
-Install one by copying its folder into `~/rooms/.rooms/plugins/`. To write one, see [docs/plugins.md](docs/plugins.md).
+Two come with the app, on by default:
+
+- [Goals](https://github.com/alto-computer/rooms-plugin-goals): long-, mid- and short-term goals and a TODO list, with documents linked to each.
+- [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw): sketch beside any document; export as PNG.
+
+Right-click a plugin in the sidebar to turn it off. To add another, copy its folder into `~/rooms/.rooms/plugins/`; Rooms asks before it runs. To write one, see [docs/plugins.md](docs/plugins.md).
 
 ## Shortcuts
 

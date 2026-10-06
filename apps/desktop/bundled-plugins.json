@@ -1,0 +1,16 @@
+{
+  "plugins": [
+    {
+      "id": "goals",
+      "repo": "https://github.com/alto-computer/rooms-plugin-goals",
+      "version": "0.1.0",
+      "sha256": "e8beb2f07c6cb21302d00e1af84eff5cd8e4bca0beb2c7bb691754e78251ae2f"
+    },
+    {
+      "id": "excalidraw",
+      "repo": "https://github.com/alto-computer/rooms-plugin-excalidraw",
+      "version": "0.1.0",
+      "sha256": "ee800981f0f628154c1e13987e79bdd604adb344af221db81846f80a6b9d2baf"
+    }
+  ]
+}

@@ -65,7 +65,11 @@ export function PluginItems() {
                   <span className="truncate">{p.slots.tab!.title}</span>
                 </button>
               ) : (
-                <div onContextMenu={onContextMenu} className={cn(ITEM, !p.enabled && "text-ink-3")}>
+                <div
+                  onContextMenu={onContextMenu}
+                  title={p.enabled && p.slots.artifactSidePanel ? `Opens beside documents: ${p.slots.artifactSidePanel.title}` : undefined}
+                  className={cn(ITEM, !p.enabled && "text-ink-3")}
+                >
                   <Icon size={17} strokeWidth={1.75} aria-hidden className="shrink-0" />
                   <span className="truncate">{p.slots.tab?.title ?? p.name}</span>
                   {p.enabled ? null : <span className="ml-auto shrink-0 text-[12px]">Off</span>}

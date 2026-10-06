@@ -347,3 +347,46 @@ mod tests {
         assert_eq!(found, vec![("broken".into(), false), ("echo".into(), true), ("zed".into(), true)]);
     }
 }
+
+/// Marks a plugin folder the app installed; holds the version it installed.
+const BUNDLED_MARK: &str = ".bundled";
+
+/// Copies a plugin the app ships (`src/<id>/`) into the plugins folder when it is new or its
+/// version differs from the one the app installed before. Returns the manifest when it copied.
+/// Never touches a folder without the app's mark (the user's own plugin) or anything in `data/`.
+pub fn install_bundled(home: &Path, src: &Path) -> std::io::Result<Option<Manifest>> {
+    let Ok(m) = load_manifest(src) else { return Ok(None) };
+    let target = plugins_dir(home).join(&m.id);
+    if target.exists() {
+        match std::fs::read_to_string(target.join(BUNDLED_MARK)) {
+            Err(_) => return Ok(None),
+            Ok(v) if v == m.version => return Ok(None),
+            Ok(_) => {}
+        }
+        for e in std::fs::read_dir(&target)?.flatten() {
+            if e.file_name() == DATA { continue; }
+            let p = e.path();
+            if e.file_type()?.is_dir() { std::fs::remove_dir_all(&p)?; } else { std::fs::remove_file(&p)?; }
+        }
+    }
+    std::fs::create_dir_all(&target)?;
+    copy_code(src, &target, true)?;
+    std::fs::write(target.join(BUNDLED_MARK), &m.version)?;
+    Ok(Some(m))
+}
+
+/// Regular files and folders under `from`, except `data/` at the top and any symlink.
+fn copy_code(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
+    for e in std::fs::read_dir(from)?.flatten() {
+        let t = e.file_type()?;
+        let dest = to.join(e.file_name());
+        if t.is_dir() {
+            if top && e.file_name() == DATA { continue; }
+            std::fs::create_dir_all(&dest)?;
+            copy_code(&e.path(), &dest, false)?;
+        } else if t.is_file() {
+            std::fs::copy(e.path(), dest)?;
+        }
+    }
+    Ok(())
+}

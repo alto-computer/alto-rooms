@@ -15,3 +15,6 @@ __pycache__/
 
 # brainstorm visual companion
 .superpowers/
+# Filled by apps/desktop/scripts/bundle-plugins.ts
+apps/desktop/src-tauri/resources/plugins/*
+!apps/desktop/src-tauri/resources/plugins/.gitkeep

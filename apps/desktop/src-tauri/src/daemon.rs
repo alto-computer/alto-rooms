@@ -259,6 +259,11 @@ pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connec
     if cfg!(debug_assertions) {
         cmd = cmd.env("ROOMS_DEV_ORIGIN", "http://localhost:1420");
     }
+    if let Ok(dir) = app.path().resolve("plugins", tauri::path::BaseDirectory::Resource) {
+        if dir.is_dir() {
+            cmd = cmd.env("ROOMS_BUNDLED_PLUGINS", dir);
+        }
+    }
     let (mut rx, child) = cmd.spawn().map_err(|_| START_ERROR.to_string())?;
     let pid = child.pid();
     inner.child = Some(child);
