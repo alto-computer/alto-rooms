@@ -621,6 +621,20 @@ class FindHtmlTest(unittest.TestCase):
         self.assertEqual(w("install -m 644 a.html /x/b.html"), ["/x/b.html"])
         self.assertEqual(w("install -o me -g staff -S .bak a.html /x/b.html"), ["/x/b.html"])
         self.assertEqual(w("cp -S .orig --suffix=.b a.html b.html"), ["/c/b.html"])
+        # clustered short flags: a value letter takes the next arg only when it ends the cluster
+        self.assertEqual(w("install -Dm 644 a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("install -Dm644 a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("cp -aS .bak a.html b.html"), ["/c/b.html"])
+        self.assertEqual(w("cp -at /out a.html"), ["/out/a.html"])
+        # long value flags, separate or attached
+        self.assertEqual(w("install --mode 644 --owner me --group g a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("mv --suffix .old --mode=1 a.html b.html"), ["/c/b.html"])
+        self.assertEqual(w("cp --target-directory /out a.html"), ["/out/a.html"])
+        # sudo/env with their own flags
+        self.assertEqual(w("sudo -u root cp a.html b.html"), ["/c/b.html"])
+        self.assertEqual(w("sudo -E -g staff -C 3 -h host -p pw cp a.html b.html"), ["/c/b.html"])
+        self.assertEqual(w("env -i -u HOME -C /d cp a.html /o/b.html"), ["/o/b.html"])
+        self.assertEqual(w("env -0 -S x cp a.html b.html"), ["/c/b.html"])
         # prefixes before the command word
         self.assertEqual(w("FOO=1 sudo env A=b command cp a.html b.html"), ["/c/b.html"])
         # dynamic words are unknown

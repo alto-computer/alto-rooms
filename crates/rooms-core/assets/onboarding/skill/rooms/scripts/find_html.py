@@ -34,10 +34,13 @@ SHELL_DEQUOTE_RE = re.compile(r"""'([^']*)'|"((?:[^"\\]|\\.)*)"|\\(.)|['"\\]""")
 SHELL_UNESCAPE_RE = re.compile(r'\\([\\"$`])')
 SHELL_SEPARATORS = set("();|&\n")
 SHELL_ASSIGN_RE = re.compile(r"^[A-Za-z_]\w*=")
-SHELL_PREFIXES = {"sudo", "env", "command"}
+# prefix commands before the command word -> their short flags that take a value
+SHELL_PREFIXES = {"sudo": "ugChp", "env": "uCS", "command": ""}
 SHELL_MAX_CHARS = 100_000
 HEREDOC_RE = re.compile(r"(?<!<)<<-?\s*(['\"]?)(\w+)\1")
-COPY_VALUE_FLAGS = {"cp": {"-S"}, "mv": {"-S"}, "install": {"-m", "-o", "-g", "-S"}}
+# short flags that take a value (t = target directory), and long ones that may take it separately
+COPY_VALUE_FLAGS = {"cp": "St", "mv": "St", "install": "mogSt"}
+COPY_LONG_VALUE_FLAGS = {"--mode", "--owner", "--group", "--suffix", "--target-directory"}
 
 JS_STR = r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|`(?:[^`\\]|\\.)*`"
 JS_NAME = r"[A-Za-z_$][\w$]*"
@@ -163,29 +166,64 @@ def split_redirects(seg):
     return argv, targets
 
 
+def short_flag_value(flag, letters, it):
+    """(letter, value) of the first value-taking letter in a short-flag cluster, else (None, None).
+
+    The value is the rest of the cluster (`-m644`), or the next arg when the letter ends it (`-Dm 644`).
+    """
+    for i, ch in enumerate(flag[1:], 2):
+        if ch in letters:
+            return ch, flag[i:] or next(it, None)
+    return None, None
+
+
+def is_flag(word):
+    return word.startswith("-") and word != "-"
+
+
+def skip_flags(words, letters):
+    """`words` after their leading flags; flags in `letters` also skip their value."""
+    it = iter(words)
+    for w in it:
+        if w == "--":
+            break
+        if not is_flag(w):
+            return [w, *it]
+        if not w.startswith("--"):
+            short_flag_value(w, letters, it)
+    return list(it)
+
+
 def command_words(argv):
-    """`argv` from the command word on: env assignments and sudo/env/command are skipped."""
-    i = 0
-    while i < len(argv) and (SHELL_ASSIGN_RE.match(argv[i]) or argv[i] in SHELL_PREFIXES):
-        i += 1
-    return argv[i:]
+    """`argv` from the command word on: env assignments and sudo/env/command (with flags) skipped."""
+    rest = argv
+    while rest:
+        w, rest = rest[0], rest[1:]
+        if w in SHELL_PREFIXES:
+            rest = skip_flags(rest, SHELL_PREFIXES[w])
+        elif not SHELL_ASSIGN_RE.match(w):
+            return [w, *rest]
+    return []
 
 
 def copy_dests(prog, args, cwd):
     """Destinations of `cp`/`mv`/`install` args: `-t DIR`, or the last arg (a dir gets basenames)."""
-    value_flags = COPY_VALUE_FLAGS[prog]
     target, srcs, flags, it = None, [], True, iter(args)
     for a in it:
-        if flags and a == "--":
-            flags = False
-        elif flags and a == "-t":
-            target = next(it, None)
-        elif flags and a.startswith("--target-directory="):
-            target = a.split("=", 1)[1]
-        elif flags and a in value_flags:
-            next(it, None)
-        elif not (flags and a.startswith("-") and a != "-"):
+        if not (flags and is_flag(a)):
             srcs.append(a)
+        elif a == "--":
+            flags = False
+        elif a.startswith("--"):
+            name, eq, value = a.partition("=")
+            if not eq and name in COPY_LONG_VALUE_FLAGS:
+                value = next(it, None)
+            if name == "--target-directory":
+                target = value
+        else:
+            letter, value = short_flag_value(a, COPY_VALUE_FLAGS[prog], it)
+            if letter == "t":
+                target = value
     if target is None:
         if len(srcs) < 2:
             return []
