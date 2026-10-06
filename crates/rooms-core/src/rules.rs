@@ -85,6 +85,12 @@ pub fn validate_iso_date(d: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// The `fileKey` of an original at `target` (its canonical path): first 16 hex of sha256.
+pub fn file_key(target: &str) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(target.as_bytes()))[..16].to_string()
+}
+
 pub fn artifact_id(room_id: &str, rel_path: &str) -> String {
     let mut h = Sha1::new();
     h.update(room_id.as_bytes());

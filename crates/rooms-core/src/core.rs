@@ -532,6 +532,16 @@ impl RoomsCore {
         Ok(room_v)
     }
 
+    /// The artifact holding the original with `file_key`: when several rooms link it, the first in
+    /// sidebar order, then the journal. `None` if no artifact has that key.
+    pub fn artifact_by_file_key(&self, file_key: &str) -> Option<Artifact> {
+        let inner = self.inner.lock().unwrap();
+        let mut hits = inner.index.by_file_key(file_key).ok()?;
+        let rank = |room: &str| inner.state.rooms.iter().position(|r| r.id == room).unwrap_or(usize::MAX);
+        hits.sort_by_key(|a| rank(&a.room_id));
+        hits.into_iter().next()
+    }
+
     /// Moves `room` to position `to` among the rooms other than the inbox, which keeps its place
     /// (`to` past the end = last). Saves state.json and emits `rooms.reordered` with the full order.
     pub fn move_room(&self, room: &RoomId, to: usize) -> Result<Vec<RoomId>, CoreError> {

@@ -15,7 +15,7 @@ const artifact = (id: string, roomId: string, title: string): Artifact => ({
   createdAt: "2026-06-02T03:00:00Z",
   updatedAt: "2026-06-02T03:00:00Z",
   author: "agent",
-  source: { agent: null, session: null, cwd: null, machine: null },
+  source: { agent: null, session: null, cwd: null, machine: null }, fileKey: "0000000000000000",
 });
 
 const setup = (onClose = vi.fn(), storeTimers?: ReturnType<typeof manualTimers>["timers"]) =>

@@ -910,3 +910,70 @@ fn move_room_refuses_the_inbox_and_unknown_rooms() {
     assert!(matches!(core.move_room(&"inbox".to_string(), 1).unwrap_err(), CoreError::InvalidInput(_)));
     assert_eq!(core.move_room(&"nope".to_string(), 0).unwrap_err(), CoreError::RoomNotFound);
 }
+
+// ---- fileKey ----
+
+fn key_of(core: &RoomsCore, room: &str, title_file: &str) -> String {
+    core.list_artifacts(&room.to_string()).unwrap().into_iter().find(|a| a.rel_path == title_file).unwrap().file_key
+}
+
+#[test]
+fn file_key_is_stable_across_moves_for_plain_files_and_links() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    let outside = tempfile::tempdir().unwrap();
+    let orig = outside.path().join("orig.html");
+    fs::write(&orig, "<title>o</title>").unwrap();
+    fs::write(d.path().join("a/x.html"), "<title>x</title>").unwrap();
+    symlink(&orig, d.path().join("a/y.html")).unwrap();
+    core.backfill_all().unwrap();
+    let (kx, ky) = (key_of(&core, &a, "x.html"), key_of(&core, &a, "y.html"));
+    assert_eq!(kx.len(), 16);
+    assert!(kx.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_ne!(kx, ky);
+    let x = core.list_artifacts(&a).unwrap().into_iter().find(|t| t.rel_path == "x.html").unwrap();
+    let y = core.list_artifacts(&a).unwrap().into_iter().find(|t| t.rel_path == "y.html").unwrap();
+    core.move_artifact(&a, &x.id, &b).unwrap();
+    core.move_artifact(&a, &y.id, &b).unwrap();
+    assert_eq!(key_of(&core, &b, "x.html"), kx);
+    assert_eq!(key_of(&core, &b, "y.html"), ky);
+    drop(core);
+    let reopened = RoomsCore::open(d.path()).unwrap();
+    reopened.backfill_all().unwrap();
+    assert_eq!(key_of(&reopened, &b, "x.html"), kx);
+    assert_eq!(key_of(&reopened, &b, "y.html"), ky);
+}
+
+#[test]
+fn same_original_linked_twice_shares_file_key() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("o.html"), "").unwrap();
+    fs::write(outside.path().join("p.html"), "").unwrap();
+    symlink(outside.path().join("o.html"), d.path().join("a/o.html")).unwrap();
+    symlink(outside.path().join("o.html"), d.path().join("b/o.html")).unwrap();
+    symlink(outside.path().join("p.html"), d.path().join("b/p.html")).unwrap();
+    core.backfill_all().unwrap();
+    assert_eq!(key_of(&core, &a, "o.html"), key_of(&core, &b, "o.html"));
+    assert_ne!(key_of(&core, &b, "o.html"), key_of(&core, &b, "p.html"));
+}
+
+#[test]
+fn artifact_by_file_key_finds_first_in_room_order() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("o.html"), "").unwrap();
+    symlink(outside.path().join("o.html"), d.path().join("b/o.html")).unwrap();
+    symlink(outside.path().join("o.html"), d.path().join("a/o.html")).unwrap();
+    core.backfill_all().unwrap();
+    let key = key_of(&core, &a, "o.html");
+    assert_eq!(core.artifact_by_file_key(&key).unwrap().room_id, a);
+    core.move_room(&b, 0).unwrap();
+    assert_eq!(core.artifact_by_file_key(&key).unwrap().room_id, b);
+    assert!(core.artifact_by_file_key("0000000000000000").is_none());
+}

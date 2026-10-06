@@ -14,7 +14,7 @@ const artifact = (id: string, title: string): Artifact => ({
   createdAt: "2026-10-01T00:00:00Z",
   updatedAt: "2026-10-01T00:00:00Z",
   author: "agent",
-  source: { agent: null, session: null, cwd: null, machine: null },
+  source: { agent: null, session: null, cwd: null, machine: null }, fileKey: "0000000000000000",
 });
 
 describe("DocView", () => {

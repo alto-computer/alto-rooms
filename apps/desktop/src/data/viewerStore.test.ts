@@ -30,7 +30,7 @@ function art(roomId: string, createdAt: string): Artifact {
     createdAt,
     updatedAt: createdAt,
     author: "agent",
-    source: { agent: null, session: null, cwd: null, machine: null },
+    source: { agent: null, session: null, cwd: null, machine: null }, fileKey: "0000000000000000",
   };
 }
 

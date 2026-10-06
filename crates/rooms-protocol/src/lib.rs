@@ -60,6 +60,9 @@ wire!(pub struct Artifact {
     pub updated_at: String,
     pub author: Author,
     pub source: Source,
+    /// Stable key of the original file: set when the artifact is first indexed, kept when Rooms
+    /// moves it. Artifacts linking the same original share it.
+    pub file_key: String,
 });
 
 wire!(pub struct Note {

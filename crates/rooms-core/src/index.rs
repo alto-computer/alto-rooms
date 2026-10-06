@@ -1,6 +1,6 @@
 use crate::error::CoreError;
 use crate::meta::{file_mtime, file_times, read_meta, title_or_filename, Meta};
-use crate::rules::{artifact_id, local_day, PathClass};
+use crate::rules::{artifact_id, file_key, local_day, PathClass};
 use crate::walk::ScanEntry;
 use rooms_protocol::{Artifact, Author, Source};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -48,7 +48,7 @@ pub enum Change {
     Removed { room_id: String, artifact_id: String },
 }
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -61,10 +61,12 @@ CREATE TABLE IF NOT EXISTS artifacts (
   created_day TEXT NOT NULL,
   created_ts INTEGER NOT NULL,
   updated_at TEXT NOT NULL,
-  source TEXT NOT NULL
+  source TEXT NOT NULL,
+  file_key TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_room ON artifacts(room_id, created_ts);
 CREATE INDEX IF NOT EXISTS idx_artifacts_day ON artifacts(created_day, created_ts);
+CREATE INDEX IF NOT EXISTS idx_artifacts_file_key ON artifacts(file_key);
 ";
 
 fn err(e: rusqlite::Error) -> CoreError { CoreError::WriteFailed(e.to_string()) }
@@ -107,6 +109,7 @@ impl Index {
             updated_at: r.get("updated_at")?,
             author: Author::Agent,
             source: serde_json::from_str::<Source>(&source).unwrap_or_default(),
+            file_key: r.get("file_key")?,
         })
     }
 
@@ -162,9 +165,11 @@ impl Index {
 
     fn upsert_facts(&mut self, room_id: &str, f: &FileFacts) -> Result<Option<Change>, CoreError> {
         let id = artifact_id(room_id, &f.rel_path);
-        let existing: Option<(String, String, String, String)> = self.conn.query_row(
-            "SELECT created_at, title, updated_at, created_day FROM artifacts WHERE id = ?1", params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional().map_err(err)?;
+        let existing: Option<(String, String, String, String, String)> = self.conn.query_row(
+            "SELECT created_at, title, updated_at, created_day, file_key FROM artifacts WHERE id = ?1", params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional().map_err(err)?;
+        // Set once, from the original's path when first seen; a Rooms move carries the row (reassign).
+        let key = existing.as_ref().map(|x| x.4.clone()).unwrap_or_else(|| file_key(&f.target));
         let meta = f.meta.clone();
         let (file_created, updated) = (f.file_created.clone(), f.updated.clone());
         let created = meta.created.clone()
@@ -179,18 +184,18 @@ impl Index {
         let ts = chrono::DateTime::parse_from_rfc3339(&created).map(|d| d.timestamp_millis()).unwrap_or(0);
         let source = serde_json::to_string(&meta.source).unwrap_or_else(|_| "{}".into());
         self.conn.execute(
-            "INSERT INTO artifacts (id, room_id, rel_path, target, title, created_at, created_day, created_ts, updated_at, source)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+            "INSERT INTO artifacts (id, room_id, rel_path, target, title, created_at, created_day, created_ts, updated_at, source, file_key)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
              ON CONFLICT(id) DO UPDATE SET target=excluded.target, title=excluded.title, created_at=excluded.created_at,
                created_day=excluded.created_day, created_ts=excluded.created_ts, updated_at=excluded.updated_at, source=excluded.source",
-            params![id, room_id, f.rel_path, f.target, title, created, day, ts, updated, source],
+            params![id, room_id, f.rel_path, f.target, title, created, day, ts, updated, source, key],
         ).map_err(err)?;
         let a = Artifact { id, room_id: room_id.into(), rel_path: f.rel_path.clone(), title: title.clone(),
-            created_at: created, updated_at: updated.clone(), author: Author::Agent, source: meta.source };
+            created_at: created, updated_at: updated.clone(), author: Author::Agent, source: meta.source, file_key: key };
         let change = match existing {
             None => Change::Added(a),
-            Some((_, old_title, old_updated, old_day)) if old_title == title && old_updated == updated && old_day == day => return Ok(None),
-            Some((_, _, _, old_day)) => { self.touch(&old_day); Change::Updated(a) }
+            Some((_, old_title, old_updated, old_day, _)) if old_title == title && old_updated == updated && old_day == day => return Ok(None),
+            Some((_, _, _, old_day, _)) => { self.touch(&old_day); Change::Updated(a) }
         };
         self.touch(&day);
         Ok(Some(change))
@@ -238,6 +243,13 @@ impl Index {
             Ok(c) => Ok(c),
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
         }
+    }
+
+    /// Every row with `file_key` (one per room that holds the original).
+    pub fn by_file_key(&self, file_key: &str) -> Result<Vec<Artifact>, CoreError> {
+        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE file_key = ?1").map_err(err)?;
+        let rows = st.query_map(params![file_key], Self::row_to_artifact).map_err(err)?;
+        Ok(rows.filter_map(Result::ok).collect())
     }
 
     pub fn by_day(&self, day: &str) -> Result<Vec<(Artifact, String)>, CoreError> {

@@ -18,7 +18,7 @@ const artifact = (id: string, roomId: string, createdAt: string): Artifact => ({
   createdAt,
   updatedAt: createdAt,
   author: "agent",
-  source: { agent: null, session: null, cwd: null, machine: null },
+  source: { agent: null, session: null, cwd: null, machine: null }, fileKey: "0000000000000000",
 });
 
 const OLD = "2026-01-02T03:00:00Z";
