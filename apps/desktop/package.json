@@ -49,6 +49,7 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",
+    "remark-cjk-friendly": "^2.3.2",
     "shadcn": "^4.21.1",
     "sonner": "^2.0.8",
     "tailwindcss": "^4.3.3",

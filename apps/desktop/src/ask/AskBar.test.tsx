@@ -4,7 +4,6 @@ import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
-import { Toaster } from "@/components/ui/sonner";
 import { AskBar } from "./AskBar";
 
 const doc: Artifact = {
@@ -21,7 +20,7 @@ let store: ReturnType<typeof useAsksStore>;
 function Grab() { store = useAsksStore(); return null; }
 
 async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false) {
-  return renderWithStores(<><Grab /><AskBar artifact={doc} /><Toaster /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly });
+  return renderWithStores(<><Grab /><AskBar artifact={doc} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly });
 }
 
 describe("AskBar", () => {
@@ -72,27 +71,25 @@ describe("AskBar", () => {
     expect(await screen.findByText("claude-code · new conversation — couldn't find the thread that made this doc")).toBeTruthy();
   });
 
-  const done = turn({ status: "done", answer: "the answer", endedAt: "2026-10-06T10:00:05+09:00" });
-
-  it("copies the answer with an icon button, flips it to a check, and toasts", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    await setup({ k1: [done] });
-    const btn = await screen.findByRole("button", { name: "Copy answer" });
-    expect(btn.getAttribute("data-copied")).toBeNull();
-    fireEvent.click(btn);
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("the answer"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Copy answer" }).getAttribute("data-copied")).toBe("true"));
-    expect(await screen.findByText("Copied")).toBeTruthy();
+  it("puts a copy button under each finished answer", async () => {
+    await setup({ k1: [turn({ status: "done", answer: "the answer", endedAt: "2026-10-06T10:00:05+09:00" })] });
+    expect(await screen.findByRole("button", { name: "Copy answer" })).toBeTruthy();
   });
 
-  it("toasts when the clipboard refuses", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockRejectedValue(new Error("no")) }, configurable: true });
-    await setup({ k1: [done] });
-    fireEvent.click(await screen.findByRole("button", { name: "Copy answer" }));
-    expect(await screen.findByText("Couldn't copy")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy answer" }).getAttribute("data-copied")).toBeNull();
+  it("scrolls the sheet to the latest turn when it opens and when a turn arrives", async () => {
+    const scrollTo = vi.fn();
+    vi.spyOn(Element.prototype, "scrollTo").mockImplementation(scrollTo);
+    try {
+      const { emit } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+      await screen.findByText("a");
+      await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+      scrollTo.mockClear();
+      act(() => emit({ type: "ask.started", turn: turn({ id: "t2", question: "q2" }) }));
+      await screen.findByText("Thinking");
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("when a turn ends, refocuses the input only if focus was on the body", async () => {
@@ -147,21 +144,6 @@ describe("AskBar", () => {
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q0" }));
   });
 
-  it("waiting shows a thinking line with a live elapsed counter, no image", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      await setup({ k1: [turn({ startedAt: new Date().toISOString() })] });
-        const text = await screen.findByText("Thinking");
-      const row = text.parentElement!;
-      expect(row.querySelector("img")).toBeNull();
-      expect(row.textContent).toContain("(0s)");
-      act(() => vi.advanceTimersByTime(2000));
-      expect(row.textContent).toContain("(2s)");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("stop button cancels the running turn", async () => {
     const { client } = await setup({ k1: [turn({})] });
     fireEvent.click(await screen.findByText("Stop"));
@@ -208,16 +190,5 @@ describe("AskBar", () => {
     } finally {
       frame.remove();
     }
-  });
-
-  it("renders links and images as plain text", async () => {
-    await setup({ k1: [turn({ status: "done", answer: "[문서](https://x.dev) ![그림](https://x.dev/a.png) **굵게**", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    expect(await screen.findByText("굵게")).toBeTruthy();
-    const sheet = screen.getByText("굵게").closest("div")!;
-    expect(sheet.querySelector("a")).toBeNull();
-    expect(sheet.querySelector("img")).toBeNull();
-    expect(sheet.textContent).toContain("문서 (https://x.dev)");
-    expect(sheet.textContent).toContain("그림");
-    expect(screen.getByText("굵게").tagName).toBe("STRONG");
   });
 });

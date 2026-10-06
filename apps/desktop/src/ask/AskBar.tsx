@@ -1,72 +1,20 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import Markdown, { type Components } from "react-markdown";
-import { ArrowUp, Check, Copy } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowUp } from "lucide-react";
 import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { useCopy } from "@/views/CopyChip";
+import { AnswerMarkdown } from "./AnswerMarkdown";
+import { CopyAnswerButton } from "./CopyAnswerButton";
+import { ThinkingLine } from "./ThinkingLine";
+import { useStickToBottom } from "./useStickToBottom";
 
 const PLACEHOLDER = "Ask about this doc…";
-
-/** Agent output may echo untrusted content: never render a link or an image, only their text. */
-const MARKDOWN_COMPONENTS: Components = {
-  a: ({ href, children }) => (
-    <>
-      {children}
-      {href && /^https?:\/\//i.test(href) ? <span className="text-ink-2"> ({href})</span> : null}
-    </>
-  ),
-  img: ({ alt }) => <>{alt ?? ""}</>,
-};
 
 function seconds(t: AskTurn): number | null {
   if (!t.endedAt) return null;
   return Math.max(0, Math.round((Date.parse(t.endedAt) - Date.parse(t.startedAt)) / 1000));
-}
-
-/** Seconds since `startedAt`, ticking every second while mounted. */
-function useElapsed(startedAt: string): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const tick = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(tick);
-  }, []);
-  return Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1000));
-}
-
-/** Codex-style waiting line: a shimmer sweeping over the text, then the elapsed seconds. */
-function Thinking({ t }: { t: AskTurn }) {
-  const secs = useElapsed(t.startedAt);
-  return (
-    <>
-      <span className="animate-shimmer bg-linear-to-r from-ink-2 via-[#c9c9c9] to-ink-2 bg-[length:200%_100%] bg-clip-text text-transparent motion-reduce:animate-none motion-reduce:text-ink-2">
-        Thinking
-      </span>
-      <span className="text-ink-3">({secs}s)</span>
-    </>
-  );
-}
-
-/** Icon button that copies an answer: a check for COPIED_MS after success, a toast either way. */
-function CopyAnswer({ text }: { text: string }) {
-  const { copied, failed, copy } = useCopy();
-  useEffect(() => { if (copied) toast.success("Copied", { id: "ask-copy" }); }, [copied]);
-  useEffect(() => { if (failed.shown) toast.error("Couldn't copy", { id: "ask-copy" }); }, [failed.shown]);
-  const Icon = copied ? Check : Copy;
-  return (
-    <button
-      type="button"
-      aria-label="Copy answer"
-      data-copied={copied ? "true" : undefined}
-      className="text-ink-2 hover:text-ink"
-      onClick={() => void copy(text)}
-    >
-      <Icon size={14} />
-    </button>
-  );
 }
 
 function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop: () => void }) {
@@ -76,16 +24,12 @@ function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop:
       <div className="ml-auto w-fit max-w-[80%] rounded-[10px] bg-[#f2f2f2] px-3 py-1.5 whitespace-pre-wrap">{t.question}</div>
       {t.status === "running" ? (
         <div className="flex items-center gap-2 text-[12.5px] text-ink-2">
-          <Thinking t={t} />
+          <ThinkingLine startedAt={t.startedAt} />
           <button type="button" className="ml-auto underline" onClick={onStop}>Stop</button>
         </div>
       ) : (
         <>
-          {t.answer ? (
-            <div className="text-[13.5px] leading-[1.55] [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:overflow-x-auto [&_ul]:list-disc [&_ul]:pl-5">
-              <Markdown components={MARKDOWN_COMPONENTS}>{t.answer}</Markdown>
-            </div>
-          ) : null}
+          {t.answer ? <AnswerMarkdown text={t.answer} /> : null}
           {t.status === "cancelled" ? <div className="text-[12.5px] text-ink-2">Stopped</div> : null}
           {t.status === "failed" ? (
             <div className="text-[12.5px] whitespace-pre-wrap text-ink-2">
@@ -95,7 +39,7 @@ function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop:
           ) : null}
           <div className="flex items-center gap-2 text-[11.5px] text-ink-2">
             {secs !== null ? <span>{secs}s</span> : null}
-            {t.answer ? <CopyAnswer text={t.answer} /> : null}
+            {t.answer ? <CopyAnswerButton text={t.answer} /> : null}
           </div>
         </>
       )}
@@ -113,7 +57,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const [sheet, setSheet] = useState(true);
   const [sendError, setSendError] = useState<string | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const bottom = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
   /** Set synchronously on send, so a second Enter before the turn shows up does nothing. */
   const sending = useRef(false);
@@ -138,9 +82,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
     wasOpen.current = open;
   }, [open, shown]);
   const turns = thread?.turns ?? [];
-  useEffect(() => {
-    bottom.current?.scrollIntoView?.({ block: "end" });
-  }, [turns.length, turns.at(-1)?.status]);
+  const showSheet = shown && sheet && (turns.length > 0 || !!thread?.error);
+  useStickToBottom(sheetRef, [showSheet, loaded, turns.length, turns.map((t) => t.status).join()]);
   const running = turns.find((t) => t.status === "running");
   const runningId = running?.id;
   const wasRunning = useRef(false);
@@ -202,11 +145,10 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
     }
   };
 
-  const showSheet = sheet && (turns.length > 0 || thread?.error);
   return (
     <div ref={container} className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-4 pb-4">
       {showSheet ? (
-        <div className="pointer-events-auto max-h-[50vh] w-full max-w-[560px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
+        <div ref={sheetRef} className="pointer-events-auto max-h-[50vh] w-full max-w-[560px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
           {last ? (
             <div className="mb-2 text-[11.5px] text-ink-2">
               {last.agent} · {last.mode === "resume" ? "continuing the thread that made it" : "new conversation — couldn't find the thread that made this doc"}
@@ -223,7 +165,6 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
               <Turn key={t.id} t={t} onRetry={() => void send(t.question)} onStop={() => store.cancel(t.id)} />
             ))}
           </div>
-          <div ref={bottom} />
         </div>
       ) : null}
       {sendError ? <div className="pointer-events-auto text-[12.5px] text-ink-2">{sendError}</div> : null}
