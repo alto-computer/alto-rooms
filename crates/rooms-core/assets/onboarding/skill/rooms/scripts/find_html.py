@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 
 CLAUDE_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Artifact"}
@@ -387,45 +388,72 @@ def find_links(home, wanted):
     return out
 
 
-def record_sources(rooms_home, cands, writes_by_path):
-    """Merge each candidate's last write into <rooms_home>/.rooms/sources.json.
+def source_entry(path, writes):
+    """The sources.json entry for one file, or None when it has no session.
 
-    Returns how many entries were written or updated. An existing entry with a
-    newer writtenAt is kept; a corrupt or unreadable file starts from empty.
+    `writes` is sorted by time. The last explicit write wins over loose Codex
+    shell matches, which may only mention the path (e.g. a session that `cat`s it).
     """
-    new = {}
-    for c in cands:
-        last = writes_by_path[c["path"]][-1]
-        if not last[2]:
-            continue
-        new[c["path"]] = {"agent": last[1], "session": last[2],
-                          "cwd": last[3] or os.path.dirname(c["path"]),
-                          "writtenAt": fmt(last[0])}
-    d = os.path.join(rooms_home, ".rooms")
-    target = os.path.join(d, "sources.json")
-    merged = {}
+    explicit = [w for w in writes if w[4]]
+    ts, agent, session, cwd, _ = (explicit or writes)[-1]
+    if not session:
+        return None
+    return {"agent": agent, "session": session,
+            "cwd": cwd or os.path.dirname(path), "writtenAt": fmt(ts)}
+
+
+def read_sources(target):
+    """The "sources" map of an existing sources.json; empty when missing or invalid."""
     try:
         with open(target, encoding="utf-8") as f:
             old = json.load(f).get("sources")
-        if isinstance(old, dict):
-            merged = {k: v for k, v in old.items() if isinstance(v, dict)}
     except (OSError, ValueError, AttributeError):
-        merged = {}
+        return {}
+    return {k: v for k, v in old.items() if isinstance(v, dict)} if isinstance(old, dict) else {}
+
+
+def write_sources(target, sources):
+    """Atomically replace `target` via a private temp file (safe for concurrent runs)."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target), prefix=".sources.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "sources": sources}, f, ensure_ascii=False,
+                      indent=1, sort_keys=True)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def record_sources(rooms_home, cands, writes_by_path):
+    """Merge each candidate's source into <rooms_home>/.rooms/sources.json.
+
+    Never raises: returns the output fields {"recorded": n} on success, or adds
+    "record_error" when nothing could be written. An existing entry with a newer
+    writtenAt is kept; a corrupt or unreadable file starts from empty. Nothing is
+    created when <rooms_home>/.rooms is missing (roomsd always creates it).
+    """
+    d = os.path.join(rooms_home, ".rooms")
+    if not os.path.isdir(d):
+        return {"recorded": 0, "record_error": "no .rooms in " + rooms_home}
+    target = os.path.join(d, "sources.json")
+    merged = read_sources(target)
     n = 0
-    for path, entry in new.items():
-        prev = merged.get(path)
-        stored = prev.get("writtenAt") if prev else None
-        if isinstance(stored, str) and stored > entry["writtenAt"]:
+    for c in cands:
+        entry = source_entry(c["path"], writes_by_path[c["path"]])
+        stored = merged.get(c["path"], {}).get("writtenAt")
+        if entry is None or (isinstance(stored, str) and stored > entry["writtenAt"]):
             continue
-        merged[path] = entry
+        merged[c["path"]] = entry
         n += 1
-    os.makedirs(d, exist_ok=True)
-    tmp = target + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(json.dumps({"version": 1, "sources": merged}, ensure_ascii=False,
-                           indent=1, sort_keys=True))
-    os.replace(tmp, target)
-    return n
+    try:
+        write_sources(target, merged)
+    except OSError as e:
+        return {"recorded": None, "record_error": str(e)}
+    return {"recorded": n}
 
 
 def main(argv=None):
@@ -501,7 +529,7 @@ def main(argv=None):
         "skipped": {"noise": noise, "missing": missing, "read_errors": col.read_errors},
     }
     if a.record_sources:
-        out["recorded"] = record_sources(rooms_home, cands, merged)
+        out.update(record_sources(rooms_home, cands, merged))
     json.dump(out, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0

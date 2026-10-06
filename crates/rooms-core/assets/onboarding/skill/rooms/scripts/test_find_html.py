@@ -373,11 +373,17 @@ class FindHtmlTest(unittest.TestCase):
 
     # ---- --record-sources ----
 
+    def dot_rooms(self):
+        d = os.path.join(self.e.home, ".rooms")
+        os.makedirs(d, exist_ok=True)
+        return d
+
     def sources(self):
         with open(os.path.join(self.e.home, ".rooms", "sources.json")) as f:
             return json.load(f)
 
     def test_record_sources_writes_entry(self):
+        self.dot_rooms()
         a = self.e.html("proj/rs.html")
         self.e.claude_log([cc("Write", a, cwd="/work", sid="sid-1")])
         out = self.e.run("--record-sources")
@@ -388,6 +394,7 @@ class FindHtmlTest(unittest.TestCase):
             "writtenAt": c["last_written"]}}})
 
     def test_record_sources_includes_linked(self):
+        self.dot_rooms()
         a = self.e.html("proj/rl.html")
         room = os.path.join(self.e.home, "room")
         os.makedirs(room)
@@ -399,6 +406,7 @@ class FindHtmlTest(unittest.TestCase):
         self.assertEqual(self.sources()["sources"][a]["session"], "sid-l")
 
     def test_record_sources_last_write_wins(self):
+        self.dot_rooms()
         a = self.e.html("proj/rw.html")
         self.e.claude_log([cc("Write", a, days_ago=3, sid="old")], name="a.jsonl")
         self.e.claude_log([cc("Write", a, days_ago=1, sid="new", cwd="/n")], name="b.jsonl")
@@ -411,7 +419,7 @@ class FindHtmlTest(unittest.TestCase):
         b = self.e.html("proj/rk2.html")
         self.e.claude_log([cc("Write", a, days_ago=1, sid="s-a"),
                            cc("Write", b, days_ago=1, sid="s-b")])
-        os.makedirs(os.path.join(self.e.home, ".rooms"))
+        self.dot_rooms()
         old = {"agent": "codex", "session": "old", "cwd": "/o", "writtenAt": "2000-01-01T00:00:00Z"}
         newer = {"agent": "codex", "session": "newer", "cwd": "/o", "writtenAt": "2999-01-01T00:00:00Z"}
         with open(os.path.join(self.e.home, ".rooms", "sources.json"), "w") as f:
@@ -427,7 +435,7 @@ class FindHtmlTest(unittest.TestCase):
         a = self.e.html("proj/re.html")
         self.e.claude_log([cc("Write", a, sid="s-eq")])
         t = self.e.run()["candidates"][0]["last_written"]
-        os.makedirs(os.path.join(self.e.home, ".rooms"))
+        self.dot_rooms()
         with open(os.path.join(self.e.home, ".rooms", "sources.json"), "w") as f:
             json.dump({"version": 1, "sources": {a: {"agent": "codex", "session": "x",
                        "cwd": "/o", "writtenAt": t}}}, f)
@@ -437,7 +445,7 @@ class FindHtmlTest(unittest.TestCase):
     def test_record_sources_corrupt_file_replaced(self):
         a = self.e.html("proj/rc.html")
         self.e.claude_log([cc("Write", a, sid="s-c")])
-        os.makedirs(os.path.join(self.e.home, ".rooms"))
+        self.dot_rooms()
         with open(os.path.join(self.e.home, ".rooms", "sources.json"), "w") as f:
             f.write("{")
         self.e.run("--record-sources")
@@ -452,9 +460,51 @@ class FindHtmlTest(unittest.TestCase):
             sys.path.remove(HERE)
         t = datetime.now(timezone.utc)
         a = self.e.html("proj/rn.html")
-        n = find_html.record_sources(self.e.home, [{"path": a}], {a: [(t, "codex", "", None, True)]})
-        self.assertEqual(n, 0)
+        self.dot_rooms()
+        r = find_html.record_sources(self.e.home, [{"path": a}], {a: [(t, "codex", "", None, True)]})
+        self.assertEqual(r, {"recorded": 0})
         self.assertEqual(self.sources()["sources"], {})
+
+    def test_record_sources_prefers_last_explicit_write(self):
+        # a later Codex shell command that only mentions the path must not take the doc over
+        self.dot_rooms()
+        a = self.e.html("proj/rx.html")
+        self.e.claude_log([cc("Write", a, days_ago=2, cwd="/w", sid="writer")])
+        self.e.codex_log([cx_meta("/r", sid="reviewer"), cx_exec("cat %s 2>/dev/null" % a)])
+        out = self.e.run("--record-sources")
+        self.assertEqual(out["candidates"][0]["agent"], "codex")  # loose match is the last write
+        e = self.sources()["sources"][a]
+        self.assertEqual((e["agent"], e["session"], e["cwd"]), ("claude-code", "writer", "/w"))
+
+    def test_record_sources_without_dot_rooms_creates_nothing(self):
+        a = self.e.html("proj/rd.html")
+        self.e.claude_log([cc("Write", a, sid="s-d")])
+        out = self.e.run("--record-sources")
+        self.assertEqual(len(out["candidates"]), 1)
+        self.assertEqual(out["recorded"], 0)
+        self.assertIn("no .rooms in", out["record_error"])
+        self.assertFalse(os.path.exists(os.path.join(self.e.home, ".rooms")))
+
+    @unittest.skipIf(os.name != "posix" or os.geteuid() == 0, "needs a non-root POSIX user")
+    def test_record_failure_still_prints_candidates(self):
+        a = self.e.html("proj/rr.html")
+        self.e.claude_log([cc("Write", a, sid="s-r")])
+        d = self.dot_rooms()
+        os.chmod(d, 0o500)
+        self.addCleanup(os.chmod, d, 0o700)
+        out = self.e.run("--record-sources")
+        self.assertEqual(self.paths(out), [a])
+        self.assertIsNone(out["recorded"])
+        self.assertTrue(out["record_error"])
+        self.assertEqual(os.listdir(d), [])
+
+    def test_record_sources_leaves_no_temp_files(self):
+        a = self.e.html("proj/rt.html")
+        self.e.claude_log([cc("Write", a, sid="s-t")])
+        d = self.dot_rooms()
+        self.e.run("--record-sources")
+        self.e.run("--record-sources")
+        self.assertEqual(os.listdir(d), ["sources.json"])
 
     def test_no_flag_no_file_no_key(self):
         a = self.e.html("proj/rf.html")
