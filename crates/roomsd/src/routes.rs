@@ -1,5 +1,6 @@
 use crate::AppState;
-use axum::extract::{Path, State};
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -33,7 +34,8 @@ impl IntoResponse for AskErr {
     }
 }
 
-pub async fn start_ask(State(st): State<AppState>, Json(b): Json<StartAsk>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
+pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
+    let Json(b) = b.map_err(|e| AskError::BadRequest(e.body_text()))?;
     Ok((StatusCode::ACCEPTED, Json(st.asks.start(&b.room_id, &b.artifact_id, &b.question)?)))
 }
 
@@ -41,7 +43,8 @@ pub async fn start_ask(State(st): State<AppState>, Json(b): Json<StartAsk>) -> R
 #[serde(rename_all = "camelCase")]
 pub struct AskQuery { file_key: String }
 
-pub async fn ask_thread(State(st): State<AppState>, axum::extract::Query(q): axum::extract::Query<AskQuery>) -> Result<Json<Vec<AskTurn>>, AskErr> {
+pub async fn ask_thread(State(st): State<AppState>, q: Result<Query<AskQuery>, QueryRejection>) -> Result<Json<Vec<AskTurn>>, AskErr> {
+    let Query(q) = q.map_err(|e| AskError::BadRequest(e.body_text()))?;
     Ok(Json(st.asks.thread(&q.file_key)?))
 }
 

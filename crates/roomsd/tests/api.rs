@@ -600,3 +600,16 @@ async fn ask_writes_are_forbidden_read_only() {
     let r = app.clone().oneshot(post("/v1/asks", r#"{"roomId":"r","artifactId":"a","question":"q"}"#, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn ask_extractor_rejections_use_the_error_shape() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    for body in ["{", r#"{"roomId":"r"}"#] {
+        let r = app.clone().oneshot(post("/v1/asks", body, Some("t0k"), API_HOST)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body_json(r).await["error"], "bad_request");
+    }
+    let r = app.clone().oneshot(get("/v1/asks", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(r).await["error"], "bad_request");
+}
