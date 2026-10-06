@@ -603,6 +603,46 @@ class FindHtmlTest(unittest.TestCase):
         self.assertEqual(w("cp a.html b.html", None), [])
         self.assertEqual(w(None), [])
 
+    def test_shell_writes_quoting_flags_and_prefixes(self):
+        sys.path.insert(0, HERE)
+        try:
+            import find_html
+        finally:
+            sys.path.remove(HERE)
+        w = lambda cmd, cwd="/c": list(find_html.shell_writes(cmd, cwd))
+        # operators count only outside quotes
+        self.assertEqual(w('grep ">" a.html > b.html'), ["/c/b.html"])
+        self.assertEqual(w('echo ">" x.html'), [])
+        self.assertEqual(w("echo '&&' 'cp a.html b.html'"), [])
+        self.assertEqual(w("cat a.html > y.txt"), [])
+        self.assertEqual(w("sort < a.html"), [])
+        self.assertEqual(w('cp "/sp ace/a.html" o\\ ut/"x y.html"'), ["/c/o ut/x y.html"])
+        # value-taking flags
+        self.assertEqual(w("install -m 644 a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("install -o me -g staff -S .bak a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("cp -S .orig --suffix=.b a.html b.html"), ["/c/b.html"])
+        # prefixes before the command word
+        self.assertEqual(w("FOO=1 sudo env A=b command cp a.html b.html"), ["/c/b.html"])
+        # dynamic words are unknown
+        self.assertEqual(w('cp a.html "$OUT/b.html"; cp a.html `pwd`/c.html'), [])
+        self.assertEqual(w("cd $D && cp a.html b.html"), [])
+        self.assertEqual(w("cp a.html b.html " + "x" * 200000), [])
+
+    def test_aside_malformed_records_and_write_tool_path(self):
+        canon, _ = self.aside_dirs()
+        a = self.e.html(os.path.join(canon, "w.html"))
+        r = self.e.html(os.path.join(canon, "r.html"))
+        bad = aside_call("repl", {"code": "x"})
+        bad["content"] = "a toolCall .html string"
+        bad2 = aside_call("repl", {"code": "x"})
+        bad2["content"] = ["toolCall", 3, {"type": "toolCall", "name": "repl", "arguments": "str"}]
+        self.e.aside_log([bad, bad2,
+                          aside_call("write_file", {"path": a, "content": "<html>"}),
+                          aside_call("read_file", {"path": r})])
+        out = self.e.run()
+        self.assertEqual(self.paths(out), [a])
+        self.assertEqual(out["candidates"][0]["agent"], "aside")
+
     # ---- Aside ----
     def aside_dirs(self):
         """A canonical artifacts dir and Aside's symlinked agents/main/artifacts view of it."""

@@ -13,7 +13,6 @@ import html as htmllib
 import json
 import os
 import re
-import shlex
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -28,12 +27,17 @@ TS_RE = re.compile(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)")
 TZ_RE = re.compile(r"^(?:\.\d+)?\s*(Z|[+-]\d\d(?::?\d\d)?)?")
 ORCA_RE = re.compile(r"/orca/workspaces/([^/]+)/([^/]+)(?:/|$)")
 
-SHELL_PUNCT = "();<>|&\n"
+# words may mix quoted parts and escapes; a quote left open runs as a plain character
+SHELL_TOKEN_RE = re.compile(r"""[ \t\r]+|(?P<comment>\#[^\n]*)|(?P<op>[();<>|&\n]+)
+    |(?P<word>(?:[^\s();<>|&'"\\]|\\.|'[^']*'|"(?:[^"\\]|\\.)*"|['"\\])+)""", re.X)
+SHELL_DEQUOTE_RE = re.compile(r"""'([^']*)'|"((?:[^"\\]|\\.)*)"|\\(.)|['"\\]""")
+SHELL_UNESCAPE_RE = re.compile(r'\\([\\"$`])')
 SHELL_SEPARATORS = set("();|&\n")
-SHELL_REDIRECTS = set("<>&|")
-SHELL_FALLBACK_RE = re.compile(r"[();<>|&\n]+|(#[^\n]*)|([^\s();<>|&]+)")
+SHELL_ASSIGN_RE = re.compile(r"^[A-Za-z_]\w*=")
+SHELL_PREFIXES = {"sudo", "env", "command"}
+SHELL_MAX_CHARS = 100_000
 HEREDOC_RE = re.compile(r"(?<!<)<<-?\s*(['\"]?)(\w+)\1")
-COPY_CMDS = {"cp", "mv", "install"}
+COPY_VALUE_FLAGS = {"cp": {"-S"}, "mv": {"-S"}, "install": {"-m", "-o", "-g", "-S"}}
 
 JS_STR = r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|`(?:[^`\\]|\\.)*`"
 JS_NAME = r"[A-Za-z_$][\w$]*"
@@ -111,52 +115,65 @@ def strip_heredocs(command):
     return "\n".join(out)
 
 
+def dequote(word):
+    def part(m):
+        single, double, escaped = m.groups()
+        if single is not None:
+            return single
+        if double is not None:
+            return SHELL_UNESCAPE_RE.sub(r"\1", double)
+        return escaped or ""
+    return SHELL_DEQUOTE_RE.sub(part, word)
+
+
 def shell_tokens(command):
-    """Words and operator tokens; a command shlex can't parse falls back to a plain split."""
-    text = strip_heredocs(command)
-    # shlex drops a comment together with its newline; doubling newlines keeps the separator
-    lex = shlex.shlex(text.replace("\n", "\n\n"), posix=True, punctuation_chars=SHELL_PUNCT)
-    lex.whitespace, lex.whitespace_split = " \t\r", True
-    try:
-        return list(lex)
-    except ValueError:
-        return [m.group(0).strip("'\"") for m in SHELL_FALLBACK_RE.finditer(text)
-                if not m.group(1)]
-
-
-def is_op(token, chars):
-    return bool(token) and set(token) <= chars
+    """(is_operator, text) tokens. Operators are recognised only outside quotes."""
+    text = strip_heredocs(command).replace("\\\n", "")
+    for m in SHELL_TOKEN_RE.finditer(text):
+        if m.lastgroup == "op":
+            yield True, m.group()
+        elif m.lastgroup == "word":
+            yield False, dequote(m.group())
 
 
 def shell_segments(tokens):
-    """Simple commands, split on `&&`, `||`, `;`, `|`, `&`, parentheses and newlines."""
+    """Simple commands as lists of tokens, split on `&&`, `||`, `;`, `|`, `&`, `( )`, newlines."""
     seg = []
-    for t in tokens:
-        if is_op(t, SHELL_SEPARATORS):
+    for op, text in tokens:
+        if op and set(text) <= SHELL_SEPARATORS:
             if seg:
                 yield seg
             seg = []
         else:
-            seg.append(t)
+            seg.append((op, text))
     if seg:
         yield seg
 
 
-def split_redirects(words):
+def split_redirects(seg):
     """(argv, output redirect targets) of one simple command."""
-    argv, targets, it = [], [], iter(words)
-    for w in it:
-        if is_op(w, SHELL_REDIRECTS):
-            target = next(it, "")
-            if ">" in w:
-                targets.append(target)
-        else:
-            argv.append(w)
+    argv, targets, it = [], [], iter(seg)
+    for op, text in it:
+        if not op:
+            argv.append(text)
+            continue
+        _, target = next(it, (True, ""))
+        if ">" in text:
+            targets.append(target)
     return argv, targets
 
 
-def copy_dests(args, cwd):
+def command_words(argv):
+    """`argv` from the command word on: env assignments and sudo/env/command are skipped."""
+    i = 0
+    while i < len(argv) and (SHELL_ASSIGN_RE.match(argv[i]) or argv[i] in SHELL_PREFIXES):
+        i += 1
+    return argv[i:]
+
+
+def copy_dests(prog, args, cwd):
     """Destinations of `cp`/`mv`/`install` args: `-t DIR`, or the last arg (a dir gets basenames)."""
+    value_flags = COPY_VALUE_FLAGS[prog]
     target, srcs, flags, it = None, [], True, iter(args)
     for a in it:
         if flags and a == "--":
@@ -165,22 +182,31 @@ def copy_dests(args, cwd):
             target = next(it, None)
         elif flags and a.startswith("--target-directory="):
             target = a.split("=", 1)[1]
+        elif flags and a in value_flags:
+            next(it, None)
         elif not (flags and a.startswith("-") and a != "-"):
             srcs.append(a)
     if target is None:
         if len(srcs) < 2:
             return []
         *srcs, target = srcs
-        d = resolve(target, cwd)
+        d = shell_path(target, cwd)
         if not (target.endswith("/") or len(srcs) > 1 or (d and os.path.isdir(d))):
             return [target]
     return [os.path.join(target, os.path.basename(s.rstrip("/"))) for s in srcs]
 
 
+def shell_path(word, cwd):
+    """`word` as an absolute path, or None when it is dynamic (`$`, backticks) or unresolvable."""
+    if "$" in word or "`" in word:
+        return None
+    return resolve(word, cwd)
+
+
 def change_dir(args, cwd):
     if not args:
         return os.path.expanduser("~")
-    return None if args[0] == "-" else resolve(args[0], cwd)
+    return None if args[0] == "-" else shell_path(args[0], cwd)
 
 
 def shell_writes(command, cwd):
@@ -188,21 +214,22 @@ def shell_writes(command, cwd):
 
     Relative paths follow `cd` from `cwd`; they are dropped when the directory is unknown.
     """
-    if not isinstance(command, str):
+    if not isinstance(command, str) or len(command) > SHELL_MAX_CHARS:
         return
-    for words in shell_segments(shell_tokens(command)):
-        argv, targets = split_redirects(words)
-        prog = os.path.basename(argv[0]) if argv else ""
+    for seg in shell_segments(shell_tokens(command)):
+        argv, targets = split_redirects(seg)
+        words = command_words(argv)
+        prog = os.path.basename(words[0]) if words else ""
         if prog == "cd":
-            cwd = change_dir(argv[1:], cwd)
-        elif prog in COPY_CMDS:
-            targets += copy_dests(argv[1:], cwd)
+            cwd = change_dir(words[1:], cwd)
+        elif prog in COPY_VALUE_FLAGS:
+            targets += copy_dests(prog, words[1:], cwd)
         elif prog == "tee":
-            targets += [a for a in argv[1:] if not a.startswith("-")]
-        for t in targets:
-            p = is_html(t) and resolve(t, cwd)
-            if p:
-                yield p
+            targets += [a for a in words[1:] if not a.startswith("-")]
+        for target in filter(is_html, targets):
+            path = shell_path(target, cwd)
+            if path:
+                yield path
 
 
 # ---- JavaScript (Aside repl) ----
@@ -259,10 +286,10 @@ def js_writes(code, syms):
                 syms[name] = value
             else:
                 syms.pop(name, None)  # now something we can't follow
-        elif value is not None and JS_ARG_END_RE.match(code, end):
-            p = is_html(value) and resolve(value, None)
-            if p:
-                yield p
+        elif is_html(value) and JS_ARG_END_RE.match(code, end):
+            path = resolve(value, None)
+            if path:
+                yield path
 
 
 class Collector:
@@ -364,15 +391,16 @@ def aside_call_writes(call, syms):
     elif name == "bash":
         for p in shell_writes(args.get("command"), None):
             yield p, False
-    p = args.get("path") or args.get("file_path")
-    p = is_html(p) and WRITE_TOOL_RE.search(name) and resolve(p, None)
-    if p:
-        yield p, True
+    target = args.get("path") or args.get("file_path")
+    if is_html(target) and WRITE_TOOL_RE.search(name):
+        path = resolve(target, None)
+        if path:
+            yield path, True
 
 
 def scan_aside_file(path, sid, col):
     syms = {}
-    for rec in json_records(path, col, lambda line: '"assistant"' in line):
+    for rec in json_records(path, col, lambda line: '"toolCall"' in line):
         try:
             if rec.get("role") != "assistant":
                 continue
