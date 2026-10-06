@@ -14,7 +14,8 @@ fn app(read_only: bool, peer: &str) -> (tempfile::TempDir, axum::Router, AppStat
     let d = tempfile::tempdir().unwrap();
     let core = RoomsCore::open(d.path()).unwrap();
     core.backfill_all().unwrap();
-    let st = AppState { core, token: "t0k".into(), read_only, files_origin: "http://127.0.0.1:4318".into(), net: NetConfig::default() };
+    let asks = rooms_core::asks::Asks::new(core.clone(), None);
+    let st = AppState { core, asks, token: "t0k".into(), read_only, files_origin: "http://127.0.0.1:4318".into(), net: NetConfig::default() };
     let addr: SocketAddr = peer.parse().unwrap();
     (d, build_api_router(st.clone()).layer(MockConnectInfo(addr)), st)
 }
@@ -238,7 +239,8 @@ async fn custom_ports_and_dev_origin() {
     let d = tempfile::tempdir().unwrap();
     let core = RoomsCore::open(d.path()).unwrap();
     let net = NetConfig { api_port: 14317, files_port: 14318, dev_origin: Some("http://localhost:4173".into()) };
-    let st = AppState { core, token: "t0k".into(), read_only: false, files_origin: "http://127.0.0.1:14318".into(), net };
+    let asks = rooms_core::asks::Asks::new(core.clone(), None);
+    let st = AppState { core, asks, token: "t0k".into(), read_only: false, files_origin: "http://127.0.0.1:14318".into(), net };
     let app = build_api_router(st).layer(MockConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
     let mut ok = post("/v1/rooms", r#"{"name":"a"}"#, Some("t0k"), "127.0.0.1:14317");
     ok.headers_mut().insert("origin", "http://localhost:4173".parse().unwrap());
@@ -254,7 +256,8 @@ fn dev_app() -> axum::Router {
     let d = tempfile::tempdir().unwrap();
     let core = RoomsCore::open(d.path()).unwrap();
     let net = NetConfig { api_port: 14317, files_port: 14318, dev_origin: Some("http://localhost:4173".into()) };
-    let st = AppState { core, token: "t0k".into(), read_only: false, files_origin: "http://127.0.0.1:14318".into(), net };
+    let asks = rooms_core::asks::Asks::new(core.clone(), None);
+    let st = AppState { core, asks, token: "t0k".into(), read_only: false, files_origin: "http://127.0.0.1:14318".into(), net };
     std::mem::forget(d);
     build_api_router(st).layer(MockConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()))
 }
@@ -285,7 +288,8 @@ async fn files_host_guard_uses_custom_port() {
     let d = tempfile::tempdir().unwrap();
     let core = RoomsCore::open(d.path()).unwrap();
     let net = NetConfig { api_port: 14317, files_port: 14318, dev_origin: None };
-    let st = AppState { core, token: "t0k".into(), read_only: false, files_origin: "http://127.0.0.1:14318".into(), net };
+    let asks = rooms_core::asks::Asks::new(core.clone(), None);
+    let st = AppState { core, asks, token: "t0k".into(), read_only: false, files_origin: "http://127.0.0.1:14318".into(), net };
     let app = build_files_router(st);
     let bad = app.clone().oneshot(get("/x/y.html", "127.0.0.1:4318")).await.unwrap();
     assert_eq!(bad.status(), StatusCode::FORBIDDEN);
@@ -540,4 +544,59 @@ async fn plugin_csp_without_downloads_has_no_extra_sandbox_tokens() {
     let csp = r.headers()["content-security-policy"].to_str().unwrap().to_string();
     assert!(csp.starts_with("sandbox allow-scripts; "), "{csp}");
     assert!(!csp.contains("allow-popups") && !csp.contains("allow-same-origin"));
+}
+
+fn delete(uri: &str, token: Option<&str>, host: &str) -> Request<Body> {
+    let mut b = Request::delete(uri).header("host", host);
+    if let Some(t) = token { b = b.header("authorization", format!("Bearer {t}")); }
+    b.body(Body::empty()).unwrap()
+}
+
+#[tokio::test]
+async fn ask_routes() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("r").unwrap();
+    let root = st.core.room_root(&room.id).unwrap().0;
+    std::fs::write(root.join("doc.html"), "<title>d</title>").unwrap();
+    st.core.backfill_all().unwrap();
+    std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"hi\"]\n").unwrap();
+    let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
+    let mut rx = st.core.subscribe();
+
+    let body = format!(r#"{{"roomId":"{}","artifactId":"{}","question":"q"}}"#, room.id, art.id);
+    let r = app.clone().oneshot(post("/v1/asks", &body, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::ACCEPTED);
+    let turn = body_json(r).await;
+    assert_eq!(turn["status"], "running");
+    loop {
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+        if let rooms_protocol::EventKind::AskDone { turn: t } = ev.kind { assert_eq!(t.answer, "hi"); break; }
+    }
+    let r = app.clone().oneshot(get(&format!("/v1/asks?fileKey={}", art.file_key), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await[0]["answer"], "hi");
+
+    let r = app.clone().oneshot(post("/v1/asks", &body.replace("\"q\"", "\"  \""), Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(r).await["error"], "bad_request");
+    let r = app.clone().oneshot(post("/v1/asks", &body.replace(&art.id, "nope"), Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    std::fs::write(d.path().join(".rooms/agents.toml"), "default = [").unwrap();
+    let r = app.clone().oneshot(post("/v1/asks", &body, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body_json(r).await["error"], "agent_config");
+    let r = app.clone().oneshot(get("/v1/asks?fileKey=..%2Fx", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    let r = app.clone().oneshot(delete("/v1/asks/whatever", Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    let r = app.clone().oneshot(post("/v1/asks", &body, None, API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn ask_writes_are_forbidden_read_only() {
+    let (_d, app, _) = app(true, "127.0.0.1:5000");
+    let r = app.clone().oneshot(post("/v1/asks", r#"{"roomId":"r","artifactId":"a","question":"q"}"#, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
 }

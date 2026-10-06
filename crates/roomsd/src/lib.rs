@@ -94,6 +94,7 @@ impl NetConfig {
 #[derive(Clone)]
 pub struct AppState {
     pub core: RoomsCore,
+    pub asks: rooms_core::asks::Asks,
     pub token: String,
     pub read_only: bool,
     pub files_origin: String,
@@ -121,6 +122,8 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/journal/{date}/notes/{name}/rename", post(routes::rename_note))
         .route("/v1/artifacts/move", post(routes::move_artifact))
         .route("/v1/artifacts/by-file-key/{key}", get(routes::artifact_by_file_key))
+        .route("/v1/asks", get(routes::ask_thread).post(routes::start_ask))
+        .route("/v1/asks/{ask_id}", axum::routing::delete(routes::cancel_ask))
         .route("/v1/plugins", get(routes::list_plugins))
         .route("/v1/plugins/{id}", patch(routes::set_plugin_enabled))
         .route("/v1/plugins/{id}/data", get(routes::list_plugin_data))

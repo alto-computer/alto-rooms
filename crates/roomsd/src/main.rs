@@ -20,16 +20,20 @@ async fn main() {
         }
     }
     let token = write_token(core.home()).expect("write token");
-    let st = AppState { core, token, read_only: false, files_origin: format!("http://127.0.0.1:{fp}"), net };
+    let asks = rooms_core::asks::Asks::new(core.clone(), rooms_core::asks::login_path().await);
+    let st = AppState { core, asks: asks.clone(), token, read_only: false, files_origin: format!("http://127.0.0.1:{fp}"), net };
     let api = build_api_router(st.clone()).into_make_service_with_connect_info::<SocketAddr>();
     // files router has no ConnectInfo extractor
     let files = build_files_router(st).into_make_service();
     eprintln!("roomsd: home={} api=http://127.0.0.1:{ap} files=http://127.0.0.1:{fp}", home.display());
     let a = tokio::spawn(async move { axum::serve(api_l, api).await });
     let f = tokio::spawn(async move { axum::serve(files_l, files).await });
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
     let (name, res) = tokio::select! {
         r = a => ("api", r),
         r = f => ("files", r),
+        _ = term.recv() => { asks.shutdown().await; std::process::exit(0) }
+        _ = tokio::signal::ctrl_c() => { asks.shutdown().await; std::process::exit(0) }
     };
     match res {
         Ok(Ok(())) => eprintln!("roomsd: {name} server stopped unexpectedly"),

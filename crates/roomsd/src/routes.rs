@@ -3,6 +3,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use rooms_core::asks::AskError;
 use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
 use serde::Deserialize;
@@ -15,6 +16,39 @@ impl IntoResponse for ApiErr {
     }
 }
 impl From<CoreError> for ApiErr { fn from(e: CoreError) -> Self { ApiErr(e) } }
+
+pub struct AskErr(AskError);
+impl From<AskError> for AskErr { fn from(e: AskError) -> Self { AskErr(e) } }
+impl IntoResponse for AskErr {
+    fn into_response(self) -> Response {
+        let (status, code) = match &self.0 {
+            AskError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            AskError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            AskError::Busy => (StatusCode::CONFLICT, "ask_busy"),
+            AskError::Capacity => (StatusCode::CONFLICT, "ask_capacity"),
+            AskError::AgentConfig(_) => (StatusCode::UNPROCESSABLE_ENTITY, "agent_config"),
+            AskError::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "io"),
+        };
+        (status, Json(ApiError { error: code.into(), message: self.0.to_string() })).into_response()
+    }
+}
+
+pub async fn start_ask(State(st): State<AppState>, Json(b): Json<StartAsk>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
+    Ok((StatusCode::ACCEPTED, Json(st.asks.start(&b.room_id, &b.artifact_id, &b.question)?)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskQuery { file_key: String }
+
+pub async fn ask_thread(State(st): State<AppState>, axum::extract::Query(q): axum::extract::Query<AskQuery>) -> Result<Json<Vec<AskTurn>>, AskErr> {
+    Ok(Json(st.asks.thread(&q.file_key)?))
+}
+
+pub async fn cancel_ask(State(st): State<AppState>, Path(ask_id): Path<String>) -> StatusCode {
+    st.asks.cancel(&ask_id);
+    StatusCode::NO_CONTENT
+}
 
 /// Runs a core call on the blocking pool: core does filesystem/SQLite IO under a std Mutex,
 /// which must not stall the async workers. A panicked/cancelled task maps to 500 `internal`.
@@ -235,7 +269,8 @@ mod tests {
     fn state() -> (tempfile::TempDir, AppState) {
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
-        (d, AppState { core, token: "t".into(), read_only: false, files_origin: String::new(), net: crate::NetConfig::default() })
+        let asks = rooms_core::asks::Asks::new(core.clone(), None);
+        (d, AppState { core, asks, token: "t".into(), read_only: false, files_origin: String::new(), net: crate::NetConfig::default() })
     }
 
     /// Spec §5 S3 rule ③: the client drops buffered events with seq ≤ snapshot seq, so the header
