@@ -142,6 +142,29 @@ describe("AskBar", () => {
     expect(screen.getByText("답")).toBeTruthy();
   });
 
+  it("an outside pointerdown or a click into the doc iframe folds the sheet; inside does not", async () => {
+    await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
+    act(() => store.toggle());
+    const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    fireEvent.pointerDown(await screen.findByText("답"));
+    expect(screen.getByText("답")).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByText("답")).toBeNull();
+    expect(input.isConnected).toBe(true);
+    fireEvent.focus(input);
+    expect(screen.getByText("답")).toBeTruthy();
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    try {
+      frame.focus();
+      expect(document.activeElement).toBe(frame);
+      act(() => void window.dispatchEvent(new Event("blur")));
+      expect(screen.queryByText("답")).toBeNull();
+    } finally {
+      frame.remove();
+    }
+  });
+
   it("renders links and images as plain text", async () => {
     await setup({ k1: [turn({ status: "done", answer: "[문서](https://x.dev) ![그림](https://x.dev/a.png) **굵게**", endedAt: "2026-10-06T10:00:03+09:00" })] });
     act(() => store.toggle());

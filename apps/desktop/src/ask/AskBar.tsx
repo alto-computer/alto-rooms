@@ -95,6 +95,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const [sendError, setSendError] = useState<string | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  const container = useRef<HTMLDivElement>(null);
   /** Set synchronously on send, so a second Enter before the turn shows up does nothing. */
   const sending = useRef(false);
   const loading = useRef<string | null>(null);
@@ -126,6 +127,24 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
     wasRunning.current = !!runningId;
   }, [runningId, shown]);
 
+  // Outside click folds the sheet like Esc. Clicks in the doc iframe never reach this document,
+  // so a window blur with focus moved into an iframe counts as one too.
+  useEffect(() => {
+    if (!shown) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (container.current && e.target instanceof Node && !container.current.contains(e.target)) setSheet(false);
+    };
+    const onBlur = () => {
+      if (document.activeElement?.tagName === "IFRAME") setSheet(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [shown]);
+
   if (!shown) return null;
   const last = turns.at(-1);
 
@@ -156,7 +175,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
 
   const showSheet = sheet && (turns.length > 0 || thread?.error);
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-4 pb-4">
+    <div ref={container} className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-4 pb-4">
       {showSheet ? (
         <div className="pointer-events-auto max-h-[50vh] w-full max-w-[560px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
           {last ? (
