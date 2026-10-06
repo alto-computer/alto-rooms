@@ -1,16 +1,26 @@
 import { Toaster as Sonner, type ToasterProps } from "sonner"
-import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
+import { CheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
 
 const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme="light"
-      position="bottom-right"
+      position="top-center"
+      offset={16}
       duration={1800}
       className="toaster group"
+      toastOptions={{
+        unstyled: true,
+        classNames: {
+          toast:
+            "mx-auto flex w-fit items-center gap-2 rounded-full border-0 bg-ink px-3.5 py-2 text-[13px] leading-5 text-white shadow-lg",
+          title: "font-normal",
+          icon: "m-0 flex size-4 items-center justify-center",
+        },
+      }}
       icons={{
         success: (
-          <CircleCheckIcon className="size-4" />
+          <CheckIcon className="size-3.5" />
         ),
         info: (
           <InfoIcon className="size-4" />
@@ -27,10 +37,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }}
       style={
         {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
-          "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
+          "--width": "max-content",
         } as React.CSSProperties
       }
       {...props}

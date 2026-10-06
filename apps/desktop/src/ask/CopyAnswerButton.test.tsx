@@ -28,6 +28,9 @@ describe("CopyAnswerButton", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("the answer"));
     await waitFor(() => expect(btn.getAttribute("data-copied")).toBe("true"));
     expect(await screen.findByText("Copied")).toBeTruthy();
+    const toaster = document.querySelector("[data-sonner-toaster]");
+    expect(toaster?.getAttribute("data-y-position")).toBe("top");
+    expect(toaster?.getAttribute("data-x-position")).toBe("center");
   });
 
   it("toasts on every click, even while still showing the check", async () => {
