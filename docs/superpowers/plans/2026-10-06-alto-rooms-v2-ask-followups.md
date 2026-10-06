@@ -52,3 +52,12 @@ Deferred minor findings and rulings from the subagent-driven execution of `2026-
 
 ## Next
 - Follow-up (user-approved 2026-10-06): provenance sidecar — rooms skill records {realpath: {agent, session, cwd}} into <home>/.rooms/sources.json at sort/re-sort (including already-linked files) and at link time; roomsd uses it when a doc has no rooms:* meta; UI says when it falls back to a new conversation. Root cause: onboarding found sessions (find_html.py) but the design never recorded them (spec §11 open question).
+
+## v2.1 (sources.json) — rulings and deferred minors
+- Ruling: batch T1+T2 (python+skill text) and T3+T4 (core+UI) into two dispatches — small, same-area pairs — cost if wrong: larger review surface
+- Ruling: user-requested Task 5 (copy icon + sonner toast + textarea scrollbar) folded into the T3+T4 dispatch — avoids parallel commits in one checkout — cost if wrong: none
+- Final review v2.1: With fixes. Ruling: one fix wave = I1 tmp-file race + record failure must not abort output; I2 prefer last explicit write; M6 skip recording if <home>/.rooms missing; M3 lookup fallback by canonicalizing keys; plus user requests (AskBar refactor into useStickToBottom/AnswerMarkdown/ThinkingLine/CopyAnswerButton, scroll to latest smoothly on open, remark-cjk-friendly, toast on every copy click, drop cn-toast) — cost if wrong: a larger single fix diff
+- Ruling: deferred — M4 header wording when profile missing (spec text), M5 journal docs not recorded, M7 v4 habit until re-sort (release note), overlapping read-modify-write lost update
+- Task 1: minor (deferred): makedirs may create a mistyped rooms_home; fixed tmp name + read-modify-write races; write failure aborts the run before printing candidates
+- Task 5: minor (deferred): repeat copy within 1.5 s shows no new toast (effect-driven); textarea scrollbar always hidden; dead cn-toast class; test helper param unused; corrupt-sidecar test relies on setup dir
+- sources::lookup canonicalizes every key on an exact miss (O(n) per ask); sources.json is 0600 (mkstemp)
