@@ -4,6 +4,7 @@ pub(crate) mod agents;
 pub(crate) mod log;
 pub(crate) mod prompt;
 pub(crate) mod run;
+pub(crate) mod sources;
 
 pub use run::Limits;
 
@@ -116,7 +117,12 @@ impl Asks {
         if !valid_file_key(&artifact.file_key) { return Err(AskError::BadRequest("bad file key".into())); }
         let file_abs = core.resolve_file(&room.to_string(), &artifact.rel_path).map_err(|_| AskError::NotFound)?;
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
-        let src = &artifact.source;
+        // Meta wins. Otherwise the sidecar entry (agent, session, cwd) is used WHOLE: mixing the doc's
+        // agent with another conversation's session would resume the wrong agent's thread.
+        let meta = &artifact.source;
+        let meta_has_session = meta.session.as_deref().is_some_and(valid_ident);
+        let sidecar = if meta_has_session { None } else { sources::lookup(core.home(), &file_abs) };
+        let src = sidecar.as_ref().unwrap_or(meta);
         let agent = src.agent.as_deref().filter(|a| valid_ident(a));
         let session = src.session.as_deref().filter(|s| valid_ident(s));
         let plan = profiles.plan(agent, session);

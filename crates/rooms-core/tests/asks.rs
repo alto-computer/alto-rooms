@@ -183,3 +183,74 @@ async fn start_after_shutdown_is_refused() {
     asks.shutdown().await;
     assert!(matches!(asks.start(&room, &art, "q"), Err(AskError::Capacity)));
 }
+
+// ---- sources.json sidecar (doc has no usable rooms:session) ----
+
+fn write_sources(home: &std::path::Path, doc: &std::path::Path, agent: &str, session: &str, cwd: &str) {
+    let key = std::fs::canonicalize(doc).unwrap().to_string_lossy().into_owned();
+    let body = serde_json::json!({"version": 1, "sources": {key: {
+        "agent": agent, "session": session, "cwd": cwd, "writtenAt": "2026-10-06T00:00:00Z"}}});
+    std::fs::create_dir_all(home.join(".rooms")).unwrap();
+    std::fs::write(home.join(".rooms/sources.json"), body.to_string()).unwrap();
+}
+
+fn doc_path(d: &tempfile::TempDir, core: &RoomsCore, room: &str) -> std::path::PathBuf {
+    let _ = d;
+    core.room_root(&room.to_string()).unwrap().0.join("doc.html")
+}
+
+#[tokio::test]
+async fn sidecar_resumes_when_doc_has_no_meta() {
+    let cwd = tempfile::tempdir().unwrap();
+    let real = std::fs::canonicalize(cwd.path()).unwrap();
+    let (d, core, room, art) = setup("");
+    write_sources(d.path(), &doc_path(&d, &core, &room), "claude-code", "S-9", &real.to_string_lossy());
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, &art, "q").unwrap();
+    assert_eq!(t.mode, AskMode::Resume);
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.contains("[resume] [S-9]"), "{}", done.answer);
+    assert!(done.answer.contains(&format!("CWD: {}", real.display())), "{}", done.answer);
+}
+
+#[tokio::test]
+async fn meta_session_wins_over_sidecar() {
+    let (d, core, room, art) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#);
+    write_sources(d.path(), &doc_path(&d, &core, &room), "claude-code", "S-9", "/");
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, &art, "q").unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.contains("[resume] [S-1]"), "{}", done.answer);
+}
+
+#[tokio::test]
+async fn sidecar_entry_is_used_whole_not_mixed_with_meta_agent() {
+    let (d, core, room, art) = setup(r#"<meta name="rooms:agent" content="codex">"#);
+    write_sources(d.path(), &doc_path(&d, &core, &room), "claude-code", "S-9", "/");
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, &art, "q").unwrap();
+    assert_eq!((t.agent.as_str(), t.mode), ("claude-code", AskMode::Resume));
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.contains("[resume] [S-9]"), "{}", done.answer);
+}
+
+#[tokio::test]
+async fn sidecar_values_are_still_validated() {
+    let (d, core, room, art) = setup("");
+    write_sources(d.path(), &doc_path(&d, &core, &room), "claude-code", "--bad", "/");
+    let asks = Asks::new(core.clone(), None);
+    let t = asks.start(&room, &art, "q").unwrap();
+    assert_eq!(t.mode, AskMode::New);
+}
+
+#[tokio::test]
+async fn corrupt_sidecar_means_new_mode_without_error() {
+    let (d, core, room, art) = setup("");
+    std::fs::write(d.path().join(".rooms/sources.json"), "{").unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let t = asks.start(&room, &art, "q").unwrap();
+    assert_eq!(t.mode, AskMode::New);
+}
