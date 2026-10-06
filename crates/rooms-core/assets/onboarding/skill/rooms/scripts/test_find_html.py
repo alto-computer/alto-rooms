@@ -371,6 +371,98 @@ class FindHtmlTest(unittest.TestCase):
         self.e.claude_log([cc("Write", a)])
         self.assertEqual(self.e.run()["version"], 2)
 
+    # ---- --record-sources ----
+
+    def sources(self):
+        with open(os.path.join(self.e.home, ".rooms", "sources.json")) as f:
+            return json.load(f)
+
+    def test_record_sources_writes_entry(self):
+        a = self.e.html("proj/rs.html")
+        self.e.claude_log([cc("Write", a, cwd="/work", sid="sid-1")])
+        out = self.e.run("--record-sources")
+        self.assertEqual(out["recorded"], 1)
+        c = out["candidates"][0]
+        self.assertEqual(self.sources(), {"version": 1, "sources": {a: {
+            "agent": "claude-code", "session": "sid-1", "cwd": "/work",
+            "writtenAt": c["last_written"]}}})
+
+    def test_record_sources_includes_linked(self):
+        a = self.e.html("proj/rl.html")
+        room = os.path.join(self.e.home, "room")
+        os.makedirs(room)
+        os.symlink(a, os.path.join(room, "alias.html"))
+        self.e.claude_log([cc("Write", a, sid="sid-l")])
+        out = self.e.run("--record-sources")
+        self.assertTrue(out["candidates"][0]["linked"])
+        self.assertEqual(out["recorded"], 1)
+        self.assertEqual(self.sources()["sources"][a]["session"], "sid-l")
+
+    def test_record_sources_last_write_wins(self):
+        a = self.e.html("proj/rw.html")
+        self.e.claude_log([cc("Write", a, days_ago=3, sid="old")], name="a.jsonl")
+        self.e.claude_log([cc("Write", a, days_ago=1, sid="new", cwd="/n")], name="b.jsonl")
+        self.e.run("--record-sources")
+        e = self.sources()["sources"][a]
+        self.assertEqual((e["session"], e["cwd"]), ("new", "/n"))
+
+    def test_record_sources_keeps_newer_replaces_older(self):
+        a = self.e.html("proj/rk.html")
+        b = self.e.html("proj/rk2.html")
+        self.e.claude_log([cc("Write", a, days_ago=1, sid="s-a"),
+                           cc("Write", b, days_ago=1, sid="s-b")])
+        os.makedirs(os.path.join(self.e.home, ".rooms"))
+        old = {"agent": "codex", "session": "old", "cwd": "/o", "writtenAt": "2000-01-01T00:00:00Z"}
+        newer = {"agent": "codex", "session": "newer", "cwd": "/o", "writtenAt": "2999-01-01T00:00:00Z"}
+        with open(os.path.join(self.e.home, ".rooms", "sources.json"), "w") as f:
+            json.dump({"version": 1, "sources": {a: newer, b: old, "/other": old}}, f)
+        out = self.e.run("--record-sources")
+        s = self.sources()["sources"]
+        self.assertEqual(s[a], newer)
+        self.assertEqual(s[b]["session"], "s-b")
+        self.assertEqual(s["/other"], old)
+        self.assertEqual(out["recorded"], 1)
+
+    def test_record_sources_equal_time_replaced(self):
+        a = self.e.html("proj/re.html")
+        self.e.claude_log([cc("Write", a, sid="s-eq")])
+        t = self.e.run()["candidates"][0]["last_written"]
+        os.makedirs(os.path.join(self.e.home, ".rooms"))
+        with open(os.path.join(self.e.home, ".rooms", "sources.json"), "w") as f:
+            json.dump({"version": 1, "sources": {a: {"agent": "codex", "session": "x",
+                       "cwd": "/o", "writtenAt": t}}}, f)
+        self.assertEqual(self.e.run("--record-sources")["recorded"], 1)
+        self.assertEqual(self.sources()["sources"][a]["session"], "s-eq")
+
+    def test_record_sources_corrupt_file_replaced(self):
+        a = self.e.html("proj/rc.html")
+        self.e.claude_log([cc("Write", a, sid="s-c")])
+        os.makedirs(os.path.join(self.e.home, ".rooms"))
+        with open(os.path.join(self.e.home, ".rooms", "sources.json"), "w") as f:
+            f.write("{")
+        self.e.run("--record-sources")
+        self.assertEqual(self.sources()["sources"][a]["session"], "s-c")
+
+    def test_record_sources_skips_candidates_without_session(self):
+        # the log scanners fall back to the file name, so exercise the helper directly
+        sys.path.insert(0, HERE)
+        try:
+            import find_html
+        finally:
+            sys.path.remove(HERE)
+        t = datetime.now(timezone.utc)
+        a = self.e.html("proj/rn.html")
+        n = find_html.record_sources(self.e.home, [{"path": a}], {a: [(t, "codex", "", None, True)]})
+        self.assertEqual(n, 0)
+        self.assertEqual(self.sources()["sources"], {})
+
+    def test_no_flag_no_file_no_key(self):
+        a = self.e.html("proj/rf.html")
+        self.e.claude_log([cc("Write", a)])
+        out = self.e.run()
+        self.assertNotIn("recorded", out)
+        self.assertFalse(os.path.exists(os.path.join(self.e.home, ".rooms", "sources.json")))
+
 
 if __name__ == "__main__":
     unittest.main()

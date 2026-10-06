@@ -4,7 +4,9 @@
 
 Reads Claude Code and Codex session logs and <home>/.rooms/state.json (all
 read-only), prints JSON to stdout.
-Python 3.9+ standard library only. This script never writes anything.
+Python 3.9+ standard library only. This script never writes anything, except
+with --record-sources: then it writes <home>/.rooms/sources.json (which agent
+conversation last wrote each file) and nothing else.
 """
 import argparse
 import html as htmllib
@@ -385,6 +387,47 @@ def find_links(home, wanted):
     return out
 
 
+def record_sources(rooms_home, cands, writes_by_path):
+    """Merge each candidate's last write into <rooms_home>/.rooms/sources.json.
+
+    Returns how many entries were written or updated. An existing entry with a
+    newer writtenAt is kept; a corrupt or unreadable file starts from empty.
+    """
+    new = {}
+    for c in cands:
+        last = writes_by_path[c["path"]][-1]
+        if not last[2]:
+            continue
+        new[c["path"]] = {"agent": last[1], "session": last[2],
+                          "cwd": last[3] or os.path.dirname(c["path"]),
+                          "writtenAt": fmt(last[0])}
+    d = os.path.join(rooms_home, ".rooms")
+    target = os.path.join(d, "sources.json")
+    merged = {}
+    try:
+        with open(target, encoding="utf-8") as f:
+            old = json.load(f).get("sources")
+        if isinstance(old, dict):
+            merged = {k: v for k, v in old.items() if isinstance(v, dict)}
+    except (OSError, ValueError, AttributeError):
+        merged = {}
+    n = 0
+    for path, entry in new.items():
+        prev = merged.get(path)
+        stored = prev.get("writtenAt") if prev else None
+        if isinstance(stored, str) and stored > entry["writtenAt"]:
+            continue
+        merged[path] = entry
+        n += 1
+    os.makedirs(d, exist_ok=True)
+    tmp = target + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"version": 1, "sources": merged}, ensure_ascii=False,
+                           indent=1, sort_keys=True))
+    os.replace(tmp, target)
+    return n
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--days", type=int, default=14)
@@ -392,6 +435,8 @@ def main(argv=None):
     ap.add_argument("--claude-dir", default="~/.claude/projects")
     ap.add_argument("--codex-dir", default="~/.codex/sessions")
     ap.add_argument("--include-noise", action="store_true")
+    ap.add_argument("--record-sources", action="store_true",
+                    help="write <home>/.rooms/sources.json: which conversation wrote each file")
     a = ap.parse_args(argv)
 
     now = datetime.now(timezone.utc)
@@ -451,10 +496,13 @@ def main(argv=None):
             "in_worktree": worktree,
         })
     cands.sort(key=lambda c: c["last_written"], reverse=True)
-    json.dump({
+    out = {
         "version": 2, "days": a.days, "generated_at": fmt(now), "candidates": cands,
         "skipped": {"noise": noise, "missing": missing, "read_errors": col.read_errors},
-    }, sys.stdout, ensure_ascii=False)
+    }
+    if a.record_sources:
+        out["recorded"] = record_sources(rooms_home, cands, merged)
+    json.dump(out, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0
 
