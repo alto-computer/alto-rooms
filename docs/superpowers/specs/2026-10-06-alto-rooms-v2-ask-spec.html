@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Alto Rooms v2 묻기 — Spec</title>
+<style>
+  :root {
+    --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --border: #e7e5e4;
+    --accent: #2563eb; --accent-bg: #eff6ff;
+    --ok: #16a34a; --warn: #ca8a04; --bad: #dc2626;
+    --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+    --sans: -apple-system, 'Inter', 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.65; font-size: 15px; }
+  .layout { display: grid; grid-template-columns: 240px 1fr; max-width: 1400px; margin: 0 auto; min-height: 100vh; }
+  nav.toc { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 32px 20px; border-right: 1px solid var(--border); background: white; font-size: 13px; }
+  nav.toc h4 { margin: 0 0 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  nav.toc a { display: block; padding: 6px 8px; color: var(--fg); text-decoration: none; border-radius: 4px; margin-bottom: 2px; }
+  nav.toc a:hover { background: var(--accent-bg); color: var(--accent); }
+  nav.toc .badge { float: right; font-size: 11px; }
+  main { padding: 48px 64px; max-width: 980px; }
+  h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 22px; margin: 56px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  h2 .num { color: var(--muted); font-variant-numeric: tabular-nums; }
+  h2 .badge { margin-left: auto; font-size: 14px; padding: 4px 10px; border-radius: 999px; font-weight: 500; }
+  .badge-ok { background: #dcfce7; color: #166534; }
+  .badge-warn { background: #fef3c7; color: #92400e; }
+  .badge-bad { background: #fee2e2; color: #991b1b; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  code { font-family: var(--mono); font-size: 0.9em; background: #f4f4f5; padding: 2px 6px; border-radius: 3px; }
+  pre { background: #1c1917; color: #fafaf9; padding: 16px 20px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.55; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: #f4f4f5; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+  mark.ambiguous { background: #fef08a; padding: 2px 6px; border-radius: 3px; font-weight: 500; }
+  mark.ambiguous::before { content: "❓ "; }
+  .review-box { background: var(--accent-bg); border-left: 4px solid var(--accent); padding: 14px 18px; margin: 20px 0; border-radius: 0 6px 6px 0; }
+  .review-box h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); }
+  .qa { border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 16px 0; background: white; }
+  .qa .q { font-weight: 600; margin: 0 0 8px; color: var(--accent); }
+  .qa .a { margin: 0; }
+  svg.diagram { display: block; max-width: 100%; height: auto; margin: 20px auto; background: white; border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  svg text { font-family: var(--sans); }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 32px; }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { padding: 6px 0 6px 28px; position: relative; }
+  .checklist li::before { content: "☐"; position: absolute; left: 0; color: var(--muted); font-size: 18px; }
+  .checklist li.done::before { content: "☑"; color: var(--ok); }
+  .seam { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 16px 20px; margin: 20px 0; background: white; }
+  .seam .seam-title { font-weight: 700; margin: 0 0 4px; font-family: var(--mono); font-size: 14px; color: var(--accent); }
+  .seam .seam-sub { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+  .seam h5 { margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .contract-row th { width: 170px; white-space: nowrap; }
+  .flow { border: 1px solid var(--border); border-top: 4px solid var(--accent); border-radius: 8px; padding: 8px 24px 20px; margin: 24px 0; background: white; }
+  .flow > h3 { color: var(--accent); }
+  .flow .slot { margin: 18px 0; padding-left: 14px; border-left: 3px solid var(--border); }
+  .flow .slot > h4 { margin: 0 0 6px; font-size: 13px; }
+  /* mockup */
+  .mock { border:1px solid #ddd; border-radius:12px; overflow:hidden; background:#f7f7f7; display:flex; height:440px; margin:16px 0; }
+  .mock .side { width:160px; border-right:1px solid #e4e4e4; padding:14px 12px; font-size:12.5px; color:#444; }
+  .mock .side div { padding:4px 6px; border-radius:6px; } .mock .side .on { background:#ececec; font-weight:600; }
+  .mock .mainc { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .mock .tabs { display:flex; gap:4px; padding:8px 10px 0; font-size:12px; }
+  .mock .tab { padding:5px 11px; border:1px solid #e2e2e2; border-bottom:0; border-radius:8px 8px 0 0; background:#efefef; color:#666; }
+  .mock .tab.on { background:#fff; color:#111; }
+  .mock .doc { flex:1; background:#fff; border-top:1px solid #e2e2e2; position:relative; overflow:hidden; }
+  .mock .l { height:9px; background:#eee; border-radius:4px; margin:10px 40px; }
+  .mock .sheet { position:absolute; left:50%; transform:translateX(-50%); bottom:70px; width:500px; background:#fff; border:1px solid #e3e3e3; border-radius:14px; box-shadow:0 8px 30px rgba(0,0,0,.08); padding:12px 14px; font-size:13px; }
+  .mock .q { margin-left:auto; background:#f2f2f2; border-radius:10px; padding:6px 10px; width:fit-content; max-width:80%; margin-bottom:8px; }
+  .mock .hd { font-size:11px; color:#888; margin-bottom:8px; }
+  .mock .bar { position:absolute; left:50%; transform:translateX(-50%); bottom:16px; width:500px; background:#fff; border:1px solid #dcdcdc; border-radius:999px; box-shadow:0 4px 18px rgba(0,0,0,.08); display:flex; align-items:center; padding:7px 7px 7px 15px; gap:8px; font-size:13px; }
+  .mock .ph { flex:1; color:#9a9a9a; } .mock .chip { font-size:11px; background:#f2f2f2; border-radius:999px; padding:2px 8px; color:#555; }
+  .mock .send { width:28px; height:28px; border-radius:50%; background:#c8372d; color:#fff; display:flex; align-items:center; justify-content:center; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <h4>Spec Sections</h4>
+  <a href="#s0">0. Overview <span class="badge">🟢</span></a>
+  <a href="#s1">1. Requirements <span class="badge">🟢</span></a>
+  <a href="#s2">2. Business Logic &amp; Policy <span class="badge">🟢</span></a>
+  <a href="#s3">3. Error Handling <span class="badge">🟢</span></a>
+  <a href="#s4">4. Architecture <span class="badge">🟢</span></a>
+  <a href="#s5">5. Seams <span class="badge">🟢</span></a>
+  <a href="#s6">6. Contracts <span class="badge">🟢</span></a>
+  <a href="#s7">7. Core Flows <span class="badge">🟢</span></a>
+  <a href="#s8">8. End-to-End <span class="badge">🟢</span></a>
+  <a href="#s9">9. Testing <span class="badge">🟢</span></a>
+  <a href="#s10">10. Senior Review <span class="badge">🟢</span></a>
+  <a href="#s11">11. Open Questions <span class="badge">🟡</span></a>
+  <h4 style="margin-top:24px">Legend</h4>
+  <div style="font-size:12px; line-height:1.7;">🟢 done · 🟡 draft · 🔴 blocked<br><mark class="ambiguous">text</mark> = open ambiguity</div>
+</nav>
+
+<main>
+
+<h1>Alto Rooms v2 — 묻기 (Ask)</h1>
+<div class="meta">Spec · 2026-10-06 · author: jun-hash · branch <code>feat/v2-ask</code> · 선행: <code>2026-10-05-alto-rooms-v1-spec.html</code> (S4 Handoff 예약 seam을 이 문서가 확정)</div>
+
+<!-- ============================================== -->
+<h2 id="s0"><span class="num">0.</span> Overview <span class="badge badge-ok">🟢</span></h2>
+
+<h3>Problem</h3>
+<p>에이전트가 만든 HTML 아티팩트를 Rooms에서 읽다가 궁금한 게 생기면, 그 문서를 만든 터미널 대화를 찾아가서 묻고 다시 돌아와야 한다. 이 왕복이 사용자가 꼽은 가장 큰 시간 손실이다.</p>
+
+<h3>Goal (1줄)</h3>
+<p><strong>문서 탭에서 ⌘J로 둥근 묻기 바를 열고 질문하면, 그 문서를 만든 에이전트 대화의 맥락으로 답이 바 위에 돌아온다 — Rooms는 사용자의 에이전트 CLI를 실행하고 그 stdout을 보여 줄 뿐이다.</strong></p>
+
+<h3>설계 원칙 (사용자 결정)</h3>
+<ul>
+  <li><strong>단순하게.</strong> Rooms의 관심사는 "AI에 연결"까지. 에이전트별 출력 형식·세션 구조를 코드가 알지 않는다.</li>
+  <li><strong>claude, codex 어디든.</strong> 에이전트 지식은 설정 파일의 명령 템플릿(argv 배열)뿐. 새 에이전트 = 설정 한 블록.</li>
+  <li>대화가 이미 끝났을 수 있으니 <strong>매번 새 프로세스로 resume(포크)</strong>해서 묻고, 답은 <strong>stdout 일반 텍스트</strong>로 받는다.</li>
+  <li>UI는 Granola 채팅바처럼. <strong>⌘J로 켜고 끈다. 기본은 꺼짐</strong>(앱을 켤 때마다 꺼진 상태, 저장 안 함).</li>
+</ul>
+
+<h3>Out of scope (v2)</h3>
+<ul>
+  <li>스트리밍 — 중간 출력 이벤트도, JSON 파싱도 없다. claude/codex/aside 모두 stdout에 최종 답만 끝에 한 번 쓰므로(실측) 답은 <code>ask.done</code> 한 번에 온다.</li>
+  <li>방 단위 묻기, Journal에서 묻기, 여러 문서를 묶어 묻기.</li>
+  <li>답을 "문서로 저장" — 답에는 "복사"만 있다.</li>
+  <li>다른 기기(Mac mini)로 보내기, 원격 웹 뷰에서 묻기(<code>read_only</code>면 묻기 불가).</li>
+  <li>살아 있는 터미널 세션을 inbox 파일로 깨우기. 세션 ID 자동 채우기(온보딩 스킬이 <code>sessions</code>를 기록하게 하는 건 별도 작업).</li>
+  <li>설정 UI. <code>agents.toml</code>은 손으로 고친다.</li>
+</ul>
+
+<h3>Glossary</h3>
+<table>
+  <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+  <tbody>
+    <tr><td><code>묻기 바 (AskBar)</code></td><td>문서 탭 하단 가운데에 뜨는 둥근 입력 바 + 그 위로 펼쳐지는 대화 시트.</td></tr>
+    <tr><td><code>턴 (AskTurn)</code></td><td>질문 하나와 그 답 하나. 상태 <code>running | done | failed | cancelled</code>.</td></tr>
+    <tr><td><code>대화 (thread)</code></td><td>한 원본 파일(<code>fileKey</code>)에 쌓인 턴들의 순서 목록. 문서당 하나.</td></tr>
+    <tr><td><code>에이전트 프로필</code></td><td><code>agents.toml</code>의 한 블록. <code>resume</code>/<code>new</code> argv 템플릿.</td></tr>
+    <tr><td><code>모드</code></td><td><code>resume</code>(문서에 <code>rooms:session</code>이 있음) 또는 <code>new</code>(없음).</td></tr>
+    <tr><td><code>fileKey</code></td><td>v1 기존 필드. 원본 파일의 안정 키 — 방 이동·심링크에도 유지. 대화 기록의 키.</td></tr>
+  </tbody>
+</table>
+
+<div class="review-box"><h4>리뷰 시 확인할 점</h4>"Rooms는 AI를 돌리지 않는다"(v1 원칙)를 어기지 않는가? → 모델·프롬프트 엔지니어링·API 키 없음. 사용자 CLI를 실행하고 텍스트를 중계만 한다. v1 스펙의 "결과는 폴더로만 돌아온다"는 <strong>묻기 답은 stdout으로 받는다</strong>로 이 문서가 바꾼다.</div>
+
+<!-- ============================================== -->
+<h2 id="s1"><span class="num">1.</span> Requirements <span class="badge badge-ok">🟢</span></h2>
+
+<h3>User Stories</h3>
+<ul>
+  <li><strong>US-1</strong> 문서를 읽다가 ⌘J를 누르고 질문을 쓰면, 그 문서를 만든 에이전트가 원래 대화 맥락을 가진 채 답한다.</li>
+  <li><strong>US-2</strong> 답을 보고 이어서 물으면 앞의 문답을 기억한 채 답한다.</li>
+  <li><strong>US-3</strong> 세션 정보가 없는 문서도 물을 수 있다(새 대화가 그 파일을 읽고 답한다).</li>
+  <li><strong>US-4</strong> 탭을 닫았다 다시 열거나 앱을 재시작해도 그 문서의 대화가 남아 있다.</li>
+  <li><strong>US-5</strong> 오래 걸리면 멈출 수 있고, 실패하면 이유를 본다.</li>
+  <li><strong>US-6</strong> claude-code가 아닌 다른 에이전트(codex, aside 등)도 설정만으로 붙인다.</li>
+</ul>
+
+<h3>화면 (확정 시안)</h3>
+<div class="mock">
+  <div class="side"><div>찾기</div><div>Journal</div><div style="margin-top:10px;color:#999;font-size:11px">방</div><div class="on">harness-research</div><div>tauri-notes</div></div>
+  <div class="mainc">
+    <div class="tabs"><div class="tab">harness-research</div><div class="tab on">Pi vs Codex 비교.html</div><div class="tab">+</div></div>
+    <div class="doc">
+      <div style="height:22px"></div><div class="l" style="width:35%;height:16px"></div><div class="l"></div><div class="l" style="width:80%"></div><div class="l" style="width:65%"></div><div class="l"></div>
+      <div class="sheet">
+        <div class="hd">🦦 claude-code · 만든 대화에 이어서</div>
+        <div class="q">표 3번 행의 '확장성'은 무슨 기준이야?</div>
+        <div style="line-height:1.55">플러그인 개수가 아니라 <b>코어를 안 고치고 붙일 수 있는 접점 수</b>를 셌어요…</div>
+        <div class="hd" style="margin:6px 0 0">12초 · 복사</div>
+      </div>
+      <div class="bar"><span class="ph">이 문서에 대해 묻기…</span><span class="chip">claude-code</span><span class="send">↑</span></div>
+    </div>
+  </div>
+</div>
+<ul>
+  <li>바는 <strong>문서 탭에만</strong> 있다. 방·Journal·노트·새 탭·플러그인 탭에서는 ⌘J가 아무 일도 안 한다.</li>
+  <li>대화 시트는 이 문서의 대화에 턴이 하나라도 있으면 바 위에 펼쳐진다. 최대 높이 50vh, 넘치면 시트 안에서 스크롤, 새 답이 오면 맨 아래로.</li>
+  <li>시트 머리: <code>{agent} · 만든 대화에 이어서</code>(resume) 또는 <code>{agent} · 새 대화</code>(new). 에이전트 프로필이 없으면 "에이전트 설정 없음" + 설정 파일 경로.</li>
+  <li>대기 중: 수달 sleep 포즈(120px 세트에서 축소 사용 안 함 — v1 규칙대로 sleep 120px 그대로, 시트 안 왼쪽) + "{agent}가 답을 쓰고 있어요…" + <u>멈추기</u>. 입력·보내기 잠김.</li>
+  <li>답은 마크다운 렌더(앱에 이미 쓰는 렌더러 재사용, raw HTML 비활성). 답 아래 "<i>N초 · 복사</i>". 실패면 빨간 대신 muted 색 에러 문구 + stderr 마지막 줄.</li>
+  <li>빨간색(thread)은 보내기 버튼 하나뿐(Alto DS 규칙).</li>
+  <li>Esc: 시트가 펼쳐져 있으면 시트만 접는다(바는 남음). 접힌 상태에서 바에 포커스하면 다시 펼친다.</li>
+</ul>
+
+<h3>Acceptance Criteria</h3>
+<table>
+  <thead><tr><th>#</th><th>Given</th><th>When</th><th>Then</th></tr></thead>
+  <tbody>
+    <tr><td>AC-1</td><td>앱을 막 켰다</td><td>문서 탭을 연다</td><td>묻기 바가 보이지 않는다</td></tr>
+    <tr><td>AC-2</td><td>문서 탭, 바 꺼짐</td><td>⌘J (포커스가 iframe 문서 안이어도)</td><td>바가 나타나고 입력 칸에 포커스. 다시 ⌘J(입력 칸 안에서도) → 바와 시트가 사라짐</td></tr>
+    <tr><td>AC-3</td><td>바가 켜진 채 다른 문서 탭으로 전환</td><td>—</td><td>그 탭에서도 바가 켜져 있다(켜짐 상태는 앱 전역, 메모리만)</td></tr>
+    <tr><td>AC-4</td><td><code>rooms:agent=claude-code</code>, <code>rooms:session=S</code>인 문서</td><td>질문 전송</td><td><code>claude -p --resume S --fork-session …</code>가 문서의 <code>rooms:cwd</code>에서 실행되고, 끝나면 stdout이 답으로 보인다. 원래 세션 S의 jsonl은 바뀌지 않는다</td></tr>
+    <tr><td>AC-5</td><td>같은 문서에 턴 1개 완료</td><td>두 번째 질문</td><td>보내는 프롬프트에 첫 문답이 들어가고, 여전히 세션 S에서 resume(포크)한다</td></tr>
+    <tr><td>AC-6</td><td><code>rooms:session</code> 없는 문서</td><td>질문</td><td><code>new</code> 템플릿으로 실행, 프롬프트에 문서 절대경로 + "먼저 읽어라"</td></tr>
+    <tr><td>AC-7</td><td>답 대기 중</td><td>멈추기</td><td>프로세스 그룹이 종료되고 턴이 <code>cancelled</code>, 그때까지의 stdout은 남는다</td></tr>
+    <tr><td>AC-8</td><td>턴 2개가 있는 문서</td><td>탭 닫고 roomsd 재시작 후 다시 연다(⌘J)</td><td>두 턴이 그대로 보인다</td></tr>
+    <tr><td>AC-9</td><td>문서가 다른 방으로 이동됨(<code>fileKey</code> 동일)</td><td>새 위치에서 연다</td><td>같은 대화가 보인다</td></tr>
+    <tr><td>AC-10</td><td>질문에 <code>"; rm -rf ~ #</code> 포함</td><td>전송</td><td>셸을 거치지 않으므로 그대로 텍스트로 전달된다</td></tr>
+    <tr><td>AC-11</td><td><code>agents.toml</code>에 <code>[agents.my-agent]</code> 추가, 문서 <code>rooms:agent=my-agent</code></td><td>질문</td><td>코드 변경 없이 그 템플릿이 실행된다</td></tr>
+    <tr><td>AC-12</td><td><code>claude</code>가 PATH에 없다</td><td>질문</td><td>턴이 <code>failed</code>, "명령을 찾을 수 없어요: claude" + <code>agents.toml</code> 경로</td></tr>
+    <tr><td>AC-13</td><td>같은 문서에 실행 중인 턴이 있다(다른 클라이언트에서 보냄)</td><td>또 전송</td><td>409 <code>ask_busy</code>. UI는 이미 잠겨 있으므로 정상 경로에선 안 보인다</td></tr>
+    <tr><td>AC-15</td><td><code>rooms:agent=aside</code>, <code>rooms:session=ses…</code> 문서</td><td>질문</td><td><code>aside session resume ses… "&lt;prompt&gt;"</code> 실행, 답이 보이고 Aside 앱의 그 세션에도 문답이 남는다</td></tr>
+    <tr><td>AC-16</td><td><code>rooms:session="--dangerously-bypass…"</code></td><td>질문</td><td>R0에 걸려 세션 없음 → new 모드. 그 값은 argv에 들어가지 않는다</td></tr>
+    <tr><td>AC-14</td><td>바가 꺼진 상태에서 답 대기 중</td><td>⌘J로 다시 연다</td><td>대기/완료 상태가 그대로 보인다(진행은 바 표시와 무관)</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s2"><span class="num">2.</span> Business Logic &amp; Policy <span class="badge badge-ok">🟢</span></h2>
+
+<h3>Core Rules</h3>
+<ol>
+  <li><strong>R0 meta 검증(문서는 신뢰하지 않는 입력):</strong> <code>source.agent</code>, <code>source.session</code>은 <code>^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$</code>일 때만 쓴다(첫 글자가 <code>-</code>면 플래그로 해석될 수 있으므로 금지). 아니면 없는 것으로 본다. <code>source.cwd</code>는 절대경로이면서 존재하는 디렉터리일 때만 쓴다.</li>
+  <li><strong>R1 에이전트 선택:</strong> <code>source.agent</code>가 있고 그 이름의 프로필이 있으면 그것. 아니면 <code>default</code> 프로필(기본값 <code>claude-code</code>).</li>
+  <li><strong>R2 모드:</strong> <code>resume</code>은 세 조건이 다 맞을 때만 — <code>source.session</code>이 있음 · R1에서 고른 프로필 이름 == <code>source.agent</code>(다른 에이전트의 세션을 섞지 않는다) · 프로필에 <code>resume</code>이 있음. 아니면 <code>new</code>.</li>
+  <li><strong>R3 실행 위치(cwd):</strong> <code>source.cwd</code>(R0 통과)면 그것, 아니면 원본 파일 realpath의 부모 디렉터리. resume이 세션을 찾는 데는 cwd가 필요 없다(claude 실측) — cwd는 에이전트가 상대경로로 파일을 읽을 때를 위한 것. resume이 실패하면(세션 삭제 등) 그냥 exit≠0 → <code>failed</code>; Rooms는 stderr를 해석해 new로 자동 전환하지 않는다.</li>
+  <li><strong>R4 프롬프트(Rooms가 만드는 유일한 텍스트):</strong> <code>preamble</code> + 문서 경로 + 이 대화의 이전 <code>done</code> 턴 최대 6개(오래된 것부터, 합계 24,000자 넘으면 오래된 턴부터 버림) + 질문. 형식은 §6.3에 고정.</li>
+  <li><strong>R5 이어 묻기:</strong> 새 세션 ID를 파싱하지 않는다. 매 턴 원래 <code>source.session</code>에서 다시 resume(포크)하고, 맥락은 R4의 이전 문답으로 잇는다.</li>
+  <li><strong>R6 셸 없음:</strong> 템플릿은 argv 배열. <code>{prompt}</code> <code>{session}</code> <code>{file}</code> <code>{cwd}</code>는 각 원소 안에서 문자열 치환만. 첫 원소는 실행 파일. <code>sh -c</code> 금지.</li>
+  <li><strong>R7 동시성:</strong> <code>fileKey</code>당 <code>running</code> 턴 최대 1개. 전역 동시 실행 상한 4개(넘으면 409 <code>ask_capacity</code>).</li>
+  <li><strong>R8 상한:</strong> 실행 10분 넘으면 종료(<code>failed</code>, "시간 초과"). stdout 1 MiB 넘으면 종료(<code>failed</code>, "답이 너무 길어요"). stderr는 마지막 4 KiB만 보관.</li>
+  <li><strong>R9 저장 위치:</strong> <code>&lt;home&gt;/.rooms/asks/&lt;fileKey&gt;.jsonl</code>. 원본·연결 폴더에는 아무것도 쓰지 않는다.</li>
+  <li><strong>R10 바 표시:</strong> 켜짐/꺼짐은 앱 메모리의 전역 boolean, 시작값 false, 저장하지 않는다. 진행 중인 묻기와 독립.</li>
+  <li><strong>R11 읽기 전용:</strong> <code>info.readOnly</code>면 묻기 엔드포인트는 403, 앱은 바를 렌더하지 않는다(⌘J 무시).</li>
+  <li><strong>R12 환경:</strong> 자식 프로세스는 roomsd의 환경 + 로그인 셸에서 얻은 <code>PATH</code>(roomsd 시작 시 <code>$SHELL -lc 'printf %s "$PATH"'</code> 1회, 2초 타임아웃, 실패 시 현재 PATH 유지). stdin은 <code>/dev/null</code>. 새 프로세스 그룹으로 띄운다.</li>
+</ol>
+
+<h3>Cross-field &amp; Temporal Invariants</h3>
+<ul>
+  <li><strong>I1</strong> 한 <code>fileKey</code>의 jsonl은 턴 시작 시 <code>running</code> 레코드 1줄, 끝날 때 최종 레코드 1줄을 append. 읽을 때 같은 <code>id</code>는 마지막 줄이 이긴다. → 크래시로 끝 레코드가 없으면 그 턴은 <code>running</code>으로 남는데, roomsd 시작 시 메모리에 실행 중이 아닌 <code>running</code> 턴은 읽을 때 <code>failed</code>("Rooms가 다시 시작돼서 중단됐어요")로 보고한다.</li>
+  <li><strong>I2</strong> 이벤트 순서: 한 턴에 대해 <code>ask.started</code> 1회 → <code>ask.done</code> 정확히 1회. 중간 이벤트는 없다.</li>
+  <li><strong>I3</strong> <code>ask.done</code>을 보내기 전에 최종 레코드가 디스크에 append돼 있다(이벤트를 받은 클라이언트가 GET하면 최종 상태를 본다).</li>
+  <li><strong>I4</strong> 턴의 <code>agent</code>/<code>mode</code>는 시작 시 정해지고 바뀌지 않는다(나중에 문서 meta가 바뀌어도 기록은 그대로).</li>
+</ul>
+
+<h3>턴 상태</h3>
+<svg class="diagram" viewBox="0 0 640 170">
+  <defs><marker id="a1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78716c"/></marker></defs>
+  <circle cx="40" cy="80" r="6" fill="#1c1917"/>
+  <line x1="46" y1="80" x2="140" y2="80" stroke="#78716c" stroke-width="1.5" marker-end="url(#a1)"/><text x="93" y="70" text-anchor="middle" font-size="12">POST</text>
+  <rect x="145" y="58" width="110" height="44" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="200" y="85" text-anchor="middle" font-size="13">running</text>
+  <rect x="440" y="10" width="110" height="36" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/><text x="495" y="33" text-anchor="middle" font-size="13">done</text>
+  <rect x="440" y="62" width="110" height="36" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/><text x="495" y="85" text-anchor="middle" font-size="13">failed</text>
+  <rect x="440" y="114" width="110" height="36" rx="6" fill="#f4f4f5" stroke="#78716c" stroke-width="1.5"/><text x="495" y="137" text-anchor="middle" font-size="13">cancelled</text>
+  <line x1="255" y1="72" x2="438" y2="30" stroke="#78716c" stroke-width="1.5" marker-end="url(#a1)"/><text x="330" y="40" font-size="11.5">exit 0</text>
+  <line x1="255" y1="80" x2="438" y2="80" stroke="#78716c" stroke-width="1.5" marker-end="url(#a1)"/><text x="270" y="75" font-size="11.5">exit≠0 · spawn 실패 · 시간/크기 초과 · 재시작</text>
+  <line x1="255" y1="90" x2="438" y2="130" stroke="#78716c" stroke-width="1.5" marker-end="url(#a1)"/><text x="330" y="128" font-size="11.5">DELETE</text>
+</svg>
+
+<!-- ============================================== -->
+<h2 id="s3"><span class="num">3.</span> Error Handling <span class="badge badge-ok">🟢</span></h2>
+
+<h3>Error Matrix</h3>
+<table>
+  <thead><tr><th>Condition</th><th>Error</th><th>HTTP / 결과</th><th>사용자 문구</th></tr></thead>
+  <tbody>
+    <tr><td>본문 JSON 깨짐, 질문 빈 문자열(trim 후) 또는 8,000자 초과</td><td><code>bad_request</code></td><td>400</td><td>(UI가 미리 막음)</td></tr>
+    <tr><td>artifactId가 그 방에 없음</td><td><code>not_found</code></td><td>404</td><td>"이 문서를 찾을 수 없어요"</td></tr>
+    <tr><td>읽기 전용 서버</td><td><code>read_only</code></td><td>403</td><td>(바 없음)</td></tr>
+    <tr><td>같은 fileKey 실행 중</td><td><code>ask_busy</code></td><td>409</td><td>"답을 기다리는 중이에요"</td></tr>
+    <tr><td>전역 4개 실행 중</td><td><code>ask_capacity</code></td><td>409</td><td>"다른 질문이 끝나면 다시 보내 주세요"</td></tr>
+    <tr><td><code>agents.toml</code> 파싱 실패 / 프로필 없음 / argv 비었음</td><td><code>agent_config</code></td><td>422 (턴 안 만듦)</td><td>"에이전트 설정을 읽지 못했어요: {이유}" + 파일 경로</td></tr>
+    <tr><td>실행 파일 없음/권한 없음(spawn 실패)</td><td>—</td><td>202 후 <code>failed</code></td><td>"명령을 찾을 수 없어요: {argv[0]}"</td></tr>
+    <tr><td>exit ≠ 0</td><td>—</td><td><code>failed</code></td><td>"{agent}가 오류로 끝났어요 (code N)" + stderr 마지막 줄</td></tr>
+    <tr><td>10분 초과 / stdout 1 MiB 초과</td><td>—</td><td><code>failed</code></td><td>"시간이 너무 오래 걸려 멈췄어요" / "답이 너무 길어요"</td></tr>
+    <tr><td>jsonl append 실패(디스크)</td><td>—</td><td>시작 실패면 500 <code>io</code>; 종료 기록 실패면 이벤트는 보내고 로그 경고</td><td>"기록을 저장하지 못했어요"</td></tr>
+    <tr><td>DELETE 대상이 없거나 이미 끝남</td><td>—</td><td>204 (멱등)</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<h3>Recovery / Retry Policy</h3>
+<ul>
+  <li>자동 재시도 없음. 실패한 턴 아래에 "다시 묻기" 링크 — 같은 질문으로 새 턴 POST.</li>
+  <li><code>agents.toml</code>은 매 POST마다 다시 읽는다(캐시 없음, 파일 작음). 고치고 바로 다시 물으면 된다.</li>
+  <li>SSE 끊김: v1 규칙(재연결 시 resync)대로, 앱은 재연결 후 열린 문서의 <code>GET /v1/asks</code>를 다시 부른다.</li>
+</ul>
+
+<!-- ============================================== -->
+<h2 id="s4"><span class="num">4.</span> Architecture <span class="badge badge-ok">🟢</span></h2>
+
+<h3>주요 결정</h3>
+<table>
+  <thead><tr><th>#</th><th>결정</th><th>근거 / 버린 대안</th></tr></thead>
+  <tbody>
+    <tr><td>D1</td><td>실행은 <strong>roomsd</strong>(rooms-core의 <code>Asks</code>)</td><td>프로토콜만 쓰는 다른 클라이언트도 같은 기능. Tauri에서 실행하면 데스크톱 전용이 된다.</td></tr>
+    <tr><td>D2</td><td>에이전트 지식 = <code>agents.toml</code>의 argv 템플릿뿐</td><td>코드에 "claude" 문자열 없음(기본 프로필 상수 제외). 플러그인 슬롯으로 하자니 플러그인은 명령 실행 불가(v1 플러그인 스펙).</td></tr>
+    <tr><td>D3</td><td>stdout = 일반 텍스트, 파싱 안 함</td><td>stream-json 파싱은 에이전트마다 달라 결합. 대가: claude 텍스트 모드는 끝에 한 번에 나온다.</td></tr>
+    <tr><td>D4</td><td>이어 묻기 = 원 세션 resume(포크) + 이전 문답 프롬프트 첨부</td><td>새 session_id 파싱 불필요. 원 세션이 터미널에 열려 있어도 안전.</td></tr>
+    <tr><td>D5</td><td>셸 없음, argv 배열 템플릿</td><td>셸 인용 파싱 불필요 + 주입 차단.</td></tr>
+    <tr><td>D6</td><td>기록은 <code>.rooms/asks/&lt;fileKey&gt;.jsonl</code>, append-only</td><td>방 이동·심링크에도 같은 대화. SQLite 대신 파일 — v1 "파일이 진실" 원칙.</td></tr>
+    <tr><td>D7</td><td>⌘J 토글은 네이티브 메뉴 accelerator + 페이지 키 핸들러 둘 다</td><td>포커스가 문서 iframe 안이면 페이지 keydown이 안 온다(⌘B와 같은 구조).</td></tr>
+  </tbody>
+</table>
+
+<h3>Module Map</h3>
+<table>
+  <thead><tr><th>Name</th><th>Responsibility</th><th>Depends on</th></tr></thead>
+  <tbody>
+    <tr><td><code>crates/rooms-protocol</code> (+ <code>AskTurn</code>, <code>AskStatus</code>, <code>AskMode</code>, <code>StartAsk</code>, 이벤트 3종)</td><td>와이어 타입 단일 정의 → ts-rs 생성</td><td>—</td></tr>
+    <tr><td><code>crates/rooms-core/src/asks/mod.rs</code> — <strong>facade <code>Asks</code></strong></td><td>start / cancel / thread. 턴 수명주기, 동시성, 상한</td><td>RoomsCore(문서 조회·이벤트), 아래 3개</td></tr>
+    <tr><td><code>asks/agents.rs</code> — <code>AgentProfiles</code></td><td><code>agents.toml</code> 로드 + 기본값 + argv 렌더</td><td>toml</td></tr>
+    <tr><td><code>asks/prompt.rs</code> — <code>build_prompt</code></td><td>R4 프롬프트 조립(순수 함수)</td><td>—</td></tr>
+    <tr><td><code>asks/log.rs</code> — <code>AskLog</code></td><td>jsonl append / 읽기(마지막 줄 승리)</td><td>fs</td></tr>
+    <tr><td><code>asks/run.rs</code> — <code>spawn_agent</code></td><td>tokio::process로 실행, stdout 모으기(ANSI 제거), 상한, kill</td><td>tokio, nix(killpg)</td></tr>
+    <tr><td><code>crates/roomsd/src/routes.rs</code></td><td><code>POST/GET /v1/asks</code>, <code>DELETE /v1/asks/{id}</code></td><td>Asks</td></tr>
+    <tr><td><code>packages/protocol-ts/src/client.ts</code></td><td><code>startAsk</code> / <code>askThread</code> / <code>cancelAsk</code></td><td>generated types</td></tr>
+    <tr><td><code>apps/desktop/src/ask/</code> — <code>AskBar.tsx</code>, <code>askStore.ts</code></td><td>바 UI, 대화 상태(SSE 반영), ⌘J 토글 상태</td><td>client, data/hooks</td></tr>
+    <tr><td><code>apps/desktop/src/views/DocView.tsx</code></td><td><code>&lt;AskBar artifact={artifact}/&gt;</code> 한 줄 추가</td><td>AskBar</td></tr>
+    <tr><td><code>shell/shortcuts.ts</code>, <code>src-tauri/src/lib.rs</code>, <code>lib/appEvents.ts</code></td><td>⌘J = <code>toggle-ask</code>, 메뉴 View → "묻기 바" (CmdOrCtrl+J)</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<h3>Module Dependency Diagram</h3>
+<svg class="diagram" viewBox="0 0 760 300">
+  <defs><marker id="a2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker></defs>
+  <g font-size="13" text-anchor="middle">
+    <rect x="20" y="20" width="200" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="120" y="47">AskBar (desktop)</text>
+    <rect x="280" y="20" width="200" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="380" y="47">roomsd routes /v1/asks</text>
+    <rect x="280" y="120" width="200" height="44" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/><text x="380" y="147">Asks (facade, rooms-core)</text>
+    <rect x="20" y="230" width="160" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="100" y="257">AgentProfiles</text>
+    <rect x="200" y="230" width="160" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="280" y="257">build_prompt</text>
+    <rect x="380" y="230" width="160" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="460" y="257">AskLog (jsonl)</text>
+    <rect x="560" y="230" width="180" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="650" y="257">spawn_agent → CLI</text>
+    <rect x="560" y="120" width="180" height="44" rx="6" fill="white" stroke="#1c1917" stroke-width="1.5"/><text x="650" y="147">RoomsCore (조회·emit)</text>
+  </g>
+  <g stroke="#2563eb" stroke-width="1.5" fill="none" font-size="12" fill-opacity="1">
+    <line x1="220" y1="42" x2="278" y2="42" marker-end="url(#a2)"/><text x="249" y="34" fill="#2563eb" stroke="none" text-anchor="middle">S1</text>
+    <line x1="380" y1="64" x2="380" y2="118" marker-end="url(#a2)"/><text x="392" y="95" fill="#2563eb" stroke="none">S2</text>
+    <line x1="330" y1="164" x2="110" y2="228" marker-end="url(#a2)"/><text x="200" y="190" fill="#2563eb" stroke="none">S3</text>
+    <line x1="360" y1="164" x2="285" y2="228" marker-end="url(#a2)"/><text x="305" y="200" fill="#2563eb" stroke="none">S4</text>
+    <line x1="400" y1="164" x2="455" y2="228" marker-end="url(#a2)"/><text x="440" y="200" fill="#2563eb" stroke="none">S5</text>
+    <line x1="440" y1="164" x2="640" y2="228" marker-end="url(#a2)"/><text x="560" y="200" fill="#2563eb" stroke="none">S6</text>
+    <line x1="480" y1="142" x2="558" y2="142" marker-end="url(#a2)"/><text x="519" y="134" fill="#2563eb" stroke="none" text-anchor="middle">S7</text>
+    <path d="M560 160 C 400 300, 150 200, 120 66" marker-end="url(#a2)" stroke-dasharray="5 4"/><text x="150" y="110" fill="#2563eb" stroke="none">SSE ask.* (S1)</text>
+  </g>
+</svg>
+
+<h3>Cluster Facades</h3>
+<ul>
+  <li><strong>서버 덩어리 = <code>Asks</code> 하나.</strong> routes는 <code>Asks</code>만 부른다. 템플릿·프롬프트·로그·프로세스는 <code>asks</code> 모듈 밖으로 안 나간다(<code>pub(crate)</code>).</li>
+  <li><strong>앱 덩어리 = <code>&lt;AskBar artifact/&gt;</code> + <code>useAskBarOpen()</code>.</strong> DocView는 artifact만 넘긴다. SSE 반영·요청·토글은 <code>apps/desktop/src/ask/</code> 안.</li>
+</ul>
+
+<h3>명명</h3>
+<ul>
+  <li>Rust: <code>Asks</code>, <code>AskTurn</code>, <code>AskId</code>(UUID v4 문자열), <code>AgentProfiles</code>, <code>AskLog</code>. 이벤트 <code>ask.started</code> / <code>ask.done</code>.</li>
+  <li>TS: <code>startAsk</code>, <code>askThread</code>, <code>cancelAsk</code>, <code>AskBar</code>, <code>useAskBarOpen</code>, 액션 <code>"toggle-ask"</code>, 메뉴 id <code>MENU_TOGGLE_ASK</code> (<code>menu://toggle-ask</code>).</li>
+  <li>UI 문구는 "묻기". 코드·와이어는 "ask".</li>
+</ul>
+
+<!-- ============================================== -->
+<h2 id="s5"><span class="num">5.</span> Seams <span class="badge badge-ok">🟢</span></h2>
+<p class="meta">§4 다이어그램 화살표 하나당 블록 하나. call-site 먼저 → frozen signature → 3줄 계약.</p>
+
+<div class="seam">
+  <p class="seam-title">S1: AskBar → roomsd (HTTP + SSE)</p>
+  <p class="seam-sub">앱과 코어 사이 유일한 묻기 경로. 프로토콜 v1에 엔드포인트·이벤트를 더한다(PROTOCOL_VERSION은 "1" 유지 — 추가만).</p>
+  <h5>call-site</h5>
+<pre><code>// apps/desktop/src/ask/askStore.ts
+const turn = await client.startAsk({ roomId: artifact.roomId, artifactId: artifact.id, question });
+// → turn.status === "running"; 끝나면 SSE ask.done 이 turn.id 로 들어온다.
+// SSE ask.started 가 202보다 먼저 올 수 있다 → askStore 는 id 기준 upsert (먼저 온 쪽이 턴을 만든다)
+const thread = await client.askThread(artifact.fileKey);     // 탭 열 때·재연결 때
+await client.cancelAsk(turn.id);                              // 멈추기</code></pre>
+  <h5>frozen signature</h5>
+<pre><code>POST   /v1/asks                 body StartAsk            → 202 AskTurn        (write guard + bearer)
+GET    /v1/asks?fileKey={key}                            → 200 AskTurn[]      (오래된 것 → 최신)
+DELETE /v1/asks/{askId}                                  → 204                (write guard + bearer, 멱등)
+
+type StartAsk = { roomId: RoomId; artifactId: ArtifactId; question: string };
+type AskStatus = "running" | "done" | "failed" | "cancelled";
+type AskMode = "resume" | "new";
+type AskTurn = {
+  id: string; fileKey: string; question: string; answer: string;
+  agent: string; mode: AskMode; status: AskStatus;
+  error: string | null; startedAt: string; endedAt: string | null;   // RFC3339
+};
+// EventKind 추가
+{ type: "ask.started", turn: AskTurn }
+{ type: "ask.done",    turn: AskTurn }                                  // 최종 상태, answer 전체 포함
+
+// client.ts
+startAsk(req: StartAsk): Promise&lt;AskTurn&gt;
+askThread(fileKey: string): Promise&lt;AskTurn[]&gt;
+cancelAsk(askId: string): Promise&lt;void&gt;</code></pre>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ (roomId, artifactId, question) / askId · ↑ AskTurn</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>roomsd가 턴과 기록을 소유. 앱은 SSE를 받아 화면 상태만 가진다(진실은 <code>askThread</code>).</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>202를 받았으면 그 턴에 대해 <code>ask.done</code>이 반드시 1회 온다(I2). <code>ask.done.turn.answer</code>가 답 전체다.</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S2: roomsd routes → Asks (facade)</p>
+  <p class="seam-sub">HTTP를 벗겨 낸 도메인 호출.</p>
+  <h5>call-site</h5>
+<pre><code>// crates/roomsd/src/routes.rs
+let turn = state.asks.start(&amp;req.room_id, &amp;req.artifact_id, &amp;req.question)?;   // AskError → ApiError
+let turns = state.asks.thread(&amp;q.file_key)?;
+state.asks.cancel(&amp;ask_id);</code></pre>
+  <h5>frozen signature</h5>
+<pre><code>pub struct Asks { /* RoomsCore 핸들, 실행 중 맵, 경로 */ }
+impl Asks {
+    pub fn new(core: RoomsCore, login_path: Option&lt;String&gt;) -&gt; Self;
+    /// 검증·템플릿 해석·running 기록·프로세스 시작까지 동기로 끝내고 반환. 출력은 백그라운드 태스크가 emit.
+    pub fn start(&amp;self, room: &amp;RoomId, artifact: &amp;ArtifactId, question: &amp;str) -&gt; Result&lt;AskTurn, AskError&gt;;
+    pub fn thread(&amp;self, file_key: &amp;str) -&gt; Result&lt;Vec&lt;AskTurn&gt;, AskError&gt;;
+    pub fn cancel(&amp;self, ask_id: &amp;str);          // 없거나 끝났으면 no-op
+    pub fn shutdown(&amp;self);                      // roomsd 종료 시 실행 중 전부 kill → cancelled 기록
+}
+pub enum AskError { BadRequest(String), NotFound, ReadOnly, Busy, Capacity, AgentConfig(String), Io(String) }</code></pre>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ 식별자 + 질문 문자열 · ↑ AskTurn / AskError</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>Asks가 실행 중 맵(<code>askId → (fileKey, kill handle)</code>)과 기록을 소유. routes는 무상태.</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td><code>start</code>가 Ok면 running 레코드가 디스크에 있고 <code>ask.started</code>가 이미 emit됐다. spawn 실패도 Ok(턴은 곧 failed로 done).</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S3: Asks → AgentProfiles</p>
+  <p class="seam-sub">에이전트 지식의 유일한 출처.</p>
+  <h5>call-site</h5>
+<pre><code>let profiles = AgentProfiles::load(&amp;home.join(".rooms/agents.toml")).map_err(AskError::AgentConfig)?;
+let plan = profiles.plan(artifact.source.agent.as_deref(), artifact.source.session.as_deref())?;
+let argv = plan.render(&amp;Vars { prompt: &amp;prompt, session: sess, file: &amp;file, cwd: &amp;cwd });</code></pre>
+  <h5>frozen signature</h5>
+<pre><code>pub(crate) struct AgentProfiles { default: String, agents: BTreeMap&lt;String, Profile&gt;, preamble: Option&lt;String&gt; }
+pub(crate) struct Profile { resume: Option&lt;Vec&lt;String&gt;&gt;, new: Vec&lt;String&gt; }
+pub(crate) struct Plan { pub agent: String, pub mode: AskMode, template: Vec&lt;String&gt; }
+pub(crate) struct Vars&lt;'a&gt; { pub prompt: &amp;'a str, pub session: &amp;'a str, pub file: &amp;'a str, pub cwd: &amp;'a str }
+impl AgentProfiles {
+    pub fn load(path: &amp;Path) -&gt; Result&lt;Self, String&gt;;       // 파일 없음 = 기본값만. 파일의 [agents.X]는 기본값 X를 통째로 대체
+    pub fn plan(&amp;self, agent: Option&lt;&amp;str&gt;, session: Option&lt;&amp;str&gt;) -&gt; Result&lt;Plan, String&gt;;   // R1, R2
+    pub fn preamble(&amp;self) -&gt; &amp;str;
+}
+impl Plan { pub fn render(&amp;self, v: &amp;Vars) -&gt; Vec&lt;String&gt;; }   // 원소별 문자열 치환만</code></pre>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ agent 이름, session 유무 · ↑ (agent, mode, argv)</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>사용자가 파일을 소유. Rooms는 읽기만, 절대 쓰지 않는다(기본값은 코드 상수).</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td><code>render</code> 결과는 비어 있지 않고 argv[0]은 치환 없는 문자열(템플릿 첫 원소에 플레이스홀더 금지 — load가 거부).</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S4: Asks → build_prompt</p>
+  <p class="seam-sub">Rooms가 만드는 유일한 텍스트. 순수 함수.</p>
+<pre><code>let prompt = build_prompt(profiles.preamble(), mode, &amp;file_abs, &amp;prior_done_turns, question);
+
+pub(crate) fn build_prompt(preamble: &amp;str, mode: AskMode, file: &amp;str, prior: &amp;[AskTurn], question: &amp;str) -&gt; String;</code></pre>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ 문구·모드·경로·이전 done 턴·질문 · ↑ String</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>무상태. 이전 턴 선택(R4의 6개/24,000자)도 이 함수 안.</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>같은 입력 → 같은 출력(스냅샷 테스트 가능). 형식 §6.3.</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S5: Asks → AskLog</p>
+<pre><code>let log = AskLog::new(home.join(".rooms/asks"));
+log.append(&amp;turn)?;                       // running 시작, 최종 각각 1줄
+let turns = log.read(&amp;file_key)?;         // id별 마지막 줄 승리, startedAt 오름차순
+
+pub(crate) struct AskLog { dir: PathBuf }
+impl AskLog {
+    pub fn append(&amp;self, turn: &amp;AskTurn) -&gt; std::io::Result&lt;()&gt;;   // O_APPEND, 한 줄 = 한 write, 디렉터리 없으면 생성(0700)
+    pub fn read(&amp;self, file_key: &amp;str) -&gt; std::io::Result&lt;Vec&lt;AskTurn&gt;&gt;;  // 파일 없음 = 빈 Vec, 깨진 줄은 건너뜀
+}</code></pre>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ AskTurn · ↑ AskTurn[]</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>파일이 진실. 쓰는 쪽은 Asks 하나(roomsd는 home당 1개 — v1 flock).</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>append가 Ok를 반환하면 그 줄은 다음 read에 보인다. fileKey는 파일명 안전 문자열이라는 v1 보장에 기댄다(구현 시 <code>[A-Za-z0-9_-]</code> 아닌 키는 BadRequest).</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S6: Asks → spawn_agent → 에이전트 CLI</p>
+  <p class="seam-sub">Rooms 밖으로 나가는 유일한 출구(v1의 "handoff out").</p>
+<pre><code>let handle = spawn_agent(SpawnSpec { argv, cwd, path_env, limits: Limits::default() },
+)?;                                                         // Err = spawn 실패
+let outcome: Outcome = handle.wait().await;                 // Exited{code, stderr_tail} | Killed(Reason)
+handle.kill();                                              // 멈추기: killpg(SIGTERM) → 3초 후 SIGKILL
+
+pub(crate) struct SpawnSpec { pub argv: Vec&lt;String&gt;, pub cwd: PathBuf, pub path_env: Option&lt;String&gt;, pub limits: Limits }
+pub(crate) struct Limits { pub timeout: Duration /*600s*/, pub max_stdout: usize /*1 MiB*/, pub stderr_tail: usize /*4 KiB*/ }
+pub(crate) enum Reason { Cancelled, Timeout, TooLong, Shutdown }
+pub(crate) enum Outcome { Exited { code: i32, stderr_tail: String }, Killed(Reason) }</code></pre>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ argv, cwd, PATH · ↑ 종료 결과 + stdout 전체</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>자식 프로세스 그룹은 핸들이 소유. 핸들이 drop되면 kill(고아 없음).</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>에이전트 CLI는 답을 stdout에 쓰고 끝나면 종료한다 — 그 외 가정 없음. stdout은 끝까지 모아 lossy UTF-8로 바꾸고 ANSI 이스케이프(<code>\x1b\[[0-9;?]*[ -/]*[@-~]</code>)를 지운 뒤 앞뒤 공백 trim.</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S7: Asks → RoomsCore</p>
+  <p class="seam-sub">기존 코어에 두 개만 더한다.</p>
+<pre><code>let artifact = core.artifact(room, artifact_id).ok_or(AskError::NotFound)?;   // 신규: list_artifacts 위 얇은 조회
+let file_abs = core.resolve_file(room, &amp;artifact.rel_path)?;                  // 기존 (realpath)
+core.emit_ask(EventKind::AskStarted { turn });                                // 신규: 내부 emit을 Inner 락 잡고 호출
+
+impl RoomsCore {
+    pub fn artifact(&amp;self, room: &amp;RoomId, id: &amp;ArtifactId) -&gt; Option&lt;Artifact&gt;;
+    pub fn emit_ask(&amp;self, kind: EventKind);    // AskStarted | AskDone 만 허용 (debug_assert)
+    pub fn read_only(&amp;self) -&gt; bool;            // 기존 Info.read_only와 같은 값
+}</code></pre>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ (room, id) / 이벤트 · ↑ Artifact, 절대경로</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>seq와 브로드캐스트는 RoomsCore 소유. Asks는 emit만 요청.</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>emit된 이벤트는 기존 SSE 스냅샷→버퍼 규칙을 그대로 따른다(ask 이벤트도 seq를 받는다).</td></tr>
+  </tbody></table>
+</div>
+
+<div class="seam">
+  <p class="seam-title">S8: DocView → AskBar, 셸 → 토글</p>
+<pre><code>// DocView.tsx (추가 한 줄, iframe 래퍼 안쪽 relative 컨테이너)
+&lt;AskBar artifact={artifact} /&gt;
+
+// AskBar.tsx
+export function AskBar({ artifact }: { artifact: Artifact }): JSX.Element | null;   // 꺼져 있거나 readOnly면 null
+// askStore.ts
+export function useAskBarOpen(): [open: boolean, toggle: () =&gt; void];             // 전역, 시작값 false
+// AppShell: case "toggle-ask": 활성 탭이 doc일 때만 toggle()</code></pre>
+  <table><tbody>
+    <tr class="contract-row"><th>건너감</th><td>↓ Artifact 하나 · ↑ 없음</td></tr>
+    <tr class="contract-row"><th>제어·상태 소유</th><td>바 열림은 askStore 전역. 대화 상태는 fileKey별 askStore 캐시(SSE로 갱신).</td></tr>
+    <tr class="contract-row"><th>상대편 보장</th><td>⌘J는 입력 칸 안에서도 동작(<code>allowedWithFocus("toggle-ask", *) = true</code>) — ⌘B와 다른 점.</td></tr>
+  </tbody></table>
+</div>
+
+<!-- ============================================== -->
+<h2 id="s6"><span class="num">6.</span> Contracts <span class="badge badge-ok">🟢</span></h2>
+
+<h3>6.1 <code>Asks::start</code></h3>
+<table>
+  <thead><tr><th>항목</th><th>내용</th></tr></thead>
+  <tbody>
+    <tr><td>Inputs</td><td><code>room</code>: 존재하는 방 id · <code>artifact</code>: 그 방의 문서 id · <code>question</code>: trim 후 1–8,000자</td></tr>
+    <tr><td>Pre</td><td>roomsd가 read-only 아님 · 같은 fileKey running 없음 · 전역 running &lt; 4</td></tr>
+    <tr><td>순서</td><td>① 검증 → ② artifact·file_abs 조회 → ③ AgentProfiles load+plan → ④ prior = thread(fileKey)의 done 턴 → ⑤ build_prompt → ⑥ render → ⑦ running 레코드 append → ⑧ 실행 중 맵 등록 + <code>ask.started</code> emit → ⑨ spawn(실패 시 즉시 failed 마감) → 반환</td></tr>
+    <tr><td>Outputs</td><td><code>AskTurn{status: running, answer: "", endedAt: null}</code></td></tr>
+    <tr><td>Post</td><td>정확히 한 번 <code>ask.done</code>(I2). 최종 레코드 append 후 emit(I3). 실행 중 맵에서 제거.</td></tr>
+    <tr><td>Errors</td><td>§3 표: BadRequest/NotFound/ReadOnly/Busy/Capacity/AgentConfig/Io. ①–⑥ 실패는 디스크·이벤트 흔적 없음.</td></tr>
+  </tbody>
+</table>
+
+<h3>6.2 <code>agents.toml</code> 형식 + 기본값</h3>
+<pre><code># ~/rooms/.rooms/agents.toml — 없으면 아래 기본값과 같다. Rooms는 이 파일을 쓰지 않는다.
+default = "claude-code"
+# preamble = "..."            # 생략 시 §6.3 기본 문구
+
+[agents.claude-code]
+resume = ["claude", "-p", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--tools=Read,Grep,Glob", "{prompt}"]
+new    = ["claude", "-p", "--no-session-persistence", "--tools=Read,Grep,Glob", "{prompt}"]
+
+[agents.codex]
+resume = ["codex", "exec", "fork", "{session}", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "{prompt}"]
+new    = ["codex", "exec", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "{prompt}"]
+
+[agents.aside]
+resume = ["aside", "session", "resume", "{session}", "{prompt}"]
+new    = ["aside", "exec", "{prompt}"]</code></pre>
+<ul>
+  <li>플레이스홀더: <code>{prompt}</code> <code>{session}</code> <code>{file}</code> <code>{cwd}</code>. 그 외 <code>{…}</code>는 그대로 둔다(에러 아님).</li>
+  <li>검증: <code>new</code> 필수, 비어 있지 않음, 첫 원소에 <code>{</code> 없음. 실패 → <code>AgentConfig("agents.codex.new: …")</code>.</li>
+  <li><strong>읽기 전용</strong>(기본 템플릿 한정의 계약): claude는 <code>--tools=</code>로 쓸 수 있는 도구 자체를 Read/Grep/Glob로 제한(<code>--allowedTools</code>는 사전 승인일 뿐이라 쓰지 않는다), codex는 read-only 샌드박스. aside는 브라우저 에이전트라 파일 수정 도구 개념이 다르다 — preamble의 "고치지 마세요"에 맡긴다. 사용자가 고친 템플릿은 Rooms가 보장하지 않는다.</li>
+  <li><strong>흔적 안 남기기:</strong> claude <code>--no-session-persistence</code>, codex <code>--ephemeral</code> → 묻기마다 포크 세션 파일이 생기지 않아 <code>/resume</code> 목록이 지저분해지지 않는다. 원 세션도 그대로(claude <code>--fork-session</code>, codex <code>exec fork</code>).</li>
+  <li><strong>aside는 포크가 없다:</strong> <code>aside session resume</code>은 실제 세션에 이어 붙는다 → 질문과 답이 Aside 앱의 그 세션에도 남는다(오히려 "만든 대화로 바로 간다"에 가장 가깝다). aside 세션은 계정 단위라 다른 기기에서 만든 세션도 이어진다.</li>
+  <li><code>--tools=</code>처럼 <strong>값을 <code>=</code>로 붙여 쓴다</strong>: claude의 <code>--tools</code>/<code>--allowedTools</code>는 가변 인자라 띄어 쓰면 뒤의 <code>{prompt}</code>까지 삼킨다(실측: "Input must be provided" 에러). codex <code>exec fork</code>에는 <code>-s</code>가 없어서 <code>-c sandbox_mode=…</code>를 쓴다.</li>
+  <li>실측(2026-10-06, 로컬): claude/codex/aside 셋 다 <strong>stdout = 최종 답만</strong>, 진행 로그는 stderr. claude resume은 다른 cwd에서도 세션을 찾았다. aside stdout 끝에 ANSI 리셋 코드가 붙는다 → Rooms는 stdout에서 ANSI 이스케이프(<code>ESC[…</code>)를 일반적으로 제거한다(에이전트별 처리 아님).</li>
+</ul>
+
+<h3>6.3 프롬프트 형식 (고정)</h3>
+<pre><code>{preamble}
+
+문서: {file_abs}
+{mode=new 일 때만} 먼저 이 파일을 읽으세요.
+
+{prior 가 있을 때만}
+이전 문답:
+Q: {q1}
+A: {a1}
+...
+
+질문: {question}</code></pre>
+<p>기본 preamble: <code>[Rooms] 사용자가 Rooms 앱에서 위 HTML 문서를 보며 묻습니다. 마크다운으로 짧게 답하세요. 파일을 만들거나 고치지 마세요.</code> (resume 모드에선 "네가 만든 문서"라는 맥락은 세션이 이미 갖고 있다.)</p>
+
+<h3>6.4 <code>Asks::thread</code> / <code>cancel</code></h3>
+<ul>
+  <li><code>thread(fileKey)</code>: AskLog.read 결과에서, running인데 실행 중 맵에 없는 턴은 <code>failed</code> + "Rooms가 다시 시작돼서 중단됐어요"로 바꿔 반환(I1). 실행 중 턴은 <code>running</code> 그대로(answer 빈 문자열) → 탭을 다시 열어도 대기 표시가 보인다(AC-14).</li>
+  <li><code>cancel(id)</code>: 맵에 있으면 kill(Reason::Cancelled). 종료 처리는 일반 경로(최종 레코드 + done)가 한다.</li>
+</ul>
+
+<!-- ============================================== -->
+<h2 id="s7"><span class="num">7.</span> Core Flows <span class="badge badge-ok">🟢</span></h2>
+
+<h3>Flow Index</h3>
+<table>
+  <thead><tr><th>#</th><th>Flow</th><th>트리거</th></tr></thead>
+  <tbody>
+    <tr><td>F1</td><td>질문 보내고 답 받기</td><td>바에서 Enter / ↑</td></tr>
+    <tr><td>F2</td><td>멈추기·시간 초과·종료</td><td>멈추기 / 10분 / roomsd 종료</td></tr>
+    <tr><td>F3</td><td>대화 다시 보기</td><td>바가 열린 채 문서 탭 활성화, SSE 재연결</td></tr>
+    <tr><td>F4</td><td>바 켜고 끄기</td><td>⌘J / 메뉴</td></tr>
+  </tbody>
+</table>
+
+<div class="flow">
+  <h3>F1: 질문 보내고 답 받기</h3>
+  <div class="slot"><h4>① 트리거 &amp; 타이밍</h4>바 입력에서 Enter(⇧Enter = 줄바꿈, IME 조합 중 Enter 무시) 또는 보내기 버튼. 이 fileKey에 running 턴이 없을 때만 활성.</div>
+  <div class="slot"><h4>② 워크플로우</h4>
+    <svg class="diagram" viewBox="0 0 760 330">
+      <defs><marker id="a3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78716c"/></marker></defs>
+      <g font-size="12.5" text-anchor="middle"><rect x="20" y="10" width="140" height="34" rx="6" fill="#f4f4f5" stroke="#78716c"/><text x="90" y="32">AskBar</text>
+      <rect x="300" y="10" width="160" height="34" rx="6" fill="#f4f4f5" stroke="#78716c"/><text x="380" y="32">roomsd · Asks</text>
+      <rect x="600" y="10" width="140" height="34" rx="6" fill="#f4f4f5" stroke="#78716c"/><text x="670" y="32">agent CLI</text></g>
+      <g stroke="#d6d3d1" stroke-dasharray="4 4"><line x1="90" y1="44" x2="90" y2="320"/><line x1="380" y1="44" x2="380" y2="320"/><line x1="670" y1="44" x2="670" y2="320"/></g>
+      <g font-size="12" stroke="#78716c" stroke-width="1.3">
+        <line x1="90" y1="70" x2="375" y2="70" marker-end="url(#a3)"/><text x="100" y="64" stroke="none">POST /v1/asks</text>
+        <text x="390" y="95" stroke="none">검증 → profiles.plan → build_prompt → running append</text>
+        <line x1="380" y1="115" x2="95" y2="115" marker-end="url(#a3)"/><text x="100" y="109" stroke="none">SSE ask.started · 202 AskTurn</text>
+        <line x1="380" y1="140" x2="665" y2="140" marker-end="url(#a3)"/><text x="390" y="134" stroke="none">spawn(argv, cwd) 셸 없음</text>
+        <line x1="670" y1="180" x2="385" y2="180" marker-end="url(#a3)"/><text x="530" y="174" stroke="none">(stdout 모으는 중)</text>
+        
+        <line x1="670" y1="235" x2="385" y2="235" marker-end="url(#a3)"/><text x="530" y="229" stroke="none">exit</text>
+        <text x="390" y="260" stroke="none">최종 레코드 append (done/failed)</text>
+        <line x1="380" y1="285" x2="95" y2="285" marker-end="url(#a3)"/><text x="100" y="279" stroke="none">SSE ask.done (answer 전체)</text>
+      </g>
+    </svg>
+  </div>
+  <div class="slot"><h4>③ 입력 &amp; 출처</h4>question(사용자), artifact.source.{agent,session,cwd}(문서 meta, v1 파서), file_abs(resolve_file), prior(AskLog), 템플릿(agents.toml), PATH(R12).</div>
+  <div class="slot"><h4>④ 주요 결정</h4>
+    <ul>
+      <li><strong>결정론(코드):</strong> 에이전트·모드·cwd 선택(R1–R3), 프롬프트 조립(R4), 상한(R8).</li>
+      <li><strong>위임(외부):</strong> 답의 내용 전부 — 사용자의 에이전트 CLI. 출력 형식도 CLI 마음(Rooms는 텍스트로만 취급).</li>
+    </ul>
+  </div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4>§3 표. 동기 단계 실패는 HTTP 에러로 바에 한 줄(입력 내용 유지). 비동기 실패는 턴에 failed 표시 + "다시 묻기".</div>
+  <div class="slot"><h4>⑥ 동작 결과</h4>시트에 질문 말풍선(202 또는 <code>ask.started</code> 중 먼저 온 것으로 생성) → 대기 수달 → done에서 대기 표시를 마크다운 답으로 교체 + "N초 · 복사". 입력 칸 비움.</div>
+  <div class="slot"><h4>⑦ 연결</h4>S1, S2, S3, S4, S5, S6, S7.</div>
+</div>
+
+<div class="flow">
+  <h3>F2: 멈추기 · 시간 초과 · 종료</h3>
+  <div class="slot"><h4>① 트리거</h4>"멈추기" 클릭(DELETE), 10분 타이머, stdout 1 MiB, roomsd 종료(<code>Asks::shutdown</code>; 앱 종료 시 사이드카도 종료).</div>
+  <div class="slot"><h4>② 워크플로우</h4>kill 요청 → <code>killpg(SIGTERM)</code> → 3초 안에 안 끝나면 <code>SIGKILL</code> → wait가 <code>Killed(reason)</code> → 최종 레코드(cancelled 또는 failed, 그때까지의 answer 보존) → <code>ask.done</code>.</div>
+  <div class="slot"><h4>③ 입력</h4>askId(DELETE) 또는 내부 타이머.</div>
+  <div class="slot"><h4>④ 주요 결정</h4>프로세스 <strong>그룹</strong> 단위 kill — claude/codex가 띄운 자식(도구 실행)까지 정리. Cancelled/Shutdown → <code>cancelled</code>, Timeout/TooLong → <code>failed</code>.</div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4>이미 끝난 턴에 DELETE → 204 no-op. shutdown 중 기록 실패 → 다음 시작 때 I1 규칙으로 failed 표시.</div>
+  <div class="slot"><h4>⑥ 동작 결과</h4>바 잠금 해제, 부분 답 + "멈췄어요" muted 표시.</div>
+  <div class="slot"><h4>⑦ 연결</h4>S1(DELETE), S6(kill).</div>
+</div>
+
+<div class="flow">
+  <h3>F3: 대화 다시 보기</h3>
+  <div class="slot"><h4>① 트리거</h4>AskBar가 마운트될 때(바가 열린 상태로 문서 탭이 보이거나, ⌘J로 열 때) 그 fileKey 캐시가 없으면. SSE 재연결(<code>resync</code>) 때는 캐시된 fileKey 전부 다시.</div>
+  <div class="slot"><h4>② 워크플로우</h4><code>askThread(fileKey)</code> → 캐시 교체 → 이후 SSE <code>ask.*</code>로 갱신(fileKey가 맞는 것만).</div>
+  <div class="slot"><h4>③ 입력</h4>artifact.fileKey.</div>
+  <div class="slot"><h4>④ 주요 결정</h4>캐시 병합 규칙: id 기준 upsert. 상태 우선순위 terminal(done/failed/cancelled) &gt; running — 늦게 도착한 running(202 응답 등)이 이미 끝난 턴을 되돌리지 않는다.</div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4>GET 실패 → 시트에 "대화를 불러오지 못했어요" + 다시 시도. 바 입력은 그래도 가능.</div>
+  <div class="slot"><h4>⑥ 동작 결과</h4>턴이 있으면 시트가 펼쳐진 상태로 시작, 없으면 바만.</div>
+  <div class="slot"><h4>⑦ 연결</h4>S1(GET + SSE).</div>
+</div>
+
+<div class="flow">
+  <h3>F4: 바 켜고 끄기 (⌘J)</h3>
+  <div class="slot"><h4>① 트리거</h4>⌘J(macOS) / Ctrl+J(그 외) — 페이지 keydown(<code>keyAction</code>에 <code>j: "toggle-ask"</code>) 또는 네이티브 메뉴 accelerator(<code>menu://toggle-ask</code>, 포커스가 iframe 안일 때). 메뉴: View → "묻기 바" CmdOrCtrl+J.</div>
+  <div class="slot"><h4>② 워크플로우</h4>AppShell <code>case "toggle-ask"</code> → 활성 탭이 doc이고 readOnly가 아니면 <code>toggle()</code> → 켜질 때 입력 칸 focus.</div>
+  <div class="slot"><h4>③ 입력</h4>활성 탭 종류, info.readOnly.</div>
+  <div class="slot"><h4>④ 주요 결정</h4>상태는 전역 1개, 시작값 false, 저장 안 함(사용자 결정). 입력 칸 안에서도 동작(토글로 닫아야 하므로). 한글 IME에서도 <code>e.code === "KeyJ"</code>로 잡힘(기존 <code>shortcutLetter</code>).</div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4>doc 탭이 아니면 무시(아무 표시 없음).</div>
+  <div class="slot"><h4>⑥ 동작 결과</h4>바·시트 등장/사라짐. 진행 중 묻기는 영향 없음.</div>
+  <div class="slot"><h4>⑦ 연결</h4>S8.</div>
+</div>
+
+<!-- ============================================== -->
+<h2 id="s8"><span class="num">8.</span> End-to-End Scenario <span class="badge badge-ok">🟢</span></h2>
+<ol>
+  <li>Claude Code 세션 <code>S=7f3a…</code>가 <code>~/personal/alto</code>에서 <code>pi-vs-codex.html</code>을 만들며 <code>&lt;meta name="rooms:agent" content="claude-code"&gt;</code>, <code>rooms:session=7f3a…</code>, <code>rooms:cwd=/Users/…/alto</code>를 넣었다. 방 harness-research에 링크돼 있다.</li>
+  <li>앱 실행 → 문서 탭 열기(바 없음, AC-1) → 문서 안을 클릭한 채 ⌘J → 메뉴 accelerator로 바 등장, 입력 칸 포커스.</li>
+  <li>"표 3번 행의 '확장성'은 무슨 기준이야?" Enter → <code>POST /v1/asks</code> → plan = (claude-code, resume) → argv = <code>claude -p --resume 7f3a… --fork-session --allowedTools Read,Grep,Glob "&lt;prompt&gt;"</code>, cwd <code>/Users/…/alto</code>.</li>
+  <li><code>.rooms/asks/&lt;fileKey&gt;.jsonl</code>에 running 줄 → <code>ask.started</code> → 시트에 질문 + 대기 수달.</li>
+  <li>~12초 뒤 claude가 답을 stdout에 한 번에 출력 → exit 0 → done 줄 append → <code>ask.done</code> → 마크다운 답 + "12초 · 복사".</li>
+  <li>"그럼 Rooms는 몇 개야?" → 같은 S에서 다시 포크, 프롬프트에 이전 문답 1개 포함.</li>
+  <li>⌘J로 바 닫기 → 탭 닫기 → 앱 재시작 → 문서 다시 열고 ⌘J → <code>askThread</code>로 두 턴이 보인다.</li>
+</ol>
+
+<!-- ============================================== -->
+<h2 id="s9"><span class="num">9.</span> Testing <span class="badge badge-ok">🟢</span></h2>
+<table>
+  <thead><tr><th>층</th><th>무엇</th><th>어떻게</th></tr></thead>
+  <tbody>
+    <tr><td>rooms-core 단위</td><td>AgentProfiles(기본값, 덮어쓰기, 검증 에러, 치환), build_prompt(스냅샷, 6개/24,000자 자르기, new/resume 차이), AskLog(마지막 줄 승리, 깨진 줄, 없는 파일)</td><td>cargo test, 순수 함수</td></tr>
+    <tr><td>rooms-core 통합</td><td>Asks.start → done/failed/cancelled, Busy/Capacity, 타임아웃(짧은 Limits 주입), 1 MiB, 크래시 후 running→failed(I1), ANSI 제거·lossy UTF-8</td><td><strong>가짜 에이전트</strong>: 테스트용 <code>agents.toml</code>이 <code>["sh","-c",…]</code> 대신 테스트 바이너리/스크립트(<code>tests/fixtures/fake-agent.sh</code>: argv를 echo, sleep, exit code 지정)를 가리킨다. 실제 claude/codex 호출 없음.</td></tr>
+    <tr><td>roomsd</td><td>라우트 상태 코드, write guard/토큰, read_only 403, SSE 이벤트 순서(I2)·seq</td><td>기존 roomsd 테스트 하네스</td></tr>
+    <tr><td>desktop vitest</td><td>askStore 병합 규칙, keyAction(⌘J, ㅓ), allowedWithFocus, AskBar 렌더 상태(대기/답/실패/멈춤), doc 탭 외 무시</td><td>vitest + 기존 fake client</td></tr>
+    <tr><td>e2e (실제 roomsd)</td><td>F1–F4 golden path를 fake-agent로</td><td>기존 e2e 10개 옆에 추가</td></tr>
+    <tr><td>수동</td><td>실제 claude/codex/aside로 기본 템플릿 resume·new 각 1회, claude/codex 원 세션 jsonl 불변·포크 파일 없음 확인</td><td>manual-test.html (구현 후)</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================== -->
+<h2 id="s10"><span class="num">10.</span> Senior Review <span class="badge badge-ok">🟢</span></h2>
+
+<h3>10.1 진입점-우선 워크스루</h3>
+<ol>
+  <li><strong>진입점:</strong> 서버는 <code>Asks::start(room, artifact, question)</code> 하나, 앱은 <code>&lt;AskBar artifact/&gt;</code> 하나. "문서 하나와 질문 하나를 주면 턴 하나가 생기고, 끝나면 이벤트가 한 번 온다."</li>
+  <li><strong>분리:</strong> Asks 안쪽은 넷으로 갈린다 — 무엇을 실행할지(AgentProfiles, 사용자 파일), 무슨 말을 보낼지(build_prompt, 순수), 어떻게 실행할지(spawn_agent, 프로세스), 무엇을 남길지(AskLog, 파일). 에이전트 지식은 첫째에만, Rooms의 문구는 둘째에만 있다.</li>
+  <li><strong>흐름:</strong> POST → 동기 검증·기록·spawn → 202 → 종료 시 stdout을 기록하고 done 한 번. 앱은 GET + SSE로 화면만 맞춘다.</li>
+  <li><strong>계약:</strong> 202면 done이 정확히 한 번(I2), done 전에 디스크(I3), 셸 없음(R6), 원 세션 불변(포크 템플릿).</li>
+</ol>
+<div class="review-box"><h4>3축 성공 기준</h4>
+  <ul class="checklist">
+    <li class="done">interface — 시그니처만 보고 호출 가능 (start/thread/cancel, AskBar artifact)</li>
+    <li class="done">data flow — 소유가 한쪽: 턴·기록은 roomsd, 템플릿은 사용자 파일, 화면 상태는 앱</li>
+    <li class="done">behavior — 상태기계 4상태 + I1–I4로 내부를 안 열고 예측 가능</li>
+  </ul>
+</div>
+
+<h3>10.2 Senior Q&amp;A</h3>
+<div class="qa"><p class="q">Q1. Resume from fallback cwd silently fails</p><p class="a"><strong>A.</strong> 실측(2026-10-06): claude <code>-p --resume S --fork-session</code>은 세션과 다른 cwd에서도 세션을 찾았다. 그래서 cwd는 세션 찾기와 무관하고, 에이전트가 상대경로를 읽을 때만 쓰인다(R3에 명시). resume이 정말 실패하면(세션 삭제 등) exit≠0 → <code>failed</code>로 끝나고, Rooms는 stderr를 해석해 new로 바꾸지 않는다. 사용자는 실패 문구를 보고 다시 묻는다.</p></div>
+<div class="qa"><p class="q">Q2. Default codex resume template is invalid</p><p class="a"><strong>A.</strong> 맞다. <code>codex exec fork</code>에는 <code>-s</code>가 없다. 그래서 <code>-c sandbox_mode="read-only"</code>로 바꿨다(fork도 <code>-c</code>는 받는다). 기본 템플릿 셋(claude/codex/aside)은 manual-test에 "실제 CLI로 resume·new 각 1회" 항목을 두고, 단위 테스트는 기본값이 파싱·검증을 통과하는지만 본다. CLI 플래그는 Rooms가 통제할 수 없으므로 자동 테스트에서 실제 CLI를 부르지 않는다.</p></div>
+<div class="qa"><p class="q">Q3. "Read-only" is enforced by which flag?</p><p class="a"><strong>A.</strong> <code>--allowedTools</code>는 사전 승인일 뿐이라는 지적이 맞다. claude는 <code>--tools=Read,Grep,Glob</code>(쓸 수 있는 도구 자체를 제한)로 바꿨고 실측으로 동작을 확인했다. 띄어 쓰면 가변 인자가 프롬프트를 삼켜서 <code>=</code> 형식으로 고정했다. codex는 read-only 샌드박스를 쓴다. 이건 <strong>기본 템플릿에 한한 계약</strong>이다(§6.2). 사용자가 고친 템플릿과 aside(브라우저 에이전트)는 preamble에 맡긴다.</p></div>
+<div class="qa"><p class="q">Q4. Untrusted HTML meta flows into argv</p><p class="a"><strong>A.</strong> R0을 추가했다. agent와 session은 <code>^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$</code>일 때만 쓰고(첫 글자 <code>-</code> 금지라 플래그 주입이 막힌다), 아니면 없는 것으로 보고 new 모드로 간다. cwd는 존재하는 절대 디렉터리일 때만 쓴다. 이 검증은 <code>Asks::start</code>가 S3 <code>plan</code>을 부르기 전에 한다.</p></div>
+<div class="qa"><p class="q">Q5. Unknown agent falls back with a foreign session</p><p class="a"><strong>A.</strong> R2를 고쳤다. resume은 고른 프로필 이름이 <code>source.agent</code>와 같을 때만 한다. codex 문서에 codex 프로필이 없으면 default(claude-code)로 <strong>new</strong> 모드가 되고, 다른 에이전트의 세션 ID는 쓰지 않는다. 422로 막지 않는 이유: 그래도 "이 파일을 읽고 답해"는 쓸모가 있다.</p></div>
+<div class="qa"><p class="q">Q6. SSE events can beat the 202</p><p class="a"><strong>A.</strong> askStore는 id 기준 upsert를 한다. 202와 <code>ask.started</code> 중 먼저 온 쪽이 턴을 만든다. 상태 우선순위는 terminal &gt; running이라, 늦게 온 202(running)가 이미 done인 턴을 되돌리지 않는다. S1 call-site와 F1⑥, F3④에 반영했다.</p></div>
+<div class="qa"><p class="q">Q7. Is streaming ask.output worth its machinery?</p><p class="a"><strong>A.</strong> 아니다. 실측으로 claude, codex, aside 셋 다 stdout에 최종 답만 끝에 한 번 쓴다. <code>ask.output</code>, UTF-8 이월, thread의 부분 답을 모두 지웠다. 이벤트는 <code>ask.started</code>/<code>ask.done</code> 둘만 남았고, 답은 done에 통째로 실린다. 스트리밍이 필요해지면 그때 추가 이벤트로 넣는다(프로토콜에 추가만 하면 되는 변경).</p></div>
+<div class="qa"><p class="q">Q8. Every ask leaves a forked session behind</p><p class="a"><strong>A.</strong> claude는 <code>--no-session-persistence</code>, codex는 <code>--ephemeral</code>을 기본 템플릿에 넣었다. 실측으로 claude 포크가 세션 파일을 남기지 않는 것을 확인했다. aside는 포크가 없어서 실제 세션에 이어 붙고, 이건 의도된 동작으로 문서화했다(Aside 앱의 그 세션에서 문답이 보인다). 이전 문답은 Rooms가 프롬프트에 붙이므로 매 턴 버려지는 포크로도 대화가 이어진다.</p></div>
+
+<!-- ============================================== -->
+<h2 id="s11"><span class="num">11.</span> Open Questions <span class="badge badge-warn">🟡</span></h2>
+<ul>
+  <li><mark class="ambiguous">aside가 만든 아티팩트에 <code>rooms:agent=aside</code>/<code>rooms:session</code>을 넣게 하는 방법(aside 쪽 스킬/지침)은 이 스펙 밖 — Rooms 쪽 준비는 끝(프로필 기본값).</mark></li>
+  <li><mark class="ambiguous">세션 ID가 채워진 문서가 지금은 거의 없다(온보딩 스킬이 <code>sessions</code>를 버림, 원본은 안 고침). v2 직후 별도 작업으로 "스킬이 링크할 때 세션을 Rooms 쪽 사이드카(<code>.rooms/sources.json</code> 등)에 기록"할지?</mark> — v2는 meta 태그만 읽고, 없으면 new 모드로 동작하므로 이 스펙의 완료를 막지 않는다.</li>
+</ul>
+
+</main>
+</div>
+</body>
+</html>
