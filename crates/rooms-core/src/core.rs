@@ -605,7 +605,11 @@ impl RoomsCore {
         }
     }
 
-    /// The tools of valid, enabled plugins, in plugin-id then manifest order.
+    /// The tools of valid, enabled plugins, in plugin-id then tool-name (alphabetical) order; the
+    /// manifest's `tools` is a map, so its own order is not kept.
+    ///
+    /// Plugins should treat `appendTo` files as append-only: the bridge may rewrite them, which
+    /// races with tool appends.
     pub fn list_tools(&self) -> Vec<ToolInfo> {
         let enabled = self.inner.lock().unwrap().state.plugins.enabled.clone();
         let mut out = Vec::new();
