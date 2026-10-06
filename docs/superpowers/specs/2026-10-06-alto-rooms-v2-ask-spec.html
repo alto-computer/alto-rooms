@@ -407,9 +407,9 @@ impl Asks {
     pub fn start(&amp;self, room: &amp;RoomId, artifact: &amp;ArtifactId, question: &amp;str) -&gt; Result&lt;AskTurn, AskError&gt;;
     pub fn thread(&amp;self, file_key: &amp;str) -&gt; Result&lt;Vec&lt;AskTurn&gt;, AskError&gt;;
     pub fn cancel(&amp;self, ask_id: &amp;str);          // 없거나 끝났으면 no-op
-    pub fn shutdown(&amp;self);                      // roomsd 종료 시 실행 중 전부 kill → cancelled 기록
+    pub async fn shutdown(&amp;self);                // SIGTERM 시 실행 중 전부 kill, ≤700ms 기다려 cancelled 기록(앱은 1초 줌)
 }
-pub enum AskError { BadRequest(String), NotFound, ReadOnly, Busy, Capacity, AgentConfig(String), Io(String) }</code></pre>
+pub enum AskError { BadRequest(String), NotFound, Busy, Capacity, AgentConfig(String), Io(String) }   // read-only는 write guard가 403</code></pre>
   <table><tbody>
     <tr class="contract-row"><th>건너감</th><td>↓ 식별자 + 질문 문자열 · ↑ AskTurn / AskError</td></tr>
     <tr class="contract-row"><th>제어·상태 소유</th><td>Asks가 실행 중 맵(<code>askId → (fileKey, kill handle)</code>)과 기록을 소유. routes는 무상태.</td></tr>
@@ -422,7 +422,7 @@ pub enum AskError { BadRequest(String), NotFound, ReadOnly, Busy, Capacity, Agen
   <p class="seam-sub">에이전트 지식의 유일한 출처.</p>
   <h5>call-site</h5>
 <pre><code>let profiles = AgentProfiles::load(&amp;home.join(".rooms/agents.toml")).map_err(AskError::AgentConfig)?;
-let plan = profiles.plan(artifact.source.agent.as_deref(), artifact.source.session.as_deref())?;
+let plan = profiles.plan(agent, session);   // R0 통과한 값만
 let argv = plan.render(&amp;Vars { prompt: &amp;prompt, session: sess, file: &amp;file, cwd: &amp;cwd });</code></pre>
   <h5>frozen signature</h5>
 <pre><code>pub(crate) struct AgentProfiles { default: String, agents: BTreeMap&lt;String, Profile&gt;, preamble: Option&lt;String&gt; }
@@ -431,7 +431,7 @@ pub(crate) struct Plan { pub agent: String, pub mode: AskMode, template: Vec&lt;
 pub(crate) struct Vars&lt;'a&gt; { pub prompt: &amp;'a str, pub session: &amp;'a str, pub file: &amp;'a str, pub cwd: &amp;'a str }
 impl AgentProfiles {
     pub fn load(path: &amp;Path) -&gt; Result&lt;Self, String&gt;;       // 파일 없음 = 기본값만. 파일의 [agents.X]는 기본값 X를 통째로 대체
-    pub fn plan(&amp;self, agent: Option&lt;&amp;str&gt;, session: Option&lt;&amp;str&gt;) -&gt; Result&lt;Plan, String&gt;;   // R1, R2
+    pub fn plan(&amp;self, agent: Option&lt;&amp;str&gt;, session: Option&lt;&amp;str&gt;) -&gt; Plan;   // R1, R2 — load가 이미 검증하므로 실패 없음
     pub fn preamble(&amp;self) -&gt; &amp;str;
 }
 impl Plan { pub fn render(&amp;self, v: &amp;Vars) -&gt; Vec&lt;String&gt;; }   // 원소별 문자열 치환만</code></pre>
@@ -476,15 +476,14 @@ impl AskLog {
 <div class="seam">
   <p class="seam-title">S6: Asks → spawn_agent → 에이전트 CLI</p>
   <p class="seam-sub">Rooms 밖으로 나가는 유일한 출구(v1의 "handoff out").</p>
-<pre><code>let handle = spawn_agent(SpawnSpec { argv, cwd, path_env, limits: Limits::default() },
-)?;                                                         // Err = spawn 실패
-let outcome: Outcome = handle.wait().await;                 // Exited{code, stderr_tail} | Killed(Reason)
-handle.kill();                                              // 멈추기: killpg(SIGTERM) → 3초 후 SIGKILL
+<pre><code>let Running { killer, done } = spawn_agent(SpawnSpec { argv, cwd, path_env, limits })?;   // Err = spawn 실패
+killer.kill(Reason::Cancelled);                             // 멈추기: killpg(SIGTERM) → 3초 후 SIGKILL (Shutdown은 300ms)
+let outcome: Outcome = done.await?;                         // Exited{code, stdout, stderr_tail} | Killed{reason, stdout}
 
 pub(crate) struct SpawnSpec { pub argv: Vec&lt;String&gt;, pub cwd: PathBuf, pub path_env: Option&lt;String&gt;, pub limits: Limits }
-pub(crate) struct Limits { pub timeout: Duration /*600s*/, pub max_stdout: usize /*1 MiB*/, pub stderr_tail: usize /*4 KiB*/ }
+pub struct Limits { pub timeout: Duration /*600s*/, pub max_stdout: usize /*1 MiB*/, pub stderr_tail: usize /*4 KiB*/, pub kill_grace: Duration /*3s*/ }
 pub(crate) enum Reason { Cancelled, Timeout, TooLong, Shutdown }
-pub(crate) enum Outcome { Exited { code: i32, stderr_tail: String }, Killed(Reason) }</code></pre>
+pub(crate) enum Outcome { Exited { code: i32, stdout: String, stderr_tail: String }, Killed { reason: Reason, stdout: String } }</code></pre>
   <table><tbody>
     <tr class="contract-row"><th>건너감</th><td>↓ argv, cwd, PATH · ↑ 종료 결과 + stdout 전체</td></tr>
     <tr class="contract-row"><th>제어·상태 소유</th><td>자식 프로세스 그룹은 핸들이 소유. 핸들이 drop되면 kill(고아 없음).</td></tr>
@@ -495,12 +494,11 @@ pub(crate) enum Outcome { Exited { code: i32, stderr_tail: String }, Killed(Reas
 <div class="seam">
   <p class="seam-title">S7: Asks → RoomsCore</p>
   <p class="seam-sub">기존 코어에 두 개만 더한다.</p>
-<pre><code>let artifact = core.artifact(room, artifact_id).ok_or(AskError::NotFound)?;   // 신규: list_artifacts 위 얇은 조회
+<pre><code>let artifact = core.list_artifacts(room)?.into_iter().find(|a| a.id == artifact_id).ok_or(AskError::NotFound)?;   // 기존
 let file_abs = core.resolve_file(room, &amp;artifact.rel_path)?;                  // 기존 (realpath)
 core.emit_ask(EventKind::AskStarted { turn });                                // 신규: 내부 emit을 Inner 락 잡고 호출
 
 impl RoomsCore {
-    pub fn artifact(&amp;self, room: &amp;RoomId, id: &amp;ArtifactId) -&gt; Option&lt;Artifact&gt;;
     pub fn emit_ask(&amp;self, kind: EventKind);    // AskStarted | AskDone 만 허용 (debug_assert)
 }</code></pre>
   <table><tbody>
