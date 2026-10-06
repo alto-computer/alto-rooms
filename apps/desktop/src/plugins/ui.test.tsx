@@ -57,6 +57,59 @@ async function openPanel(name = "Echo") {
 }
 
 describe("artifact side panel", () => {
+  it("previews drag width without persisting until release and stops after cancellation", async () => {
+    const h = await openDoc();
+    await openPanel();
+    const handle = screen.getByRole("separator", { name: "Resize panel" });
+    handle.setPointerCapture = vi.fn();
+    handle.hasPointerCapture = () => false;
+    const panel = handle.parentElement!;
+    const initial = h.viewer.getState().pluginPanel.width;
+    const writes = vi.spyOn(h.viewer, "setPluginPanel");
+    vi.useFakeTimers();
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 800 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 700 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(panel.style.width).toBe(`${initial + 100}px`);
+    expect(writes).not.toHaveBeenCalled();
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 690 });
+    expect(h.viewer.getState().pluginPanel.width).toBe(initial + 110);
+    expect(writes).toHaveBeenCalledTimes(1);
+    fireEvent.pointerDown(handle, { pointerId: 2, button: 0, clientX: 690 });
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 650 });
+    fireEvent.pointerCancel(window, { pointerId: 2 });
+    const afterCancel = h.viewer.getState().pluginPanel.width;
+    writes.mockClear();
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 400 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(panel.style.width).toBe(`${afterCancel}px`);
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it.each(["lostpointercapture", "blur", "unmount"])("cleans up a resize on %s", async (reason) => {
+    const h = await openDoc();
+    await openPanel();
+    const handle = screen.getByRole("separator", { name: "Resize panel" });
+    handle.setPointerCapture = vi.fn();
+    handle.hasPointerCapture = () => false;
+    const initial = h.viewer.getState().pluginPanel.width;
+    const writes = vi.spyOn(h.viewer, "setPluginPanel");
+    vi.useFakeTimers();
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 800 });
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 300 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(handle.parentElement!.style.width).toBe(`${initial}px`);
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 650 });
+    if (reason === "unmount") cleanup();
+    else if (reason === "blur") fireEvent(window, new Event("blur"));
+    else fireEvent(handle, new PointerEvent("lostpointercapture", { pointerId: 1 }));
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 500 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 500 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(writes).not.toHaveBeenCalled();
+    expect(document.body.style.userSelect).not.toBe("none");
+  });
+
   it("shows nothing without an enabled side-panel plugin", async () => {
     await openDoc([plugin({ enabled: false, needsApproval: true }), echoTab()]);
     expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();

@@ -9,8 +9,8 @@
     {
       "id": "excalidraw",
       "repo": "https://github.com/alto-computer/rooms-plugin-excalidraw",
-      "version": "0.1.0",
-      "sha256": "ee800981f0f628154c1e13987e79bdd604adb344af221db81846f80a6b9d2baf"
+      "version": "0.1.1",
+      "sha256": "48aea269d8276cacb9ffc7dac80089432a670d687c1017a433453f592c63a447"
     }
   ]
 }

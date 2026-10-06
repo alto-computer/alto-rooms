@@ -17,9 +17,7 @@ async function setup(page: Page, daemon: Daemon) {
   const bench = await daemon.createRoom("Bench");
   await daemon.write("Bench/latency.html", "<title>Latency report</title><p>p95 118 ms</p>");
   const csp: string[] = [];
-  // Excalidraw lists a CDN after each bundled font; Chromium reports that blocked fallback even when the bundled one loads.
-  const cdnFallback = /https:\/\/esm\.sh\/@excalidraw\//;
-  page.on("console", (m) => /Content Security Policy|Refused to/.test(m.text()) && !cdnFallback.test(m.text()) && csp.push(m.text()));
+  page.on("console", (m) => /Content Security Policy|Refused to/.test(m.text()) && csp.push(m.text()));
   await page.goto("/");
   await expect.poll(async () => ((await (await fetch(`${daemon.baseUrl}/v1/rooms/${bench.id}/artifacts`)).json()) as Doc[]).length).toBe(1);
   const [doc] = (await (await fetch(`${daemon.baseUrl}/v1/rooms/${bench.id}/artifacts`)).json()) as Doc[];
@@ -92,4 +90,55 @@ test("Excalidraw notes come with the app: a drawing is saved per document and ex
   await expect(frame.locator("canvas.interactive")).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => daemon.read(notes)).toContain('"type":"rectangle"');
   expect(csp).toEqual([]);
+});
+
+
+test("Notes resize follows across both frames, persists once per drag and cancels cleanly", async ({ page, daemon }, testInfo) => {
+  const { csp } = await setup(page, daemon);
+  await openDoc(page);
+  await page.getByRole("button", { name: "Open Notes" }).click();
+  await expect(page.frameLocator('iframe[title="Excalidraw notes"]').locator("canvas.interactive")).toBeVisible();
+  const handle = page.getByRole("separator", { name: "Resize panel" });
+  const panel = page.getByRole("complementary", { name: "Notes" });
+  await page.evaluate(() => {
+    const w = window as any;
+    w.resizeWrites = 0;
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "alto-rooms.viewer.v1") w.resizeWrites++;
+      return original.call(this, key, value);
+    };
+  });
+  const measurements: unknown[] = [];
+  for (const delta of [-300, 300, -200, 200]) {
+    const box = (await handle.boundingBox())!;
+    const before = (await panel.boundingBox())!.width;
+    const x = box.x + box.width / 2;
+    const y = box.y + 240;
+    const writes = await page.evaluate(() => (window as any).resizeWrites);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    for (let i = 1; i <= 20; i++) {
+      await page.mouse.move(x + delta * i / 20, y);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+    }
+    const during = (await panel.boundingBox())!.width;
+    expect(Math.abs(during - (before - delta))).toBeLessThanOrEqual(2);
+    expect(await page.evaluate(() => (window as any).resizeWrites)).toBe(writes);
+    await page.mouse.up();
+    expect(await page.evaluate(() => (window as any).resizeWrites)).toBe(writes + 1);
+    measurements.push({ delta, before, during, error: during - (before - delta), writes: 1 });
+  }
+  const box = (await handle.boundingBox())!;
+  const beforeCancel = (await panel.boundingBox())!.width;
+  await page.mouse.move(box.x + box.width / 2, box.y + 240);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 100, box.y + 240, { steps: 5 });
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.mouse.up();
+  await page.mouse.move(box.x - 200, box.y + 240);
+  await expect.poll(async () => (await panel.boundingBox())!.width).toBe(beforeCancel);
+  expect(csp).toEqual([]);
+  console.log("RESIZE_MEASUREMENTS", testInfo.project.name, JSON.stringify(measurements));
+  await testInfo.attach("resize-measurements", { body: JSON.stringify(measurements, null, 2), contentType: "application/json" });
 });
