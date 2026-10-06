@@ -44,4 +44,25 @@ fn export_typescript_bindings() {
     Info::export_all().unwrap();
     RoomsEvent::export_all().unwrap();
     ApiError::export_all().unwrap();
+    AskTurn::export_all().unwrap();
+    StartAsk::export_all().unwrap();
+}
+
+#[test]
+fn ask_events_are_camel_and_tagged() {
+    let turn = AskTurn {
+        id: "a1".into(), file_key: "0123456789abcdef".into(), question: "q".into(), answer: "".into(),
+        agent: "claude-code".into(), mode: AskMode::Resume, status: AskStatus::Running,
+        error: None, started_at: "2026-10-06T10:00:00+09:00".into(), ended_at: None,
+    };
+    let v = serde_json::to_value(&RoomsEvent { seq: 3, kind: EventKind::AskStarted { turn: turn.clone() } }).unwrap();
+    assert_eq!(v["type"], "ask.started");
+    assert_eq!(v["turn"]["fileKey"], "0123456789abcdef");
+    assert_eq!(v["turn"]["mode"], "resume");
+    assert_eq!(v["turn"]["status"], "running");
+    assert_eq!(v["turn"]["endedAt"], serde_json::Value::Null);
+    let d = serde_json::to_value(&RoomsEvent { seq: 4, kind: EventKind::AskDone { turn } }).unwrap();
+    assert_eq!(d["type"], "ask.done");
+    let s: StartAsk = serde_json::from_str(r#"{"roomId":"r","artifactId":"a","question":"hi"}"#).unwrap();
+    assert_eq!((s.room_id.as_str(), s.artifact_id.as_str(), s.question.as_str()), ("r", "a", "hi"));
 }

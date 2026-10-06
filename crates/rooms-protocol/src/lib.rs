@@ -138,6 +138,38 @@ wire!(pub struct ApiError {
     pub message: String,
 });
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum AskStatus { Running, Done, Failed, Cancelled }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum AskMode { Resume, New }
+
+wire!(
+/// One question and its answer, asked from a doc to the agent that made it (spec v2 ask).
+pub struct AskTurn {
+    pub id: String,
+    pub file_key: String,
+    pub question: String,
+    /// The agent's stdout (ANSI stripped, trimmed); empty while running.
+    pub answer: String,
+    pub agent: String,
+    pub mode: AskMode,
+    pub status: AskStatus,
+    pub error: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+});
+
+wire!(pub struct StartAsk {
+    pub room_id: RoomId,
+    pub artifact_id: ArtifactId,
+    pub question: String,
+});
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(tag = "type")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
@@ -155,6 +187,9 @@ pub enum EventKind {
     #[serde(rename = "note.saved")] NoteSaved { note: Note },
     #[serde(rename = "note.removed")] NoteRemoved { date: IsoDate, name: String },
     #[serde(rename = "journal.changed")] JournalChanged { date: IsoDate },
+    #[serde(rename = "ask.started")] AskStarted { turn: AskTurn },
+    /// Exactly once per started turn; `turn.answer` is the whole answer.
+    #[serde(rename = "ask.done")] AskDone { turn: AskTurn },
     #[serde(rename = "resync", rename_all = "camelCase")] Resync { room_id: Option<RoomId> },
 }
 

@@ -1,6 +1,9 @@
 export * from "./client";
 export * from "./generated/ApiError";
 export * from "./generated/Artifact";
+export * from "./generated/AskMode";
+export * from "./generated/AskStatus";
+export * from "./generated/AskTurn";
 export * from "./generated/Author";
 export * from "./generated/EventKind";
 export * from "./generated/Info";
@@ -16,3 +19,4 @@ export * from "./generated/RoomKind";
 export * from "./generated/RoomStatus";
 export * from "./generated/RoomsEvent";
 export * from "./generated/Source";
+export * from "./generated/StartAsk";
