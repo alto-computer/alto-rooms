@@ -174,8 +174,20 @@ describe("artifact side panel", () => {
 
   it("stops relaying data changes once the frame is gone", async () => {
     const h = await openDoc();
+    let listeners = 0;
+    const onSignal = h.rooms.onSignal.bind(h.rooms);
+    vi.spyOn(h.rooms, "onSignal").mockImplementation((fn) => {
+      listeners++;
+      const off = onSignal(fn);
+      return () => {
+        listeners--;
+        off();
+      };
+    });
     const { posted } = await openPanel();
+    expect(listeners).toBeGreaterThan(0);
     cleanup();
+    expect(listeners).toBe(0);
     h.emit({ type: "plugin.data.changed", pluginId: "echo", path: "a.jsonl" });
     expect(posted.mock.calls.filter((c) => (c[0] as { type?: string }).type === "dataChanged")).toEqual([]);
   });
