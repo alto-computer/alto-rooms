@@ -66,6 +66,29 @@ describe("AskBar", () => {
     expect(screen.getByText("claude-code · continuing the thread that made it")).toBeTruthy();
   });
 
+  it("when a turn ends, refocuses the input only if focus was on the body", async () => {
+    const { emit } = await setup({ k1: [turn({})] });
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    input.blur();
+    expect(document.activeElement).toBe(document.body);
+    act(() => emit({ type: "ask.done", turn: turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" }) }));
+    await waitFor(() => expect(document.activeElement).toBe(input));
+
+    act(() => emit({ type: "ask.started", turn: turn({ id: "t2", question: "q2" }) }));
+    await screen.findByText("Thinking");
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    try {
+      other.focus();
+      expect(document.activeElement).toBe(other);
+      act(() => emit({ type: "ask.done", turn: turn({ id: "t2", question: "q2", status: "done", answer: "b", endedAt: "2026-10-06T10:00:02+09:00" }) }));
+      await screen.findByText("b");
+      expect(document.activeElement).toBe(other);
+    } finally {
+      other.remove();
+    }
+  });
+
   it("a fast double Enter sends once", async () => {
     const { client } = await setup();
     const input = await screen.findByPlaceholderText("Ask about this doc…");

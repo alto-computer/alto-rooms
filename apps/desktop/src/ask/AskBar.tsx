@@ -125,9 +125,15 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const running = turns.find((t) => t.status === "running");
   const runningId = running?.id;
   const wasRunning = useRef(false);
-  // When the running turn finishes, the input is writable again: put the caret back in it.
+  // When the running turn finishes, the input is writable again: put the caret back in it, but
+  // only if focus is nowhere else (body) or already in the bar. Never take it from the doc iframe
+  // or another input.
   useEffect(() => {
-    if (wasRunning.current && !runningId && shown) input.current?.focus();
+    if (wasRunning.current && !runningId && shown) {
+      const active = document.activeElement;
+      const idle = !active || active === document.body || !!container.current?.contains(active);
+      if (idle) input.current?.focus();
+    }
     wasRunning.current = !!runningId;
   }, [runningId, shown]);
 

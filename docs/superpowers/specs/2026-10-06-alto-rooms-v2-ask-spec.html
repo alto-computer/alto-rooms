@@ -225,7 +225,7 @@
   <li><strong>R9 저장 위치:</strong> <code>&lt;home&gt;/.rooms/asks/&lt;fileKey&gt;.jsonl</code>. 원본·연결 폴더에는 아무것도 쓰지 않는다.</li>
   <li><strong>R10 바 표시:</strong> 켜짐/꺼짐은 앱 메모리의 전역 boolean, 시작값 true, 저장하지 않는다. 입력 칸 포커스는 사용자가 켤 때(false→true)만. 진행 중인 묻기와 독립.</li>
   <li><strong>R11 읽기 전용:</strong> <code>info.readOnly</code>면 POST/DELETE는 기존 write guard가 403으로 막는다(Asks는 read-only를 모른다). 앱은 바를 렌더하지 않는다(⌘J 무시).</li>
-  <li><strong>R12 환경:</strong> 자식 프로세스는 roomsd의 환경 + 로그인 셸에서 얻은 <code>PATH</code>(roomsd 시작 시 <code>$SHELL -lc 'printf %s "$PATH"'</code> 1회, 2초 타임아웃, 실패 시 현재 PATH 유지). stdin은 <code>/dev/null</code>. 새 프로세스 그룹으로 띄운다.</li>
+  <li><strong>R12 환경:</strong> 자식 프로세스는 roomsd의 환경 + 로그인 셸에서 얻은 <code>PATH</code>. roomsd는 시작할 때 이 조회를 <strong>백그라운드로</strong> 1회 띄우고 기다리지 않는다(<code>Asks::resolve_login_path</code>): <code>$SHELL -l -c 'printf "__ROOMS_PATH__%s" "$PATH"'</code>(<code>$SHELL</code>이 없으면 <code>/bin/zsh</code>), stdin <code>/dev/null</code>, 2초 타임아웃. 출력에서 <strong>마지막</strong> sentinel <code>__ROOMS_PATH__</code> 뒤의 <strong>첫 줄</strong>만 trim해서 PATH로 쓴다. 그래서 <code>.zprofile</code>이 앞에 찍는 글자도, <code>.zlogout</code>이 뒤에 찍는 글자도 무시된다. sentinel이 없거나, 값이 비었거나, 셸이 0이 아닌 코드로 끝나거나, 타임아웃이면 결과를 버린다. 결과가 도착하기 전에(또는 버려지면) 시작된 ask는 roomsd 자신의 <code>PATH</code>를 그대로 쓴다. stdin은 <code>/dev/null</code>. 새 프로세스 그룹으로 띄운다.</li>
 </ol>
 
 <h3>Cross-field &amp; Temporal Invariants</h3>
