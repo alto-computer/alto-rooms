@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import Markdown, { type Components } from "react-markdown";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Check, Copy } from "lucide-react";
+import { toast } from "sonner";
 import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { useCopy } from "@/views/CopyChip";
 
 const PLACEHOLDER = "Ask about this doc…";
 
@@ -48,6 +50,25 @@ function Thinking({ t }: { t: AskTurn }) {
   );
 }
 
+/** Icon button that copies an answer: a check for COPIED_MS after success, a toast either way. */
+function CopyAnswer({ text }: { text: string }) {
+  const { copied, failed, copy } = useCopy();
+  useEffect(() => { if (copied) toast.success("Copied", { id: "ask-copy" }); }, [copied]);
+  useEffect(() => { if (failed.shown) toast.error("Couldn't copy", { id: "ask-copy" }); }, [failed.shown]);
+  const Icon = copied ? Check : Copy;
+  return (
+    <button
+      type="button"
+      aria-label="Copy answer"
+      data-copied={copied ? "true" : undefined}
+      className="text-ink-2 hover:text-ink"
+      onClick={() => void copy(text)}
+    >
+      <Icon size={14} />
+    </button>
+  );
+}
+
 function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop: () => void }) {
   const secs = seconds(t);
   return (
@@ -72,11 +93,9 @@ function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop:
               <button type="button" className="underline" onClick={onRetry}>Retry</button>
             </div>
           ) : null}
-          <div className="flex gap-2 text-[11.5px] text-ink-2">
+          <div className="flex items-center gap-2 text-[11.5px] text-ink-2">
             {secs !== null ? <span>{secs}s</span> : null}
-            {t.answer ? (
-              <button type="button" className="underline" onClick={() => void navigator.clipboard?.writeText(t.answer)}>Copy</button>
-            ) : null}
+            {t.answer ? <CopyAnswer text={t.answer} /> : null}
           </div>
         </>
       )}
@@ -218,7 +237,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
           onFocus={() => setSheet(true)}
-          className="max-h-32 flex-1 resize-none bg-transparent text-[13.5px] outline-none placeholder:text-[#9a9a9a]"
+          className="max-h-32 flex-1 resize-none overflow-y-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-[13.5px] outline-none placeholder:text-[#9a9a9a]"
         />
         <span className="rounded-full bg-[#f2f2f2] px-2 py-0.5 text-[11.5px] text-ink-2">{artifact.source.agent ?? "Default agent"}</span>
         <button

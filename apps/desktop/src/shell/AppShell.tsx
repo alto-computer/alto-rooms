@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAsksStore, useReadOnly, useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab, ViewerStore } from "@/data/viewerStore";
@@ -174,6 +175,7 @@ export function AppShell() {
         </div>
         <QuickFind open={findOpen} onClose={() => setFindOpen(false)} />
         <EnableCard />
+        <Toaster />
       </SidebarProvider>
     </TooltipProvider>
   );

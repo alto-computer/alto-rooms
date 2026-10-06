@@ -4,6 +4,7 @@ import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
+import { Toaster } from "@/components/ui/sonner";
 import { AskBar } from "./AskBar";
 
 const doc: Artifact = {
@@ -20,7 +21,7 @@ let store: ReturnType<typeof useAsksStore>;
 function Grab() { store = useAsksStore(); return null; }
 
 async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false) {
-  return renderWithStores(<><Grab /><AskBar artifact={doc} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly });
+  return renderWithStores(<><Grab /><AskBar artifact={doc} /><Toaster /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly });
 }
 
 describe("AskBar", () => {
@@ -69,6 +70,29 @@ describe("AskBar", () => {
   it("says so when a new conversation was started because the thread couldn't be found", async () => {
     await setup({ k1: [turn({ mode: "new", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
     expect(await screen.findByText("claude-code · new conversation — couldn't find the thread that made this doc")).toBeTruthy();
+  });
+
+  const done = turn({ status: "done", answer: "the answer", endedAt: "2026-10-06T10:00:05+09:00" });
+
+  it("copies the answer with an icon button, flips it to a check, and toasts", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await setup({ k1: [done] });
+    const btn = await screen.findByRole("button", { name: "Copy answer" });
+    expect(btn.getAttribute("data-copied")).toBeNull();
+    fireEvent.click(btn);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("the answer"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copy answer" }).getAttribute("data-copied")).toBe("true"));
+    expect(await screen.findByText("Copied")).toBeTruthy();
+  });
+
+  it("toasts when the clipboard refuses", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockRejectedValue(new Error("no")) }, configurable: true });
+    await setup({ k1: [done] });
+    fireEvent.click(await screen.findByRole("button", { name: "Copy answer" }));
+    expect(await screen.findByText("Couldn't copy")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy answer" }).getAttribute("data-copied")).toBeNull();
   });
 
   it("when a turn ends, refocuses the input only if focus was on the body", async () => {
