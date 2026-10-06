@@ -2,7 +2,7 @@
 name: rooms
 description: "Sorts HTML artifacts into Rooms (an app that shows HTML artifacts grouped into topic room folders). Triggers: \"sort my rooms\", \"sort my rooms again\", reading and following \"~/rooms/ONBOARD.md\", \"put this in a room\", \"add to Rooms\", \"put this in the inbox\", \"put this in today's Journal\", making a review/Dream HTML, sorting recent HTML into rooms, and linking a newly written .html/.htm artifact into the right room. Never moves originals; only creates symlinks."
 ---
-<!-- rooms-onboarding v4 -->
+<!-- rooms-onboarding v5 -->
 
 # rooms skill
 
@@ -50,11 +50,13 @@ ln -s "<absolute path of the original>" "<home>/<slug>/<original file name>"
 1. Find candidates. If the user wants a wider range, use `--days 30`.
 
    ```sh
-   python3 "<skill>/scripts/find_html.py" --home "<home>" --days 14
+   python3 "<skill>/scripts/find_html.py" --home "<home>" --days 14 --record-sources
    ```
 
+   This also records which conversation wrote each file (`<home>/.rooms/sources.json`), including files already in a room, so asking about a doc in Rooms continues that conversation.
+
    The output is one JSON object: `candidates[]` (most recently written first). Each has `path`, `title`, `agent`, `last_written`, `repo_key`, `rel_in_repo`, `linked`, `linked_at`, `in_linked_room`, `in_worktree`. `skipped` counts what was filtered out.
-   - A candidate with `linked: true` is already in a room. Skip it (also when re-sorting).
+   - A candidate with `linked: true` is already in a room. Skip it (also when re-sorting). It is still recorded in `sources.json`. Re-running is how existing docs get linked to their conversation; nothing is moved.
    - A candidate whose `in_linked_room` is not null is already inside a linked folder room (named there). Skip it.
    - Several candidates with the same `repo_key` + `rel_in_repo` (worktree copies) form one group. If any member is `linked: true` or has a non-null `in_linked_room`, skip the whole group. Otherwise use only the one with the latest `last_written`.
    - If there are no candidates and no conversation history, ask the user which folders hold their artifacts.
@@ -90,7 +92,7 @@ When you write a new `.html` / `.htm` artifact, link it into the best room. Do n
 1. Check whether a link already exists.
 
    ```sh
-   python3 "<skill>/scripts/find_html.py" --home "<home>" --days 1
+   python3 "<skill>/scripts/find_html.py" --home "<home>" --days 1 --record-sources
    ```
 
    If the entry for the file you just wrote has `linked: true` or a non-null `in_linked_room`, do not link it. If there is no entry (not in the logs yet), check directly. Any output means a link already exists.
@@ -135,5 +137,5 @@ After the first sort, ask the user: shall I add the line below to `~/.claude/CLA
 - Never move, edit, or delete original files.
 - Never write anything inside a linked (connected folder) room.
 - Never create rooms named `journal` or `inbox` (linking into `inbox`, and writing HTML into `journal/<date>/` as in "Writing to the Journal", are fine).
-- Never touch `<home>/.rooms`. Reading the skill source is the only exception (`find_html.py` only reads `state.json`).
+- Never touch `<home>/.rooms` by hand. Exceptions: reading the skill source, and `find_html.py --record-sources`, which writes only `<home>/.rooms/sources.json`.
 - Never read, print, or pass the token (`<home>/.rooms/token`) in a command.
