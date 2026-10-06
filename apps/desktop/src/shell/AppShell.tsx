@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useViewer, useViewerStore } from "@/data/hooks";
+import { useAsksStore, useReadOnly, useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab, ViewerStore } from "@/data/viewerStore";
-import { listenAll, MENU_BACK, MENU_CLOSE_TAB, MENU_FIND, MENU_FORWARD, MENU_NEW_TAB, MENU_TOGGLE_SIDEBAR } from "@/lib/appEvents";
+import { listenAll, MENU_BACK, MENU_CLOSE_TAB, MENU_FIND, MENU_FORWARD, MENU_NEW_TAB, MENU_TOGGLE_ASK, MENU_TOGGLE_SIDEBAR } from "@/lib/appEvents";
 import { isTauri } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { DocView } from "@/views/DocView";
@@ -19,7 +19,7 @@ import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
 
 /** Runs a shell action (callers check the focus rule first). */
-function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => void) {
+function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => void, toggleAsk: () => void) {
   const s = viewer.getState();
   switch (action) {
     case "toggle-sidebar":
@@ -34,17 +34,20 @@ function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => 
     case "find":
       openFind();
       break;
+    case "toggle-ask":
+      toggleAsk();
+      break;
   }
 }
 
 /**
- * ⌘B sidebar, ⌘W close tab, ⌘T new tab, ⌘K quick find. Bound on window.
- * In Tauri all four belong to the native menu (which emits `menu://…`), so the
+ * ⌘B sidebar, ⌘W close tab, ⌘T new tab, ⌘K quick find, ⌘J ask bar. Bound on window.
+ * In Tauri all five belong to the native menu (which emits `menu://…`), so the
  * page leaves them alone and they never fire twice. Either way the same focus
- * rule applies: ⌘K works from a text field, the others don't (except ⌘W from
+ * rule applies: ⌘K and ⌘J work from a text field, the others don't (except ⌘W from
  * the note body).
  */
-function useShortcuts(viewer: ViewerStore, openFind: () => void) {
+function useShortcuts(viewer: ViewerStore, openFind: () => void, toggleAsk: () => void) {
   useEffect(() => {
     const menuOwned = isTauri();
     const onKey = (e: KeyboardEvent) => {
@@ -53,24 +56,25 @@ function useShortcuts(viewer: ViewerStore, openFind: () => void) {
       if (menuOwned) return;
       if (!allowedWithFocus(action, e.target instanceof Element ? e.target : null)) return;
       e.preventDefault();
-      runAction(action, viewer, openFind);
+      runAction(action, viewer, openFind, toggleAsk);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [viewer, openFind]);
+  }, [viewer, openFind, toggleAsk]);
 
   useEffect(() => {
     if (!isTauri()) return;
     const fromMenu = (action: ShortcutAction) => () => {
-      if (allowedWithFocus(action, document.activeElement)) runAction(action, viewer, openFind);
+      if (allowedWithFocus(action, document.activeElement)) runAction(action, viewer, openFind, toggleAsk);
     };
     return listenAll({
       [MENU_NEW_TAB]: fromMenu("new-tab"),
       [MENU_CLOSE_TAB]: fromMenu("close-tab"),
       [MENU_FIND]: fromMenu("find"),
       [MENU_TOGGLE_SIDEBAR]: fromMenu("toggle-sidebar"),
+      [MENU_TOGGLE_ASK]: fromMenu("toggle-ask"),
     });
-  }, [viewer, openFind]);
+  }, [viewer, openFind, toggleAsk]);
 }
 
 /**
@@ -136,7 +140,13 @@ export function AppShell() {
   const viewer = useViewerStore();
   const [findOpen, setFindOpen] = useState(false);
   const openFind = useCallback(() => setFindOpen(true), []);
-  useShortcuts(viewer, openFind);
+  const asks = useAsksStore();
+  const readOnly = useReadOnly();
+  const activeKind = tabs.find((t) => t.id === activeId)?.kind;
+  const toggleAsk = useCallback(() => {
+    if (activeKind === "doc" && !readOnly) asks.toggle();
+  }, [activeKind, readOnly, asks]);
+  useShortcuts(viewer, openFind, toggleAsk);
   useHistoryNav(viewer);
 
   const active = tabs.find((t) => t.id === activeId);

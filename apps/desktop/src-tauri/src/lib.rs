@@ -14,6 +14,7 @@ const MENU_CLOSE_WINDOW: &str = "close-window";
 const MENU_QUIT: &str = "quit";
 const MENU_FIND: &str = "find";
 const MENU_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
+const MENU_TOGGLE_ASK: &str = "toggle-ask";
 const MENU_BACK: &str = "back";
 const MENU_FORWARD: &str = "forward";
 
@@ -52,11 +53,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()?;
     let find = MenuItemBuilder::with_id(MENU_FIND, "Find").accelerator("CmdOrCtrl+K").build(app)?;
     let sidebar = MenuItemBuilder::with_id(MENU_TOGGLE_SIDEBAR, "Toggle Sidebar").accelerator("CmdOrCtrl+B").build(app)?;
+    let ask = MenuItemBuilder::with_id(MENU_TOGGLE_ASK, "묻기 바").accelerator("CmdOrCtrl+J").build(app)?;
     let back = MenuItemBuilder::with_id(MENU_BACK, "Back").accelerator("CmdOrCtrl+[").build(app)?;
     let forward = MenuItemBuilder::with_id(MENU_FORWARD, "Forward").accelerator("CmdOrCtrl+]").build(app)?;
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&find)
         .item(&sidebar)
+        .item(&ask)
         .separator()
         .item(&back)
         .item(&forward)
@@ -113,6 +116,7 @@ pub fn run() {
             MENU_CLOSE_TAB => emit(app, "menu://close-tab"),
             MENU_FIND => emit(app, "menu://find"),
             MENU_TOGGLE_SIDEBAR => emit(app, "menu://toggle-sidebar"),
+            MENU_TOGGLE_ASK => emit(app, "menu://toggle-ask"),
             MENU_BACK => emit(app, "menu://back"),
             MENU_FORWARD => emit(app, "menu://forward"),
             MENU_CLOSE_WINDOW => flush::request(app, Intent::CloseWindow),
