@@ -64,6 +64,12 @@ If a new version asks for more permissions, Rooms asks the user again.
 
 ## The SDK
 
+```sh
+bun add https://github.com/alto-computer/alto-rooms/releases/download/plugin-sdk-v0.1.0/alto-rooms-plugin-sdk-0.1.0.tgz
+```
+
+Build with any bundler; set its base to `./` so every URL in the build is relative. [Goals](https://github.com/alto-computer/rooms-plugin-goals) and [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw) are complete examples.
+
 ```ts
 import { connect } from "@alto-rooms/plugin-sdk";
 
@@ -112,3 +118,14 @@ The context is `{ slot: "artifact.sidePanel", artifact }` or `{ slot: "tab" }`. 
 ## Your data is just files
 
 Everything you store is a plain file under `~/rooms/.rooms/plugins/<id>/data/`. Document its format, and the user's agent can read and change it too (for example, "link this report to my Q4 goal").
+
+## Plugins that ship with the app
+
+The desktop app ships a few plugins, listed in `apps/desktop/bundled-plugins.json` (repo, version, sha256 of the release zip). `bun run plugins` puts their releases in `src-tauri/resources/plugins/`, and the release build includes them.
+
+When the app starts, roomsd installs them into `~/rooms/.rooms/plugins/<id>/` and marks each folder with a `.bundled` file:
+
+- The first time, the plugin is turned on with its permissions; no card asks.
+- A new version replaces the code and keeps `data/`. Its permissions come with the app update.
+- If the user turned it off, it stays off. A deleted folder comes back on the next start, on or off as it was; turn it off to stop using it.
+- A folder without the `.bundled` mark is the user's own and is never replaced.

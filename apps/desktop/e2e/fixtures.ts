@@ -53,7 +53,11 @@ export function buildFixturePlugin(id: string): string {
   if (cached) return cached;
   const src = path.join(PLUGIN_FIXTURES, id);
   const out = path.join(os.tmpdir(), `rooms-e2e-plugin-${id}-${process.pid}`);
-  execFileSync("bun", ["build", path.join(src, "main.ts"), "--outfile", path.join(out, "main.js"), "--target", "browser", "--format", "esm"], { stdio: "pipe" });
+  execFileSync(
+    "bun",
+    ["build", path.join(src, "main.ts"), "--outfile", path.join(out, "main.js"), "--target", "browser", "--format", "esm"],
+    { stdio: "pipe" },
+  );
   for (const f of ["manifest.json", "index.html"]) execFileSync("cp", [path.join(src, f), path.join(out, f)]);
   builtPlugins.set(id, out);
   return out;
@@ -105,7 +109,10 @@ async function stop(child: ChildProcess): Promise<void> {
   }
 }
 
-export const test = base.extend<{ daemon: Daemon }, { roomsdBinary: string }>({
+export const test = base.extend<{ daemon: Daemon; bundledPlugins: string | undefined }, { roomsdBinary: string }>({
+  /** A folder of plugins to install as the desktop app's bundled ones (ROOMS_BUNDLED_PLUGINS). */
+  bundledPlugins: [undefined, { option: true }],
+
   roomsdBinary: [
     async ({}, use) => {
       execFileSync("cargo", ["build", "-q", "-p", "roomsd"], { cwd: REPO_ROOT, env: cargoEnv(), stdio: "pipe" });
@@ -115,7 +122,7 @@ export const test = base.extend<{ daemon: Daemon }, { roomsdBinary: string }>({
     { scope: "worker", timeout: 600_000 },
   ],
 
-  daemon: async ({ page, roomsdBinary }, use, testInfo) => {
+  daemon: async ({ page, roomsdBinary, bundledPlugins }, use, testInfo) => {
     for (const port of [API_PORT, FILES_PORT]) {
       if (!(await portFree(port))) throw new Error(`port ${port} is busy; stop whatever holds it before running e2e`);
     }
@@ -128,6 +135,7 @@ export const test = base.extend<{ daemon: Daemon }, { roomsdBinary: string }>({
         ROOMS_API_PORT: String(API_PORT),
         ROOMS_FILES_PORT: String(FILES_PORT),
         ROOMS_DEV_ORIGIN: APP_ORIGIN,
+        ...(bundledPlugins ? { ROOMS_BUNDLED_PLUGINS: bundledPlugins } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

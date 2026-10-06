@@ -1,6 +1,6 @@
 [package]
 name = "alto-rooms-desktop"
-version = "0.3.1"
+version = "0.4.0"
 description = "Alto Rooms desktop app"
 edition = "2021"
 
