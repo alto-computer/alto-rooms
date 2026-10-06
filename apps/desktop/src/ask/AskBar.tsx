@@ -190,7 +190,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
         <div className="pointer-events-auto max-h-[50vh] w-full max-w-[560px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
           {last ? (
             <div className="mb-2 text-[11.5px] text-ink-2">
-              {last.agent} · {last.mode === "resume" ? "continuing the thread that made it" : "new conversation"}
+              {last.agent} · {last.mode === "resume" ? "continuing the thread that made it" : "new conversation — couldn't find the thread that made this doc"}
             </div>
           ) : null}
           {thread?.error ? (

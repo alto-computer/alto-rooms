@@ -37,7 +37,7 @@ test("ask a doc and get the fake agent's answer", async ({ page, daemon }) => {
   await input.fill("왜 이렇게 했어?");
   await input.press("Enter");
   await expect(page.getByText("Question: 왜 이렇게 했어?")).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText("claude-code · new conversation")).toBeVisible();
+  await expect(page.getByText("claude-code · new conversation — couldn't find the thread that made this doc")).toBeVisible();
 
   // Survives a reload: the thread comes back from roomsd.
   await page.reload();

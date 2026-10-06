@@ -66,6 +66,11 @@ describe("AskBar", () => {
     expect(screen.getByText("claude-code · continuing the thread that made it")).toBeTruthy();
   });
 
+  it("says so when a new conversation was started because the thread couldn't be found", async () => {
+    await setup({ k1: [turn({ mode: "new", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+    expect(await screen.findByText("claude-code · new conversation — couldn't find the thread that made this doc")).toBeTruthy();
+  });
+
   it("when a turn ends, refocuses the input only if focus was on the body", async () => {
     const { emit } = await setup({ k1: [turn({})] });
     const input = await screen.findByPlaceholderText("Ask about this doc…");
