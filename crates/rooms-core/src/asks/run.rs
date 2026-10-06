@@ -51,6 +51,19 @@ fn signal_group(pid: i32, sig: i32) {
     unsafe { libc::killpg(pid, sig); }
 }
 
+/// The leader has exited; end whatever it left in its group (spec S6: no orphans). An empty
+/// group costs nothing; otherwise SIGTERM, ≤ 300 ms to go, then SIGKILL.
+async fn end_leftovers(pid: Option<i32>) {
+    let Some(pid) = pid else { return };
+    // SAFETY: signal 0 only checks whether the group still has members.
+    let alive = || unsafe { libc::killpg(pid, 0) } == 0;
+    if !alive() { return; }
+    signal_group(pid, libc::SIGTERM);
+    let until = tokio::time::Instant::now() + Duration::from_millis(300);
+    while alive() && tokio::time::Instant::now() < until { tokio::time::sleep(Duration::from_millis(20)).await; }
+    if alive() { signal_group(pid, libc::SIGKILL); }
+}
+
 /// SIGTERM the child's process group, SIGKILL after the grace period, then reap the child.
 async fn terminate(child: &mut tokio::process::Child, pid: Option<i32>, reason: Reason, kill_grace: Duration) {
     if let Some(pid) = pid {
@@ -136,10 +149,14 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
         // its exit against the deadline and kill requests.
         let reason = match next {
             Next::Stop(r) => r,
-            Next::Exit(code) => return Outcome::Exited { code, stdout: stdout_text, stderr_tail: stderr_tail(&mut err_task).await },
+            Next::Exit(code) => {
+                end_leftovers(pid).await;
+                return Outcome::Exited { code, stdout: stdout_text, stderr_tail: stderr_tail(&mut err_task).await };
+            }
             Next::Eof => tokio::select! {
                 status = child.wait() => {
                     let code = code_of(status);
+                    end_leftovers(pid).await;
                     return Outcome::Exited { code, stdout: stdout_text, stderr_tail: stderr_tail(&mut err_task).await };
                 }
                 _ = &mut deadline => Reason::Timeout,
@@ -245,13 +262,36 @@ mod tests {
         assert!(matches!(out, Outcome::Exited { code: 0, .. }), "{out:?}");
     }
 
-    #[tokio::test]
-    async fn exit_does_not_wait_for_a_descendant_holding_stdout() {
-        let r = spawn_agent(spec("printf done; sleep 30 & exit 0", Limits::default())).unwrap();
-        let out = within_5s(r.done).await.unwrap();
-        match out {
-            Outcome::Exited { code: 0, stdout, .. } => assert_eq!(stdout, "done"),
+    /// Polls `kill(pid, 0)` for up to 1 s: true once the process is gone.
+    async fn gone_within_1s(pid: i32) -> bool {
+        for _ in 0..50 {
+            // SAFETY: signal 0 only checks that the pid exists.
+            if unsafe { libc::kill(pid, 0) } != 0 { return true; }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    async fn exits_and_leaves_no_descendant(script: &str, want_stdout: &str) {
+        let d = tempfile::tempdir().unwrap();
+        let pidfile = d.path().join("bg.pid");
+        let script = script.replace("PIDFILE", &pidfile.display().to_string());
+        let r = spawn_agent(spec(&script, Limits::default())).unwrap();
+        match within_5s(r.done).await.unwrap() {
+            Outcome::Exited { code: 0, stdout, .. } => assert_eq!(stdout, want_stdout),
             other => panic!("{other:?}"),
         }
+        let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        assert!(gone_within_1s(pid).await, "descendant {pid} outlived the turn");
+    }
+
+    #[tokio::test]
+    async fn exit_does_not_wait_for_a_descendant_holding_stdout() {
+        exits_and_leaves_no_descendant("printf done; sleep 30 & echo $! > PIDFILE; exit 0", "done").await;
+    }
+
+    #[tokio::test]
+    async fn exit_does_not_leave_a_descendant_holding_stderr() {
+        exits_and_leaves_no_descendant("printf done; sleep 30 >/dev/null & echo $! > PIDFILE; exit 0", "done").await;
     }
 }

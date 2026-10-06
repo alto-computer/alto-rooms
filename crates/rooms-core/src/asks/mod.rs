@@ -72,10 +72,11 @@ pub async fn login_path() -> Option<String> {
     parse_login_path(&out.stdout)
 }
 
-/// The text after the LAST sentinel: whatever a `.zprofile` prints before it is ignored.
+/// The first line after the LAST sentinel: whatever `.zprofile` prints before it, or `.zlogout`
+/// after it, is ignored.
 fn parse_login_path(stdout: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(stdout);
-    let path = text.rsplit_once(PATH_SENTINEL)?.1.trim();
+    let path = text.rsplit_once(PATH_SENTINEL)?.1.lines().next().unwrap_or("").trim();
     (!path.is_empty()).then(|| path.to_string())
 }
 
@@ -237,5 +238,7 @@ mod tests {
         assert_eq!(parse_login_path(noisy).as_deref(), Some("/opt/homebrew/bin:/usr/bin"));
         assert_eq!(parse_login_path(b"no sentinel here"), None);
         assert_eq!(parse_login_path(b"__ROOMS_PATH__  "), None);
+        // a login zsh may print `.zlogout` output after PATH
+        assert_eq!(parse_login_path(b"__ROOMS_PATH__/usr/bin:/bin\nbye\n").as_deref(), Some("/usr/bin:/bin"));
     }
 }
