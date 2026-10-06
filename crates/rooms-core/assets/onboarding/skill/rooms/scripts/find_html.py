@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# rooms-onboarding v6
+# rooms-onboarding v7
 """List existing .html files that an AI agent wrote recently.
 
 Reads Claude Code, Codex and Aside session logs and <home>/.rooms/state.json
@@ -612,30 +612,42 @@ def under(path, prefix):
     return path == prefix or path.startswith(prefix.rstrip("/") + "/")
 
 
-def is_noise(raw, real, home_dir, rooms_home):
-    for p in (raw, real):
-        segs = p.split("/")
-        if "scratchpad" in segs or "node_modules" in segs:
-            return True
-        if ".superpowers/brainstorm" in p:
-            return True
-        if under(p, os.path.join(home_dir, ".claude")) or under(p, os.path.join(home_dir, ".codex")):
-            return True
-        if under(p, rooms_home):
-            return True
-        # Aside's own state (session scratch, tmp); only its artifacts are documents
-        if under(p, os.path.join(home_dir, ".aside")) and "artifacts" not in segs:
-            return True
-        codex_docs = os.path.join(home_dir, "Documents", "Codex")
-        if under(p, codex_docs):
-            rest = p[len(codex_docs):].strip("/").split("/")
-            if len(rest) >= 2 and rest[1] == "work":
-                return True
-        if not under(p, home_dir):
-            for t in ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders"):
-                if under(p, t):
-                    return True
-    return False
+def not_a_document(raw, real, home_dir, rooms_home):
+    """True for agent scratch, tool state and Rooms' own `.rooms` dir: never recorded."""
+    return any(_not_a_document_path(p, home_dir, rooms_home) for p in (raw, real))
+
+
+def _not_a_document_path(p, home_dir, rooms_home):
+    segs = p.split("/")
+    if "scratchpad" in segs or "node_modules" in segs or ".superpowers/brainstorm" in p:
+        return True
+    if under(p, os.path.join(home_dir, ".claude")) or under(p, os.path.join(home_dir, ".codex")):
+        return True
+    if under(p, os.path.join(rooms_home, ".rooms")):
+        return True
+    # Aside's own state (session scratch, tmp); only its artifacts are documents
+    if under(p, os.path.join(home_dir, ".aside")) and "artifacts" not in segs:
+        return True
+    return _is_codex_work(p, home_dir) or _is_system_tmp(p, home_dir)
+
+
+def _is_codex_work(p, home_dir):
+    codex_docs = os.path.join(home_dir, "Documents", "Codex")
+    if not under(p, codex_docs):
+        return False
+    rest = p[len(codex_docs):].strip("/").split("/")
+    return len(rest) >= 2 and rest[1] == "work"
+
+
+def _is_system_tmp(p, home_dir):
+    if under(p, home_dir):
+        return False
+    return any(under(p, t) for t in ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders"))
+
+
+def in_rooms_home(real, rooms_home):
+    """True for files inside the Rooms home: recorded for provenance, never link candidates."""
+    return under(real, rooms_home)
 
 
 def repo_info(real):
@@ -771,8 +783,8 @@ def write_sources(target, sources):
         raise
 
 
-def record_sources(rooms_home, cands, writes_by_path):
-    """Merge each candidate's source into <rooms_home>/.rooms/sources.json.
+def record_sources(rooms_home, writes_by_path):
+    """Merge the source of every written file (link candidates or not) into <rooms_home>/.rooms/sources.json.
 
     Never raises: returns the output fields {"recorded": n} on success, or adds
     "record_error" when nothing could be written. An existing entry with a newer
@@ -785,12 +797,12 @@ def record_sources(rooms_home, cands, writes_by_path):
     target = os.path.join(d, "sources.json")
     merged = read_sources(target)
     n = 0
-    for c in cands:
-        entry = source_entry(c["path"], writes_by_path[c["path"]])
-        stored = merged.get(c["path"], {}).get("writtenAt")
+    for path, writes in sorted(writes_by_path.items()):
+        entry = source_entry(path, writes)
+        stored = merged.get(path, {}).get("writtenAt")
         if entry is None or (isinstance(stored, str) and stored > entry["writtenAt"]):
             continue
-        merged[c["path"]] = entry
+        merged[path] = entry
         n += 1
     try:
         write_sources(target, merged)
@@ -832,7 +844,7 @@ def main(argv=None):
             real = os.path.realpath(raw)
         else:
             real = None
-        if not a.include_noise and is_noise(raw, real or os.path.realpath(raw), user_home, rooms_home):
+        if not a.include_noise and not_a_document(raw, real or os.path.realpath(raw), user_home, rooms_home):
             noise += 1
             continue
         if real is None:
@@ -843,11 +855,14 @@ def main(argv=None):
         m = merged.setdefault(real, [])
         m.extend(h["writes"])
 
+    for writes in merged.values():
+        writes.sort(key=lambda w: w[0])
     links = find_links(rooms_home, set(merged))
     linked_roots = linked_rooms(rooms_home)
     cands = []
     for real, writes in sorted(merged.items()):
-        writes.sort(key=lambda w: w[0])
+        if in_rooms_home(real, rooms_home):
+            continue
         first, last = writes[0], writes[-1]
         key, root, worktree = repo_info(real)
         sessions = []
@@ -875,7 +890,7 @@ def main(argv=None):
         "skipped": {"noise": noise, "missing": missing, "read_errors": col.read_errors},
     }
     if a.record_sources:
-        out.update(record_sources(rooms_home, cands, merged))
+        out.update(record_sources(rooms_home, merged))
     json.dump(out, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0

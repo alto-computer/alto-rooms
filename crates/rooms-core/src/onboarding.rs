@@ -109,12 +109,12 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         ensure(d.path()).unwrap();
         let onboard = std::fs::read_to_string(d.path().join(ONBOARD)).unwrap();
-        assert!(onboard.starts_with("<!-- rooms-onboarding v6 -->\n"));
+        assert!(onboard.starts_with("<!-- rooms-onboarding v7 -->\n"));
         let skill = std::fs::read_to_string(d.path().join(SKILL)).unwrap();
         assert!(skill.starts_with("---\nname: rooms\n"));
-        assert!(skill.contains("\n<!-- rooms-onboarding v6 -->\n"));
+        assert!(skill.contains("\n<!-- rooms-onboarding v7 -->\n"));
         let script = std::fs::read_to_string(d.path().join(SCRIPT)).unwrap();
-        assert!(script.starts_with("#!/usr/bin/env python3\n# rooms-onboarding v6\n"));
+        assert!(script.starts_with("#!/usr/bin/env python3\n# rooms-onboarding v7\n"));
         assert_eq!(mode(&d.path().join(ONBOARD)), 0o644);
         assert_eq!(mode(&d.path().join(SKILL)), 0o644);
         assert_eq!(mode(&d.path().join(SCRIPT)), 0o755);
@@ -143,7 +143,7 @@ mod tests {
     }
 
     /// Writes all three files at marker `v` with stale bodies, runs `ensure`, and checks each is
-    /// now the embedded v6 file.
+    /// now the embedded v7 file.
     fn assert_upgrades_from(v: u32) {
         let d = tempfile::tempdir().unwrap();
         ensure(d.path()).unwrap();
@@ -154,24 +154,27 @@ mod tests {
         for (rel, body) in [(ONBOARD, ONBOARD_MD), (SKILL, SKILL_MD), (SCRIPT, FIND_HTML_PY)] {
             let now = std::fs::read_to_string(d.path().join(rel)).unwrap();
             assert_eq!(now, body, "{rel}");
-            assert_eq!(marker_version(&now), Some(6), "{rel}");
+            assert_eq!(marker_version(&now), Some(7), "{rel}");
         }
     }
 
     #[test]
-    fn v1_files_are_upgraded_to_v6() { assert_upgrades_from(1); }
+    fn v1_files_are_upgraded_to_v7() { assert_upgrades_from(1); }
 
     #[test]
-    fn v2_files_are_upgraded_to_v6() { assert_upgrades_from(2); }
+    fn v2_files_are_upgraded_to_v7() { assert_upgrades_from(2); }
 
     #[test]
-    fn v3_files_are_upgraded_to_v6() { assert_upgrades_from(3); }
+    fn v3_files_are_upgraded_to_v7() { assert_upgrades_from(3); }
 
     #[test]
-    fn v4_files_are_upgraded_to_v6() { assert_upgrades_from(4); }
+    fn v4_files_are_upgraded_to_v7() { assert_upgrades_from(4); }
 
     #[test]
-    fn v5_files_are_upgraded_to_v6() { assert_upgrades_from(5); }
+    fn v5_files_are_upgraded_to_v7() { assert_upgrades_from(5); }
+
+    #[test]
+    fn v6_files_are_upgraded_to_v7() { assert_upgrades_from(6); }
 
     #[test]
     fn embedded_skill_teaches_journal_writes() {
@@ -184,7 +187,7 @@ mod tests {
     fn same_or_newer_marker_is_left_alone() {
         let d = tempfile::tempdir().unwrap();
         ensure(d.path()).unwrap();
-        let same = "<!-- rooms-onboarding v6 -->\nlocally tweaked\n";
+        let same = "<!-- rooms-onboarding v7 -->\nlocally tweaked\n";
         std::fs::write(d.path().join(ONBOARD), same).unwrap();
         let newer = "#!/usr/bin/env python3\n# rooms-onboarding v9\nnewer\n";
         std::fs::write(d.path().join(SCRIPT), newer).unwrap();
@@ -228,9 +231,9 @@ mod tests {
         assert_eq!(marker_version("hello\n<!-- rooms-onboarding v2 -->\n"), None);
         assert_eq!(marker_version("<!-- rooms-onboarding vx -->"), None);
         assert_eq!(marker_version(""), None);
-        assert_eq!(marker_version(ONBOARD_MD), Some(6));
-        assert_eq!(marker_version(SKILL_MD), Some(6));
-        assert_eq!(marker_version(FIND_HTML_PY), Some(6));
+        assert_eq!(marker_version(ONBOARD_MD), Some(7));
+        assert_eq!(marker_version(SKILL_MD), Some(7));
+        assert_eq!(marker_version(FIND_HTML_PY), Some(7));
     }
 
     #[test]

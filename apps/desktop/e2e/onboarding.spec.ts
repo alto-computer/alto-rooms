@@ -10,7 +10,7 @@ import { APP_ORIGIN, artifactHtml, expect, test, today } from "./fixtures";
 
 const SCREENS = path.join(import.meta.dirname, "__screens__");
 const HEADING = "Welcome to Rooms";
-const MARKER = "<!-- rooms-onboarding v6 -->";
+const MARKER = "<!-- rooms-onboarding v7 -->";
 
 const waitingList = (page: Page) => page.getByRole("region", { name: "Waiting for a room" });
 

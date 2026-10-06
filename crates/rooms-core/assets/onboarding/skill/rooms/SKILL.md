@@ -2,7 +2,7 @@
 name: rooms
 description: "Sorts HTML artifacts into Rooms (an app that shows HTML artifacts grouped into topic room folders). Triggers: \"sort my rooms\", \"sort my rooms again\", reading and following \"~/rooms/ONBOARD.md\", \"put this in a room\", \"add to Rooms\", \"put this in the inbox\", \"put this in today's Journal\", making a review/Dream HTML, sorting recent HTML into rooms, and linking a newly written .html/.htm artifact into the right room. Never moves originals; only creates symlinks."
 ---
-<!-- rooms-onboarding v6 -->
+<!-- rooms-onboarding v7 -->
 
 # rooms skill
 

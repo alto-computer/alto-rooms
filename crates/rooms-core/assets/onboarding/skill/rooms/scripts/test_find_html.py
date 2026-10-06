@@ -190,14 +190,14 @@ class FindHtmlTest(unittest.TestCase):
         n2 = self.e.html("proj/node_modules/pkg/n.html")
         n3 = self.e.html("proj/scratchpad/n.html")
         n4 = self.e.html(".superpowers/brainstorm/n.html")
-        n5 = self.e.html("rooms/inbox/n.html")
+        n5 = self.e.html("rooms/.rooms/n.html")
         ok = self.e.html("proj/ok.html")
         self.e.claude_log([cc("Write", p) for p in (n1, n2, n3, n4, n5, ok)])
         out = self.e.run()
         self.assertEqual(self.paths(out), [ok])
         self.assertEqual(out["skipped"]["noise"], 5)
         out = self.e.run("--include-noise")
-        self.assertEqual(len(out["candidates"]), 6)
+        self.assertEqual(len(out["candidates"]), 5)
 
     def test_worktree_copies_share_repo_key(self):
         a = self.e.html("orca/workspaces/myrepo/feat-a/docs/x.html")
@@ -483,7 +483,7 @@ class FindHtmlTest(unittest.TestCase):
         t = datetime.now(timezone.utc)
         a = self.e.html("proj/rn.html")
         self.dot_rooms()
-        r = find_html.record_sources(self.e.home, [{"path": a}], {a: [(t, "codex", "", None, True)]})
+        r = find_html.record_sources(self.e.home, {a: [(t, "codex", "", None, True)]})
         self.assertEqual(r, {"recorded": 0})
         self.assertEqual(self.sources()["sources"], {})
 
@@ -732,6 +732,29 @@ class FindHtmlTest(unittest.TestCase):
         s = self.sources()["sources"]
         self.assertEqual((s[a]["agent"], s[a]["session"]), ("aside", "pgt5w6Z3QGYfSZXr"))
         self.assertEqual((s[c]["agent"], s[c]["session"]), ("claude-code", "cc-1"))
+
+    def test_files_written_inside_rooms_are_recorded_but_not_candidates(self):
+        self.dot_rooms()
+        copied = self.e.html("rooms/browser/x.html")
+        journal = self.e.html("rooms/journal/2026-10-07/y.html")
+        self.e.claude_log([
+            cc_bash("cp %s/scratchpad/x.html %s" % (self.e.root, copied), sid="cc-cp"),
+            cc("Write", journal, sid="cc-journal")])
+        out = self.e.run("--record-sources")
+        self.assertEqual(out["candidates"], [])
+        self.assertEqual(out["recorded"], 2)
+        s = self.sources()["sources"]
+        self.assertEqual(s[copied]["session"], "cc-cp")
+        self.assertEqual(s[journal]["session"], "cc-journal")
+
+    def test_dot_rooms_and_scratch_never_recorded(self):
+        self.dot_rooms()
+        hidden = self.e.html("rooms/.rooms/h.html")
+        scratch = self.e.html("proj/scratchpad/s.html")
+        self.e.claude_log([cc("Write", hidden), cc("Write", scratch)])
+        out = self.e.run("--record-sources")
+        self.assertEqual(out["recorded"], 0)
+        self.assertEqual(self.sources()["sources"], {})
 
 
 if __name__ == "__main__":
