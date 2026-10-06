@@ -350,8 +350,18 @@ export class RoomsStore {
     }, RESYNC_FALLBACK_MS);
   }
 
+  private signalListeners = new Set<(type: RoomsEvent["type"]) => void>();
+
+  /** Hears every event type as it arrives (before buffering): for state kept outside this store, e.g. plugins. */
+  onSignal = (fn: (type: RoomsEvent["type"]) => void): (() => void) => {
+    this.signalListeners.add(fn);
+    return () => void this.signalListeners.delete(fn);
+  };
+
   private onEvent = (e: RoomsEvent) => {
     if (!this.started) return;
+    for (const l of [...this.signalListeners]) l(e.type);
+    if (e.type === "plugins.changed") return;
     if (e.type === "resync" && e.roomId === null) {
       this.beginSync();
       return;

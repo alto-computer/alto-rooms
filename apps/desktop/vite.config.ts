@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
+import pkg from "./package.json" with { type: "json" };
 
 // Tauri expects a fixed dev port (tauri.conf.json build.devUrl = http://localhost:1420).
 export default defineConfig({
@@ -14,5 +15,6 @@ export default defineConfig({
   build: { target: "safari16", outDir: "dist" },
   // The quit-flush verification probe (lib/flushProbe.ts) is compiled in only
   // with ALTO_FLUSH_PROBE=1; otherwise the constant is false and it tree-shakes out.
-  define: { __FLUSH_PROBE__: JSON.stringify(process.env.ALTO_FLUSH_PROBE === "1") },
+  // __APP_VERSION__: plugins declare a minAppVersion, checked against this.
+  define: { __FLUSH_PROBE__: JSON.stringify(process.env.ALTO_FLUSH_PROBE === "1"), __APP_VERSION__: JSON.stringify(pkg.version) },
 });

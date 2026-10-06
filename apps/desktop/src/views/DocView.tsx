@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { useArtifacts, useClient, useRooms, useScopeError } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { PluginSlot } from "@/plugins/PluginSlot";
 import { DocSkeleton } from "./DocSkeleton";
 
 function Centered({ children }: { children: ReactNode }) {
@@ -31,14 +32,17 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
 
   return (
     <div className="relative flex min-h-0 flex-1 bg-white">
-      <iframe
-        title={artifact.title}
-        src={client.fileUrl(info, artifact)}
-        sandbox="allow-scripts allow-popups"
-        onLoad={() => setLoaded(true)}
-        className={cn("absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out", loaded ? "opacity-100" : "opacity-0")}
-      />
-      {loaded ? null : <DocSkeleton />}
+      <div className="relative min-w-0 flex-1">
+        <iframe
+          title={artifact.title}
+          src={client.fileUrl(info, artifact)}
+          sandbox="allow-scripts allow-popups"
+          onLoad={() => setLoaded(true)}
+          className={cn("absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out", loaded ? "opacity-100" : "opacity-0")}
+        />
+        {loaded ? null : <DocSkeleton />}
+      </div>
+      <PluginSlot slot="artifact.sidePanel" context={{ artifact }} />
     </div>
   );
 }

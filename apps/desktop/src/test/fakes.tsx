@@ -1,4 +1,4 @@
-import type { Artifact, Info, JournalDay, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type { Artifact, Info, JournalDay, PluginInfo, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
@@ -45,13 +45,23 @@ export function fakeClient(
     /** On-disk note bodies (or the error getNote throws), keyed `${date}/${file name with .md}`; absent = 404. */
     notes?: Record<string, string | Error>;
     readOnly?: boolean;
+    /** Plugins roomsd lists, and their data files keyed `${pluginId}/${path}`. */
+    plugins?: PluginInfo[];
+    pluginData?: Record<string, string>;
     /** `Info.home` (default `/h`). */
     home?: string;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
   let seq = 1;
-  const state = { rooms: opts.rooms ?? [], artifacts: opts.artifacts ?? {}, days: opts.days ?? {}, notes: opts.notes ?? {} };
+  const state = {
+    rooms: opts.rooms ?? [],
+    artifacts: opts.artifacts ?? {},
+    days: opts.days ?? {},
+    notes: opts.notes ?? {},
+    plugins: opts.plugins ?? [],
+    pluginData: opts.pluginData ?? {},
+  };
   const info: Info = {
     version: "0",
     readOnly: opts.readOnly ?? false,
@@ -61,6 +71,29 @@ export function fakeClient(
   };
   const client = {
     info: async () => info,
+    listPlugins: vi.fn(async () => state.plugins.map((p) => ({ ...p }))),
+    setPluginEnabled: vi.fn(async (id: string, enabled: boolean): Promise<PluginInfo> => {
+      const p = state.plugins.find((x) => x.id === id);
+      if (!p) throw new RoomsApiError(404, "not found", "not_found");
+      Object.assign(p, { enabled, needsApproval: !enabled });
+      return { ...p };
+    }),
+    getPluginData: vi.fn(async (id: string, path: string) => state.pluginData[`${id}/${path}`] ?? null),
+    putPluginData: vi.fn(async (id: string, path: string, text: string) => void (state.pluginData[`${id}/${path}`] = text)),
+    listPluginData: vi.fn(async (id: string, prefix = "") =>
+      Object.keys(state.pluginData)
+        .filter((k) => k.startsWith(`${id}/${prefix}`))
+        .map((k) => k.slice(id.length + 1))
+        .sort(),
+    ),
+    deletePluginData: vi.fn(async (id: string, path: string) => void delete state.pluginData[`${id}/${path}`]),
+    findArtifactByFileKey: vi.fn(
+      async (fileKey: string) =>
+        Object.values(state.artifacts)
+          .flat()
+          .find((a) => a.fileKey === fileKey) ?? null,
+    ),
+    pluginEntryUrl: (i: Info, p: PluginInfo) => `${i.filesOrigin}/_plugins/${p.id}/${p.entry}`,
     listRooms: async () => ({ data: state.rooms, seq }),
     listArtifacts: async (roomId: string) => {
       const err = opts.artifactErrors?.[roomId];

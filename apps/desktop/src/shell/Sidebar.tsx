@@ -26,6 +26,7 @@ import { useBriefError } from "@/views/briefError";
 import { EditableTitle } from "@/views/EditableTitle";
 import logo from "@/assets/logo.svg";
 import { NewRoomRow } from "./NewRoomRow";
+import { PluginItems } from "./PluginItems";
 
 /** Shared sizing for sidebar items and room rows (min-height 36, padding 0 10px, radius 8, 15px, gap 10). */
 const ITEM = "flex min-h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[15px] text-ink";
@@ -173,6 +174,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             </SortableContext>
           </DndContext>
         </ul>
+        <PluginItems />
         {moveFailed.shown ? (
           <p role="status" className="mt-2 flex items-center gap-1.5 px-2.5 text-[13px] text-[#c13515]">
             <CircleAlert size={16} aria-hidden className="shrink-0" />
