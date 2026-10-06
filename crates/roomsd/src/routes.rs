@@ -194,7 +194,13 @@ pub async fn plugin_file(State(st): State<AppState>, Path((id, rel)): Path<(Stri
         "{sandbox}; default-src 'none'; script-src {src}; style-src {src} 'unsafe-inline'; img-src {src} data: blob:; font-src {src}; connect-src 'none'; frame-src 'none'; form-action 'none'"
     );
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    let mut r = ([("content-type", content_type(&ext)), ("x-content-type-options", "nosniff")], bytes).into_response();
+    // `*` because a sandboxed frame's origin is `null` and module scripts load in CORS mode. Only
+    // plugin code is served here; plugin data never is.
+    let mut r = (
+        [("content-type", content_type(&ext)), ("x-content-type-options", "nosniff"), ("access-control-allow-origin", "*")],
+        bytes,
+    )
+        .into_response();
     if let Ok(v) = HeaderValue::from_str(&csp) { r.headers_mut().insert(axum::http::header::CONTENT_SECURITY_POLICY, v); }
     r
 }

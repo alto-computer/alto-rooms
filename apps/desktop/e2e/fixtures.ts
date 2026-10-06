@@ -40,7 +40,24 @@ export type Daemon = {
   write(rel: string, contents: string): Promise<void>;
   exists(rel: string): Promise<boolean>;
   read(rel: string): Promise<string>;
+  /** Copies a built fixture plugin (see buildFixturePlugin) into <home>/.rooms/plugins/<id>/. */
+  installPlugin(id: string): Promise<void>;
 };
+
+const PLUGIN_FIXTURES = path.join(import.meta.dirname, "fixtures", "plugins");
+const builtPlugins = new Map<string, string>();
+
+/** Builds e2e/fixtures/plugins/<id> once per run: main.ts (using the real plugin SDK) → main.js, beside the manifest and HTML. */
+export function buildFixturePlugin(id: string): string {
+  const cached = builtPlugins.get(id);
+  if (cached) return cached;
+  const src = path.join(PLUGIN_FIXTURES, id);
+  const out = path.join(os.tmpdir(), `rooms-e2e-plugin-${id}-${process.pid}`);
+  execFileSync("bun", ["build", path.join(src, "main.ts"), "--outfile", path.join(out, "main.js"), "--target", "browser", "--format", "esm"], { stdio: "pipe" });
+  for (const f of ["manifest.json", "index.html"]) execFileSync("cp", [path.join(src, f), path.join(out, f)]);
+  builtPlugins.set(id, out);
+  return out;
+}
 
 /** Today in the local time zone, as the app computes it (YYYY-MM-DD). */
 export function today(d = new Date()): string {
@@ -155,6 +172,11 @@ export const test = base.extend<{ daemon: Daemon }, { roomsdBinary: string }>({
             body,
           });
           if (!r.ok) throw new Error(`saveNote: ${r.status} ${await r.text()}`);
+        },
+        async installPlugin(id) {
+          const dest = abs(path.join(".rooms", "plugins", id));
+          await fs.mkdir(path.dirname(dest), { recursive: true });
+          await fs.cp(buildFixturePlugin(id), dest, { recursive: true });
         },
         async write(rel, contents) {
           await fs.mkdir(path.dirname(abs(rel)), { recursive: true });

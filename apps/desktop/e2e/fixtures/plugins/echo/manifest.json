@@ -1,0 +1,12 @@
+{
+  "id": "echo",
+  "name": "Echo",
+  "version": "0.1.0",
+  "minAppVersion": "0.1.0",
+  "description": "Shows what the app tells it. Used by the end-to-end tests.",
+  "permissions": ["rooms.read"],
+  "slots": {
+    "artifact.sidePanel": { "title": "Echo" },
+    "tab": { "title": "Echo", "icon": "puzzle", "sidebar": true }
+  }
+}

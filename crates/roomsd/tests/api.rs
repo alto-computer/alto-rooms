@@ -521,6 +521,8 @@ async fn plugin_assets_get_their_own_narrow_csp() {
         "sandbox allow-scripts allow-downloads; default-src 'none'; script-src {p}; style-src {p} 'unsafe-inline'; img-src {p} data: blob:; font-src {p}; connect-src 'none'; frame-src 'none'; form-action 'none'"));
     let r = files.clone().oneshot(get("/_plugins/echo/font.woff2", FILES_HOST)).await.unwrap();
     assert_eq!(r.headers()["content-type"], "font/woff2");
+    // Module scripts load in CORS mode from the sandbox's opaque origin; assets are code, never data.
+    assert_eq!(r.headers()["access-control-allow-origin"], "*");
     let r = files.clone().oneshot(get("/_plugins/echo/data/secret.txt", FILES_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
     let r = files.clone().oneshot(get("/_plugins/nope/index.html", FILES_HOST)).await.unwrap();

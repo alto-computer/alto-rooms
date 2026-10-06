@@ -1012,6 +1012,8 @@ fn plugin_enable_and_grants_persist() {
     install(d.path(), &ECHO.replace(r#"["rooms.read"]"#, r#"["rooms.read","clipboard"]"#));
     let p = reopened.plugins().into_iter().find(|p| p.id == "echo").unwrap();
     assert!(p.enabled && p.needs_approval);
+    // Waiting to approve new permissions doesn't take away storage: it can still save while closing.
+    reopened.write_plugin_data("echo", "closed.txt", "yes").unwrap();
 
     let p = reopened.set_plugin_enabled("echo", false).unwrap();
     assert!(!p.enabled);

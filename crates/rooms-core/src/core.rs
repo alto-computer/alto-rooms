@@ -583,10 +583,11 @@ impl RoomsCore {
         self.plugin(id).ok_or(CoreError::NotFound)
     }
 
-    /// The folder of a plugin the user turned on and whose permissions they granted; else `NotFound`.
+    /// The folder of a valid plugin the user turned on; else `NotFound`. Storage comes with turning
+    /// it on, so a plugin waiting to approve *new* permissions can still save (e.g. while closing).
     fn usable_plugin_dir(&self, id: &str) -> Result<std::path::PathBuf, CoreError> {
         match self.plugin(id) {
-            Some(p) if p.status == PluginStatus::Ok && p.enabled && !p.needs_approval => Ok(crate::plugins::plugins_dir(&self.home).join(id)),
+            Some(p) if p.status == PluginStatus::Ok && p.enabled => Ok(crate::plugins::plugins_dir(&self.home).join(id)),
             _ => Err(CoreError::NotFound),
         }
     }

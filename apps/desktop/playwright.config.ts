@@ -25,6 +25,6 @@ export default defineConfig({
   projects: [
     { name: "chromium" },
     // The desktop app runs on macOS WebKit (WKWebView): pointer-heavy specs run there too.
-    { name: "webkit", use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 900 } }, testMatch: /reorder\.spec\.ts/ },
+    { name: "webkit", use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 900 } }, testMatch: /(reorder|plugins)\.spec\.ts/ },
   ],
 });
