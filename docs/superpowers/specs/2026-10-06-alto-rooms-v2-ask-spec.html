@@ -177,8 +177,8 @@
   <li>바는 <strong>문서 탭에만</strong> 있다. 방·Journal·노트·새 탭·플러그인 탭에서는 ⌘J가 아무 일도 안 한다.</li>
   <li>대화 시트는 이 문서의 대화에 턴이 하나라도 있으면 바 위에 펼쳐진다. 최대 높이 50vh, 넘치면 시트 안에서 스크롤, 새 답이 오면 맨 아래로.</li>
   <li>시트 머리: <code>{agent} · 만든 대화에 이어서</code>(resume) 또는 <code>{agent} · 새 대화</code>(new). 에이전트 프로필이 없으면 "에이전트 설정 없음" + 설정 파일 경로.</li>
-  <li>대기 중: 수달 sleep 포즈(120px 세트에서 축소 사용 안 함 — v1 규칙대로 sleep 120px 그대로, 시트 안 왼쪽) + "{agent}가 답을 쓰고 있어요…" + <u>멈추기</u>. 입력·보내기 잠김.</li>
-  <li>답은 마크다운 렌더(앱에 이미 쓰는 렌더러 재사용, raw HTML 비활성). 답 아래 "<i>N초 · 복사</i>". 실패면 빨간 대신 muted 색 에러 문구 + stderr 마지막 줄.</li>
+  <li>대기 중: 수달 sleep 포즈(<code>assets/clew-sleep.svg</code> = 브랜드 poses의 <code>clew-2-sleep.svg</code>, 폭 120px, 시트 안 왼쪽) + "{agent}가 답을 쓰고 있어요…" + <u>멈추기</u>. 입력·보내기 잠김.</li>
+  <li>답은 마크다운 렌더(<code>react-markdown</code> 새 의존성 — 앱에 렌더러가 없음. raw HTML은 기본값대로 렌더하지 않음). 답 아래 "<i>N초 · 복사</i>". 실패면 빨간 대신 muted 색 에러 문구 + stderr 마지막 줄.</li>
   <li>빨간색(thread)은 보내기 버튼 하나뿐(Alto DS 규칙).</li>
   <li>Esc: 시트가 펼쳐져 있으면 시트만 접는다(바는 남음). 접힌 상태에서 바에 포커스하면 다시 펼친다.</li>
 </ul>
@@ -222,7 +222,7 @@
   <li><strong>R8 상한:</strong> 실행 10분 넘으면 종료(<code>failed</code>, "시간 초과"). stdout 1 MiB 넘으면 종료(<code>failed</code>, "답이 너무 길어요"). stderr는 마지막 4 KiB만 보관.</li>
   <li><strong>R9 저장 위치:</strong> <code>&lt;home&gt;/.rooms/asks/&lt;fileKey&gt;.jsonl</code>. 원본·연결 폴더에는 아무것도 쓰지 않는다.</li>
   <li><strong>R10 바 표시:</strong> 켜짐/꺼짐은 앱 메모리의 전역 boolean, 시작값 false, 저장하지 않는다. 진행 중인 묻기와 독립.</li>
-  <li><strong>R11 읽기 전용:</strong> <code>info.readOnly</code>면 묻기 엔드포인트는 403, 앱은 바를 렌더하지 않는다(⌘J 무시).</li>
+  <li><strong>R11 읽기 전용:</strong> <code>info.readOnly</code>면 POST/DELETE는 기존 write guard가 403으로 막는다(Asks는 read-only를 모른다). 앱은 바를 렌더하지 않는다(⌘J 무시).</li>
   <li><strong>R12 환경:</strong> 자식 프로세스는 roomsd의 환경 + 로그인 셸에서 얻은 <code>PATH</code>(roomsd 시작 시 <code>$SHELL -lc 'printf %s "$PATH"'</code> 1회, 2초 타임아웃, 실패 시 현재 PATH 유지). stdin은 <code>/dev/null</code>. 새 프로세스 그룹으로 띄운다.</li>
 </ol>
 
@@ -344,7 +344,7 @@
 
 <h3>명명</h3>
 <ul>
-  <li>Rust: <code>Asks</code>, <code>AskTurn</code>, <code>AskId</code>(UUID v4 문자열), <code>AgentProfiles</code>, <code>AskLog</code>. 이벤트 <code>ask.started</code> / <code>ask.done</code>.</li>
+  <li>Rust: <code>Asks</code>, <code>AskTurn</code>, <code>AskId</code>(nanoid 16자 — 레포에 이미 있는 nanoid 사용), <code>AgentProfiles</code>, <code>AskLog</code>. 이벤트 <code>ask.started</code> / <code>ask.done</code>.</li>
   <li>TS: <code>startAsk</code>, <code>askThread</code>, <code>cancelAsk</code>, <code>AskBar</code>, <code>useAskBarOpen</code>, 액션 <code>"toggle-ask"</code>, 메뉴 id <code>MENU_TOGGLE_ASK</code> (<code>menu://toggle-ask</code>).</li>
   <li>UI 문구는 "묻기". 코드·와이어는 "ask".</li>
 </ul>
@@ -502,7 +502,6 @@ core.emit_ask(EventKind::AskStarted { turn });                                //
 impl RoomsCore {
     pub fn artifact(&amp;self, room: &amp;RoomId, id: &amp;ArtifactId) -&gt; Option&lt;Artifact&gt;;
     pub fn emit_ask(&amp;self, kind: EventKind);    // AskStarted | AskDone 만 허용 (debug_assert)
-    pub fn read_only(&amp;self) -&gt; bool;            // 기존 Info.read_only와 같은 값
 }</code></pre>
   <table><tbody>
     <tr class="contract-row"><th>건너감</th><td>↓ (room, id) / 이벤트 · ↑ Artifact, 절대경로</td></tr>
