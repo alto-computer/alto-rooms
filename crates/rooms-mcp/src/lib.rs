@@ -13,6 +13,14 @@ const DEFAULT_PROTOCOL: &str = "2025-06-18";
 
 fn mcp_name(t: &ToolInfo) -> String { format!("{}__{}", t.plugin_id, t.name) }
 
+/// MCP requires `inputSchema.type == "object"`; one bad schema must not break the whole list.
+fn object_schema(input: &Value) -> Value {
+    let mut schema = json!({"type": "object"});
+    if let (Some(s), Some(o)) = (input.as_object(), schema.as_object_mut()) { o.extend(s.clone()); }
+    if schema["type"] != "object" { schema["type"] = json!("object"); }
+    schema
+}
+
 fn result(id: &Value, r: Value) -> Value { json!({"jsonrpc": "2.0", "id": id, "result": r}) }
 fn rpc_error(id: &Value, code: i64, message: &str) -> Value { json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}) }
 fn text_result(text: &str, is_error: bool) -> Value { json!({"content": [{"type": "text", "text": text}], "isError": is_error}) }
@@ -35,7 +43,7 @@ pub fn handle(api: &dyn Api, line: &str) -> Option<Value> {
         Some("tools/list") => {
             let tools = api.tools().unwrap_or_else(|e| { eprintln!("rooms-mcp: {e}"); vec![] });
             let list: Vec<Value> = tools.iter()
-                .map(|t| json!({"name": mcp_name(t), "description": t.description, "inputSchema": t.input})).collect();
+                .map(|t| json!({"name": mcp_name(t), "description": t.description, "inputSchema": object_schema(&t.input)})).collect();
             result(&id, json!({"tools": list}))
         }
         Some("tools/call") => result(&id, call_tool(api, &params)),
@@ -58,19 +66,20 @@ fn call_tool(api: &dyn Api, params: &Value) -> Value {
 
 /// roomsd over loopback HTTP. The token is re-read on every request so a daemon restart keeps working.
 /// No `Origin` header is sent: the write guard treats a missing Origin as a non-browser client.
-pub struct HttpApi { pub home: std::path::PathBuf, pub port: u16 }
+pub struct HttpApi { pub home: std::path::PathBuf, pub port: u16, pub timeout: std::time::Duration }
 
 impl HttpApi {
     pub fn from_env() -> Self {
         let home = std::env::var("ROOMS_HOME").map(std::path::PathBuf::from)
             .unwrap_or_else(|_| dirs::home_dir().expect("home dir").join("rooms"));
         let port = std::env::var("ROOMS_API_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(4317);
-        HttpApi { home, port }
+        HttpApi { home, port, timeout: std::time::Duration::from_secs(10) }
     }
 
     fn request(&self, method: &str, path: &str) -> Result<ureq::Request, String> {
         let token = std::fs::read_to_string(self.home.join(".rooms/token")).map_err(|e| format!("cannot read roomsd token: {e}"))?;
-        Ok(ureq::request(method, &format!("http://127.0.0.1:{}{path}", self.port))
+        let agent = ureq::AgentBuilder::new().timeout_connect(self.timeout).timeout_read(self.timeout).timeout_write(self.timeout).build();
+        Ok(agent.request(method, &format!("http://127.0.0.1:{}{path}", self.port))
             .set("Host", &format!("127.0.0.1:{}", self.port))
             .set("Authorization", &format!("Bearer {}", token.trim())))
     }
@@ -130,6 +139,36 @@ mod tests {
         let t = &r["result"]["tools"][0];
         assert_eq!((t["name"].as_str(), t["description"].as_str()), (Some("draw__draw"), Some("draw it")));
         assert_eq!(t["inputSchema"], json!({"type": "object"}));
+    }
+
+    #[test]
+    fn tools_list_forces_object_schemas() {
+        let mut bad = info("p", "a");
+        bad.input = json!({"properties": {"x": {"type": "string"}}});
+        let mut worse = info("p", "b");
+        worse.input = json!({"type": "string"});
+        let mut junk = info("p", "c");
+        junk.input = json!(null);
+        let api = Fake { tools: Ok(vec![bad, worse, junk]), ..fake() };
+        let r = run(&api, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
+        let t = &r["result"]["tools"];
+        assert_eq!(t[0]["inputSchema"], json!({"type": "object", "properties": {"x": {"type": "string"}}}));
+        assert_eq!(t[1]["inputSchema"], json!({"type": "object"}));
+        assert_eq!(t[2]["inputSchema"], json!({"type": "object"}));
+    }
+
+    #[test]
+    fn a_silent_roomsd_times_out_instead_of_hanging() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let home = std::env::temp_dir().join(format!("rooms-mcp-timeout-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".rooms")).unwrap();
+        std::fs::write(home.join(".rooms/token"), "t").unwrap();
+        let api = HttpApi { home: home.clone(), port: l.local_addr().unwrap().port(), timeout: std::time::Duration::from_millis(200) };
+        let start = std::time::Instant::now();
+        let e = api.tools().unwrap_err();
+        std::fs::remove_dir_all(home).ok();
+        assert!(e.contains("not reachable"), "{e}");
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

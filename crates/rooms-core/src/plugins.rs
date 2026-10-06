@@ -84,6 +84,7 @@ fn tools(v: Option<&Value>) -> Result<Vec<ManifestTool>, String> {
         let description = t.get("description").and_then(Value::as_str).unwrap_or("");
         if !(1..=500).contains(&description.chars().count()) { return Err(format!("tool {name}: description must be 1–500 characters")); }
         let input = t.get("input").filter(|i| i.is_object()).ok_or_else(|| format!("tool {name}: input must be a JSON object"))?;
+        if input.get("type") != Some(&Value::from("object")) { return Err(format!("tool {name}: input must be a JSON Schema with \"type\": \"object\"")); }
         if input.to_string().len() > MAX_TOOL_INPUT_BYTES { return Err(format!("tool {name}: input must be at most 16 KiB")); }
         let append_to = t.get("appendTo").and_then(Value::as_str).unwrap_or("");
         if !valid_path(&append_to.replace("{doc}", "0123456789abcdef")) {
@@ -315,7 +316,7 @@ mod tests {
     #[test]
     fn tools_are_parsed() {
         let d = tempfile::tempdir().unwrap();
-        let m = with_tools("echo", r#"{"draw":{"description":"Draw things","input":{"type":"object"},"appendTo":"notes/{doc}.ops.jsonl"},"log":{"description":"x","input":{},"appendTo":"log.jsonl"}}"#);
+        let m = with_tools("echo", r#"{"draw":{"description":"Draw things","input":{"type":"object"},"appendTo":"notes/{doc}.ops.jsonl"},"log":{"description":"x","input":{"type":"object"},"appendTo":"log.jsonl"}}"#);
         let t = load_manifest(&plugin(d.path(), "echo", &m)).unwrap().tools;
         assert_eq!(t.len(), 2);
         let draw = t.iter().find(|t| t.name == "draw").unwrap();
@@ -334,19 +335,21 @@ mod tests {
         assert!(bad(0, one("Draw", ok)).contains("tool"));
         assert!(bad(1, one("1draw", ok)).contains("tool"));
         assert!(bad(2, one(&format!("a{}", "b".repeat(40)), ok)).contains("tool"));
-        assert!(bad(3, one("t", r#"{"input":{},"appendTo":"a.jsonl"}"#)).contains("description"));
-        assert!(bad(4, one("t", r#"{"description":"","input":{},"appendTo":"a.jsonl"}"#)).contains("description"));
+        assert!(bad(3, one("t", r#"{"input":{"type":"object"},"appendTo":"a.jsonl"}"#)).contains("description"));
+        assert!(bad(4, one("t", r#"{"description":"","input":{"type":"object"},"appendTo":"a.jsonl"}"#)).contains("description"));
         let long = "x".repeat(501);
-        assert!(bad(5, one("t", &format!(r#"{{"description":"{long}","input":{{}},"appendTo":"a.jsonl"}}"#))).contains("description"));
+        assert!(bad(5, one("t", &format!(r#"{{"description":"{long}","input":{{"type":"object"}},"appendTo":"a.jsonl"}}"#))).contains("description"));
         assert!(bad(6, one("t", r#"{"description":"d","input":[],"appendTo":"a.jsonl"}"#)).contains("input"));
+        assert!(bad(16, one("t", r#"{"description":"d","input":{},"appendTo":"a.jsonl"}"#)).contains("type"));
+        assert!(bad(17, one("t", r#"{"description":"d","input":{"type":"string"},"appendTo":"a.jsonl"}"#)).contains("type"));
         assert!(bad(7, one("t", r#"{"description":"d","appendTo":"a.jsonl"}"#)).contains("input"));
         let big = "x".repeat(16 * 1024);
         assert!(bad(8, one("t", &format!(r#"{{"description":"d","input":{{"k":"{big}"}},"appendTo":"a.jsonl"}}"#))).contains("input"));
-        assert!(bad(9, one("t", r#"{"description":"d","input":{},"appendTo":"a/{x}.jsonl"}"#)).contains("appendTo"));
-        assert!(bad(10, one("t", r#"{"description":"d","input":{},"appendTo":"/abs/{doc}.jsonl"}"#)).contains("appendTo"));
-        assert!(bad(11, one("t", r#"{"description":"d","input":{},"appendTo":"../{doc}.jsonl"}"#)).contains("appendTo"));
-        assert!(bad(12, one("t", r#"{"description":"d","input":{},"appendTo":"a/{doc"}"#)).contains("appendTo"));
-        assert!(bad(13, one("t", r#"{"description":"d","input":{}}"#)).contains("appendTo"));
+        assert!(bad(9, one("t", r#"{"description":"d","input":{"type":"object"},"appendTo":"a/{x}.jsonl"}"#)).contains("appendTo"));
+        assert!(bad(10, one("t", r#"{"description":"d","input":{"type":"object"},"appendTo":"/abs/{doc}.jsonl"}"#)).contains("appendTo"));
+        assert!(bad(11, one("t", r#"{"description":"d","input":{"type":"object"},"appendTo":"../{doc}.jsonl"}"#)).contains("appendTo"));
+        assert!(bad(12, one("t", r#"{"description":"d","input":{"type":"object"},"appendTo":"a/{doc"}"#)).contains("appendTo"));
+        assert!(bad(13, one("t", r#"{"description":"d","input":{"type":"object"}}"#)).contains("appendTo"));
         assert!(bad(14, "[]".into()).contains("tools"));
         let many: Vec<String> = (0..17).map(|i| format!(r#""t{i}":{ok}"#)).collect();
         assert!(bad(15, format!("{{{}}}", many.join(","))).contains("16"));
