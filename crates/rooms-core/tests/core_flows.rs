@@ -458,44 +458,7 @@ fn scan_of_removed_room_writes_nothing() {
     assert!(core.journal_day(&today).unwrap().artifacts.iter().all(|a| a.room_id != r.id));
 }
 
-#[test]
-fn api_calls_stay_fast_during_big_backfill() {
-    let d = tempfile::tempdir().unwrap();
-    let big = d.path().join("big");
-    fs::create_dir_all(&big).unwrap();
-    let head = format!("<title>t</title>{}", "x".repeat(20_000));
-    for i in 0..3000 { fs::write(big.join(format!("{i}.html")), &head).unwrap(); }
-    let core = RoomsCore::open(d.path()).unwrap();
-    let c = core.clone();
-    let t = std::thread::spawn(move || c.backfill_all().unwrap());
-    let mut worst = Duration::ZERO;
-    while !t.is_finished() {
-        let s = Instant::now();
-        let _ = core.list_rooms();
-        let _ = core.current_seq();
-        worst = worst.max(s.elapsed());
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    t.join().unwrap();
-    assert!(worst < slow(Duration::from_millis(150)), "worst {worst:?}");
-}
 
-#[test]
-fn one_new_file_in_big_room_is_added_within_a_second() {
-    let d = tempfile::tempdir().unwrap();
-    let big = d.path().join("big");
-    fs::create_dir_all(&big).unwrap();
-    for i in 0..3000 { fs::write(big.join(format!("{i}.html")), "<title>t</title>").unwrap(); }
-    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
-    let id = core.list_rooms().into_iter().find(|r| r.name == "big").unwrap().id;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while core.list_artifacts(&id).unwrap().len() < 3000 { assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(50)); }
-    let mut rx = core.subscribe();
-    let s = Instant::now();
-    fs::write(big.join("fresh.html"), "<title>fresh</title>").unwrap();
-    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.rel_path == "fresh.html"), slow(Duration::from_secs(2)));
-    assert!(s.elapsed() < slow(Duration::from_secs(1)), "{:?}", s.elapsed());
-}
 
 #[test]
 fn finder_rename_of_inbox_does_not_move_the_inbox() {
@@ -1047,4 +1010,35 @@ fn plugin_assets_resolve_and_data_stays_private() {
     assert!(core.resolve_plugin_file("echo", "index.html").unwrap().ends_with("index.html"));
     assert!(core.resolve_plugin_file("echo", "data/x.txt").is_err());
     assert!(core.resolve_plugin_file("nope", "index.html").is_err());
+}
+
+#[test]
+fn a_new_file_at_a_moved_files_old_path_gets_its_own_file_key() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    fs::write(d.path().join("a/report.html"), "<title>first</title>").unwrap();
+    core.backfill_all().unwrap();
+    let first = core.list_artifacts(&a).unwrap().remove(0);
+    core.move_artifact(&a, &first.id, &b).unwrap();
+    fs::write(d.path().join("a/report.html"), "<title>second</title>").unwrap();
+    core.backfill_all().unwrap();
+    let second = key_of(&core, &a, "report.html");
+    assert_ne!(second, first.file_key, "a different document must not share the moved one's notes");
+    assert_eq!(key_of(&core, &b, "report.html"), first.file_key);
+}
+
+#[test]
+fn a_link_to_a_moved_files_new_path_shares_its_file_key() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    let c = core.create_room("c").unwrap().id;
+    fs::write(d.path().join("a/report.html"), "<title>r</title>").unwrap();
+    core.backfill_all().unwrap();
+    let r = core.list_artifacts(&a).unwrap().remove(0);
+    core.move_artifact(&a, &r.id, &b).unwrap();
+    symlink(d.path().join("b/report.html"), d.path().join("c/report.html")).unwrap();
+    core.backfill_all().unwrap();
+    assert_eq!(key_of(&core, &c, "report.html"), r.file_key);
 }

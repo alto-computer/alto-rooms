@@ -11,6 +11,15 @@ pub struct Index {
     conn: Connection,
     /// Journal days whose contents changed since the last `take_touched_days` (old and new day on a move).
     touched_days: BTreeSet<String>,
+    /// While a batch is applied: every row's target → fileKey and the keys in use, loaded on the
+    /// first new file so each further new file costs map lookups, not queries, inside the lock.
+    keys: Option<KeyCache>,
+}
+
+#[derive(Default)]
+struct KeyCache {
+    by_target: HashMap<String, String>,
+    taken: HashSet<String>,
 }
 
 /// Journal day of an artifact. Files under `journal/YYYY-MM-DD/` belong to that folder's day
@@ -25,7 +34,15 @@ pub fn journal_folder_day(room_id: &str, rel_path: &str) -> Option<String> {
 pub struct Fingerprint { pub target: String, pub updated_at: String, pub created_day: String }
 
 #[derive(Debug, Clone)]
-pub struct FileFacts { pub rel_path: String, pub target: String, pub meta: Meta, pub file_created: String, pub updated: String }
+pub struct FileFacts {
+    pub rel_path: String,
+    pub target: String,
+    pub meta: Meta,
+    pub file_created: String,
+    pub updated: String,
+    /// `file_key(target)`, hashed here, outside the write lock (cheap in release, not in debug builds).
+    pub path_key: String,
+}
 
 /// Phase 2 of a rescan, run WITHOUT the core lock: reads the file head only when its fingerprint
 /// (target + mtime, plus the journal folder day) changed. `None` = not an artifact or unchanged.
@@ -38,7 +55,8 @@ pub fn read_entry(room_id: &str, e: &ScanEntry, fp: Option<&Fingerprint>) -> Opt
     }
     let meta = read_meta(&e.target);
     let (file_created, updated) = file_times(&e.target);
-    Some(FileFacts { rel_path: e.rel_path.clone(), target, meta, file_created, updated })
+    let path_key = file_key(&target);
+    Some(FileFacts { rel_path: e.rel_path.clone(), target, meta, file_created, updated, path_key })
 }
 
 #[derive(Debug, Clone)]
@@ -85,7 +103,7 @@ impl Index {
             Ok(c)
         };
         match try_open() {
-            Ok(conn) => Ok(Index { conn, touched_days: BTreeSet::new() }),
+            Ok(conn) => Ok(Index { conn, touched_days: BTreeSet::new(), keys: None }),
             Err(_) => {
                 let _ = std::fs::remove_file(path);
                 for suffix in ["-wal", "-shm"] {
@@ -93,7 +111,7 @@ impl Index {
                     p.push(suffix);
                     let _ = std::fs::remove_file(p);
                 }
-                Ok(Index { conn: try_open().map_err(err)?, touched_days: BTreeSet::new() })
+                Ok(Index { conn: try_open().map_err(err)?, touched_days: BTreeSet::new(), keys: None })
             }
         }
     }
@@ -136,6 +154,7 @@ impl Index {
     /// Phase 3, run under the core lock: one transaction. Upserts `facts`, removes rows not in `present`.
     pub fn apply(&mut self, room_id: &str, facts: &[FileFacts], present: &HashSet<String>) -> Result<Vec<Change>, CoreError> {
         let mut changes = Vec::new();
+        self.keys = None;
         self.conn.execute_batch("BEGIN").map_err(err)?;
         let r = (|| -> Result<(), CoreError> {
             for f in facts { if let Some(c) = self.upsert_facts(room_id, f)? { changes.push(c); } }
@@ -149,6 +168,7 @@ impl Index {
             }
             Ok(())
         })();
+        self.keys = None;
         match r {
             Ok(()) => { self.conn.execute_batch("COMMIT").map_err(err)?; Ok(changes) }
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
@@ -165,11 +185,15 @@ impl Index {
 
     fn upsert_facts(&mut self, room_id: &str, f: &FileFacts) -> Result<Option<Change>, CoreError> {
         let id = artifact_id(room_id, &f.rel_path);
-        let existing: Option<(String, String, String, String, String)> = self.conn.query_row(
-            "SELECT created_at, title, updated_at, created_day, file_key FROM artifacts WHERE id = ?1", params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional().map_err(err)?;
-        // Set once, from the original's path when first seen; a Rooms move carries the row (reassign).
-        let key = existing.as_ref().map(|x| x.4.clone()).unwrap_or_else(|| file_key(&f.target));
+        // Cached statements: this runs once per file inside the room's write lock (big backfills).
+        let existing: Option<(String, String, String, String, String)> = self.conn
+            .prepare_cached("SELECT created_at, title, updated_at, created_day, file_key FROM artifacts WHERE id = ?1").map_err(err)?
+            .query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional().map_err(err)?;
+        // Set once when first seen; a Rooms move carries the row (reassign).
+        let key = match existing.as_ref() {
+            Some(x) => x.4.clone(),
+            None => self.new_file_key(&f.target, &f.path_key)?,
+        };
         let meta = f.meta.clone();
         let (file_created, updated) = (f.file_created.clone(), f.updated.clone());
         let created = meta.created.clone()
@@ -183,13 +207,13 @@ impl Index {
         };
         let ts = chrono::DateTime::parse_from_rfc3339(&created).map(|d| d.timestamp_millis()).unwrap_or(0);
         let source = serde_json::to_string(&meta.source).unwrap_or_else(|_| "{}".into());
-        self.conn.execute(
+        self.conn.prepare_cached(
             "INSERT INTO artifacts (id, room_id, rel_path, target, title, created_at, created_day, created_ts, updated_at, source, file_key)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
              ON CONFLICT(id) DO UPDATE SET target=excluded.target, title=excluded.title, created_at=excluded.created_at,
                created_day=excluded.created_day, created_ts=excluded.created_ts, updated_at=excluded.updated_at, source=excluded.source",
-            params![id, room_id, f.rel_path, f.target, title, created, day, ts, updated, source, key],
-        ).map_err(err)?;
+        ).map_err(err)?
+        .execute(params![id, room_id, f.rel_path, f.target, title, created, day, ts, updated, source, key]).map_err(err)?;
         let a = Artifact { id, room_id: room_id.into(), rel_path: f.rel_path.clone(), title: title.clone(),
             created_at: created, updated_at: updated.clone(), author: Author::Agent, source: meta.source, file_key: key };
         let change = match existing {
@@ -243,6 +267,33 @@ impl Index {
             Ok(c) => Ok(c),
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
         }
+    }
+
+    /// The key for an original seen for the first time: the key of a row already holding the same
+    /// original (a link to a file Rooms moved), else one derived from its path that no row uses yet
+    /// (a moved file keeps the key of its old path, so a new file there must not reuse it).
+    fn new_file_key(&mut self, target: &str, path_key: &str) -> Result<String, CoreError> {
+        if self.keys.is_none() {
+            let mut cache = KeyCache::default();
+            let mut st = self.conn.prepare("SELECT target, file_key FROM artifacts").map_err(err)?;
+            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(err)?;
+            for row in rows {
+                let (t, k) = row.map_err(err)?;
+                cache.taken.insert(k.clone());
+                cache.by_target.entry(t).or_insert(k);
+            }
+            drop(st);
+            self.keys = Some(cache);
+        }
+        let cache = self.keys.as_mut().expect("loaded above");
+        if let Some(k) = cache.by_target.get(target) { return Ok(k.clone()); }
+        let k = (0u32..)
+            .map(|n| if n == 0 { path_key.to_string() } else { file_key(&format!("{target}#{n}")) })
+            .find(|k| !cache.taken.contains(k))
+            .expect("some suffix is free");
+        cache.taken.insert(k.clone());
+        cache.by_target.insert(target.to_string(), k.clone());
+        Ok(k)
     }
 
     /// Every row with `file_key` (one per room that holds the original).
@@ -436,7 +487,7 @@ mod tests {
         let _ = ix.take_touched_days();
         ix.conn.execute_batch("DROP TABLE artifacts").unwrap(); // force the next apply to fail
         let fact = FileFacts { rel_path: "x.html".into(), target: "/x".into(), meta: Default::default(),
-            file_created: "2026-10-05T00:00:00+09:00".into(), updated: "2026-10-05T00:00:00+09:00".into() };
+            file_created: "2026-10-05T00:00:00+09:00".into(), updated: "2026-10-05T00:00:00+09:00".into(), path_key: file_key("/x") };
         assert!(ix.apply("r1", &[fact], &["x.html".to_string()].into()).is_err());
         assert!(ix.take_touched_days().is_empty());
     }
