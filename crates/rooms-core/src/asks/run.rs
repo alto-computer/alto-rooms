@@ -135,20 +135,17 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
         // After stdout EOF the child may still run (or hold descendants): keep racing
         // its exit against the deadline and kill requests.
         let reason = match next {
-            Next::Stop(r) => Some(r),
+            Next::Stop(r) => r,
             Next::Exit(code) => return Outcome::Exited { code, stdout: stdout_text, stderr_tail: stderr_tail(&mut err_task).await },
-            Next::Eof => loop {
-                tokio::select! {
-                    status = child.wait() => {
-                        let code = code_of(status);
-                        return Outcome::Exited { code, stdout: stdout_text, stderr_tail: stderr_tail(&mut err_task).await };
-                    }
-                    _ = &mut deadline => break Some(Reason::Timeout),
-                    Some(r) = rx.recv() => break Some(r),
+            Next::Eof => tokio::select! {
+                status = child.wait() => {
+                    let code = code_of(status);
+                    return Outcome::Exited { code, stdout: stdout_text, stderr_tail: stderr_tail(&mut err_task).await };
                 }
+                _ = &mut deadline => Reason::Timeout,
+                Some(r) = rx.recv() => r,
             },
         };
-        let reason = reason.expect("loop only breaks with a reason");
         terminate(&mut child, pid, reason, limits.kill_grace).await;
         err_task.abort();
         Outcome::Killed { reason, stdout: stdout_text }
