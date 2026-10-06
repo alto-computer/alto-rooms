@@ -23,10 +23,10 @@ pub fn acquire_home_lock(home: &std::path::Path) -> std::io::Result<std::fs::Fil
     }
 }
 
-/// `ROOMS_MCP_BIN` if set (and the file exists), else `rooms-mcp` next to the roomsd executable.
+/// `ROOMS_MCP_BIN` if set (made absolute, and the file must exist), else `rooms-mcp` next to the roomsd executable.
 pub fn resolve_mcp_bin(env_override: Option<&str>, current_exe: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     let found = match env_override.filter(|s| !s.is_empty()) {
-        Some(p) => std::path::PathBuf::from(p),
+        Some(p) => std::fs::canonicalize(p).ok()?,
         None => current_exe?.parent()?.join("rooms-mcp"),
     };
     found.is_file().then_some(found)

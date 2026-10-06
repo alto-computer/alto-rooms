@@ -34,12 +34,19 @@ fn env_override_then_sibling_of_the_executable() {
     let d = tempfile::tempdir().unwrap();
     let a = d.path().join("custom-mcp");
     std::fs::write(&a, "").unwrap();
+    let a = std::fs::canonicalize(&a).unwrap();
     let exe = d.path().join("roomsd");
     assert_eq!(resolve_mcp_bin(Some(a.to_str().unwrap()), Some(&exe)), Some(a.clone()));
     assert_eq!(resolve_mcp_bin(None, Some(&exe)), None);
     let sib = d.path().join("rooms-mcp");
     std::fs::write(&sib, "").unwrap();
     assert_eq!(resolve_mcp_bin(None, Some(&exe)), Some(sib));
+    // a relative override becomes absolute, since agents run elsewhere
+    let rel = format!("rel-mcp-{}", std::process::id());
+    std::fs::write(&rel, "").unwrap();
+    let got = resolve_mcp_bin(Some(&rel), Some(&exe));
+    std::fs::remove_file(&rel).unwrap();
+    assert!(got.is_some_and(|p| p.is_absolute() && p.ends_with(&rel)));
     // an override pointing nowhere does not fall back silently
     assert_eq!(resolve_mcp_bin(Some("/no/such/file"), Some(&exe)), None);
 }
