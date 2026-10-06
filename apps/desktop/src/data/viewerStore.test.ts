@@ -30,7 +30,7 @@ function art(roomId: string, createdAt: string): Artifact {
     createdAt,
     updatedAt: createdAt,
     author: "agent",
-    source: { agent: null, session: null, cwd: null, machine: null },
+    source: { agent: null, session: null, cwd: null, machine: null }, fileKey: "0000000000000000",
   };
 }
 
@@ -310,5 +310,32 @@ describe("ViewerStore: in-tab history", () => {
     st.navigate(room("r1"));
     expect(st.getState().tabs).toHaveLength(1);
     expect(activeTab(st).kind).toBe("room");
+  });
+});
+
+describe("ViewerStore: plugins", () => {
+  it("plugin tabs open, navigate, persist and come back", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    st.navigate({ kind: "plugin", pluginId: "goals" });
+    const id = st.getState().activeId!;
+    expect(st.getState().tabs.find((t) => t.id === id)).toEqual({ id, kind: "plugin", pluginId: "goals" });
+    st.navigate({ kind: "room", roomId: "r1" });
+    st.back();
+    expect(st.getState().tabs[0]).toMatchObject({ kind: "plugin", pluginId: "goals" });
+    const again = new ViewerStore(storage, clock().now);
+    expect(again.getState().tabs[0]).toMatchObject({ kind: "plugin", pluginId: "goals" });
+    expect(st.open({ kind: "plugin", pluginId: "goals" })).toBe(id);
+  });
+
+  it("the side panel state defaults to closed, persists, and ignores junk", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    expect(st.getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });
+    st.setPluginPanel({ open: true, pluginId: "excalidraw" });
+    st.setPluginPanel({ width: 480 });
+    expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: true, width: 480, pluginId: "excalidraw" });
+    storage.map.set(VIEWER_STORAGE_KEY, JSON.stringify({ ...JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!), pluginPanel: { open: "yes", width: -5 } }));
+    expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });
   });
 });

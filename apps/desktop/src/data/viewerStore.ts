@@ -5,7 +5,8 @@ export type Tab =
   | { id: string; kind: "doc"; roomId: string; artifactId: string }
   | { id: string; kind: "journal"; date: string }
   | { id: string; kind: "note"; date: string; name: string }
-  | { id: string; kind: "new" };
+  | { id: string; kind: "new" }
+  | { id: string; kind: "plugin"; pluginId: string };
 
 /** `Omit` distributed over the union, so each kind keeps its own id fields. */
 export type TabInput = Tab extends infer T ? (T extends Tab ? Omit<T, "id"> : never) : never;
@@ -17,8 +18,14 @@ export type TabHistory = { back: TabInput[]; forward: TabInput[] };
 const HISTORY_LIMIT = 50;
 const NO_HISTORY: TabHistory = { back: [], forward: [] };
 
+/** The artifact side panel: open or not, its width, and which plugin it shows. Per viewer, not per tab. */
+export type PluginPanel = { open: boolean; width: number; pluginId: string | null };
+
+export const DEFAULT_PLUGIN_PANEL: PluginPanel = { open: false, width: 360, pluginId: null };
+
 export type ViewerState = {
   tabs: Tab[];
+  pluginPanel: PluginPanel;
   /** Tab id -> its in-tab navigation history. Tabs without one have nowhere to go back to. */
   history: Record<string, TabHistory>;
   activeId: string | null;
@@ -57,6 +64,8 @@ function parseTab(v: unknown): Tab | null {
       return isStr(t.date) && isStr(t.name) ? { id: t.id, kind: "note", date: t.date, name: t.name } : null;
     case "new":
       return { id: t.id, kind: "new" };
+    case "plugin":
+      return isStr(t.pluginId) ? { id: t.id, kind: "plugin", pluginId: t.pluginId } : null;
     default:
       return null;
   }
@@ -81,6 +90,13 @@ function parseHistory(v: unknown, ids: Set<string>): Record<string, TabHistory> 
   return out;
 }
 
+function parsePluginPanel(v: unknown): PluginPanel {
+  if (!v || typeof v !== "object") return DEFAULT_PLUGIN_PANEL;
+  const p = v as Record<string, unknown>;
+  const ok = typeof p.open === "boolean" && typeof p.width === "number" && p.width >= 240 && p.width <= 1200 && (p.pluginId === null || isStr(p.pluginId));
+  return ok ? { open: p.open as boolean, width: p.width as number, pluginId: p.pluginId as string | null } : DEFAULT_PLUGIN_PANEL;
+}
+
 function parseState(raw: string | null): ViewerState | null {
   if (raw === null) return null;
   try {
@@ -102,6 +118,7 @@ function parseState(raw: string | null): ViewerState | null {
     const activeId = isStr(v.activeId) && seen.has(v.activeId) ? v.activeId : (tabs[0]?.id ?? null);
     return {
       tabs,
+      pluginPanel: parsePluginPanel(v.pluginPanel),
       history: parseHistory(v.history, seen),
       activeId,
       sidebarOpen: typeof v.sidebarOpen === "boolean" ? v.sidebarOpen : true,
@@ -126,6 +143,8 @@ function sameTab(a: TabInput | Tab, b: TabInput | Tab): boolean {
       return b.kind === "note" && a.date === b.date && a.name === b.name;
     case "new":
       return b.kind === "new";
+    case "plugin":
+      return b.kind === "plugin" && a.pluginId === b.pluginId;
   }
 }
 
@@ -148,6 +167,8 @@ function makeTab(id: string, t: TabInput): Tab {
       return { id, kind: "note", date: t.date, name: t.name };
     case "new":
       return { id, kind: "new" };
+    case "plugin":
+      return { id, kind: "plugin", pluginId: t.pluginId };
   }
 }
 
@@ -172,6 +193,7 @@ export class ViewerStore {
     }
     this.state = parseState(raw) ?? {
       tabs: [],
+      pluginPanel: DEFAULT_PLUGIN_PANEL,
       history: {},
       activeId: null,
       sidebarOpen: true,
@@ -286,6 +308,12 @@ export class ViewerStore {
   activate(id: string): void {
     if (id === this.state.activeId || !this.state.tabs.some((t) => t.id === id)) return;
     this.set({ ...this.leaving(), activeId: id });
+  }
+
+  setPluginPanel(patch: Partial<PluginPanel>): void {
+    const next = { ...this.state.pluginPanel, ...patch };
+    next.width = Math.min(1200, Math.max(240, Math.round(next.width)));
+    this.set({ pluginPanel: next });
   }
 
   setSidebarOpen(open: boolean): void {

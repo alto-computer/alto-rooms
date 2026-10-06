@@ -532,6 +532,113 @@ impl RoomsCore {
         Ok(room_v)
     }
 
+    // ---- plugins ----
+
+    fn plugin_info(state: &crate::state::PluginState, folder: String, r: Result<(crate::plugins::Manifest, String), String>) -> PluginInfo {
+        match r {
+            Ok((m, rev)) => {
+                let enabled = state.enabled.contains(&m.id);
+                let granted = state.grants.get(&m.id).cloned();
+                let needs_approval = granted.as_ref().is_none_or(|g| !m.permissions.iter().all(|p| g.contains(p)));
+                PluginInfo {
+                    id: m.id, name: m.name, version: m.version, min_app_version: m.min_app_version, description: m.description,
+                    entry: m.entry, permissions: m.permissions, slots: m.slots, status: PluginStatus::Ok, reason: None,
+                    enabled, granted, needs_approval, rev,
+                }
+            }
+            Err(reason) => PluginInfo {
+                id: folder.clone(), name: folder, version: String::new(), min_app_version: String::new(), description: None,
+                entry: String::new(), permissions: Vec::new(), slots: PluginSlots::default(), status: PluginStatus::Invalid,
+                reason: Some(reason), enabled: false, granted: None, needs_approval: false, rev: String::new(),
+            },
+        }
+    }
+
+    /// Every plugin folder, sorted by id, with its enable state.
+    pub fn plugins(&self) -> Vec<PluginInfo> {
+        let state = self.inner.lock().unwrap().state.plugins.clone();
+        crate::plugins::scan(&self.home).into_iter().map(|(f, r)| Self::plugin_info(&state, f, r)).collect()
+    }
+
+    fn plugin(&self, id: &str) -> Option<PluginInfo> {
+        self.plugins().into_iter().find(|p| p.id == id)
+    }
+
+    /// Turns a valid plugin on or off. Turning on grants `shown` (the permissions the user saw)
+    /// limited to what the manifest declares now; `None` grants what it declares now. Turning off
+    /// keeps the approval.
+    pub fn set_plugin_enabled(&self, id: &str, enabled: bool, shown: Option<Vec<String>>) -> Result<PluginInfo, CoreError> {
+        let p = self.plugin(id).ok_or(CoreError::NotFound)?;
+        if p.status != PluginStatus::Ok { return Err(CoreError::InvalidInput(p.reason.unwrap_or_else(|| "invalid plugin".into()))); }
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let st = &mut inner.state.plugins;
+            st.enabled.retain(|x| x != id);
+            if enabled {
+                st.enabled.push(id.to_string());
+                st.enabled.sort();
+                let granted: Vec<String> = match shown {
+                    Some(seen) => p.permissions.iter().filter(|x| seen.contains(x)).cloned().collect(),
+                    None => p.permissions.clone(),
+                };
+                st.grants.insert(id.to_string(), granted);
+            }
+            inner.state.save()?;
+            self.emit(&mut inner, EventKind::PluginsChanged {});
+        }
+        self.plugin(id).ok_or(CoreError::NotFound)
+    }
+
+    /// The folder of a valid plugin the user turned on; else `NotFound`. Storage comes with turning
+    /// it on, so a plugin waiting to approve *new* permissions can still save (e.g. while closing).
+    fn usable_plugin_dir(&self, id: &str) -> Result<std::path::PathBuf, CoreError> {
+        match self.plugin(id) {
+            Some(p) if p.status == PluginStatus::Ok && p.enabled => Ok(crate::plugins::plugins_dir(&self.home).join(id)),
+            _ => Err(CoreError::NotFound),
+        }
+    }
+
+    pub fn read_plugin_data(&self, id: &str, rel: &str) -> Result<Option<String>, CoreError> {
+        crate::plugins::read_data(&self.usable_plugin_dir(id)?, rel)
+    }
+
+    pub fn write_plugin_data(&self, id: &str, rel: &str, text: &str) -> Result<(), CoreError> {
+        crate::plugins::write_data(&self.usable_plugin_dir(id)?, rel, text)
+    }
+
+    pub fn list_plugin_data(&self, id: &str, prefix: &str) -> Result<Vec<String>, CoreError> {
+        crate::plugins::list_data(&self.usable_plugin_dir(id)?, prefix)
+    }
+
+    pub fn delete_plugin_data(&self, id: &str, rel: &str) -> Result<(), CoreError> {
+        crate::plugins::delete_data(&self.usable_plugin_dir(id)?, rel)
+    }
+
+    /// A file of a valid plugin to serve (never under data/). Enabled or not: the app only opens
+    /// frames for enabled plugins, and serving lets the enable card show nothing but the manifest.
+    pub fn resolve_plugin_file(&self, id: &str, rel: &str) -> Result<std::path::PathBuf, CoreError> {
+        match self.plugin(id) {
+            Some(p) if p.status == PluginStatus::Ok => crate::plugins::resolve_asset(&crate::plugins::plugins_dir(&self.home).join(id), rel),
+            _ => Err(CoreError::NotFound),
+        }
+    }
+
+    /// Tells clients the plugin list may have changed (the watcher calls this).
+    pub fn plugins_changed(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        self.emit(&mut inner, EventKind::PluginsChanged {});
+    }
+
+    /// The artifact holding the original with `file_key`: when several rooms link it, the first in
+    /// sidebar order, then the journal. `None` if no artifact has that key.
+    pub fn artifact_by_file_key(&self, file_key: &str) -> Option<Artifact> {
+        let inner = self.inner.lock().unwrap();
+        let mut hits = inner.index.by_file_key(file_key).ok()?;
+        let rank = |room: &str| inner.state.rooms.iter().position(|r| r.id == room).unwrap_or(usize::MAX);
+        hits.sort_by_key(|a| rank(&a.room_id));
+        hits.into_iter().next()
+    }
+
     /// Moves `room` to position `to` among the rooms other than the inbox, which keeps its place
     /// (`to` past the end = last). Saves state.json and emits `rooms.reordered` with the full order.
     pub fn move_room(&self, room: &RoomId, to: usize) -> Result<Vec<RoomId>, CoreError> {

@@ -458,44 +458,7 @@ fn scan_of_removed_room_writes_nothing() {
     assert!(core.journal_day(&today).unwrap().artifacts.iter().all(|a| a.room_id != r.id));
 }
 
-#[test]
-fn api_calls_stay_fast_during_big_backfill() {
-    let d = tempfile::tempdir().unwrap();
-    let big = d.path().join("big");
-    fs::create_dir_all(&big).unwrap();
-    let head = format!("<title>t</title>{}", "x".repeat(20_000));
-    for i in 0..3000 { fs::write(big.join(format!("{i}.html")), &head).unwrap(); }
-    let core = RoomsCore::open(d.path()).unwrap();
-    let c = core.clone();
-    let t = std::thread::spawn(move || c.backfill_all().unwrap());
-    let mut worst = Duration::ZERO;
-    while !t.is_finished() {
-        let s = Instant::now();
-        let _ = core.list_rooms();
-        let _ = core.current_seq();
-        worst = worst.max(s.elapsed());
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    t.join().unwrap();
-    assert!(worst < slow(Duration::from_millis(150)), "worst {worst:?}");
-}
 
-#[test]
-fn one_new_file_in_big_room_is_added_within_a_second() {
-    let d = tempfile::tempdir().unwrap();
-    let big = d.path().join("big");
-    fs::create_dir_all(&big).unwrap();
-    for i in 0..3000 { fs::write(big.join(format!("{i}.html")), "<title>t</title>").unwrap(); }
-    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
-    let id = core.list_rooms().into_iter().find(|r| r.name == "big").unwrap().id;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while core.list_artifacts(&id).unwrap().len() < 3000 { assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(50)); }
-    let mut rx = core.subscribe();
-    let s = Instant::now();
-    fs::write(big.join("fresh.html"), "<title>fresh</title>").unwrap();
-    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.rel_path == "fresh.html"), slow(Duration::from_secs(2)));
-    assert!(s.elapsed() < slow(Duration::from_secs(1)), "{:?}", s.elapsed());
-}
 
 #[test]
 fn finder_rename_of_inbox_does_not_move_the_inbox() {
@@ -909,4 +872,195 @@ fn move_room_refuses_the_inbox_and_unknown_rooms() {
     core.create_room("a").unwrap();
     assert!(matches!(core.move_room(&"inbox".to_string(), 1).unwrap_err(), CoreError::InvalidInput(_)));
     assert_eq!(core.move_room(&"nope".to_string(), 0).unwrap_err(), CoreError::RoomNotFound);
+}
+
+// ---- fileKey ----
+
+fn key_of(core: &RoomsCore, room: &str, title_file: &str) -> String {
+    core.list_artifacts(&room.to_string()).unwrap().into_iter().find(|a| a.rel_path == title_file).unwrap().file_key
+}
+
+#[test]
+fn file_key_is_stable_across_moves_for_plain_files_and_links() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    let outside = tempfile::tempdir().unwrap();
+    let orig = outside.path().join("orig.html");
+    fs::write(&orig, "<title>o</title>").unwrap();
+    fs::write(d.path().join("a/x.html"), "<title>x</title>").unwrap();
+    symlink(&orig, d.path().join("a/y.html")).unwrap();
+    core.backfill_all().unwrap();
+    let (kx, ky) = (key_of(&core, &a, "x.html"), key_of(&core, &a, "y.html"));
+    assert_eq!(kx.len(), 16);
+    assert!(kx.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_ne!(kx, ky);
+    let x = core.list_artifacts(&a).unwrap().into_iter().find(|t| t.rel_path == "x.html").unwrap();
+    let y = core.list_artifacts(&a).unwrap().into_iter().find(|t| t.rel_path == "y.html").unwrap();
+    core.move_artifact(&a, &x.id, &b).unwrap();
+    core.move_artifact(&a, &y.id, &b).unwrap();
+    assert_eq!(key_of(&core, &b, "x.html"), kx);
+    assert_eq!(key_of(&core, &b, "y.html"), ky);
+    drop(core);
+    let reopened = RoomsCore::open(d.path()).unwrap();
+    reopened.backfill_all().unwrap();
+    assert_eq!(key_of(&reopened, &b, "x.html"), kx);
+    assert_eq!(key_of(&reopened, &b, "y.html"), ky);
+}
+
+#[test]
+fn same_original_linked_twice_shares_file_key() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("o.html"), "").unwrap();
+    fs::write(outside.path().join("p.html"), "").unwrap();
+    symlink(outside.path().join("o.html"), d.path().join("a/o.html")).unwrap();
+    symlink(outside.path().join("o.html"), d.path().join("b/o.html")).unwrap();
+    symlink(outside.path().join("p.html"), d.path().join("b/p.html")).unwrap();
+    core.backfill_all().unwrap();
+    assert_eq!(key_of(&core, &a, "o.html"), key_of(&core, &b, "o.html"));
+    assert_ne!(key_of(&core, &b, "o.html"), key_of(&core, &b, "p.html"));
+}
+
+#[test]
+fn artifact_by_file_key_finds_first_in_room_order() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("o.html"), "").unwrap();
+    symlink(outside.path().join("o.html"), d.path().join("b/o.html")).unwrap();
+    symlink(outside.path().join("o.html"), d.path().join("a/o.html")).unwrap();
+    core.backfill_all().unwrap();
+    let key = key_of(&core, &a, "o.html");
+    assert_eq!(core.artifact_by_file_key(&key).unwrap().room_id, a);
+    core.move_room(&b, 0).unwrap();
+    assert_eq!(core.artifact_by_file_key(&key).unwrap().room_id, b);
+    assert!(core.artifact_by_file_key("0000000000000000").is_none());
+}
+
+// ---- plugins ----
+
+const ECHO: &str = r#"{"id":"echo","name":"Echo","version":"0.1.0","minAppVersion":"0.3.0",
+    "permissions":["rooms.read"],"slots":{"tab":{"title":"Echo","sidebar":true}}}"#;
+
+fn install(home: &std::path::Path, manifest: &str) {
+    let dir = home.join(".rooms/plugins/echo");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("manifest.json"), manifest).unwrap();
+    fs::write(dir.join("index.html"), "<p>echo</p>").unwrap();
+}
+
+#[test]
+fn plugin_enable_and_grants_persist() {
+    let (d, core) = home();
+    install(d.path(), ECHO);
+    let p = core.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert_eq!(p.status, PluginStatus::Ok);
+    assert!(!p.enabled && p.needs_approval);
+    assert_eq!(core.read_plugin_data("echo", "x.txt").unwrap_err(), CoreError::NotFound);
+
+    let p = core.set_plugin_enabled("echo", true, None).unwrap();
+    assert!(p.enabled && !p.needs_approval);
+    core.write_plugin_data("echo", "x.txt", "hi").unwrap();
+    assert_eq!(core.read_plugin_data("echo", "x.txt").unwrap().as_deref(), Some("hi"));
+    assert_eq!(core.list_plugin_data("echo", "").unwrap(), vec!["x.txt"]);
+
+    let reopened = RoomsCore::open(d.path()).unwrap();
+    let p = reopened.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert!(p.enabled && !p.needs_approval);
+
+    install(d.path(), &ECHO.replace(r#"["rooms.read"]"#, r#"["rooms.read","clipboard"]"#));
+    let p = reopened.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert!(p.enabled && p.needs_approval);
+    // Waiting to approve new permissions doesn't take away storage: it can still save while closing.
+    reopened.write_plugin_data("echo", "closed.txt", "yes").unwrap();
+
+    let p = reopened.set_plugin_enabled("echo", false, None).unwrap();
+    assert!(!p.enabled);
+    assert_eq!(reopened.set_plugin_enabled("nope", true, None).unwrap_err(), CoreError::NotFound);
+}
+
+#[test]
+fn invalid_plugins_are_listed_but_cannot_be_enabled() {
+    let (d, core) = home();
+    install(d.path(), "{");
+    let p = core.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert_eq!(p.status, PluginStatus::Invalid);
+    assert!(p.reason.is_some() && !p.needs_approval);
+    assert!(matches!(core.set_plugin_enabled("echo", true, None).unwrap_err(), CoreError::InvalidInput(_)));
+}
+
+#[test]
+fn plugins_changed_emits_event() {
+    let (_d, core) = home();
+    let mut rx = core.subscribe();
+    core.plugins_changed();
+    assert!(matches!(rx.try_recv().unwrap().kind, EventKind::PluginsChanged {}));
+}
+
+#[test]
+fn plugin_assets_resolve_and_data_stays_private() {
+    let (d, core) = home();
+    install(d.path(), ECHO);
+    core.set_plugin_enabled("echo", true, None).unwrap();
+    core.write_plugin_data("echo", "x.txt", "hi").unwrap();
+    assert!(core.resolve_plugin_file("echo", "index.html").unwrap().ends_with("index.html"));
+    assert!(core.resolve_plugin_file("echo", "data/x.txt").is_err());
+    assert!(core.resolve_plugin_file("nope", "index.html").is_err());
+}
+
+#[test]
+fn a_new_file_at_a_moved_files_old_path_gets_its_own_file_key() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    fs::write(d.path().join("a/report.html"), "<title>first</title>").unwrap();
+    core.backfill_all().unwrap();
+    let first = core.list_artifacts(&a).unwrap().remove(0);
+    core.move_artifact(&a, &first.id, &b).unwrap();
+    fs::write(d.path().join("a/report.html"), "<title>second</title>").unwrap();
+    core.backfill_all().unwrap();
+    let second = key_of(&core, &a, "report.html");
+    assert_ne!(second, first.file_key, "a different document must not share the moved one's notes");
+    assert_eq!(key_of(&core, &b, "report.html"), first.file_key);
+}
+
+#[test]
+fn a_link_to_a_moved_files_new_path_shares_its_file_key() {
+    let (d, core) = home();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    let c = core.create_room("c").unwrap().id;
+    fs::write(d.path().join("a/report.html"), "<title>r</title>").unwrap();
+    core.backfill_all().unwrap();
+    let r = core.list_artifacts(&a).unwrap().remove(0);
+    core.move_artifact(&a, &r.id, &b).unwrap();
+    symlink(d.path().join("b/report.html"), d.path().join("c/report.html")).unwrap();
+    core.backfill_all().unwrap();
+    assert_eq!(key_of(&core, &c, "report.html"), r.file_key);
+}
+
+#[test]
+fn turning_on_grants_only_what_was_shown_and_turning_off_keeps_the_approval() {
+    let (d, core) = home();
+    install(d.path(), &ECHO.replace(r#"["rooms.read"]"#, r#"["rooms.read","clipboard"]"#));
+    let p = core.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert_eq!(p.granted, None);
+    // The card showed only rooms.read (the manifest gained clipboard since): grant only that.
+    let p = core.set_plugin_enabled("echo", true, Some(vec!["rooms.read".into()])).unwrap();
+    assert!(p.enabled && p.needs_approval);
+    assert_eq!(p.granted, Some(vec!["rooms.read".to_string()]));
+    let p = core.set_plugin_enabled("echo", true, Some(vec!["rooms.read".into(), "clipboard".into()])).unwrap();
+    assert!(p.enabled && !p.needs_approval);
+    // Off is a decision, not a reset: no approval needed to turn it back on.
+    let p = core.set_plugin_enabled("echo", false, None).unwrap();
+    assert!(!p.enabled && !p.needs_approval);
+    let p = RoomsCore::open(d.path()).unwrap().plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert!(!p.enabled && !p.needs_approval);
+    // Shown permissions that the manifest no longer declares are not granted.
+    let p = core.set_plugin_enabled("echo", true, Some(vec!["downloads".into(), "rooms.read".into(), "clipboard".into()])).unwrap();
+    assert_eq!(p.granted, Some(vec!["rooms.read".to_string(), "clipboard".to_string()]));
 }

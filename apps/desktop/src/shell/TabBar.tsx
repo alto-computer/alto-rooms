@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { ArrowLeft, ArrowRight, Calendar, FileText, Folder, LayoutGrid, PanelLeft, Plus, X, type LucideIcon } from "lucide-react";
-import { useArtifacts, useRooms, useViewer, useViewerStore } from "@/data/hooks";
+import { ArrowLeft, ArrowRight, Calendar, FileText, Folder, LayoutGrid, PanelLeft, Plus, Puzzle, X, type LucideIcon } from "lucide-react";
+import { useArtifacts, usePlugins, useRooms, useViewer, useViewerStore } from "@/data/hooks";
+import { pluginIcon } from "@/plugins/icons";
 import type { Tab } from "@/data/viewerStore";
 import { noteBase } from "@/lib/notes";
 import { monthDay } from "@/lib/dates";
@@ -15,6 +16,7 @@ const ICONS: Record<Tab["kind"], LucideIcon> = {
   note: FileText,
   journal: Calendar,
   new: LayoutGrid,
+  plugin: Puzzle,
 };
 
 /** Before the first sync we can't tell yet. */
@@ -52,7 +54,15 @@ function TabLabel({ tab }: { tab: Tab }) {
       return <>{noteBase(tab.name)}</>;
     case "new":
       return <>New tab</>;
+    case "plugin":
+      return <PluginLabel pluginId={tab.pluginId} />;
   }
+}
+
+function PluginLabel({ pluginId }: { pluginId: string }) {
+  const { list, loaded } = usePlugins();
+  const p = list.find((x) => x.id === pluginId);
+  return <>{p?.slots.tab?.title ?? (loaded ? "Missing plugin" : PENDING)}</>;
 }
 
 const ICON_BUTTON =
@@ -158,7 +168,8 @@ export function TabBar() {
 }
 
 function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boolean; onActivate: () => void; onClose: () => void }) {
-  const Icon = ICONS[tab.kind];
+  const { list } = usePlugins();
+  const Icon = tab.kind === "plugin" ? pluginIcon(list.find((p) => p.id === tab.pluginId)?.slots.tab?.icon) : ICONS[tab.kind];
   const middle = (e: MouseEvent) => {
     if (e.button === 1) {
       e.preventDefault();

@@ -1,0 +1,114 @@
+# Writing a Rooms plugin
+
+A plugin adds UI to Rooms: a panel beside documents, or a tab of its own with a sidebar item. It runs in a sandboxed iframe and talks to the app only through `@alto-rooms/plugin-sdk`. Rooms never imports plugin code.
+
+Plugins change what you **see**. To change what gets **made** (reports, reviews), use your agent and its skills; their output lands in Rooms as files.
+
+## Layout
+
+```text
+~/rooms/.rooms/plugins/<id>/
+  manifest.json
+  index.html        # the entry (or "entry" in the manifest)
+  main.js, assets…  # everything the page needs, bundled
+  data/             # your plugin's files; Rooms creates it on first write
+```
+
+Install a plugin by copying its built folder there. Rooms notices it and asks the user before it runs.
+
+## manifest.json
+
+```json
+{
+  "id": "excalidraw",
+  "name": "Excalidraw notes",
+  "version": "0.1.0",
+  "minAppVersion": "0.3.0",
+  "description": "Sketch next to any document.",
+  "permissions": ["clipboard", "downloads"],
+  "slots": {
+    "artifact.sidePanel": { "title": "Notes" },
+    "tab": { "title": "Goals", "icon": "target", "sidebar": true }
+  }
+}
+```
+
+| Field | Rule |
+| --- | --- |
+| `id` | `^[a-z0-9][a-z0-9-]{1,39}$`, and the same as the folder name |
+| `name` | 1–40 characters |
+| `version`, `minAppVersion` | semver. Rooms older than `minAppVersion` won't run the plugin |
+| `description` | optional, up to 200 characters, shown when Rooms asks the user |
+| `entry` | optional, defaults to `index.html`; not under `data/` |
+| `permissions` | any of `rooms.read`, `clipboard`, `downloads` |
+| `slots` | at least one of the two below. Unknown slots are ignored |
+
+Slots:
+
+- `artifact.sidePanel` `{ title }`: a panel beside an open document. The user opens it from a button on the document.
+- `tab` `{ title, icon?, sidebar? }`: a tab of its own. With `sidebar: true` it gets an item under **Plugins** in the sidebar. `icon` is one of `target`, `pencil`, `list-checks`, `calendar`, `star`, `book`, `flag`, `layout-grid`, `sparkles`, `notebook`, `lightbulb`, `puzzle`.
+
+Titles are 1–24 characters.
+
+## Permissions
+
+Storing your own files is always allowed. Everything else is declared, and the user sees it before the plugin runs:
+
+| Permission | The user sees | You get |
+| --- | --- | --- |
+| `rooms.read` | Can see your rooms and documents | `rooms.list()`, `artifacts.list()` |
+| `clipboard` | Can copy and paste | clipboard access in the frame |
+| `downloads` | Can save files you export | file downloads from the frame |
+
+If a new version asks for more permissions, Rooms asks the user again.
+
+## The SDK
+
+```ts
+import { connect } from "@alto-rooms/plugin-sdk";
+
+const rooms = await connect();
+
+rooms.onContext(async (ctx) => {
+  if (ctx.slot !== "artifact.sidePanel") return;
+  const saved = await rooms.storage.read(`notes/${ctx.artifact.fileKey}.excalidraw`);
+  scene.load(saved ? JSON.parse(saved) : EMPTY);
+});
+
+const save = debounce(
+  () => rooms.storage.write(`notes/${current.fileKey}.excalidraw`, JSON.stringify(scene.serialize())),
+  400,
+);
+rooms.onBeforeClose(async () => {
+  await save.flush();
+});
+```
+
+| Call | What it does |
+| --- | --- |
+| `connect({ timeoutMs? })` | Connects; resolves once the app sends the first context |
+| `onContext(cb)` | Called at once and whenever the context changes (another document in the same panel) |
+| `onBeforeClose(cb)` | Runs before your frame closes: panel closed, app quitting, plugin updated or re-permissioned |
+| `storage.read(path)` | Text of a file in your `data/`, or `null` |
+| `storage.write(path, text)` | Writes atomically; up to 10 MB |
+| `storage.list(prefix?)` | Your files under `data/`, sorted |
+| `storage.delete(path)` | Removes a file; a missing file is fine |
+| `rooms.list()` | Rooms in sidebar order (`rooms.read`) |
+| `artifacts.list(roomId)` | Documents in a room, newest first (`rooms.read`) |
+| `open({ roomId } \| { fileKey })` | Opens a room or document in the current tab |
+
+Errors are `PluginError` with a `code`: `permission_denied`, `invalid_path`, `too_large`, `not_found`, `write_failed`, `unknown_method`, `timeout`.
+
+The context is `{ slot: "artifact.sidePanel", artifact }` or `{ slot: "tab" }`. `artifact.fileKey` identifies the original file: it stays the same when Rooms moves the document, and every room that links the same original gets the same key. Key your per-document data by it.
+
+## Rules of the sandbox
+
+- **Paths** are relative to `data/`: 1–200 characters, `/`-separated segments of `A–Z a–z 0–9 . _ -`, no `.` or `..`, at most 8 deep.
+- **No network.** `fetch` to anywhere is blocked. Bundle your fonts, images and wasm into the plugin folder.
+- **Your files only.** You can't read other plugins' data, document contents, or Rooms' own state.
+- **Save as you go.** Switching tabs closes your frame right away; `onBeforeClose` is reliable when the panel closes or the app quits, but not on a tab switch. Debounce writes to a few hundred milliseconds.
+- **Stay responsive.** If your frame stops answering pings, Rooms shows "This plugin stopped responding" with a Reload button.
+
+## Your data is just files
+
+Everything you store is a plain file under `~/rooms/.rooms/plugins/<id>/data/`. Document its format, and the user's agent can read and change it too (for example, "link this report to my Q4 goal").

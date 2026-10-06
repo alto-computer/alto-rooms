@@ -23,7 +23,7 @@ function art(id: string, roomId = "r1", createdAt = `2026-10-05T00:00:0${id.slic
     createdAt,
     updatedAt: createdAt,
     author: "agent",
-    source: { agent: null, session: null, cwd: null, machine: null },
+    source: { agent: null, session: null, cwd: null, machine: null }, fileKey: "0000000000000000",
   };
 }
 

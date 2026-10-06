@@ -60,6 +60,9 @@ wire!(pub struct Artifact {
     pub updated_at: String,
     pub author: Author,
     pub source: Source,
+    /// Stable key of the original file: set when the artifact is first indexed, kept when Rooms
+    /// moves it. Artifacts linking the same original share it.
+    pub file_key: String,
 });
 
 wire!(pub struct Note {
@@ -84,6 +87,52 @@ wire!(pub struct Info {
     pub files_origin: String,
 });
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum PluginStatus { Ok, Invalid }
+
+wire!(pub struct SidePanelSlot {
+    pub title: String,
+});
+
+wire!(pub struct TabSlot {
+    pub title: String,
+    pub icon: Option<String>,
+    pub sidebar: bool,
+});
+
+wire!(
+/// The slots a manifest declares (`slots["artifact.sidePanel"]`, `slots["tab"]`).
+#[derive(Default)] pub struct PluginSlots {
+    pub artifact_side_panel: Option<SidePanelSlot>,
+    pub tab: Option<TabSlot>,
+});
+
+wire!(
+/// A plugin folder under `<home>/.rooms/plugins/`. When `status` is `invalid`, only `id` (the
+/// folder name), `status` and `reason` are meaningful.
+pub struct PluginInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub min_app_version: String,
+    pub description: Option<String>,
+    pub entry: String,
+    pub permissions: Vec<String>,
+    pub slots: PluginSlots,
+    pub status: PluginStatus,
+    pub reason: Option<String>,
+    pub enabled: bool,
+    /// The permissions the user approved; `None` until they first turn the plugin on.
+    pub granted: Option<Vec<String>>,
+    /// Valid, and either never approved or declaring permissions beyond `granted`. Turning a
+    /// plugin off keeps its approval, so an off plugin doesn't need approval to come back.
+    pub needs_approval: bool,
+    /// Changes when the manifest or the entry file changes.
+    pub rev: String,
+});
+
 wire!(pub struct ApiError {
     pub error: String,
     pub message: String,
@@ -98,6 +147,8 @@ pub enum EventKind {
     #[serde(rename = "room.removed", rename_all = "camelCase")] RoomRemoved { room_id: RoomId },
     /// The sidebar order changed; `room_ids` is the full new order (as `GET /v1/rooms` lists it).
     #[serde(rename = "rooms.reordered", rename_all = "camelCase")] RoomsReordered { room_ids: Vec<RoomId> },
+    /// Something under `.rooms/plugins/` changed (outside plugins' `data/`) or a plugin was turned on/off: list again.
+    #[serde(rename = "plugins.changed")] PluginsChanged {},
     #[serde(rename = "artifact.added")] ArtifactAdded { artifact: Artifact },
     #[serde(rename = "artifact.updated")] ArtifactUpdated { artifact: Artifact },
     #[serde(rename = "artifact.removed", rename_all = "camelCase")] ArtifactRemoved { room_id: RoomId, artifact_id: ArtifactId },

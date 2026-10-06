@@ -1,4 +1,5 @@
 import { createContext, createElement, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { PluginsStore, type PluginsState } from "@/plugins/pluginsStore";
 import type { Artifact, JournalDay, createRoomsClient } from "@alto-rooms/protocol-ts";
 import type { RoomsState, RoomsStore } from "./roomsStore";
 import type { ViewerState, ViewerStore } from "./viewerStore";
@@ -8,14 +9,20 @@ export type RoomsClient = ReturnType<typeof createRoomsClient>;
 
 type Stores = { rooms: RoomsStore; viewer: ViewerStore; client?: RoomsClient };
 
-const StoresContext = createContext<Stores | null>(null);
+const StoresContext = createContext<(Stores & { plugins: PluginsStore }) | null>(null);
 
 export function StoresProvider({ rooms, viewer, client, children }: Stores & { children?: ReactNode }) {
-  const value = useMemo(() => ({ rooms, viewer, client }), [rooms, viewer, client]);
+  // The plugin list rides the rooms event stream (plugins.changed, resync).
+  const plugins = useMemo(() => new PluginsStore(client, rooms, __APP_VERSION__), [client, rooms]);
+  useEffect(() => {
+    plugins.start();
+    return () => plugins.stop();
+  }, [plugins]);
+  const value = useMemo(() => ({ rooms, viewer, client, plugins }), [rooms, viewer, client, plugins]);
   return createElement(StoresContext.Provider, { value }, children);
 }
 
-function useStores(): Stores {
+function useStores(): Stores & { plugins: PluginsStore } {
   const s = useContext(StoresContext);
   if (!s) throw new Error("StoresProvider is missing");
   return s;
@@ -23,6 +30,13 @@ function useStores(): Stores {
 
 export const useRoomsStore = (): RoomsStore => useStores().rooms;
 export const useViewerStore = (): ViewerStore => useStores().viewer;
+export const usePluginsStore = (): PluginsStore => useStores().plugins;
+
+/** The plugin list (with app compatibility) and this run's dismissed enable cards. */
+export function usePlugins(): PluginsState {
+  const store = usePluginsStore();
+  return useSyncExternalStore(store.subscribe, store.getState);
+}
 
 export function useClient(): RoomsClient {
   const { client } = useStores();

@@ -2,4 +2,9 @@
 import type { Author } from "./Author";
 import type { Source } from "./Source";
 
-export type Artifact = { id: string, roomId: string, relPath: string, title: string, createdAt: string, updatedAt: string, author: Author, source: Source, };
+export type Artifact = { id: string, roomId: string, relPath: string, title: string, createdAt: string, updatedAt: string, author: Author, source: Source, 
+/**
+ * Stable key of the original file: set when the artifact is first indexed, kept when Rooms
+ * moves it. Artifacts linking the same original share it.
+ */
+fileKey: string, };

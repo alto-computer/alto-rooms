@@ -12,6 +12,8 @@ import { NoteView } from "@/views/NoteView";
 import { NewTabView } from "@/views/NewTabView";
 import { QuickFind } from "@/views/QuickFind";
 import { RoomView } from "@/views/RoomView";
+import { EnableCard } from "@/plugins/EnableCard";
+import { PluginSlot } from "@/plugins/PluginSlot";
 import { allowedWithFocus, historyKey, isMenuHistoryKey, isTextField, keyAction, type ShortcutAction } from "./shortcuts";
 import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
@@ -122,6 +124,8 @@ function TabView({ tab }: { tab: Tab }) {
       return <NoteView tabId={tab.id} date={tab.date} name={tab.name} />;
     case "new":
       return <NewTabView />;
+    case "plugin":
+      return <PluginSlot slot="tab" pluginId={tab.pluginId} context={{}} />;
   }
 }
 
@@ -159,6 +163,7 @@ export function AppShell() {
           </main>
         </div>
         <QuickFind open={findOpen} onClose={() => setFindOpen(false)} />
+        <EnableCard />
       </SidebarProvider>
     </TooltipProvider>
   );

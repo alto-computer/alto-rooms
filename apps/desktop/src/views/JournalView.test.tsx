@@ -30,7 +30,7 @@ const artifact = (id: string, roomId: string, relPath: string, title: string, cr
   createdAt,
   updatedAt: createdAt,
   author: "agent",
-  source: { agent: null, session: null, cwd: null, machine: null },
+  source: { agent: null, session: null, cwd: null, machine: null }, fileKey: "0000000000000000",
 });
 
 const note = (date: string, name: string, updatedAt = "2026-10-05T01:00:00Z"): Note => ({

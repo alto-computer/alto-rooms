@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { createRoomsClient } from "@alto-rooms/protocol-ts";
-import { DAEMON_EXITED, installQuitFlushResponder, listenAll, onBeforeQuitFlush } from "@/lib/appEvents";
+import { DAEMON_EXITED, installQuitFlushResponder, listenAll, onBeforeQuitFlush, onQuitFlushAsync } from "@/lib/appEvents";
+import { flushAllPlugins } from "@/plugins/host";
+import { CLOSE_CAP_MS as PLUGIN_CLOSE_CAP_MS } from "@/plugins/PluginFrame";
 import { resolveConnection, type Connection } from "@/lib/connection";
 import { runFlushProbe } from "@/lib/flushProbe";
 import { rebindNoteSavers } from "@/lib/noteSaver";
@@ -88,6 +90,8 @@ export default function App() {
 
   // Answer the native close/quit hook on every screen, so closing never waits for its timeout.
   useEffect(() => (isTauri() ? installQuitFlushResponder() : undefined), []);
+  // Open plugins save before quitting, inside the same window as the notes.
+  useEffect(() => onQuitFlushAsync(() => flushAllPlugins(PLUGIN_CLOSE_CAP_MS)), []);
 
   // Quitting counts as leaving the active room tab (for "new" dots next time).
   useEffect(() => {

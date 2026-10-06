@@ -7,7 +7,7 @@
     },
     "apps/desktop": {
       "name": "@alto-rooms/desktop",
-      "version": "0.2.0",
+      "version": "0.2.2",
       "dependencies": {
         "@alto-rooms/protocol-ts": "workspace:*",
         "@dnd-kit/core": "^6.3.1",
@@ -32,6 +32,7 @@
         "tw-animate-css": "^1.4.0",
       },
       "devDependencies": {
+        "@alto-rooms/plugin-sdk": "workspace:*",
         "@playwright/test": "^1.63.0",
         "@tauri-apps/cli": "^2.12.1",
         "@testing-library/dom": "^10.4.2",
@@ -47,6 +48,15 @@
         "vitest": "^5.0.3",
       },
     },
+    "packages/plugin-sdk": {
+      "name": "@alto-rooms/plugin-sdk",
+      "version": "0.1.0",
+      "devDependencies": {
+        "jsdom": "^30.1.2",
+        "typescript": "^7.0.2",
+        "vitest": "^5.0.3",
+      },
+    },
     "packages/protocol-ts": {
       "name": "@alto-rooms/protocol-ts",
       "version": "0.1.0",
@@ -56,6 +66,8 @@
     "@adobe/css-tools": ["@adobe/css-tools@4.5.0", "", {}, "sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q=="],
 
     "@alto-rooms/desktop": ["@alto-rooms/desktop@workspace:apps/desktop"],
+
+    "@alto-rooms/plugin-sdk": ["@alto-rooms/plugin-sdk@workspace:packages/plugin-sdk"],
 
     "@alto-rooms/protocol-ts": ["@alto-rooms/protocol-ts@workspace:packages/protocol-ts"],
 

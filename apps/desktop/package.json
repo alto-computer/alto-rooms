@@ -1,7 +1,7 @@
 {
   "name": "@alto-rooms/desktop",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.3.1",
   "type": "module",
   "scripts": {
     "dev": "vite --port 1420 --strictPort",
@@ -13,6 +13,7 @@
     "sidecar": "bash scripts/build-sidecar.sh"
   },
   "devDependencies": {
+    "@alto-rooms/plugin-sdk": "workspace:*",
     "@playwright/test": "^1.63.0",
     "@tauri-apps/cli": "^2.12.1",
     "@testing-library/dom": "^10.4.2",

@@ -59,6 +59,16 @@ export function onBeforeQuitFlush(fn: () => void): () => void {
   };
 }
 
+const asyncFlush = new Set<() => Promise<void>>();
+
+/** Registers async work to run on `app://flush` alongside the note flush, inside the same window (e.g. plugins saving). */
+export function onQuitFlushAsync(fn: () => Promise<void>): () => void {
+  asyncFlush.add(fn);
+  return () => {
+    asyncFlush.delete(fn);
+  };
+}
+
 /** Runs the hooks, flushes notes (≤ `cap` ms), then tells Rust it may close. Never throws. */
 export async function runQuitFlush(cap = FLUSH_CAP_MS, done: () => Promise<unknown> = () => invoke("flush_done")): Promise<void> {
   for (const fn of beforeFlush) {
@@ -69,7 +79,15 @@ export async function runQuitFlush(cap = FLUSH_CAP_MS, done: () => Promise<unkno
     }
   }
   // Notes get most of the cap; the rest is for writing drafts of whatever did not land.
-  const landed = await flushAllNoteSaversAndWait(Math.max(0, cap - DRAFT_BUDGET_MS));
+  // Async hooks (plugins) share the notes' window and never extend it.
+  const window = Math.max(0, cap - DRAFT_BUDGET_MS);
+  let hookTimer: ReturnType<typeof setTimeout> | undefined;
+  const hooks = Promise.race([
+    Promise.allSettled([...asyncFlush].map((fn) => fn())),
+    new Promise<void>((r) => (hookTimer = setTimeout(r, window))),
+  ]);
+  const [landed] = await Promise.all([flushAllNoteSaversAndWait(window), hooks]);
+  clearTimeout(hookTimer);
   if (!landed) {
     // Awaited, so the drafts are on disk before Rust is told it may exit.
     let timer: ReturnType<typeof setTimeout> | undefined;

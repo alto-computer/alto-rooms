@@ -3,6 +3,7 @@ import type { Artifact } from "./generated/Artifact";
 import type { Info } from "./generated/Info";
 import type { JournalDay } from "./generated/JournalDay";
 import type { Note } from "./generated/Note";
+import type { PluginInfo } from "./generated/PluginInfo";
 import type { Room } from "./generated/Room";
 import type { RoomsEvent } from "./generated/RoomsEvent";
 
@@ -42,8 +43,11 @@ export function createRoomsClient(baseUrl: string, token?: string) {
       body,
     });
     if (!r.ok) throw await failure(r);
-    return (await r.json()) as T;
+    return (r.status === 204 ? undefined : await r.json()) as T;
   };
+  const auth = (): HeadersInit => (token ? { authorization: `Bearer ${token}` } : {});
+  const dataPath = (id: string, path: string) =>
+    `/v1/plugins/${encodeURIComponent(id)}/data/${path.split("/").map(encodeURIComponent).join("/")}`;
   return {
     info: async () => (await get<Info>("/v1/info")).data,
     listRooms: () => get<Room[]>("/v1/rooms"),
@@ -70,6 +74,38 @@ export function createRoomsClient(baseUrl: string, token?: string) {
      *  404 `room_not_found` / `not_found`. */
     moveArtifact: (roomId: string, artifactId: string, toRoomId: string) =>
       write<Artifact>("POST", "/v1/artifacts/move", JSON.stringify({ roomId, artifactId, toRoomId })),
+    listPlugins: async () => (await get<PluginInfo[]>("/v1/plugins")).data,
+    /** Turning on grants `permissions` (what the user was shown) that the manifest still declares; off keeps the approval. */
+    setPluginEnabled: (id: string, enabled: boolean, permissions?: string[]) =>
+      write<PluginInfo>("PATCH", `/v1/plugins/${encodeURIComponent(id)}`, JSON.stringify({ enabled, permissions })),
+    /** A plugin's data file as text, or null when it doesn't exist. Plugin data is private: token required. */
+    getPluginData: async (id: string, path: string): Promise<string | null> => {
+      const r = await fetch(baseUrl + dataPath(id, path), { headers: auth() });
+      if (r.status === 404) {
+        const e = await failure(r);
+        if (e.code === "not_found") return null;
+        throw e;
+      }
+      if (!r.ok) throw await failure(r);
+      return r.text();
+    },
+    /** Writes atomically. 400 `invalid_path`, 413 `too_large`, 404 when the plugin isn't enabled. */
+    putPluginData: (id: string, path: string, text: string) => write<void>("PUT", dataPath(id, path), text, "text/plain; charset=utf-8"),
+    listPluginData: async (id: string, prefix = ""): Promise<string[]> => {
+      const r = await fetch(`${baseUrl}/v1/plugins/${encodeURIComponent(id)}/data?prefix=${encodeURIComponent(prefix)}`, { headers: auth() });
+      if (!r.ok) throw await failure(r);
+      return (await r.json()) as string[];
+    },
+    deletePluginData: (id: string, path: string) => write<void>("DELETE", dataPath(id, path), ""),
+    /** The artifact holding the original with this fileKey (first in sidebar order), or null. */
+    findArtifactByFileKey: async (fileKey: string): Promise<Artifact | null> => {
+      const r = await fetch(`${baseUrl}/v1/artifacts/by-file-key/${encodeURIComponent(fileKey)}`);
+      if (r.status === 404) return null;
+      if (!r.ok) throw await failure(r);
+      return (await r.json()) as Artifact;
+    },
+    pluginEntryUrl: (info: Info, p: PluginInfo) =>
+      `${info.filesOrigin}/_plugins/${encodeURIComponent(p.id)}/${p.entry.split("/").map(encodeURIComponent).join("/")}`,
     fileUrl: (info: Info, a: Artifact) =>
       `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}`,
     /** Every (re)connection first delivers `resync {roomId: null}`; `onOpen` fires on each (re)open. */

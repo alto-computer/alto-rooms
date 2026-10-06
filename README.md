@@ -68,6 +68,12 @@ Optional `<meta>` tags:
 
 Rooms ignores hidden files, `node_modules`, `dist`, `build`, and anything listed in a `.roomsignore` file (same syntax as `.gitignore`).
 
+## Plugins
+
+Plugins add UI: a panel beside documents (for example, sketching notes) or a tab of their own (for example, a goals board). They run sandboxed, ask before they run, and keep their data as files.
+
+Install one by copying its folder into `~/rooms/.rooms/plugins/`. To write one, see [docs/plugins.md](docs/plugins.md).
+
 ## Shortcuts
 
 | Key | Action |
@@ -104,7 +110,7 @@ cargo test             # Rust tests (from the repo root)
 
 ## Status
 
-This is an early version (0.2). It has been tested on macOS only.
+This is an early version (0.3). It has been tested on macOS only.
 
 ## License
 

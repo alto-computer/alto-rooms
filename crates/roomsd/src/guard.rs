@@ -42,7 +42,10 @@ pub async fn files_host_guard(State(st): State<AppState>, req: Request, next: Ne
 
 pub async fn write_guard(State(st): State<AppState>, ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request, next: Next) -> Response {
     let is_write = matches!(*req.method(), Method::POST | Method::PUT | Method::PATCH | Method::DELETE);
-    if !is_write { return next.run(req).await; }
+    // Plugin data is private to the app (which relays it to plugins): reads need the token too.
+    let p = req.uri().path();
+    let private = p.starts_with("/v1/plugins/") && (p.ends_with("/data") || p.contains("/data/"));
+    if !is_write && !private { return next.run(req).await; }
     let h = req.headers();
     let origin_ok = match h.get(header::ORIGIN).and_then(|v| v.to_str().ok()) { None => true, Some(o) => origin_allowed(&st, o) };
     let token_ok = h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) == Some(format!("Bearer {}", st.token).as_str());
