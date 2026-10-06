@@ -4,7 +4,7 @@ import { compatible, PluginsStore } from "./pluginsStore";
 import { plugin } from "@/test/plugins";
 
 function setup(list: PluginInfo[], appVersion = "0.3.0") {
-  let signal: (e: RoomsEvent["type"]) => void = () => {};
+  let signal: (type: RoomsEvent["type"], e: RoomsEvent) => void = () => {};
   const client = {
     listPlugins: vi.fn(async () => list),
     setPluginEnabled: vi.fn(async (id: string, enabled: boolean) => {
@@ -14,9 +14,9 @@ function setup(list: PluginInfo[], appVersion = "0.3.0") {
       return p;
     }),
   };
-  const rooms = { onSignal: (fn: (e: RoomsEvent["type"]) => void) => ((signal = fn), () => {}) };
+  const rooms = { onSignal: (fn: (type: RoomsEvent["type"], e: RoomsEvent) => void) => ((signal = fn), () => {}) };
   const store = new PluginsStore(client, rooms, appVersion);
-  return { store, client, signal: (e: RoomsEvent["type"]) => signal(e) };
+  return { store, client, signal: (e: RoomsEvent["type"]) => signal(e, { type: e } as RoomsEvent) };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));

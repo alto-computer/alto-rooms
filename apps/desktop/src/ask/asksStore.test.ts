@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { AskTurn, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { AsksStore, upsert } from "./asksStore";
 
+type EventInput = RoomsEvent extends infer T ? (T extends RoomsEvent ? Omit<T, "seq"> : never) : never;
+
 const turn = (id: string, status: AskTurn["status"], extra: Partial<AskTurn> = {}): AskTurn => ({
   id, fileKey: "k1", question: "q", answer: "", agent: "claude-code", mode: "resume", status,
   error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, ...extra,
@@ -16,7 +18,7 @@ function setup(thread: AskTurn[] = []) {
   };
   const store = new AsksStore(client, { onSignal: (fn) => ((signal = fn), () => {}) });
   store.start();
-  const emit = (e: Omit<RoomsEvent, "seq">) => signal(e.type, { ...e, seq: 1 } as RoomsEvent);
+  const emit = (e: EventInput) => signal(e.type, { ...e, seq: 1 } as RoomsEvent);
   return { store, client, emit };
 }
 
