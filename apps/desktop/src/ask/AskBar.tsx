@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
 import { ArrowUp } from "lucide-react";
 import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
@@ -9,6 +9,17 @@ import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
 const PLACEHOLDER = "이 문서에 대해 묻기…";
+
+/** Agent output may echo untrusted content: never render a link or an image, only their text. */
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) => (
+    <>
+      {children}
+      {href && /^https?:\/\//i.test(href) ? <span className="text-ink-2"> ({href})</span> : null}
+    </>
+  ),
+  img: ({ alt }) => <>{alt ?? ""}</>,
+};
 
 function seconds(t: AskTurn): number | null {
   if (!t.endedAt) return null;
@@ -30,7 +41,7 @@ function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop:
         <>
           {t.answer ? (
             <div className="text-[13.5px] leading-[1.55] [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:overflow-x-auto [&_ul]:list-disc [&_ul]:pl-5">
-              <Markdown>{t.answer}</Markdown>
+              <Markdown components={MARKDOWN_COMPONENTS}>{t.answer}</Markdown>
             </div>
           ) : null}
           {t.status === "cancelled" ? <div className="text-[12.5px] text-ink-2">멈췄어요</div> : null}

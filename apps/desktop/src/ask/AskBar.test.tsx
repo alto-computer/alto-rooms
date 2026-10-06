@@ -100,4 +100,16 @@ describe("AskBar", () => {
     fireEvent.focus(input);
     expect(screen.getByText("답")).toBeTruthy();
   });
+
+  it("renders links and images as plain text", async () => {
+    await setup({ k1: [turn({ status: "done", answer: "[문서](https://x.dev) ![그림](https://x.dev/a.png) **굵게**", endedAt: "2026-10-06T10:00:03+09:00" })] });
+    act(() => store.toggle());
+    expect(await screen.findByText("굵게")).toBeTruthy();
+    const sheet = screen.getByText("굵게").closest("div")!;
+    expect(sheet.querySelector("a")).toBeNull();
+    expect(sheet.querySelector("img")).toBeNull();
+    expect(sheet.textContent).toContain("문서 (https://x.dev)");
+    expect(sheet.textContent).toContain("그림");
+    expect(screen.getByText("굵게").tagName).toBe("STRONG");
+  });
 });
