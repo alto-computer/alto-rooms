@@ -198,7 +198,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
         </div>
       ) : null}
       {sendError ? <div className="pointer-events-auto text-[12.5px] text-ink-2">{sendError}</div> : null}
-      <div className="pointer-events-auto flex w-full max-w-[560px] items-center gap-2.5 rounded-full border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)]">
+      <div className="pointer-events-auto flex w-full max-w-[560px] items-center gap-2.5 rounded-full border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-primary/70 focus-within:ring-4 focus-within:ring-primary/10">
         <textarea
           ref={input}
           rows={1}
