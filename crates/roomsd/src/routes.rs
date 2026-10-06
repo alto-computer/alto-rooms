@@ -179,6 +179,31 @@ fn plugin_err(e: CoreError) -> Response {
     }
 }
 
+/// Tool errors: `bad_request:<why>` 400, `too_large` 413, anything else as `ApiErr` (NotFound 404).
+fn tool_err(e: CoreError) -> Response {
+    match &e {
+        CoreError::InvalidInput(c) if c.starts_with("bad_request:") => bad_request(c["bad_request:".len()..].to_string()),
+        CoreError::InvalidInput(c) if c == "too_large" => plugin_err(e),
+        _ => ApiErr(e).into_response(),
+    }
+}
+
+fn bad_request(message: String) -> Response {
+    (StatusCode::BAD_REQUEST, Json(ApiError { error: "bad_request".into(), message })).into_response()
+}
+
+pub async fn list_tools(State(st): State<AppState>) -> Result<Json<Vec<ToolInfo>>, ApiErr> {
+    Ok(Json(blocking(&st, |c| Ok(c.list_tools())).await?))
+}
+
+pub async fn call_tool(State(st): State<AppState>, b: Result<Json<ToolCall>, JsonRejection>) -> Response {
+    let Json(call) = match b { Ok(j) => j, Err(e) => return bad_request(e.body_text()) };
+    match blocking(&st, move |c| c.call_tool(&call)).await {
+        Ok(r) => Json(r).into_response(),
+        Err(ApiErr(e)) => tool_err(e),
+    }
+}
+
 pub async fn list_plugins(State(st): State<AppState>) -> Result<Json<Vec<PluginInfo>>, ApiErr> {
     Ok(Json(blocking(&st, |c| Ok(c.plugins())).await?))
 }

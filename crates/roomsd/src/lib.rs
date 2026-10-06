@@ -124,6 +124,8 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/artifacts/by-file-key/{key}", get(routes::artifact_by_file_key))
         .route("/v1/asks", get(routes::ask_thread).post(routes::start_ask))
         .route("/v1/asks/{ask_id}", axum::routing::delete(routes::cancel_ask))
+        .route("/v1/tools", get(routes::list_tools))
+        .route("/v1/tools/call", post(routes::call_tool))
         .route("/v1/plugins", get(routes::list_plugins))
         .route("/v1/plugins/{id}", patch(routes::set_plugin_enabled))
         .route("/v1/plugins/{id}/data", get(routes::list_plugin_data))

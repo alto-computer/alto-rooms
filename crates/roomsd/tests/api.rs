@@ -613,3 +613,62 @@ async fn ask_extractor_rejections_use_the_error_shape() {
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
     assert_eq!(body_json(r).await["error"], "bad_request");
 }
+
+// ---- plugin tools ----
+
+fn install_drawer(home: &std::path::Path) {
+    let dir = home.join(".rooms/plugins/draw");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("manifest.json"),
+        r#"{"id":"draw","name":"Draw","version":"0.1.0","minAppVersion":"0.3.0","permissions":[],"slots":{"tab":{"title":"Draw"}},"tools":{"draw":{"description":"Draw things","input":{"type":"object"},"appendTo":"ops/{doc}.jsonl"}}}"#).unwrap();
+    std::fs::write(dir.join("index.html"), "<p>draw</p>").unwrap();
+}
+
+#[tokio::test]
+async fn tools_list_is_private_and_call_maps_errors() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.html"), "<title>x</title>").unwrap();
+    st.core.backfill_all().unwrap();
+    let key = st.core.list_artifacts(&room.id).unwrap()[0].file_key.clone();
+    install_drawer(d.path());
+
+    let r = app.clone().oneshot(send("GET", "/v1/tools", "", None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "tool list is private");
+    let r = app.clone().oneshot(send("GET", "/v1/tools", "", Some("t0k"))).await.unwrap();
+    assert_eq!((r.status(), body_json(r).await), (StatusCode::OK, serde_json::json!([])), "disabled plugin has no tools");
+    st.core.set_plugin_enabled("draw", true, None).unwrap();
+    let r = app.clone().oneshot(send("GET", "/v1/tools", "", Some("t0k"))).await.unwrap();
+    let v = body_json(r).await;
+    assert_eq!((v[0]["pluginId"].as_str(), v[0]["name"].as_str()), (Some("draw"), Some("draw")));
+
+    let call = |body: String, tok| send("POST", "/v1/tools/call", &body, tok);
+    let ok = format!(r#"{{"pluginId":"draw","name":"draw","input":{{"doc":"{key}","ops":[]}}}}"#);
+    let r = app.clone().oneshot(call(ok.clone(), None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    let r = app.clone().oneshot(call(ok.clone(), Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await["path"], format!("ops/{key}.jsonl"));
+
+    for body in ["not json".to_string(), r#"{"pluginId":"draw"}"#.into(),
+                 r#"{"pluginId":"draw","name":"draw","input":[]}"#.into(),
+                 r#"{"pluginId":"draw","name":"draw","input":{}}"#.into()] {
+        let r = app.clone().oneshot(call(body.clone(), Some("t0k"))).await.unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{body}");
+        let v = body_json(r).await;
+        assert_eq!(v["error"], "bad_request", "{body}");
+        assert!(!v["message"].as_str().unwrap().is_empty());
+    }
+    for body in [format!(r#"{{"pluginId":"nope","name":"draw","input":{{"doc":"{key}"}}}}"#),
+                 format!(r#"{{"pluginId":"draw","name":"nope","input":{{"doc":"{key}"}}}}"#),
+                 r#"{"pluginId":"draw","name":"draw","input":{"doc":"0000000000000000"}}"#.to_string()] {
+        let r = app.clone().oneshot(call(body.clone(), Some("t0k"))).await.unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body_json(r).await["error"], "not_found");
+    }
+
+    st.core.write_plugin_data("draw", &format!("ops/{key}.jsonl"), &"x".repeat(10 * 1024 * 1024)).unwrap();
+    let r = app.oneshot(call(ok, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(body_json(r).await["error"], "too_large");
+}
