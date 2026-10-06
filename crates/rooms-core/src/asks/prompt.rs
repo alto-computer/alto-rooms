@@ -27,8 +27,8 @@ fn pick_prior(prior: &[AskTurn]) -> Vec<&AskTurn> {
     picked
 }
 
-pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, prior: &[AskTurn], question: &str) -> String {
-    let mut out = format!("{preamble}\n\nDocument: {file}\n");
+pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, file_key: &str, prior: &[AskTurn], question: &str) -> String {
+    let mut out = format!("{preamble}\n\nDocument: {file}\nRooms doc: {file_key}\n");
     if mode == AskMode::New { out.push_str("Read this file first.\n"); }
     let picked = pick_prior(prior);
     if !picked.is_empty() {
@@ -51,29 +51,29 @@ mod tests {
 
     #[test]
     fn resume_without_prior() {
-        assert_eq!(build_prompt("P", AskMode::Resume, "/d/a.html", &[], "왜?"), "P\n\nDocument: /d/a.html\n\nQuestion: 왜?");
+        assert_eq!(build_prompt("P", AskMode::Resume, "/d/a.html", "0123abcd", &[], "왜?"), "P\n\nDocument: /d/a.html\nRooms doc: 0123abcd\n\nQuestion: 왜?");
     }
 
     #[test]
     fn new_mode_asks_to_read_and_includes_done_prior_only() {
         let prior = [turn("q1", "a1", AskStatus::Done), turn("q2", "", AskStatus::Failed), turn("q3", "a3", AskStatus::Done)];
         assert_eq!(
-            build_prompt("P", AskMode::New, "/d/a.html", &prior, "q4"),
-            "P\n\nDocument: /d/a.html\nRead this file first.\n\nPrevious Q&A:\nQ: q1\nA: a1\nQ: q3\nA: a3\n\nQuestion: q4"
+            build_prompt("P", AskMode::New, "/d/a.html", "0123abcd", &prior, "q4"),
+            "P\n\nDocument: /d/a.html\nRooms doc: 0123abcd\nRead this file first.\n\nPrevious Q&A:\nQ: q1\nA: a1\nQ: q3\nA: a3\n\nQuestion: q4"
         );
     }
 
     #[test]
     fn keeps_last_six_then_trims_oldest_over_char_budget() {
         let many: Vec<_> = (0..8).map(|i| turn(&format!("q{i}"), "a", AskStatus::Done)).collect();
-        let p = build_prompt("P", AskMode::Resume, "/f", &many, "z");
+        let p = build_prompt("P", AskMode::Resume, "/f", "k", &many, "z");
         assert!(!p.contains("Q: q1\n") && p.contains("Q: q2\n") && p.contains("Q: q7\n"));
         let big = "가".repeat(15_000);
         let heavy = [turn("old", &big, AskStatus::Done), turn("new", &big, AskStatus::Done)];
-        let p = build_prompt("P", AskMode::Resume, "/f", &heavy, "z");
+        let p = build_prompt("P", AskMode::Resume, "/f", "k", &heavy, "z");
         assert!(!p.contains("Q: old") && p.contains("Q: new"));
         let huge = [turn("only", &"x".repeat(30_000), AskStatus::Done)];
-        assert!(!build_prompt("P", AskMode::Resume, "/f", &huge, "z").contains("Previous Q&A"));
+        assert!(!build_prompt("P", AskMode::Resume, "/f", "k", &huge, "z").contains("Previous Q&A"));
     }
 
     #[test]

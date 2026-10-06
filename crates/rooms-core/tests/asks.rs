@@ -57,6 +57,25 @@ async fn resume_turn_runs_template_and_records() {
 }
 
 #[tokio::test]
+async fn mcp_config_arg_is_passed_only_when_the_file_exists() {
+    let (d, core, room, art) = setup("");
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--mcp-config\", \"{{mcp_config}}\", \"{{prompt}}\"]\n")).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, &art, "one").unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(!done.answer.contains("--mcp-config"), "{}", done.answer);
+    let mcp = d.path().join(".rooms/mcp.json");
+    std::fs::write(&mcp, "{}").unwrap();
+    let t = asks.start(&room, &art, "two").unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    let canon = std::fs::canonicalize(&mcp).unwrap();
+    assert!(done.answer.contains(&format!("[--mcp-config] [{}]", canon.display())), "{}", done.answer);
+    assert!(done.answer.contains("Rooms doc: "), "{}", done.answer);
+}
+
+#[tokio::test]
 async fn second_question_carries_the_first_and_still_resumes() {
     let (_d, core, room, art) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#);
     let asks = Asks::new(core.clone(), None);

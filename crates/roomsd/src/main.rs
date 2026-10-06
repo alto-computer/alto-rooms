@@ -1,4 +1,4 @@
-use roomsd::{acquire_home_lock, build_api_router, build_files_router, write_token, AppState, NetConfig};
+use roomsd::{acquire_home_lock, resolve_mcp_bin, write_mcp_config, build_api_router, build_files_router, write_token, AppState, NetConfig};
 use std::net::SocketAddr;
 
 #[tokio::main]
@@ -19,6 +19,9 @@ async fn main() {
             eprintln!("roomsd: bundled plugins: {e}");
         }
     }
+    // Lets asks give agents the rooms tools; no rooms-mcp next to us = no file = no MCP.
+    let mcp_bin = resolve_mcp_bin(std::env::var("ROOMS_MCP_BIN").ok().as_deref(), std::env::current_exe().ok().as_deref());
+    if let Err(e) = write_mcp_config(core.home(), mcp_bin.as_deref(), ap) { eprintln!("roomsd: mcp.json: {e}"); }
     let token = write_token(core.home()).expect("write token");
     // The login-shell PATH arrives in the background: startup never waits on the user's shell.
     let asks = rooms_core::asks::Asks::new(core.clone(), None);

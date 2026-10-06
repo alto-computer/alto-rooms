@@ -43,6 +43,8 @@ pub(crate) struct Vars<'a> {
     pub session: &'a str,
     pub file: &'a str,
     pub cwd: &'a str,
+    /// Path of `<home>/.rooms/mcp.json`, or "" when it does not exist.
+    pub mcp_config: &'a str,
 }
 
 fn argv(parts: &[&str]) -> Vec<String> { parts.iter().map(|s| s.to_string()).collect() }
@@ -50,8 +52,8 @@ fn argv(parts: &[&str]) -> Vec<String> { parts.iter().map(|s| s.to_string()).col
 fn builtin() -> BTreeMap<String, Profile> {
     BTreeMap::from([
         ("claude-code".to_string(), Profile {
-            resume: Some(argv(&["claude", "-p", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "{prompt}"])),
-            new: argv(&["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "{prompt}"]),
+            resume: Some(argv(&["claude", "-p", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "{prompt}"])),
+            new: argv(&["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "{prompt}"]),
         }),
         ("codex".to_string(), Profile {
             resume: Some(argv(&["codex", "exec", "fork", "{session}", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "{prompt}"])),
@@ -107,7 +109,7 @@ impl AgentProfiles {
     pub fn preamble(&self) -> &str { self.preamble.as_deref().unwrap_or(DEFAULT_PREAMBLE) }
 }
 
-const PLACEHOLDERS: [&str; 4] = ["{prompt}", "{session}", "{file}", "{cwd}"];
+const PLACEHOLDERS: [&str; 5] = ["{prompt}", "{session}", "{file}", "{cwd}", "{mcp_config}"];
 
 /// One left-to-right pass: substituted text is never scanned again.
 fn subst(arg: &str, v: &Vars) -> String {
@@ -118,7 +120,7 @@ fn subst(arg: &str, v: &Vars) -> String {
         let tail = &rest[i..];
         match PLACEHOLDERS.iter().find(|p| tail.starts_with(**p)) {
             Some(p) => {
-                out.push_str(match *p { "{prompt}" => v.prompt, "{session}" => v.session, "{file}" => v.file, _ => v.cwd });
+                out.push_str(match *p { "{prompt}" => v.prompt, "{session}" => v.session, "{file}" => v.file, "{cwd}" => v.cwd, _ => v.mcp_config });
                 rest = &tail[p.len()..];
             }
             None => { out.push('{'); rest = &tail[1..]; }
@@ -129,7 +131,16 @@ fn subst(arg: &str, v: &Vars) -> String {
 }
 
 impl Plan {
-    pub fn render(&self, v: &Vars) -> Vec<String> { self.template.iter().map(|a| subst(a, v)).collect() }
+    /// An element that is exactly `{mcp_config}` with an empty value is dropped together with the
+    /// element before it (the `--mcp-config` flag).
+    pub fn render(&self, v: &Vars) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(self.template.len());
+        for a in &self.template {
+            if a == "{mcp_config}" && v.mcp_config.is_empty() { out.pop(); continue; }
+            out.push(subst(a, v));
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -142,7 +153,7 @@ mod tests {
         if let Some(t) = text { std::fs::write(&p, t).unwrap(); }
         (d, p)
     }
-    fn vars<'a>(prompt: &'a str) -> Vars<'a> { Vars { prompt, session: "S1", file: "/f.html", cwd: "/c" } }
+    fn vars<'a>(prompt: &'a str) -> Vars<'a> { Vars { prompt, session: "S1", file: "/f.html", cwd: "/c", mcp_config: "" } }
 
     #[test]
     fn missing_file_gives_builtin_defaults() {
@@ -150,7 +161,7 @@ mod tests {
         let a = AgentProfiles::load(&p).unwrap();
         let plan = a.plan(Some("claude-code"), Some("S1"));
         assert_eq!(plan.mode, AskMode::Resume);
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "Q"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--allowedTools=mcp__rooms", "Q"]);
         assert_eq!(a.preamble(), DEFAULT_PREAMBLE);
     }
 
@@ -171,7 +182,7 @@ mod tests {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("my-agent"), Some("S1"));
         assert_eq!((plan.agent.as_str(), plan.mode), ("claude-code", AskMode::New));
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "Q"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--allowedTools=mcp__rooms", "Q"]);
     }
 
     #[test]
@@ -206,8 +217,29 @@ new = ["codex2", "{prompt}"]
     fn substitution_is_single_pass() {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("aside"), None);
-        let out = plan.render(&Vars { prompt: "say {session} and {cwd} and {other}", session: "S1", file: "/f", cwd: "/c" });
+        let out = plan.render(&Vars { prompt: "say {session} and {cwd} and {other}", session: "S1", file: "/f", cwd: "/c", mcp_config: "" });
         assert_eq!(out, vec!["aside", "exec", "say {session} and {cwd} and {other}"]);
+    }
+
+    #[test]
+    fn mcp_config_is_substituted_into_claude_templates() {
+        let (_d, p) = tmp(None);
+        let a = AgentProfiles::load(&p).unwrap();
+        let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json" };
+        assert_eq!(a.plan(Some("claude-code"), None).render(&v),
+            vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "Q"]);
+        let resumed = a.plan(Some("claude-code"), Some("S1")).render(&v);
+        assert!(resumed.windows(3).any(|w| w == ["--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms"]));
+    }
+
+    #[test]
+    fn empty_mcp_config_drops_the_element_and_the_one_before() {
+        let (_d, p) = tmp(Some("[agents.x]\nnew = [\"x\", \"--mcp-config\", \"{mcp_config}\", \"{prompt}\"]\n"));
+        let a = AgentProfiles::load(&p).unwrap();
+        assert_eq!(a.plan(Some("x"), None).render(&vars("Q")), vec!["x", "Q"]);
+        // only an element that is exactly {mcp_config} is dropped
+        let (_d, p) = tmp(Some("[agents.x]\nnew = [\"x\", \"--c={mcp_config}\", \"{prompt}\"]\n"));
+        assert_eq!(AgentProfiles::load(&p).unwrap().plan(Some("x"), None).render(&vars("Q")), vec!["x", "--c=", "Q"]);
     }
 
     #[test]

@@ -28,7 +28,8 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "binaries/roomsd"
+      "binaries/roomsd",
+      "binaries/rooms-mcp"
     ],
     "resources": {
       "resources/plugins/": "plugins/"

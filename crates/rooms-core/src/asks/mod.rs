@@ -135,8 +135,11 @@ impl Asks {
         if running.values().any(|e| e.file_key == artifact.file_key) { return Err(AskError::Busy); }
         if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
         let prior = self.read_thread(&running, &artifact.file_key)?;
-        let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &prior, q);
-        let argv = plan.render(&Vars { prompt: &prompt, session: session.unwrap_or(""), file: &file_s, cwd: &cwd_s });
+        let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, &prior, q);
+        // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
+        let mcp = core.home().join(".rooms/mcp.json");
+        let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
+        let argv = plan.render(&Vars { prompt: &prompt, session: session.unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s });
         let turn = AskTurn {
             id: nanoid::nanoid!(16), file_key: artifact.file_key.clone(), question: q.to_string(), answer: String::new(),
             agent: plan.agent.clone(), mode: plan.mode, status: AskStatus::Running, error: None, started_at: now(), ended_at: None,
