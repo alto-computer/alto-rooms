@@ -50,8 +50,8 @@ fn argv(parts: &[&str]) -> Vec<String> { parts.iter().map(|s| s.to_string()).col
 fn builtin() -> BTreeMap<String, Profile> {
     BTreeMap::from([
         ("claude-code".to_string(), Profile {
-            resume: Some(argv(&["claude", "-p", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--tools=Read,Grep,Glob", "{prompt}"])),
-            new: argv(&["claude", "-p", "--no-session-persistence", "--tools=Read,Grep,Glob", "{prompt}"]),
+            resume: Some(argv(&["claude", "-p", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "{prompt}"])),
+            new: argv(&["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "{prompt}"]),
         }),
         ("codex".to_string(), Profile {
             resume: Some(argv(&["codex", "exec", "fork", "{session}", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "{prompt}"])),
@@ -150,7 +150,7 @@ mod tests {
         let a = AgentProfiles::load(&p).unwrap();
         let plan = a.plan(Some("claude-code"), Some("S1"));
         assert_eq!(plan.mode, AskMode::Resume);
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--no-session-persistence", "--tools=Read,Grep,Glob", "Q"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "Q"]);
         assert_eq!(a.preamble(), DEFAULT_PREAMBLE);
     }
 
@@ -171,7 +171,7 @@ mod tests {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("my-agent"), Some("S1"));
         assert_eq!((plan.agent.as_str(), plan.mode), ("claude-code", AskMode::New));
-        assert!(!plan.render(&vars("Q")).contains(&"S1".to_string()));
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "Q"]);
     }
 
     #[test]
