@@ -115,7 +115,7 @@
   <li><strong>단순하게.</strong> Rooms의 관심사는 "AI에 연결"까지. 에이전트별 출력 형식·세션 구조를 코드가 알지 않는다.</li>
   <li><strong>claude, codex 어디든.</strong> 에이전트 지식은 설정 파일의 명령 템플릿(argv 배열)뿐. 새 에이전트 = 설정 한 블록.</li>
   <li>대화가 이미 끝났을 수 있으니 <strong>매번 새 프로세스로 resume(포크)</strong>해서 묻고, 답은 <strong>stdout 일반 텍스트</strong>로 받는다.</li>
-  <li>UI는 Granola 채팅바처럼. <strong>⌘J로 켜고 끈다. 기본은 꺼짐</strong>(앱을 켤 때마다 꺼진 상태, 저장 안 함).</li>
+  <li>UI는 Granola 채팅바처럼. <strong>⌘J로 켜고 끈다. 기본은 켜짐</strong>(앱을 켤 때마다 켜진 상태, 저장 안 함. 처음 열 때는 포커스를 가져가지 않는다).</li>
 </ul>
 
 <h3>Out of scope (v2)</h3>
@@ -177,18 +177,19 @@
   <li>바는 <strong>문서 탭에만</strong> 있다. 방·Journal·노트·새 탭·플러그인 탭에서는 ⌘J가 아무 일도 안 한다.</li>
   <li>대화 시트는 이 문서의 대화에 턴이 하나라도 있으면 바 위에 펼쳐진다. 최대 높이 50vh, 넘치면 시트 안에서 스크롤, 새 답이 오면 맨 아래로.</li>
   <li>시트 머리: <code>{agent} · 만든 대화에 이어서</code>(resume) 또는 <code>{agent} · 새 대화</code>(new). 에이전트 프로필이 없으면 "에이전트 설정 없음" + 설정 파일 경로.</li>
-  <li>대기 중: 수달 sleep 포즈(<code>assets/clew-sleep.svg</code> = 브랜드 poses의 <code>clew-2-sleep.svg</code>, 폭 120px, 시트 안 왼쪽) + "{agent}가 답을 쓰고 있어요…" + <u>멈추기</u>. 입력·보내기 잠김.</li>
+  <li>대기 중(Codex처럼): muted 회색 "생각하는 중" 위로 왼쪽→오른쪽 shimmer(약 1.6초 반복, <code>prefers-reduced-motion</code>이면 정지) + muted "(N초)"(<code>startedAt</code>부터 1초마다 갱신) + 오른쪽 <u>멈추기</u>. 이미지 없음. 입력 칸은 읽기 전용(포커스·Esc는 동작), 보내기 잠김. 끝나면 입력 칸에 다시 포커스.</li>
   <li>답은 마크다운 렌더(<code>react-markdown</code> 새 의존성 — 앱에 렌더러가 없음. raw HTML은 기본값대로 렌더하지 않음). 답 아래 "<i>N초 · 복사</i>". 실패면 빨간 대신 muted 색 에러 문구 + stderr 마지막 줄.</li>
   <li>빨간색(thread)은 보내기 버튼 하나뿐(Alto DS 규칙).</li>
-  <li>Esc: 시트가 펼쳐져 있으면 시트만 접는다(바는 남음). 접힌 상태에서 바에 포커스하면 다시 펼친다.</li>
+  <li>Esc 또는 바깥 클릭: 시트가 펼쳐져 있으면 시트만 접는다(바는 남음). 문서 iframe 안 클릭도 바깥 클릭이다(창 blur + 포커스가 iframe으로 감). 접힌 상태에서 바에 포커스하면 다시 펼친다.</li>
+  <li>바에 포커스가 있으면(Granola처럼) 테두리가 <code>primary</code> 색 1px로 바뀌고 같은 색의 옅은 바깥 링(4px)이 생긴다. 크기·배치는 그대로.</li>
 </ul>
 
 <h3>Acceptance Criteria</h3>
 <table>
   <thead><tr><th>#</th><th>Given</th><th>When</th><th>Then</th></tr></thead>
   <tbody>
-    <tr><td>AC-1</td><td>앱을 막 켰다</td><td>문서 탭을 연다</td><td>묻기 바가 보이지 않는다</td></tr>
-    <tr><td>AC-2</td><td>문서 탭, 바 꺼짐</td><td>⌘J (포커스가 iframe 문서 안이어도)</td><td>바가 나타나고 입력 칸에 포커스. 다시 ⌘J(입력 칸 안에서도) → 바와 시트가 사라짐</td></tr>
+    <tr><td>AC-1</td><td>앱을 막 켰다</td><td>문서 탭을 연다</td><td>묻기 바가 보인다. 입력 칸이 포커스를 가져가지 않는다</td></tr>
+    <tr><td>AC-2</td><td>문서 탭, 바 켜짐(기본)</td><td>⌘J (포커스가 iframe 문서 안이어도, 입력 칸 안에서도)</td><td>바와 시트가 사라짐. 다시 ⌘J → 바가 나타나고 입력 칸에 포커스</td></tr>
     <tr><td>AC-3</td><td>바가 켜진 채 다른 문서 탭으로 전환</td><td>—</td><td>그 탭에서도 바가 켜져 있다(켜짐 상태는 앱 전역, 메모리만)</td></tr>
     <tr><td>AC-4</td><td><code>rooms:agent=claude-code</code>, <code>rooms:session=S</code>인 문서</td><td>질문 전송</td><td><code>claude -p --resume S --fork-session …</code>가 문서의 <code>rooms:cwd</code>에서 실행되고, 끝나면 stdout이 답으로 보인다. 원래 세션 S의 jsonl은 바뀌지 않는다</td></tr>
     <tr><td>AC-5</td><td>같은 문서에 턴 1개 완료</td><td>두 번째 질문</td><td>보내는 프롬프트에 첫 문답이 들어가고, 여전히 세션 S에서 resume(포크)한다</td></tr>
@@ -221,7 +222,7 @@
   <li><strong>R7 동시성:</strong> <code>fileKey</code>당 <code>running</code> 턴 최대 1개. 전역 동시 실행 상한 4개(넘으면 409 <code>ask_capacity</code>).</li>
   <li><strong>R8 상한:</strong> 실행 10분 넘으면 종료(<code>failed</code>, "시간 초과"). stdout 1 MiB 넘으면 종료(<code>failed</code>, "답이 너무 길어요"). stderr는 마지막 4 KiB만 보관.</li>
   <li><strong>R9 저장 위치:</strong> <code>&lt;home&gt;/.rooms/asks/&lt;fileKey&gt;.jsonl</code>. 원본·연결 폴더에는 아무것도 쓰지 않는다.</li>
-  <li><strong>R10 바 표시:</strong> 켜짐/꺼짐은 앱 메모리의 전역 boolean, 시작값 false, 저장하지 않는다. 진행 중인 묻기와 독립.</li>
+  <li><strong>R10 바 표시:</strong> 켜짐/꺼짐은 앱 메모리의 전역 boolean, 시작값 true, 저장하지 않는다. 입력 칸 포커스는 사용자가 켤 때(false→true)만. 진행 중인 묻기와 독립.</li>
   <li><strong>R11 읽기 전용:</strong> <code>info.readOnly</code>면 POST/DELETE는 기존 write guard가 403으로 막는다(Asks는 read-only를 모른다). 앱은 바를 렌더하지 않는다(⌘J 무시).</li>
   <li><strong>R12 환경:</strong> 자식 프로세스는 roomsd의 환경 + 로그인 셸에서 얻은 <code>PATH</code>(roomsd 시작 시 <code>$SHELL -lc 'printf %s "$PATH"'</code> 1회, 2초 타임아웃, 실패 시 현재 PATH 유지). stdin은 <code>/dev/null</code>. 새 프로세스 그룹으로 띄운다.</li>
 </ol>
@@ -516,7 +517,7 @@ impl RoomsCore {
 // AskBar.tsx
 export function AskBar({ artifact }: { artifact: Artifact }): JSX.Element | null;   // 꺼져 있거나 readOnly면 null
 // askStore.ts
-export function useAskBarOpen(): [open: boolean, toggle: () =&gt; void];             // 전역, 시작값 false
+export function useAskBarOpen(): [open: boolean, toggle: () =&gt; void];             // 전역, 시작값 true
 // AppShell: case "toggle-ask": 활성 탭이 doc일 때만 toggle()</code></pre>
   <table><tbody>
     <tr class="contract-row"><th>건너감</th><td>↓ Artifact 하나 · ↑ 없음</td></tr>
@@ -634,7 +635,7 @@ A: {a1}
     </ul>
   </div>
   <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4>§3 표. 동기 단계 실패는 HTTP 에러로 바에 한 줄(입력 내용 유지). 비동기 실패는 턴에 failed 표시 + "다시 묻기".</div>
-  <div class="slot"><h4>⑥ 동작 결과</h4>시트에 질문 말풍선(202 또는 <code>ask.started</code> 중 먼저 온 것으로 생성) → 대기 수달 → done에서 대기 표시를 마크다운 답으로 교체 + "N초 · 복사". 입력 칸 비움.</div>
+  <div class="slot"><h4>⑥ 동작 결과</h4>시트에 질문 말풍선(202 또는 <code>ask.started</code> 중 먼저 온 것으로 생성) → "생각하는 중" + (N초) → done에서 대기 표시를 마크다운 답으로 교체 + "N초 · 복사". 입력 칸 비움.</div>
   <div class="slot"><h4>⑦ 연결</h4>S1, S2, S3, S4, S5, S6, S7.</div>
 </div>
 
@@ -665,7 +666,7 @@ A: {a1}
   <div class="slot"><h4>① 트리거</h4>⌘J(macOS) / Ctrl+J(그 외) — 페이지 keydown(<code>keyAction</code>에 <code>j: "toggle-ask"</code>) 또는 네이티브 메뉴 accelerator(<code>menu://toggle-ask</code>, 포커스가 iframe 안일 때). 메뉴: View → "묻기 바" CmdOrCtrl+J.</div>
   <div class="slot"><h4>② 워크플로우</h4>AppShell <code>case "toggle-ask"</code> → 활성 탭이 doc이고 readOnly가 아니면 <code>toggle()</code> → 켜질 때 입력 칸 focus.</div>
   <div class="slot"><h4>③ 입력</h4>활성 탭 종류, info.readOnly.</div>
-  <div class="slot"><h4>④ 주요 결정</h4>상태는 전역 1개, 시작값 false, 저장 안 함(사용자 결정). 입력 칸 안에서도 동작(토글로 닫아야 하므로). 한글 IME에서도 <code>e.code === "KeyJ"</code>로 잡힘(기존 <code>shortcutLetter</code>).</div>
+  <div class="slot"><h4>④ 주요 결정</h4>상태는 전역 1개, 시작값 true(기본 켜짐), 저장 안 함(사용자 결정). 켤 때만 입력 칸 focus — 시작 시나 탭을 열 때는 포커스를 가져가지 않는다. 입력 칸 안에서도 동작(토글로 닫아야 하므로). 한글 IME에서도 <code>e.code === "KeyJ"</code>로 잡힘(기존 <code>shortcutLetter</code>).</div>
   <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4>doc 탭이 아니면 무시(아무 표시 없음).</div>
   <div class="slot"><h4>⑥ 동작 결과</h4>바·시트 등장/사라짐. 진행 중 묻기는 영향 없음.</div>
   <div class="slot"><h4>⑦ 연결</h4>S8.</div>
@@ -675,9 +676,9 @@ A: {a1}
 <h2 id="s8"><span class="num">8.</span> End-to-End Scenario <span class="badge badge-ok">🟢</span></h2>
 <ol>
   <li>Claude Code 세션 <code>S=7f3a…</code>가 <code>~/personal/alto</code>에서 <code>pi-vs-codex.html</code>을 만들며 <code>&lt;meta name="rooms:agent" content="claude-code"&gt;</code>, <code>rooms:session=7f3a…</code>, <code>rooms:cwd=/Users/…/alto</code>를 넣었다. 방 harness-research에 링크돼 있다.</li>
-  <li>앱 실행 → 문서 탭 열기(바 없음, AC-1) → 문서 안을 클릭한 채 ⌘J → 메뉴 accelerator로 바 등장, 입력 칸 포커스.</li>
+  <li>앱 실행 → 문서 탭 열기(바 보임, 포커스 안 가져감, AC-1) → 문서 안을 클릭한 채 ⌘J → 메뉴 accelerator로 바 숨김 → 다시 ⌘J → 바 등장, 입력 칸 포커스.</li>
   <li>"표 3번 행의 '확장성'은 무슨 기준이야?" Enter → <code>POST /v1/asks</code> → plan = (claude-code, resume) → argv = <code>claude -p --resume 7f3a… --fork-session --allowedTools Read,Grep,Glob "&lt;prompt&gt;"</code>, cwd <code>/Users/…/alto</code>.</li>
-  <li><code>.rooms/asks/&lt;fileKey&gt;.jsonl</code>에 running 줄 → <code>ask.started</code> → 시트에 질문 + 대기 수달.</li>
+  <li><code>.rooms/asks/&lt;fileKey&gt;.jsonl</code>에 running 줄 → <code>ask.started</code> → 시트에 질문 + "생각하는 중" (N초).</li>
   <li>~12초 뒤 claude가 답을 stdout에 한 번에 출력 → exit 0 → done 줄 append → <code>ask.done</code> → 마크다운 답 + "12초 · 복사".</li>
   <li>"그럼 Rooms는 몇 개야?" → 같은 S에서 다시 포크, 프롬프트에 이전 문답 1개 포함.</li>
   <li>⌘J로 바 닫기 → 탭 닫기 → 앱 재시작 → 문서 다시 열고 ⌘J → <code>askThread</code>로 두 턴이 보인다.</li>

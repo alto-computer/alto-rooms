@@ -22,7 +22,7 @@
 - Question: trimmed, 1–8,000 chars.
 - Storage: `<home>/.rooms/asks/<fileKey>.jsonl`, dir mode 0700, append-only, last line per id wins. Never write into room folders or linked folders. Rooms never writes `agents.toml`.
 - Events: exactly one `ask.started` then exactly one `ask.done` per accepted turn; the final record is appended before `ask.done` is emitted.
-- ⌘J (Ctrl+J off macOS): bar starts hidden on every launch, not persisted, global across doc tabs; works from inside text fields; ignored on non-doc tabs and in read-only.
+- ⌘J (Ctrl+J off macOS): bar starts open on every launch (without taking focus), not persisted, global across doc tabs; works from inside text fields; ignored on non-doc tabs and in read-only.
 - UI copy is Korean as in the spec. Thread colour (`bg-primary`) only on the send button.
 - Commit as the repo's configured identity (`jun-hash`), message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 

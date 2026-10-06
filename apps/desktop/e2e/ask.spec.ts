@@ -27,9 +27,13 @@ test("ask a doc and get the fake agent's answer", async ({ page, daemon }) => {
 
   await page.goto("/");
   await openDocTab(page, "harness", "Doc");
-  await expect(page.getByPlaceholder(PLACEHOLDER)).toHaveCount(0);
-  await page.keyboard.press(`${MOD}+j`);
+  // Open at launch; ⌘J hides it and shows it again.
   const input = page.getByPlaceholder(PLACEHOLDER);
+  await expect(input).toBeVisible();
+  await page.keyboard.press(`${MOD}+j`);
+  await expect(input).toHaveCount(0);
+  await page.keyboard.press(`${MOD}+j`);
+  await expect(input).toBeFocused();
   await input.fill("왜 이렇게 했어?");
   await input.press("Enter");
   await expect(page.getByText("질문: 왜 이렇게 했어?")).toBeVisible({ timeout: 10_000 });
@@ -38,6 +42,5 @@ test("ask a doc and get the fake agent's answer", async ({ page, daemon }) => {
   // Survives a reload: the thread comes back from roomsd.
   await page.reload();
   await openDocTab(page, "harness", "Doc");
-  await page.keyboard.press(`${MOD}+j`);
   await expect(page.getByText("질문: 왜 이렇게 했어?")).toBeVisible();
 });

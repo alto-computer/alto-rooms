@@ -26,24 +26,25 @@ async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false) {
 describe("AskBar", () => {
   afterEach(cleanup);
 
-  it("renders nothing until toggled, then focuses the input", async () => {
+  it("is open on mount without taking focus; toggling off hides it, toggling on focuses it", async () => {
     await setup();
+    const first = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    expect(document.activeElement).not.toBe(first);
+    expect(screen.getByText("claude-code")).toBeTruthy();
+    act(() => store.toggle());
     expect(screen.queryByPlaceholderText("이 문서에 대해 묻기…")).toBeNull();
     act(() => store.toggle());
     const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
     expect(document.activeElement).toBe(input);
-    expect(screen.getByText("claude-code")).toBeTruthy();
   });
 
   it("renders nothing in read-only", async () => {
     await setup({}, true);
-    act(() => store.toggle());
     expect(screen.queryByPlaceholderText("이 문서에 대해 묻기…")).toBeNull();
   });
 
   it("sends on Enter (not Shift+Enter, not while composing), shows waiting, then the markdown answer", async () => {
     const { client, emit } = await setup();
-    act(() => store.toggle());
     const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
     fireEvent.change(input, { target: { value: "왜?" } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
@@ -67,7 +68,6 @@ describe("AskBar", () => {
 
   it("a fast double Enter sends once", async () => {
     const { client } = await setup();
-    act(() => store.toggle());
     const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
     fireEvent.change(input, { target: { value: "한 번만" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -79,7 +79,6 @@ describe("AskBar", () => {
   it("loads older turns even when another client's ask event created the thread first", async () => {
     const { client, emit } = await setup({ k1: [turn({ id: "old", question: "예전 질문", status: "done", answer: "예전 답", endedAt: "2026-10-06T09:30:00+09:00" })] });
     act(() => emit({ type: "ask.started", turn: turn({ id: "new", question: "다른 창 질문" }) }));
-    act(() => store.toggle());
     expect(await screen.findByText("예전 답")).toBeTruthy();
     expect(screen.getByText("다른 창 질문")).toBeTruthy();
     expect(client.askThread).toHaveBeenCalledWith("k1");
@@ -90,7 +89,6 @@ describe("AskBar", () => {
       turn({ id: "t0", question: "q0", status: "failed", error: "claude-code가 오류로 끝났어요 (code 1)", endedAt: "2026-10-06T10:00:01+09:00" }),
       turn({ id: "t1", question: "q1", status: "cancelled", answer: "부분", endedAt: "2026-10-06T10:00:02+09:00" }),
     ] });
-    act(() => store.toggle());
     expect(await screen.findByText("claude-code가 오류로 끝났어요 (code 1)")).toBeTruthy();
     expect(screen.getByText("멈췄어요")).toBeTruthy();
     fireEvent.click(screen.getByText("다시 묻기"));
@@ -101,8 +99,7 @@ describe("AskBar", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       await setup({ k1: [turn({ startedAt: new Date().toISOString() })] });
-      act(() => store.toggle());
-      const text = await screen.findByText("생각하는 중");
+        const text = await screen.findByText("생각하는 중");
       const row = text.parentElement!;
       expect(row.querySelector("img")).toBeNull();
       expect(row.textContent).toContain("(0초)");
@@ -115,7 +112,6 @@ describe("AskBar", () => {
 
   it("stop button cancels the running turn", async () => {
     const { client } = await setup({ k1: [turn({})] });
-    act(() => store.toggle());
     fireEvent.click(await screen.findByText("멈추기"));
     expect(client.cancelAsk).toHaveBeenCalledWith("t1");
   });
@@ -123,7 +119,6 @@ describe("AskBar", () => {
   it("shows the API error inline and keeps the draft", async () => {
     const { client } = await setup();
     client.startAsk.mockRejectedValueOnce(new RoomsApiError(409, "답을 기다리는 중이에요", "ask_busy"));
-    act(() => store.toggle());
     const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
     fireEvent.change(input, { target: { value: "또" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -133,7 +128,6 @@ describe("AskBar", () => {
 
   it("Escape folds the sheet, focusing the input unfolds it", async () => {
     await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    act(() => store.toggle());
     const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
     expect(await screen.findByText("답")).toBeTruthy();
     fireEvent.keyDown(input, { key: "Escape" });
@@ -144,7 +138,6 @@ describe("AskBar", () => {
 
   it("an outside pointerdown or a click into the doc iframe folds the sheet; inside does not", async () => {
     await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    act(() => store.toggle());
     const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
     fireEvent.pointerDown(await screen.findByText("답"));
     expect(screen.getByText("답")).toBeTruthy();
@@ -167,7 +160,6 @@ describe("AskBar", () => {
 
   it("renders links and images as plain text", async () => {
     await setup({ k1: [turn({ status: "done", answer: "[문서](https://x.dev) ![그림](https://x.dev/a.png) **굵게**", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    act(() => store.toggle());
     expect(await screen.findByText("굵게")).toBeTruthy();
     const sheet = screen.getByText("굵게").closest("div")!;
     expect(sheet.querySelector("a")).toBeNull();

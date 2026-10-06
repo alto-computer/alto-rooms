@@ -32,11 +32,11 @@ describe("upsert", () => {
 });
 
 describe("AsksStore", () => {
-  it("starts closed and toggles", () => {
+  it("starts open and toggles", () => {
     const { store } = setup();
-    expect(store.getState().open).toBe(false);
-    store.toggle();
     expect(store.getState().open).toBe(true);
+    store.toggle();
+    expect(store.getState().open).toBe(false);
   });
 
   it("loads a thread and applies ask events for that file key", async () => {

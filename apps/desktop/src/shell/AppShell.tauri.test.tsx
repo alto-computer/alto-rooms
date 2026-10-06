@@ -151,14 +151,16 @@ describe("AppShell in Tauri", () => {
       h.viewer.open({ kind: "doc", roomId: "r1", artifactId: "a1" });
     });
     await act(async () => {}); // listeners register asynchronously
-    menu("menu://toggle-ask");
+    // open by default
     expect(await screen.findByPlaceholderText("이 문서에 대해 묻기…")).toBeInTheDocument();
     menu("menu://toggle-ask");
     expect(screen.queryByPlaceholderText("이 문서에 대해 묻기…")).toBeNull();
+    menu("menu://toggle-ask");
+    expect(await screen.findByPlaceholderText("이 문서에 대해 묻기…")).toBeInTheDocument();
     act(() => {
       h.viewer.open({ kind: "new" });
     });
     menu("menu://toggle-ask");
-    expect(asksStore.getState().open).toBe(false);
+    expect(asksStore.getState().open).toBe(true);
   });
 });

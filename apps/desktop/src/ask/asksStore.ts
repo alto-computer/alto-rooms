@@ -1,6 +1,6 @@
 /*
  * Ask threads by file key, kept in step with roomsd by `ask.started` / `ask.done`
- * events, plus whether the ask bar is open (global, starts closed, not saved).
+ * events, plus whether the ask bar is open (global, starts open, not saved).
  */
 import type { AskTurn, RoomsEvent, StartAsk } from "@alto-rooms/protocol-ts";
 
@@ -29,7 +29,7 @@ export function upsert(turns: AskTurn[], t: AskTurn): AskTurn[] {
 const EMPTY: Thread = { turns: [], loaded: false, error: false };
 
 export class AsksStore {
-  private state: AsksState = { open: false, threads: {} };
+  private state: AsksState = { open: true, threads: {} };
   private listeners = new Set<() => void>();
   private stopSignals: (() => void) | null = null;
 

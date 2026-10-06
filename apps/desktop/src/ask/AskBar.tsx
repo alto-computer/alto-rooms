@@ -111,9 +111,13 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       if (loading.current === key) loading.current = null;
     });
   }, [shown, loaded, store, artifact.fileKey]);
+  // Focus only when the user opens the bar (`open` false → true), never on mount or when roomsd
+  // info arrives (read-only is assumed until then): the bar starts open, and doc tabs must not grab focus.
+  const wasOpen = useRef(open);
   useEffect(() => {
-    if (shown) input.current?.focus();
-  }, [shown]);
+    if (open && !wasOpen.current && shown) input.current?.focus();
+    wasOpen.current = open;
+  }, [open, shown]);
   const turns = thread?.turns ?? [];
   useEffect(() => {
     bottom.current?.scrollIntoView?.({ block: "end" });
