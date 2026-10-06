@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>Plugin Tools — Spec</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--muted:#78716c;--border:#e7e5e4;--accent:#2563eb;--accent-bg:#eff6ff}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,'Pretendard',sans-serif;line-height:1.65;font-size:15px}
+main{max-width:980px;margin:0 auto;padding:48px 32px}
+h1{font-size:30px;margin:0 0 6px}h2{font-size:21px;margin:44px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--border)}h3{font-size:16px;margin:22px 0 8px}
+code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:#f4f4f5;padding:2px 6px;border-radius:3px}
+pre{background:#1c1917;color:#fafaf9;padding:14px 18px;border-radius:8px;overflow-x:auto;font-size:12.5px;line-height:1.55}pre code{background:none;padding:0;color:inherit}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}th{background:#f4f4f5;font-size:12px;color:var(--muted);text-transform:uppercase}
+.meta{color:var(--muted);font-size:13px}.box{background:var(--accent-bg);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 6px 6px 0;margin:16px 0}
+mark.ambiguous{background:#fef08a;padding:2px 6px;border-radius:3px}mark.ambiguous::before{content:"❓ "}
+</style></head><body><main>
+<h1>Plugin Tools — 에이전트가 플러그인에 쓰게 하기 (첫 사용처: Excalidraw에 그리기)</h1>
+<div class="meta">Spec · 2026-10-07 · author: jun-hash · branch <code>feat/v2-ask</code> · 선행: plugins-spec(2026-10-06), v2-ask-spec(2026-10-06) · 시안: brainstorm <code>ask-draw-ux.html</code>, <code>mcp-deps.html</code></div>
+
+<h2>0. Overview</h2>
+<p><strong>목표:</strong> 문서 탭에서 "그려줘"라고 물으면 에이전트가 Excalidraw Notes 패널에 도형을 하나씩 그리고, 화면에 실시간으로 나타난다. 동시에 Rooms 코어는 "아티팩트를 모아 보여 준다"는 역할에 충실하게 남는다.</p>
+<div class="box"><b>원칙 (사용자 결정):</b> Excalidraw에 대한 지식(draw의 뜻, 변환, 렌더링, 데이터 형식)은 <b>플러그인만</b> 안다. 코어에는 범용 확장 지점 하나 — "플러그인이 manifest로 도구를 <b>선언</b>하면, 에이전트가 그 도구를 부를 수 있고, 코어는 입력을 그 플러그인의 데이터 파일에 한 줄 덧붙인다(declarative append)". MCP 서버는 코어 밖의 얇은 어댑터 <code>rooms-mcp</code>.</div>
+<h3>Out of scope</h3>
+<ul><li>플러그인이 도구를 직접 실행하고 결과를 돌려주는 방식(B안). 앱이 꺼져 있으면 안 되고 코어가 복잡해진다.</li>
+<li>Codex·Aside 묻기에 MCP 붙이기 (claude-code 기본 템플릿만). 사용자의 일반 Claude Code 세션에 rooms MCP 등록(온보딩 옵션)도 다음.</li>
+<li>도구 입력의 완전한 JSON Schema 검증. 스키마는 에이전트에게 알려 주는 용도; 코어는 봉투(envelope)만 검사, 의미 검사는 플러그인이 재생할 때.</li>
+<li>Excalidraw 플러그인 릴리스(zip 배포, bundled-plugins.json sha 갱신) — 로컬 개발 경로로 검증 후, 배포는 사용자 확인 뒤.</li></ul>
+
+<h2>1. 사용자 경험</h2>
+<ol><li>문서 탭 묻기 바: "Draw how the two benchmarks differ".</li>
+<li>에이전트가 <code>rooms</code> MCP의 <code>excalidraw__draw</code>를 여러 번 호출 → 호출마다 Notes 패널이 열려 있으면 도형이 바로 나타남(페이드인), "claude-code is drawing" 배지 2초.</li>
+<li>패널이 닫혀 있거나 앱이 꺼져 있어도 기록되고, 다음에 Notes를 열 때 그려짐.</li>
+<li>답은 평소처럼 시트에 온다. 기존 그림은 지우지 않고 오른쪽에 덧붙인다.</li></ol>
+
+<h2>2. 규칙</h2>
+<table><tr><th>#</th><th>규칙</th></tr>
+<tr><td>T1</td><td>manifest <code>tools</code>: <code>{ "&lt;name&gt;": { "description": str(1–500), "input": JSON-Schema 객체(≤16 KiB, 저장만), "appendTo": "&lt;data path template&gt;" } }</code>. name = <code>[a-z][a-z0-9_]{0,39}</code>. appendTo는 <code>{doc}</code> 자리표시자만 허용, 치환 후 <code>valid_path</code> 통과, <code>data/</code> 기준. 플러그인당 도구 ≤ 16. 잘못된 tools는 manifest 전체를 invalid로(이유 표시).</td></tr>
+<tr><td>T2</td><td>도구 호출 입력: JSON 객체, 직렬화 ≤ 64 KiB. <code>doc</code> 필드가 있어야 하고 값은 fileKey(16 hex) 또는 절대 경로 → 코어가 색인에서 fileKey로 해석(경로는 realpath로 비교). 해석 실패 → <code>not_found</code>.</td></tr>
+<tr><td>T3</td><td>호출 효과: <code>data/&lt;appendTo(doc=fileKey)&gt;</code>에 한 줄 append: <code>{"at": RFC3339, "tool": name, "input": {...}}</code>. 파일 총량 ≤ 10 MiB(기존 MAX_DATA_BYTES). 플러그인이 유효·켜짐 상태여야 함(아니면 <code>not_found</code>).</td></tr>
+<tr><td>T4</td><td>append 후 SSE <code>plugin.data.changed {pluginId, path}</code>를 낸다. 브리지 storage.write는 이벤트를 내지 않는다(자기 쓰기).</td></tr>
+<tr><td>T5</td><td>앱은 그 플러그인의 열린 프레임들에 <code>{rooms:1,type:"dataChanged",path}</code>를 전달. SDK: <code>storage.onChange(cb: (path) =&gt; void) =&gt; unsubscribe</code>.</td></tr>
+<tr><td>T6</td><td><code>rooms-mcp</code>: stdio MCP 서버(별도 바이너리). 시작 시 home(<code>ROOMS_HOME</code> 또는 <code>~/rooms</code>)의 token을 읽고, <code>tools/list</code> 때마다 <code>GET /v1/tools</code>를 그대로 노출(이름 <code>&lt;pluginId&gt;__&lt;tool&gt;</code>), <code>tools/call</code> → <code>POST /v1/tools/call</code>. Excalidraw를 모른다.</td></tr>
+<tr><td>T7</td><td>roomsd는 시작 시 <code>&lt;home&gt;/.rooms/mcp.json</code>(<code>{"mcpServers":{"rooms":{"command":"&lt;abs rooms-mcp&gt;","env":{"ROOMS_HOME":"&lt;home&gt;"}}}}</code>)을 쓴다. rooms-mcp 경로 = <code>ROOMS_MCP_BIN</code> 또는 roomsd 실행 파일 옆 <code>rooms-mcp</code>; 없으면 파일을 쓰지 않는다.</td></tr>
+<tr><td>T8</td><td>묻기 템플릿 자리표시자 <code>{mcp_config}</code> 추가(파일이 없으면 빈 문자열이 아니라 그 인자를 통째로 빼야 하므로: 템플릿 원소가 정확히 <code>{mcp_config}</code>이고 값이 비면 그 원소와 바로 앞 원소(<code>--mcp-config</code>)를 제거). 기본 claude 템플릿: <code>--mcp-config {mcp_config} --allowedTools=mcp__rooms</code> 추가.</td></tr>
+<tr><td>T9</td><td>프롬프트에 <code>Rooms doc: &lt;fileKey&gt;</code> 한 줄 추가(도구의 doc 값으로 쓰게).</td></tr>
+<tr><td>T10</td><td>Excalidraw 플러그인: manifest <code>tools.draw</code>(ops: box/arrow/text, id, text, from, to, near), <code>appendTo: "notes/{doc}.ops.jsonl"</code>. 열 때와 dataChanged 때 ops 파일을 읽어 아직 적용 안 한 줄만 장면에 덧붙임(적용 개수는 장면 파일의 <code>rooms.opsApplied</code>에 저장) → 자동 배치(기존 그림 오른쪽, 위→아래 흐름, 화살표는 id로 연결) → 저장. 잘못된 op은 건너뜀.</td></tr>
+<tr><td>T11</td><td>모든 UI 문구 영어.</td></tr></table>
+
+<h2>3. 에러</h2>
+<table><tr><th>조건</th><th>HTTP</th><th>code</th></tr>
+<tr><td>본문 깨짐 / input이 객체 아님 / 64 KiB 초과 / doc 없음</td><td>400</td><td>bad_request</td></tr>
+<tr><td>플러그인·도구 없음, 플러그인 꺼짐·invalid, doc 해석 실패</td><td>404</td><td>not_found</td></tr>
+<tr><td>데이터 파일 10 MiB 초과</td><td>413</td><td>too_large</td></tr>
+<tr><td>토큰·origin·read-only</td><td>403</td><td>read_only (기존 guard)</td></tr></table>
+
+<h2>4. 구조</h2>
+<pre><code>Agent ─MCP stdio→ rooms-mcp ─HTTP(Bearer)→ roomsd: /v1/tools, /v1/tools/call
+                                              rooms-core: plugins.rs (manifest.tools 파싱)
+                                                          tools.rs  (list_tools, call_tool → append + emit)
+Excalidraw plugin ─manifest.tools.draw (선언)→ core
+core ─SSE plugin.data.changed→ desktop PluginHost ─postMessage dataChanged→ plugin iframe (SDK storage.onChange)</code></pre>
+<table><tr><th>모듈</th><th>책임</th><th>모르는 것</th></tr>
+<tr><td>rooms-protocol</td><td>ToolInfo, ToolCall, EventKind::PluginDataChanged</td><td>—</td></tr>
+<tr><td>rooms-core/plugins.rs</td><td>manifest.tools 검증·보관</td><td>도구의 의미</td></tr>
+<tr><td>rooms-core/tools.rs (신규)</td><td>list_tools, call_tool(doc 해석, append, emit)</td><td>플러그인 종류</td></tr>
+<tr><td>roomsd</td><td>두 라우트, mcp.json 쓰기</td><td>—</td></tr>
+<tr><td>crates/rooms-mcp (신규)</td><td>MCP ↔ Rooms Protocol 번역</td><td>Excalidraw</td></tr>
+<tr><td>desktop + plugin-sdk</td><td>dataChanged 전달, storage.onChange</td><td>데이터 내용</td></tr>
+<tr><td>rooms-plugin-excalidraw (별도 레포)</td><td>draw의 의미, ops→요소 변환, 배치, 렌더</td><td>MCP, Rooms 내부</td></tr></table>
+
+<h2>5. Seams (frozen)</h2>
+<pre><code>// protocol
+wire!(pub struct ToolInfo { pub plugin_id: String, pub name: String, pub description: String, pub input: serde_json::Value });
+wire!(pub struct ToolCall { pub plugin_id: String, pub name: String, pub input: serde_json::Value });
+wire!(pub struct ToolResult { pub path: String });            // data path appended to
+EventKind::PluginDataChanged { plugin_id: String, path: String }   // "plugin.data.changed"
+
+// core
+impl RoomsCore {
+    pub fn list_tools(&amp;self) -&gt; Vec&lt;ToolInfo&gt;;                          // valid + enabled plugins only
+    pub fn call_tool(&amp;self, call: &amp;ToolCall) -&gt; Result&lt;ToolResult, CoreError&gt;;
+}
+// roomsd
+GET  /v1/tools          → 200 ToolInfo[]      (guarded like data reads: token)
+POST /v1/tools/call     → 200 ToolResult      (write guard)
+// SDK
+storage.onChange(cb: (path: string) =&gt; void): () =&gt; void
+// frame message
+{ rooms: 1, type: "dataChanged", path: string }</code></pre>
+
+<h2>6. 테스트</h2>
+<ul><li>core: manifest.tools 검증(이름, appendTo 템플릿, 크기, 개수), call_tool(fileKey/경로 해석, append 형식, 10 MiB, 꺼진 플러그인, 이벤트).</li>
+<li>roomsd: 두 라우트 상태 코드·guard.</li>
+<li>rooms-mcp: initialize / tools/list / tools/call JSON-RPC를 가짜 HTTP로.</li>
+<li>asks: {mcp_config} 치환·제거, 프롬프트 doc 줄.</li>
+<li>desktop: dataChanged가 해당 플러그인 프레임에만 감; SDK onChange.</li>
+<li>excalidraw: ops 재생(적용 개수, 잘못된 op 건너뜀, 배치, 화살표 연결).</li>
+<li>수동: dev 앱 + 로컬 플러그인(ROOMS_PLUGIN_EXCALIDRAW)으로 실제 "Draw …" 묻기.</li></ul>
+
+<h2>7. Open Questions</h2>
+<ul><li><mark class="ambiguous">Excalidraw 플러그인 새 버전 배포(GitHub release + bundled-plugins.json sha)는 사용자 확인 후.</mark></li></ul>
+</main></body></html>
