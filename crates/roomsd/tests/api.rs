@@ -464,7 +464,7 @@ async fn plugin_data_round_trip_errors_and_privacy() {
     install_echo(d.path(), "[]");
     let r = app.clone().oneshot(send("GET", "/v1/plugins/echo/data/a.txt", "", Some("t0k"))).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND, "not enabled yet");
-    st.core.set_plugin_enabled("echo", true).unwrap();
+    st.core.set_plugin_enabled("echo", true, None).unwrap();
     let r = app.clone().oneshot(send("PUT", "/v1/plugins/echo/data/notes/a.txt", "hello", Some("t0k"))).await.unwrap();
     assert_eq!(r.status(), StatusCode::NO_CONTENT);
     let r = app.clone().oneshot(send("GET", "/v1/plugins/echo/data/notes/a.txt", "", None)).await.unwrap();
@@ -509,7 +509,7 @@ async fn artifact_by_file_key() {
 async fn plugin_assets_get_their_own_narrow_csp() {
     let (d, _app, st) = app(false, "127.0.0.1:5000");
     install_echo(d.path(), r#"["downloads"]"#);
-    st.core.set_plugin_enabled("echo", true).unwrap();
+    st.core.set_plugin_enabled("echo", true, None).unwrap();
     st.core.write_plugin_data("echo", "secret.txt", "s").unwrap();
     let room = st.core.create_room("a").unwrap();
     std::fs::write(d.path().join("a/x.html"), "<p>hi</p>").unwrap();

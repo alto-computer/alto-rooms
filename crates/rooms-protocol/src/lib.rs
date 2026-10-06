@@ -124,7 +124,10 @@ pub struct PluginInfo {
     pub status: PluginStatus,
     pub reason: Option<String>,
     pub enabled: bool,
-    /// Valid, and either not enabled yet or declaring permissions the user has not granted.
+    /// The permissions the user approved; `None` until they first turn the plugin on.
+    pub granted: Option<Vec<String>>,
+    /// Valid, and either never approved or declaring permissions beyond `granted`. Turning a
+    /// plugin off keeps its approval, so an off plugin doesn't need approval to come back.
     pub needs_approval: bool,
     /// Changes when the manifest or the entry file changes.
     pub rev: String,

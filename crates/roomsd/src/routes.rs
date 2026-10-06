@@ -135,9 +135,10 @@ pub async fn list_plugins(State(st): State<AppState>) -> Result<Json<Vec<PluginI
     Ok(Json(blocking(&st, |c| Ok(c.plugins())).await?))
 }
 
-#[derive(Deserialize)] pub struct EnableBody { enabled: bool }
+/// `permissions`: what the enable card showed; only those (still declared) are granted.
+#[derive(Deserialize)] pub struct EnableBody { enabled: bool, #[serde(default)] permissions: Option<Vec<String>> }
 pub async fn set_plugin_enabled(State(st): State<AppState>, Path(id): Path<String>, Json(b): Json<EnableBody>) -> Result<Json<PluginInfo>, ApiErr> {
-    Ok(Json(blocking(&st, move |c| c.set_plugin_enabled(&id, b.enabled)).await?))
+    Ok(Json(blocking(&st, move |c| c.set_plugin_enabled(&id, b.enabled, b.permissions)).await?))
 }
 
 #[derive(Deserialize)] pub struct PrefixQuery { #[serde(default)] prefix: String }

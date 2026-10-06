@@ -8,7 +8,12 @@ import type { PluginStatus } from "./PluginStatus";
  */
 export type PluginInfo = { id: string, name: string, version: string, minAppVersion: string, description: string | null, entry: string, permissions: Array<string>, slots: PluginSlots, status: PluginStatus, reason: string | null, enabled: boolean, 
 /**
- * Valid, and either not enabled yet or declaring permissions the user has not granted.
+ * The permissions the user approved; `None` until they first turn the plugin on.
+ */
+granted: Array<string> | null, 
+/**
+ * Valid, and either never approved or declaring permissions beyond `granted`. Turning a
+ * plugin off keeps its approval, so an off plugin doesn't need approval to come back.
  */
 needsApproval: boolean, 
 /**

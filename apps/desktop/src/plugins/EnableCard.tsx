@@ -1,30 +1,44 @@
 /*
- * Asks before a new plugin runs (or before one runs with new permissions):
- * one card at a time, what it adds and what it can do, Turn on / Not now.
+ * Asks before a new plugin runs ("New plugin": what it adds and can do) or
+ * before an approved one gets more access ("Updated plugin": only the new
+ * permissions). One card at a time; Turn on grants exactly what it showed.
  */
 import { useState } from "react";
 import { usePlugins, usePluginsStore } from "@/data/hooks";
 import { PERMISSION_COPY } from "./permissions";
+import type { HostPlugin } from "./pluginsStore";
 
 export function EnableCard() {
   usePlugins(); // re-render on list and dismiss changes
   const store = usePluginsStore();
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
   const p = store.nextToApprove();
   if (!p) return null;
+  // Keyed by plugin and rev, so a failed attempt doesn't carry over to the next card.
+  return <Card key={`${p.id}:${p.rev}`} plugin={p} />;
+}
 
-  const adds = [
-    p.slots.tab?.sidebar ? "Adds a sidebar item and a tab" : p.slots.tab ? "Adds a tab" : null,
-    p.slots.artifactSidePanel ? "Adds a panel beside documents" : null,
-  ].filter((x): x is string => x !== null);
-  const can = p.permissions.map((x) => PERMISSION_COPY[x]).filter(Boolean);
+function Card({ plugin: p }: { plugin: HostPlugin }) {
+  const store = usePluginsStore();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const updated = p.granted !== null;
+  // A re-ask shows only what is new; a first ask shows everything the plugin adds and can do.
+  const adds = updated
+    ? []
+    : [
+        p.slots.tab?.sidebar ? "Adds a sidebar item and a tab" : p.slots.tab ? "Adds a tab" : null,
+        p.slots.artifactSidePanel ? "Adds a panel beside documents" : null,
+      ].filter((x): x is string => x !== null);
+  const asked = updated ? p.permissions.filter((x) => !p.granted!.includes(x)) : p.permissions;
+  const can = asked.map((x) => PERMISSION_COPY[x]).filter(Boolean);
+  const title = `${updated ? "Updated plugin" : "New plugin"}: ${p.name}`;
 
   const turnOn = async () => {
     setBusy(true);
     setFailed(false);
     try {
-      await store.setEnabled(p.id, true);
+      // Grant exactly what this card showed; a manifest that changed meanwhile is asked about again.
+      await store.setEnabled(p.id, true, p.permissions);
     } catch (e) {
       console.warn("could not turn the plugin on", e);
       setFailed(true);
@@ -36,11 +50,11 @@ export function EnableCard() {
   return (
     <div
       role="dialog"
-      aria-label={`New plugin: ${p.name}`}
+      aria-label={title}
       className="fixed right-5 bottom-5 z-50 flex w-[300px] flex-col gap-2 rounded-[14px] border border-[#ddd] bg-white px-4 py-3.5 text-[14px] shadow-float"
     >
-      <p className="font-medium text-ink">New plugin: {p.name}</p>
-      {p.description ? <p className="text-ink-2">{p.description}</p> : null}
+      <p className="font-medium text-ink">{title}</p>
+      {p.description && !updated ? <p className="text-ink-2">{p.description}</p> : null}
       <ul className="flex flex-col gap-0.5 text-[13px] text-ink-2">
         {[...adds, ...can].map((line) => (
           <li key={line}>{line}</li>

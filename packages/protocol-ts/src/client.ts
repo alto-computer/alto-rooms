@@ -75,8 +75,9 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     moveArtifact: (roomId: string, artifactId: string, toRoomId: string) =>
       write<Artifact>("POST", "/v1/artifacts/move", JSON.stringify({ roomId, artifactId, toRoomId })),
     listPlugins: async () => (await get<PluginInfo[]>("/v1/plugins")).data,
-    setPluginEnabled: (id: string, enabled: boolean) =>
-      write<PluginInfo>("PATCH", `/v1/plugins/${encodeURIComponent(id)}`, JSON.stringify({ enabled })),
+    /** Turning on grants `permissions` (what the user was shown) that the manifest still declares; off keeps the approval. */
+    setPluginEnabled: (id: string, enabled: boolean, permissions?: string[]) =>
+      write<PluginInfo>("PATCH", `/v1/plugins/${encodeURIComponent(id)}`, JSON.stringify({ enabled, permissions })),
     /** A plugin's data file as text, or null when it doesn't exist. Plugin data is private: token required. */
     getPluginData: async (id: string, path: string): Promise<string | null> => {
       const r = await fetch(baseUrl + dataPath(id, path), { headers: auth() });

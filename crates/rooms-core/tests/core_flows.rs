@@ -962,7 +962,7 @@ fn plugin_enable_and_grants_persist() {
     assert!(!p.enabled && p.needs_approval);
     assert_eq!(core.read_plugin_data("echo", "x.txt").unwrap_err(), CoreError::NotFound);
 
-    let p = core.set_plugin_enabled("echo", true).unwrap();
+    let p = core.set_plugin_enabled("echo", true, None).unwrap();
     assert!(p.enabled && !p.needs_approval);
     core.write_plugin_data("echo", "x.txt", "hi").unwrap();
     assert_eq!(core.read_plugin_data("echo", "x.txt").unwrap().as_deref(), Some("hi"));
@@ -978,9 +978,9 @@ fn plugin_enable_and_grants_persist() {
     // Waiting to approve new permissions doesn't take away storage: it can still save while closing.
     reopened.write_plugin_data("echo", "closed.txt", "yes").unwrap();
 
-    let p = reopened.set_plugin_enabled("echo", false).unwrap();
+    let p = reopened.set_plugin_enabled("echo", false, None).unwrap();
     assert!(!p.enabled);
-    assert_eq!(reopened.set_plugin_enabled("nope", true).unwrap_err(), CoreError::NotFound);
+    assert_eq!(reopened.set_plugin_enabled("nope", true, None).unwrap_err(), CoreError::NotFound);
 }
 
 #[test]
@@ -990,7 +990,7 @@ fn invalid_plugins_are_listed_but_cannot_be_enabled() {
     let p = core.plugins().into_iter().find(|p| p.id == "echo").unwrap();
     assert_eq!(p.status, PluginStatus::Invalid);
     assert!(p.reason.is_some() && !p.needs_approval);
-    assert!(matches!(core.set_plugin_enabled("echo", true).unwrap_err(), CoreError::InvalidInput(_)));
+    assert!(matches!(core.set_plugin_enabled("echo", true, None).unwrap_err(), CoreError::InvalidInput(_)));
 }
 
 #[test]
@@ -1005,7 +1005,7 @@ fn plugins_changed_emits_event() {
 fn plugin_assets_resolve_and_data_stays_private() {
     let (d, core) = home();
     install(d.path(), ECHO);
-    core.set_plugin_enabled("echo", true).unwrap();
+    core.set_plugin_enabled("echo", true, None).unwrap();
     core.write_plugin_data("echo", "x.txt", "hi").unwrap();
     assert!(core.resolve_plugin_file("echo", "index.html").unwrap().ends_with("index.html"));
     assert!(core.resolve_plugin_file("echo", "data/x.txt").is_err());
@@ -1041,4 +1041,26 @@ fn a_link_to_a_moved_files_new_path_shares_its_file_key() {
     symlink(d.path().join("b/report.html"), d.path().join("c/report.html")).unwrap();
     core.backfill_all().unwrap();
     assert_eq!(key_of(&core, &c, "report.html"), r.file_key);
+}
+
+#[test]
+fn turning_on_grants_only_what_was_shown_and_turning_off_keeps_the_approval() {
+    let (d, core) = home();
+    install(d.path(), &ECHO.replace(r#"["rooms.read"]"#, r#"["rooms.read","clipboard"]"#));
+    let p = core.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert_eq!(p.granted, None);
+    // The card showed only rooms.read (the manifest gained clipboard since): grant only that.
+    let p = core.set_plugin_enabled("echo", true, Some(vec!["rooms.read".into()])).unwrap();
+    assert!(p.enabled && p.needs_approval);
+    assert_eq!(p.granted, Some(vec!["rooms.read".to_string()]));
+    let p = core.set_plugin_enabled("echo", true, Some(vec!["rooms.read".into(), "clipboard".into()])).unwrap();
+    assert!(p.enabled && !p.needs_approval);
+    // Off is a decision, not a reset: no approval needed to turn it back on.
+    let p = core.set_plugin_enabled("echo", false, None).unwrap();
+    assert!(!p.enabled && !p.needs_approval);
+    let p = RoomsCore::open(d.path()).unwrap().plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert!(!p.enabled && !p.needs_approval);
+    // Shown permissions that the manifest no longer declares are not granted.
+    let p = core.set_plugin_enabled("echo", true, Some(vec!["downloads".into(), "rooms.read".into(), "clipboard".into()])).unwrap();
+    assert_eq!(p.granted, Some(vec!["rooms.read".to_string(), "clipboard".to_string()]));
 }

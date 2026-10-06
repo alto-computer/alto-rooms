@@ -58,7 +58,7 @@ describe("PluginsStore", () => {
     store.start();
     await flush();
     await store.setEnabled("echo", true);
-    expect(client.setPluginEnabled).toHaveBeenCalledWith("echo", true);
+    expect(client.setPluginEnabled).toHaveBeenCalledWith("echo", true, undefined);
     expect(store.getState().list[0].enabled).toBe(true);
   });
 

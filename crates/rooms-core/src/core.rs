@@ -538,18 +538,18 @@ impl RoomsCore {
         match r {
             Ok((m, rev)) => {
                 let enabled = state.enabled.contains(&m.id);
-                let granted = state.grants.get(&m.id).cloned().unwrap_or_default();
-                let needs_approval = !enabled || !m.permissions.iter().all(|p| granted.contains(p));
+                let granted = state.grants.get(&m.id).cloned();
+                let needs_approval = granted.as_ref().is_none_or(|g| !m.permissions.iter().all(|p| g.contains(p)));
                 PluginInfo {
                     id: m.id, name: m.name, version: m.version, min_app_version: m.min_app_version, description: m.description,
                     entry: m.entry, permissions: m.permissions, slots: m.slots, status: PluginStatus::Ok, reason: None,
-                    enabled, needs_approval, rev,
+                    enabled, granted, needs_approval, rev,
                 }
             }
             Err(reason) => PluginInfo {
                 id: folder.clone(), name: folder, version: String::new(), min_app_version: String::new(), description: None,
                 entry: String::new(), permissions: Vec::new(), slots: PluginSlots::default(), status: PluginStatus::Invalid,
-                reason: Some(reason), enabled: false, needs_approval: false, rev: String::new(),
+                reason: Some(reason), enabled: false, granted: None, needs_approval: false, rev: String::new(),
             },
         }
     }
@@ -564,8 +564,10 @@ impl RoomsCore {
         self.plugins().into_iter().find(|p| p.id == id)
     }
 
-    /// Turns a valid plugin on (granting the permissions it declares now) or off.
-    pub fn set_plugin_enabled(&self, id: &str, enabled: bool) -> Result<PluginInfo, CoreError> {
+    /// Turns a valid plugin on or off. Turning on grants `shown` (the permissions the user saw)
+    /// limited to what the manifest declares now; `None` grants what it declares now. Turning off
+    /// keeps the approval.
+    pub fn set_plugin_enabled(&self, id: &str, enabled: bool, shown: Option<Vec<String>>) -> Result<PluginInfo, CoreError> {
         let p = self.plugin(id).ok_or(CoreError::NotFound)?;
         if p.status != PluginStatus::Ok { return Err(CoreError::InvalidInput(p.reason.unwrap_or_else(|| "invalid plugin".into()))); }
         {
@@ -575,7 +577,11 @@ impl RoomsCore {
             if enabled {
                 st.enabled.push(id.to_string());
                 st.enabled.sort();
-                st.grants.insert(id.to_string(), p.permissions.clone());
+                let granted: Vec<String> = match shown {
+                    Some(seen) => p.permissions.iter().filter(|x| seen.contains(x)).cloned().collect(),
+                    None => p.permissions.clone(),
+                };
+                st.grants.insert(id.to_string(), granted);
             }
             inner.state.save()?;
             self.emit(&mut inner, EventKind::PluginsChanged {});

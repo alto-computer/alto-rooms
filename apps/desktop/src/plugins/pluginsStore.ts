@@ -11,7 +11,7 @@ export type PluginsState = { list: HostPlugin[]; dismissed: ReadonlySet<string>;
 
 type Client = {
   listPlugins(): Promise<PluginInfo[]>;
-  setPluginEnabled(id: string, enabled: boolean): Promise<PluginInfo>;
+  setPluginEnabled(id: string, enabled: boolean, permissions?: string[]): Promise<PluginInfo>;
 };
 type Signals = { onSignal(fn: (type: RoomsEvent["type"]) => void): () => void };
 
@@ -70,9 +70,10 @@ export class PluginsStore {
     }
   }
 
-  async setEnabled(id: string, enabled: boolean): Promise<void> {
+  /** On: grant `permissions` (what the user was shown). Off: stop it, keeping its approval. */
+  async setEnabled(id: string, enabled: boolean, permissions?: string[]): Promise<void> {
     if (!this.client) return;
-    await this.client.setPluginEnabled(id, enabled);
+    await this.client.setPluginEnabled(id, enabled, permissions);
     await this.refresh();
   }
 

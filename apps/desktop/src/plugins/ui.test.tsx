@@ -193,8 +193,45 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Turn off" }));
     });
-    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", false);
-    expect(screen.queryByRole("list", { name: "Plugins" })).toBeNull();
+    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", false, undefined);
+    // Off stays listed, dimmed, with no card asking again; right-click turns it back on.
+    const off = within(screen.getByRole("list", { name: "Plugins" }))
+      .getByText("Echo")
+      .closest("li")!;
+    expect(off).toHaveTextContent("Off");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.contextMenu(within(off).getByText("Echo"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Turn on" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenLastCalledWith("echo", true, []);
+    expect(within(screen.getByRole("list", { name: "Plugins" })).getByRole("button", { name: "Echo" })).toBeInTheDocument();
+  });
+
+  it("a side-panel-only plugin can be turned off from the Plugins list too", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [plugin()] });
+    await act(async () => {});
+    const row = within(screen.getByRole("list", { name: "Plugins" })).getByText("Echo");
+    fireEvent.contextMenu(row);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Turn off" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", false, undefined);
+  });
+
+  it("asks again with only the new permissions when an approved plugin wants more", async () => {
+    const h = await renderWithStores(<AppShell />, {
+      rooms: [room("r1", "Bench")],
+      plugins: [echoTab({ permissions: ["rooms.read", "clipboard"], granted: ["rooms.read"], needsApproval: true })],
+    });
+    await act(async () => {});
+    const card = screen.getByRole("dialog", { name: "Updated plugin: Echo" });
+    expect(within(card).getByText("Can copy and paste")).toBeInTheDocument();
+    expect(within(card).queryByText("Can see your rooms and documents")).toBeNull();
+    await act(async () => {
+      fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", true, ["rooms.read", "clipboard"]);
   });
 
   it("a plugin tab for a removed plugin says so", async () => {
@@ -209,7 +246,15 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
   it("asks before a new plugin runs, in plain words; Turn on enables it", async () => {
     const h = await renderWithStores(<AppShell />, {
       rooms: [room("r1", "Bench")],
-      plugins: [echoTab({ enabled: false, needsApproval: true, permissions: ["rooms.read", "downloads"], description: "Echoes things." })],
+      plugins: [
+        echoTab({
+          enabled: false,
+          granted: null,
+          needsApproval: true,
+          permissions: ["rooms.read", "downloads"],
+          description: "Echoes things.",
+        }),
+      ],
     });
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "New plugin: Echo" });
@@ -220,7 +265,7 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     await act(async () => {
       fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
     });
-    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", true);
+    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", true, ["rooms.read", "downloads"]);
     expect(screen.queryByRole("dialog", { name: "New plugin: Echo" })).toBeNull();
     expect(within(screen.getByRole("list", { name: "Plugins" })).getByRole("button", { name: "Echo" })).toBeInTheDocument();
   });
@@ -295,7 +340,7 @@ describe("an open plugin when the plugin changes", () => {
     fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
     await act(async () => {});
     expect(screen.queryByTitle("Echo")).toBeNull();
-    expect(screen.getByRole("dialog", { name: "New plugin: Echo" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Updated plugin: Echo" })).toBeInTheDocument();
   });
 
   it("a plugin tab whose manifest breaks says it can't load, after beforeClose", async () => {

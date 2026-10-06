@@ -14,6 +14,7 @@ export function plugin(extra: Partial<PluginInfo> = {}): PluginInfo {
     status: "ok",
     reason: null,
     enabled: true,
+    granted: [],
     needsApproval: false,
     rev: "r1",
     ...extra,

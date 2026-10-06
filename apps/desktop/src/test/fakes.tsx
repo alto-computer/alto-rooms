@@ -72,10 +72,13 @@ export function fakeClient(
   const client = {
     info: async () => info,
     listPlugins: vi.fn(async () => state.plugins.map((p) => ({ ...p }))),
-    setPluginEnabled: vi.fn(async (id: string, enabled: boolean): Promise<PluginInfo> => {
+    // Like roomsd: on grants what was shown (still declared); off keeps the approval.
+    setPluginEnabled: vi.fn(async (id: string, enabled: boolean, shown?: string[]): Promise<PluginInfo> => {
       const p = state.plugins.find((x) => x.id === id);
       if (!p) throw new RoomsApiError(404, "not found", "not_found");
-      Object.assign(p, { enabled, needsApproval: !enabled });
+      const granted = enabled ? p.permissions.filter((x) => !shown || shown.includes(x)) : p.granted;
+      const needsApproval = !granted || !p.permissions.every((x) => granted.includes(x));
+      Object.assign(p, { enabled, granted, needsApproval });
       return { ...p };
     }),
     getPluginData: vi.fn(async (id: string, path: string) => state.pluginData[`${id}/${path}`] ?? null),
