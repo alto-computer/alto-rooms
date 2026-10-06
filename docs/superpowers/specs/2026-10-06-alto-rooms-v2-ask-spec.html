@@ -122,7 +122,7 @@
 <ul>
   <li>스트리밍 — 중간 출력 이벤트도, JSON 파싱도 없다. claude/codex/aside 모두 stdout에 최종 답만 끝에 한 번 쓰므로(실측) 답은 <code>ask.done</code> 한 번에 온다.</li>
   <li>방 단위 묻기, Journal에서 묻기, 여러 문서를 묶어 묻기.</li>
-  <li>답을 "문서로 저장" — 답에는 "복사"만 있다.</li>
+  <li>답을 "문서로 저장" — 답에는 "Copy"만 있다.</li>
   <li>다른 기기(Mac mini)로 보내기, 원격 웹 뷰에서 묻기(<code>read_only</code>면 묻기 불가).</li>
   <li>살아 있는 터미널 세션을 inbox 파일로 깨우기. 세션 ID 자동 채우기(온보딩 스킬이 <code>sessions</code>를 기록하게 하는 건 별도 작업).</li>
   <li>설정 UI. <code>agents.toml</code>은 손으로 고친다.</li>
@@ -164,21 +164,22 @@
     <div class="doc">
       <div style="height:22px"></div><div class="l" style="width:35%;height:16px"></div><div class="l"></div><div class="l" style="width:80%"></div><div class="l" style="width:65%"></div><div class="l"></div>
       <div class="sheet">
-        <div class="hd">claude-code · 만든 대화에 이어서</div>
+        <div class="hd">claude-code · continuing the thread that made it</div>
         <div class="q">표 3번 행의 '확장성'은 무슨 기준이야?</div>
         <div style="line-height:1.55">플러그인 개수가 아니라 <b>코어를 안 고치고 붙일 수 있는 접점 수</b>를 셌어요…</div>
-        <div class="hd" style="margin:6px 0 0">12초 · 복사</div>
+        <div class="hd" style="margin:6px 0 0">12s · Copy</div>
       </div>
-      <div class="bar"><span class="ph">이 문서에 대해 묻기…</span><span class="chip">claude-code</span><span class="send">↑</span></div>
+      <div class="bar"><span class="ph">Ask about this doc…</span><span class="chip">claude-code</span><span class="send">↑</span></div>
     </div>
   </div>
 </div>
 <ul>
   <li>바는 <strong>문서 탭에만</strong> 있다. 방·Journal·노트·새 탭·플러그인 탭에서는 ⌘J가 아무 일도 안 한다.</li>
   <li>대화 시트는 이 문서의 대화에 턴이 하나라도 있으면 바 위에 펼쳐진다. 최대 높이 50vh, 넘치면 시트 안에서 스크롤, 새 답이 오면 맨 아래로.</li>
-  <li>시트 머리: <code>{agent} · 만든 대화에 이어서</code>(resume) 또는 <code>{agent} · 새 대화</code>(new). 에이전트 프로필이 없으면 "에이전트 설정 없음" + 설정 파일 경로.</li>
-  <li>대기 중(Codex처럼): muted 회색 "생각하는 중" 위로 왼쪽→오른쪽 shimmer(약 1.6초 반복, <code>prefers-reduced-motion</code>이면 정지) + muted "(N초)"(<code>startedAt</code>부터 1초마다 갱신) + 오른쪽 <u>멈추기</u>. 이미지 없음. 입력 칸은 읽기 전용(포커스·Esc는 동작), 보내기 잠김. 끝나면 입력 칸에 다시 포커스.</li>
-  <li>답은 마크다운 렌더(<code>react-markdown</code> 새 의존성 — 앱에 렌더러가 없음. raw HTML은 기본값대로 렌더하지 않음). 답 아래 "<i>N초 · 복사</i>". 실패면 빨간 대신 muted 색 에러 문구 + stderr 마지막 줄.</li>
+  <li><strong>UI 문구는 모두 영어</strong>(프로젝트 규칙, 기존 앱의 "Find", "Journal"과 같게; 짧은 sentence case). 입력 칸 "Ask about this doc…", 보내기 aria-label "Send", 칩 기본값 "Default agent". 메뉴 View → "Ask Bar".</li>
+  <li>시트 머리: <code>{agent} · continuing the thread that made it</code>(resume) 또는 <code>{agent} · new conversation</code>(new). 불러오기 실패: "Couldn't load the conversation" + <u>Try again</u>.</li>
+  <li>대기 중(Codex처럼): muted 회색 "Thinking" 위로 왼쪽→오른쪽 shimmer(약 1.6초 반복, <code>prefers-reduced-motion</code>이면 정지) + muted "(Ns)"(<code>startedAt</code>부터 1초마다 갱신) + 오른쪽 <u>Stop</u>. 이미지 없음. 입력 칸은 읽기 전용(포커스·Esc는 동작), 보내기 잠김. 끝나면 입력 칸에 다시 포커스.</li>
+  <li>답은 마크다운 렌더(<code>react-markdown</code> 새 의존성 — 앱에 렌더러가 없음. raw HTML은 기본값대로 렌더하지 않음). 답 아래 "<i>Ns · Copy</i>". 멈춘 턴은 "Stopped". 실패면 빨간 대신 muted 색 에러 문구 + stderr 마지막 줄 + <u>Retry</u>.</li>
   <li>빨간색(thread)은 보내기 버튼 하나뿐(Alto DS 규칙).</li>
   <li>Esc 또는 바깥 클릭: 시트가 펼쳐져 있으면 시트만 접는다(바는 남음). 문서 iframe 안 클릭도 바깥 클릭이다(창 blur + 포커스가 iframe으로 감). 접힌 상태에서 바에 포커스하면 다시 펼친다.</li>
   <li>바에 포커스가 있으면(Granola처럼) 테두리가 <code>primary</code> 색 1px로 바뀌고 같은 색의 옅은 바깥 링(4px)이 생긴다. 크기·배치는 그대로.</li>
@@ -194,7 +195,7 @@
     <tr><td>AC-4</td><td><code>rooms:agent=claude-code</code>, <code>rooms:session=S</code>인 문서</td><td>질문 전송</td><td><code>claude -p --resume S --fork-session …</code>가 문서의 <code>rooms:cwd</code>에서 실행되고, 끝나면 stdout이 답으로 보인다. 원래 세션 S의 jsonl은 바뀌지 않는다</td></tr>
     <tr><td>AC-5</td><td>같은 문서에 턴 1개 완료</td><td>두 번째 질문</td><td>보내는 프롬프트에 첫 문답이 들어가고, 여전히 세션 S에서 resume(포크)한다</td></tr>
     <tr><td>AC-6</td><td><code>rooms:session</code> 없는 문서</td><td>질문</td><td><code>new</code> 템플릿으로 실행, 프롬프트에 문서 절대경로 + "먼저 읽어라"</td></tr>
-    <tr><td>AC-7</td><td>답 대기 중</td><td>멈추기</td><td>프로세스 그룹이 종료되고 턴이 <code>cancelled</code>, 그때까지의 stdout은 남는다</td></tr>
+    <tr><td>AC-7</td><td>답 대기 중</td><td>Stop</td><td>프로세스 그룹이 종료되고 턴이 <code>cancelled</code>, 그때까지의 stdout은 남는다</td></tr>
     <tr><td>AC-8</td><td>턴 2개가 있는 문서</td><td>탭 닫고 roomsd 재시작 후 다시 연다(⌘J)</td><td>두 턴이 그대로 보인다</td></tr>
     <tr><td>AC-9</td><td>문서가 다른 방으로 이동됨(<code>fileKey</code> 동일)</td><td>새 위치에서 연다</td><td>같은 대화가 보인다</td></tr>
     <tr><td>AC-10</td><td>질문에 <code>"; rm -rf ~ #</code> 포함</td><td>전송</td><td>셸을 거치지 않으므로 그대로 텍스트로 전달된다</td></tr>
@@ -256,23 +257,23 @@
 <table>
   <thead><tr><th>Condition</th><th>Error</th><th>HTTP / 결과</th><th>사용자 문구</th></tr></thead>
   <tbody>
-    <tr><td>본문 JSON 깨짐, 질문 빈 문자열(trim 후) 또는 8,000자 초과</td><td><code>bad_request</code></td><td>400</td><td>(UI가 미리 막음)</td></tr>
-    <tr><td>artifactId가 그 방에 없음</td><td><code>not_found</code></td><td>404</td><td>"이 문서를 찾을 수 없어요"</td></tr>
+    <tr><td>본문 JSON 깨짐, 질문 빈 문자열(trim 후) 또는 8,000자 초과</td><td><code>bad_request</code></td><td>400</td><td>"A question must be 1–8000 characters" (UI가 미리 막음)</td></tr>
+    <tr><td>artifactId가 그 방에 없음</td><td><code>not_found</code></td><td>404</td><td>"Can't find this doc"</td></tr>
     <tr><td>읽기 전용 서버</td><td><code>read_only</code></td><td>403</td><td>(바 없음)</td></tr>
-    <tr><td>같은 fileKey 실행 중</td><td><code>ask_busy</code></td><td>409</td><td>"답을 기다리는 중이에요"</td></tr>
-    <tr><td>전역 4개 실행 중</td><td><code>ask_capacity</code></td><td>409</td><td>"다른 질문이 끝나면 다시 보내 주세요"</td></tr>
-    <tr><td><code>agents.toml</code> 파싱 실패 / 프로필 없음 / argv 비었음</td><td><code>agent_config</code></td><td>422 (턴 안 만듦)</td><td>"에이전트 설정을 읽지 못했어요: {이유}" + 파일 경로</td></tr>
-    <tr><td>실행 파일 없음/권한 없음(spawn 실패)</td><td>—</td><td>202 후 <code>failed</code></td><td>"명령을 찾을 수 없어요: {argv[0]}"</td></tr>
-    <tr><td>exit ≠ 0</td><td>—</td><td><code>failed</code></td><td>"{agent}가 오류로 끝났어요 (code N)" + stderr 마지막 줄</td></tr>
-    <tr><td>10분 초과 / stdout 1 MiB 초과</td><td>—</td><td><code>failed</code></td><td>"시간이 너무 오래 걸려 멈췄어요" / "답이 너무 길어요"</td></tr>
-    <tr><td>jsonl append 실패(디스크)</td><td>—</td><td>시작 실패면 500 <code>io</code>; 종료 기록 실패면 이벤트는 보내고 로그 경고</td><td>"기록을 저장하지 못했어요"</td></tr>
+    <tr><td>같은 fileKey 실행 중</td><td><code>ask_busy</code></td><td>409</td><td>"Waiting for an answer"</td></tr>
+    <tr><td>전역 4개 실행 중</td><td><code>ask_capacity</code></td><td>409</td><td>"Too many questions running — try again when one finishes"</td></tr>
+    <tr><td><code>agents.toml</code> 파싱 실패 / 프로필 없음 / argv 비었음</td><td><code>agent_config</code></td><td>422 (턴 안 만듦)</td><td>"Couldn't read agent settings: {reason}" + 파일 경로</td></tr>
+    <tr><td>실행 파일 없음/권한 없음(spawn 실패)</td><td>—</td><td>202 후 <code>failed</code></td><td>"Command not found: {argv[0]} — settings: {path}" (그 외 spawn 실패: "Couldn't run {argv[0]} ({e})")</td></tr>
+    <tr><td>exit ≠ 0</td><td>—</td><td><code>failed</code></td><td>"{agent} exited with an error (code N)" + stderr 마지막 줄</td></tr>
+    <tr><td>10분 초과 / stdout 1 MiB 초과</td><td>—</td><td><code>failed</code></td><td>"Stopped: took too long" / "Stopped: the answer was too long"</td></tr>
+    <tr><td>jsonl append 실패(디스크)</td><td>—</td><td>시작 실패면 500 <code>io</code>; 종료 기록 실패면 이벤트는 보내고 로그 경고</td><td>"Couldn't save the conversation: {e}"</td></tr>
     <tr><td>DELETE 대상이 없거나 이미 끝남</td><td>—</td><td>204 (멱등)</td><td>—</td></tr>
   </tbody>
 </table>
 
 <h3>Recovery / Retry Policy</h3>
 <ul>
-  <li>자동 재시도 없음. 실패한 턴 아래에 "다시 묻기" 링크 — 같은 질문으로 새 턴 POST.</li>
+  <li>자동 재시도 없음. 실패한 턴 아래에 "Retry" 링크 — 같은 질문으로 새 턴 POST.</li>
   <li><code>agents.toml</code>은 매 POST마다 다시 읽는다(캐시 없음, 파일 작음). 고치고 바로 다시 물으면 된다.</li>
   <li>SSE 끊김: v1 규칙(재연결 시 resync)대로, 앱은 재연결 후 열린 문서의 <code>GET /v1/asks</code>를 다시 부른다.</li>
 </ul>
@@ -308,7 +309,7 @@
     <tr><td><code>packages/protocol-ts/src/client.ts</code></td><td><code>startAsk</code> / <code>askThread</code> / <code>cancelAsk</code></td><td>generated types</td></tr>
     <tr><td><code>apps/desktop/src/ask/</code> — <code>AskBar.tsx</code>, <code>askStore.ts</code></td><td>바 UI, 대화 상태(SSE 반영), ⌘J 토글 상태</td><td>client, data/hooks</td></tr>
     <tr><td><code>apps/desktop/src/views/DocView.tsx</code></td><td><code>&lt;AskBar artifact={artifact}/&gt;</code> 한 줄 추가</td><td>AskBar</td></tr>
-    <tr><td><code>shell/shortcuts.ts</code>, <code>src-tauri/src/lib.rs</code>, <code>lib/appEvents.ts</code></td><td>⌘J = <code>toggle-ask</code>, 메뉴 View → "묻기 바" (CmdOrCtrl+J)</td><td>—</td></tr>
+    <tr><td><code>shell/shortcuts.ts</code>, <code>src-tauri/src/lib.rs</code>, <code>lib/appEvents.ts</code></td><td>⌘J = <code>toggle-ask</code>, 메뉴 View → "Ask Bar" (CmdOrCtrl+J)</td><td>—</td></tr>
   </tbody>
 </table>
 
@@ -572,21 +573,21 @@ new    = ["aside", "exec", "{prompt}"]</code></pre>
 <h3>6.3 프롬프트 형식 (고정)</h3>
 <pre><code>{preamble}
 
-문서: {file_abs}
-{mode=new 일 때만} 먼저 이 파일을 읽으세요.
+Document: {file_abs}
+{mode=new 일 때만} Read this file first.
 
 {prior 가 있을 때만}
-이전 문답:
+Previous Q&amp;A:
 Q: {q1}
 A: {a1}
 ...
 
-질문: {question}</code></pre>
-<p>기본 preamble: <code>[Rooms] 사용자가 Rooms 앱에서 위 HTML 문서를 보며 묻습니다. 마크다운으로 짧게 답하세요. 파일을 만들거나 고치지 마세요.</code> (resume 모드에선 "네가 만든 문서"라는 맥락은 세션이 이미 갖고 있다.)</p>
+Question: {question}</code></pre>
+<p>기본 preamble: <code>[Rooms] The user is reading the HTML document below in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.</code> (resume 모드에선 "네가 만든 문서"라는 맥락은 세션이 이미 갖고 있다.)</p>
 
 <h3>6.4 <code>Asks::thread</code> / <code>cancel</code></h3>
 <ul>
-  <li><code>thread(fileKey)</code>: AskLog.read 결과에서, running인데 실행 중 맵에 없는 턴은 <code>failed</code> + "Rooms가 다시 시작돼서 중단됐어요"로 바꿔 반환(I1). 실행 중 턴은 <code>running</code> 그대로(answer 빈 문자열) → 탭을 다시 열어도 대기 표시가 보인다(AC-14).</li>
+  <li><code>thread(fileKey)</code>: AskLog.read 결과에서, running인데 실행 중 맵에 없는 턴은 <code>failed</code> + "Stopped because Rooms restarted"로 바꿔 반환(I1). 실행 중 턴은 <code>running</code> 그대로(answer 빈 문자열) → 탭을 다시 열어도 대기 표시가 보인다(AC-14).</li>
   <li><code>cancel(id)</code>: 맵에 있으면 kill(Reason::Cancelled). 종료 처리는 일반 경로(최종 레코드 + done)가 한다.</li>
 </ul>
 
@@ -634,14 +635,14 @@ A: {a1}
       <li><strong>위임(외부):</strong> 답의 내용 전부 — 사용자의 에이전트 CLI. 출력 형식도 CLI 마음(Rooms는 텍스트로만 취급).</li>
     </ul>
   </div>
-  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4>§3 표. 동기 단계 실패는 HTTP 에러로 바에 한 줄(입력 내용 유지). 비동기 실패는 턴에 failed 표시 + "다시 묻기".</div>
-  <div class="slot"><h4>⑥ 동작 결과</h4>시트에 질문 말풍선(202 또는 <code>ask.started</code> 중 먼저 온 것으로 생성) → "생각하는 중" + (N초) → done에서 대기 표시를 마크다운 답으로 교체 + "N초 · 복사". 입력 칸 비움.</div>
+  <div class="slot"><h4>⑤ 에러 &amp; 폴백</h4>§3 표. 동기 단계 실패는 HTTP 에러로 바에 한 줄(입력 내용 유지). 비동기 실패는 턴에 failed 표시 + "Retry".</div>
+  <div class="slot"><h4>⑥ 동작 결과</h4>시트에 질문 말풍선(202 또는 <code>ask.started</code> 중 먼저 온 것으로 생성) → "Thinking" + (Ns) → done에서 대기 표시를 마크다운 답으로 교체 + "Ns · Copy". 입력 칸 비움.</div>
   <div class="slot"><h4>⑦ 연결</h4>S1, S2, S3, S4, S5, S6, S7.</div>
 </div>
 
 <div class="flow">
   <h3>F2: 멈추기 · 시간 초과 · 종료</h3>
-  <div class="slot"><h4>① 트리거</h4>"멈추기" 클릭(DELETE), 10분 타이머, stdout 1 MiB, roomsd 종료(<code>Asks::shutdown</code>; 앱 종료 시 사이드카도 종료).</div>
+  <div class="slot"><h4>① 트리거</h4>"Stop" 클릭(DELETE), 10분 타이머, stdout 1 MiB, roomsd 종료(<code>Asks::shutdown</code>; 앱 종료 시 사이드카도 종료).</div>
   <div class="slot"><h4>② 워크플로우</h4>kill 요청 → <code>killpg(SIGTERM)</code> → 3초 안에 안 끝나면 <code>SIGKILL</code> → wait가 <code>Killed(reason)</code> → 최종 레코드(cancelled 또는 failed, 그때까지의 answer 보존) → <code>ask.done</code>.</div>
   <div class="slot"><h4>③ 입력</h4>askId(DELETE) 또는 내부 타이머.</div>
   <div class="slot"><h4>④ 주요 결정</h4>프로세스 <strong>그룹</strong> 단위 kill — claude/codex가 띄운 자식(도구 실행)까지 정리. Cancelled/Shutdown → <code>cancelled</code>, Timeout/TooLong → <code>failed</code>.</div>
@@ -678,8 +679,8 @@ A: {a1}
   <li>Claude Code 세션 <code>S=7f3a…</code>가 <code>~/personal/alto</code>에서 <code>pi-vs-codex.html</code>을 만들며 <code>&lt;meta name="rooms:agent" content="claude-code"&gt;</code>, <code>rooms:session=7f3a…</code>, <code>rooms:cwd=/Users/…/alto</code>를 넣었다. 방 harness-research에 링크돼 있다.</li>
   <li>앱 실행 → 문서 탭 열기(바 보임, 포커스 안 가져감, AC-1) → 문서 안을 클릭한 채 ⌘J → 메뉴 accelerator로 바 숨김 → 다시 ⌘J → 바 등장, 입력 칸 포커스.</li>
   <li>"표 3번 행의 '확장성'은 무슨 기준이야?" Enter → <code>POST /v1/asks</code> → plan = (claude-code, resume) → argv = <code>claude -p --resume 7f3a… --fork-session --allowedTools Read,Grep,Glob "&lt;prompt&gt;"</code>, cwd <code>/Users/…/alto</code>.</li>
-  <li><code>.rooms/asks/&lt;fileKey&gt;.jsonl</code>에 running 줄 → <code>ask.started</code> → 시트에 질문 + "생각하는 중" (N초).</li>
-  <li>~12초 뒤 claude가 답을 stdout에 한 번에 출력 → exit 0 → done 줄 append → <code>ask.done</code> → 마크다운 답 + "12초 · 복사".</li>
+  <li><code>.rooms/asks/&lt;fileKey&gt;.jsonl</code>에 running 줄 → <code>ask.started</code> → 시트에 질문 + "Thinking" (Ns).</li>
+  <li>~12초 뒤 claude가 답을 stdout에 한 번에 출력 → exit 0 → done 줄 append → <code>ask.done</code> → 마크다운 답 + "12s · Copy".</li>
   <li>"그럼 Rooms는 몇 개야?" → 같은 S에서 다시 포크, 프롬프트에 이전 문답 1개 포함.</li>
   <li>⌘J로 바 닫기 → 탭 닫기 → 앱 재시작 → 문서 다시 열고 ⌘J → <code>askThread</code>로 두 턴이 보인다.</li>
 </ol>

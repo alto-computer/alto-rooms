@@ -47,7 +47,7 @@ async fn resume_turn_runs_template_and_records() {
     let done = wait_done(&mut rx, &t.id).await;
     assert_eq!(done.status, AskStatus::Done);
     assert!(done.answer.starts_with("ARGV: [resume] [S-1] ["), "{}", done.answer);
-    assert!(done.answer.contains("질문: 왜?"));
+    assert!(done.answer.contains("Question: 왜?"));
     assert!(done.ended_at.is_some());
     // thread reads it back from disk
     let th = asks.thread(&t.file_key).unwrap();
@@ -66,7 +66,7 @@ async fn second_question_carries_the_first_and_still_resumes() {
     let t2 = asks.start(&room, &art, "second").unwrap();
     let d2 = wait_done(&mut rx, &t2.id).await;
     assert!(d2.answer.contains("[resume] [S-1]"));
-    assert!(d2.answer.contains("이전 문답:\nQ: first\nA: ARGV:"));
+    assert!(d2.answer.contains("Previous Q&A:\nQ: first\nA: ARGV:"));
 }
 
 #[tokio::test]
@@ -78,7 +78,7 @@ async fn no_session_or_flag_shaped_session_runs_new_mode() {
     assert_eq!(t.mode, AskMode::New);
     let done = wait_done(&mut rx, &t.id).await;
     assert!(done.answer.starts_with("ARGV: [new] ["));
-    assert!(done.answer.contains("먼저 이 파일을 읽으세요"));
+    assert!(done.answer.contains("Read this file first"));
     assert!(!done.answer.contains("dangerously"));
 }
 
@@ -133,7 +133,7 @@ async fn bad_config_and_missing_program() {
     let t = asks.start(&room, &art, "q").unwrap();
     let done = wait_done(&mut rx, &t.id).await;
     assert_eq!(done.status, AskStatus::Failed);
-    assert!(done.error.as_deref().unwrap().contains("명령을 찾을 수 없어요: no-such-cli-xyz"));
+    assert!(done.error.as_deref().unwrap().contains("Command not found: no-such-cli-xyz"));
 }
 
 #[tokio::test]
@@ -143,7 +143,7 @@ async fn timeout_is_failed() {
     let mut rx = core.subscribe();
     let t = asks.start(&room, &art, "SLEEP").unwrap();
     let done = wait_done(&mut rx, &t.id).await;
-    assert_eq!((done.status, done.error.as_deref()), (AskStatus::Failed, Some("시간이 너무 오래 걸려 멈췄어요")));
+    assert_eq!((done.status, done.error.as_deref()), (AskStatus::Failed, Some("Stopped: took too long")));
 }
 
 #[tokio::test]
@@ -154,7 +154,7 @@ async fn restart_turns_running_into_failed_and_unblocks() {
     // A new Asks over the same home = roomsd restarted while t was running.
     let fresh = Asks::new(core.clone(), None);
     let th = fresh.thread(&t.file_key).unwrap();
-    assert_eq!((th[0].status, th[0].error.as_deref()), (AskStatus::Failed, Some("Rooms가 다시 시작돼서 중단됐어요")));
+    assert_eq!((th[0].status, th[0].error.as_deref()), (AskStatus::Failed, Some("Stopped because Rooms restarted")));
     assert!(fresh.start(&room, &art, "after restart").is_ok());
     asks.shutdown().await;
     fresh.shutdown().await;

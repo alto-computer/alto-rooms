@@ -159,7 +159,7 @@ export function fakeClient(
     }),
     startAsk: vi.fn(async (req: { roomId: string; artifactId: string; question: string }): Promise<AskTurn> => {
       const a = state.artifacts[req.roomId]?.find((x) => x.id === req.artifactId);
-      if (!a) throw new RoomsApiError(404, "이 문서를 찾을 수 없어요", "not_found");
+      if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
       return {
         id: `ask-${req.question}`, fileKey: a.fileKey, question: req.question, answer: "", agent: a.source.agent ?? "claude-code",
         mode: a.source.session ? "resume" : "new", status: "running", error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null,

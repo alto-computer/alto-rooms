@@ -28,31 +28,31 @@ describe("AskBar", () => {
 
   it("is open on mount without taking focus; toggling off hides it, toggling on focuses it", async () => {
     await setup();
-    const first = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    const first = await screen.findByPlaceholderText("Ask about this doc…");
     expect(document.activeElement).not.toBe(first);
     expect(screen.getByText("claude-code")).toBeTruthy();
     act(() => store.toggle());
-    expect(screen.queryByPlaceholderText("이 문서에 대해 묻기…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
     act(() => store.toggle());
-    const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
     expect(document.activeElement).toBe(input);
   });
 
   it("renders nothing in read-only", async () => {
     await setup({}, true);
-    expect(screen.queryByPlaceholderText("이 문서에 대해 묻기…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
   });
 
   it("sends on Enter (not Shift+Enter, not while composing), shows waiting, then the markdown answer", async () => {
     const { client, emit } = await setup();
-    const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
     fireEvent.change(input, { target: { value: "왜?" } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     expect(client.startAsk).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?" }));
-    expect(await screen.findByText("생각하는 중")).toBeTruthy();
+    expect(await screen.findByText("Thinking")).toBeTruthy();
     expect((input as HTMLTextAreaElement).value).toBe("");
     // readOnly, not disabled: Esc still folds the sheet and focus stays in the bar
     expect((input as HTMLTextAreaElement).disabled).toBe(false);
@@ -62,17 +62,17 @@ describe("AskBar", () => {
     expect((await screen.findByText("굵게")).tagName).toBe("STRONG");
     expect((input as HTMLTextAreaElement).readOnly).toBe(false);
     expect(document.activeElement).toBe(input);
-    expect(screen.getByText(/12초/)).toBeTruthy();
-    expect(screen.getByText("claude-code · 만든 대화에 이어서")).toBeTruthy();
+    expect(screen.getByText(/12s/)).toBeTruthy();
+    expect(screen.getByText("claude-code · continuing the thread that made it")).toBeTruthy();
   });
 
   it("a fast double Enter sends once", async () => {
     const { client } = await setup();
-    const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
     fireEvent.change(input, { target: { value: "한 번만" } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
-    await screen.findByText("생각하는 중");
+    await screen.findByText("Thinking");
     expect(client.startAsk).toHaveBeenCalledTimes(1);
   });
 
@@ -86,12 +86,12 @@ describe("AskBar", () => {
 
   it("shows a loaded thread, failed turns with retry, and cancelled turns", async () => {
     const { client } = await setup({ k1: [
-      turn({ id: "t0", question: "q0", status: "failed", error: "claude-code가 오류로 끝났어요 (code 1)", endedAt: "2026-10-06T10:00:01+09:00" }),
+      turn({ id: "t0", question: "q0", status: "failed", error: "claude-code exited with an error (code 1)", endedAt: "2026-10-06T10:00:01+09:00" }),
       turn({ id: "t1", question: "q1", status: "cancelled", answer: "부분", endedAt: "2026-10-06T10:00:02+09:00" }),
     ] });
-    expect(await screen.findByText("claude-code가 오류로 끝났어요 (code 1)")).toBeTruthy();
-    expect(screen.getByText("멈췄어요")).toBeTruthy();
-    fireEvent.click(screen.getByText("다시 묻기"));
+    expect(await screen.findByText("claude-code exited with an error (code 1)")).toBeTruthy();
+    expect(screen.getByText("Stopped")).toBeTruthy();
+    fireEvent.click(screen.getByText("Retry"));
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q0" }));
   });
 
@@ -99,12 +99,12 @@ describe("AskBar", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       await setup({ k1: [turn({ startedAt: new Date().toISOString() })] });
-        const text = await screen.findByText("생각하는 중");
+        const text = await screen.findByText("Thinking");
       const row = text.parentElement!;
       expect(row.querySelector("img")).toBeNull();
-      expect(row.textContent).toContain("(0초)");
+      expect(row.textContent).toContain("(0s)");
       act(() => vi.advanceTimersByTime(2000));
-      expect(row.textContent).toContain("(2초)");
+      expect(row.textContent).toContain("(2s)");
     } finally {
       vi.useRealTimers();
     }
@@ -112,23 +112,23 @@ describe("AskBar", () => {
 
   it("stop button cancels the running turn", async () => {
     const { client } = await setup({ k1: [turn({})] });
-    fireEvent.click(await screen.findByText("멈추기"));
+    fireEvent.click(await screen.findByText("Stop"));
     expect(client.cancelAsk).toHaveBeenCalledWith("t1");
   });
 
   it("shows the API error inline and keeps the draft", async () => {
     const { client } = await setup();
-    client.startAsk.mockRejectedValueOnce(new RoomsApiError(409, "답을 기다리는 중이에요", "ask_busy"));
-    const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    client.startAsk.mockRejectedValueOnce(new RoomsApiError(409, "Waiting for an answer", "ask_busy"));
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
     fireEvent.change(input, { target: { value: "또" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(await screen.findByText("답을 기다리는 중이에요")).toBeTruthy();
+    expect(await screen.findByText("Waiting for an answer")).toBeTruthy();
     expect((input as HTMLTextAreaElement).value).toBe("또");
   });
 
   it("Escape folds the sheet, focusing the input unfolds it", async () => {
     await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
     expect(await screen.findByText("답")).toBeTruthy();
     fireEvent.keyDown(input, { key: "Escape" });
     expect(screen.queryByText("답")).toBeNull();
@@ -138,7 +138,7 @@ describe("AskBar", () => {
 
   it("an outside pointerdown or a click into the doc iframe folds the sheet; inside does not", async () => {
     await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
     fireEvent.pointerDown(await screen.findByText("답"));
     expect(screen.getByText("답")).toBeTruthy();
     fireEvent.pointerDown(document.body);

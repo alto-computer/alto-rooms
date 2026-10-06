@@ -152,11 +152,11 @@ describe("AppShell in Tauri", () => {
     });
     await act(async () => {}); // listeners register asynchronously
     // open by default
-    expect(await screen.findByPlaceholderText("이 문서에 대해 묻기…")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Ask about this doc…")).toBeInTheDocument();
     menu("menu://toggle-ask");
-    expect(screen.queryByPlaceholderText("이 문서에 대해 묻기…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
     menu("menu://toggle-ask");
-    expect(await screen.findByPlaceholderText("이 문서에 대해 묻기…")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Ask about this doc…")).toBeInTheDocument();
     act(() => {
       h.viewer.open({ kind: "new" });
     });

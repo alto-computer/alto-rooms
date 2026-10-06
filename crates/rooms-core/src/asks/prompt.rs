@@ -28,14 +28,14 @@ fn pick_prior(prior: &[AskTurn]) -> Vec<&AskTurn> {
 }
 
 pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, prior: &[AskTurn], question: &str) -> String {
-    let mut out = format!("{preamble}\n\n문서: {file}\n");
-    if mode == AskMode::New { out.push_str("먼저 이 파일을 읽으세요.\n"); }
+    let mut out = format!("{preamble}\n\nDocument: {file}\n");
+    if mode == AskMode::New { out.push_str("Read this file first.\n"); }
     let picked = pick_prior(prior);
     if !picked.is_empty() {
-        out.push_str("\n이전 문답:\n");
+        out.push_str("\nPrevious Q&A:\n");
         for t in picked { out.push_str(&format!("Q: {}\nA: {}\n", t.question, t.answer)); }
     }
-    out.push_str(&format!("\n질문: {question}"));
+    out.push_str(&format!("\nQuestion: {question}"));
     out
 }
 
@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn resume_without_prior() {
-        assert_eq!(build_prompt("P", AskMode::Resume, "/d/a.html", &[], "왜?"), "P\n\n문서: /d/a.html\n\n질문: 왜?");
+        assert_eq!(build_prompt("P", AskMode::Resume, "/d/a.html", &[], "왜?"), "P\n\nDocument: /d/a.html\n\nQuestion: 왜?");
     }
 
     #[test]
@@ -59,7 +59,7 @@ mod tests {
         let prior = [turn("q1", "a1", AskStatus::Done), turn("q2", "", AskStatus::Failed), turn("q3", "a3", AskStatus::Done)];
         assert_eq!(
             build_prompt("P", AskMode::New, "/d/a.html", &prior, "q4"),
-            "P\n\n문서: /d/a.html\n먼저 이 파일을 읽으세요.\n\n이전 문답:\nQ: q1\nA: a1\nQ: q3\nA: a3\n\n질문: q4"
+            "P\n\nDocument: /d/a.html\nRead this file first.\n\nPrevious Q&A:\nQ: q1\nA: a1\nQ: q3\nA: a3\n\nQuestion: q4"
         );
     }
 
@@ -73,7 +73,7 @@ mod tests {
         let p = build_prompt("P", AskMode::Resume, "/f", &heavy, "z");
         assert!(!p.contains("Q: old") && p.contains("Q: new"));
         let huge = [turn("only", &"x".repeat(30_000), AskStatus::Done)];
-        assert!(!build_prompt("P", AskMode::Resume, "/f", &huge, "z").contains("이전 문답"));
+        assert!(!build_prompt("P", AskMode::Resume, "/f", &huge, "z").contains("Previous Q&A"));
     }
 
     #[test]

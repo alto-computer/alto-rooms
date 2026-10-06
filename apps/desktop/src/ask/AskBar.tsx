@@ -7,7 +7,7 @@ import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
-const PLACEHOLDER = "이 문서에 대해 묻기…";
+const PLACEHOLDER = "Ask about this doc…";
 
 /** Agent output may echo untrusted content: never render a link or an image, only their text. */
 const MARKDOWN_COMPONENTS: Components = {
@@ -41,9 +41,9 @@ function Thinking({ t }: { t: AskTurn }) {
   return (
     <>
       <span className="animate-shimmer bg-linear-to-r from-ink-2 via-[#c9c9c9] to-ink-2 bg-[length:200%_100%] bg-clip-text text-transparent motion-reduce:animate-none motion-reduce:text-ink-2">
-        생각하는 중
+        Thinking
       </span>
-      <span className="text-ink-3">({secs}초)</span>
+      <span className="text-ink-3">({secs}s)</span>
     </>
   );
 }
@@ -56,7 +56,7 @@ function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop:
       {t.status === "running" ? (
         <div className="flex items-center gap-2 text-[12.5px] text-ink-2">
           <Thinking t={t} />
-          <button type="button" className="ml-auto underline" onClick={onStop}>멈추기</button>
+          <button type="button" className="ml-auto underline" onClick={onStop}>Stop</button>
         </div>
       ) : (
         <>
@@ -65,17 +65,17 @@ function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop:
               <Markdown components={MARKDOWN_COMPONENTS}>{t.answer}</Markdown>
             </div>
           ) : null}
-          {t.status === "cancelled" ? <div className="text-[12.5px] text-ink-2">멈췄어요</div> : null}
+          {t.status === "cancelled" ? <div className="text-[12.5px] text-ink-2">Stopped</div> : null}
           {t.status === "failed" ? (
             <div className="text-[12.5px] whitespace-pre-wrap text-ink-2">
               {t.error}{" "}
-              <button type="button" className="underline" onClick={onRetry}>다시 묻기</button>
+              <button type="button" className="underline" onClick={onRetry}>Retry</button>
             </div>
           ) : null}
           <div className="flex gap-2 text-[11.5px] text-ink-2">
-            {secs !== null ? <span>{secs}초</span> : null}
+            {secs !== null ? <span>{secs}s</span> : null}
             {t.answer ? (
-              <button type="button" className="underline" onClick={() => void navigator.clipboard?.writeText(t.answer)}>복사</button>
+              <button type="button" className="underline" onClick={() => void navigator.clipboard?.writeText(t.answer)}>Copy</button>
             ) : null}
           </div>
         </>
@@ -184,13 +184,13 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
         <div className="pointer-events-auto max-h-[50vh] w-full max-w-[560px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
           {last ? (
             <div className="mb-2 text-[11.5px] text-ink-2">
-              {last.agent} · {last.mode === "resume" ? "만든 대화에 이어서" : "새 대화"}
+              {last.agent} · {last.mode === "resume" ? "continuing the thread that made it" : "new conversation"}
             </div>
           ) : null}
           {thread?.error ? (
             <div className="text-[12.5px] text-ink-2">
-              대화를 불러오지 못했어요{" "}
-              <button type="button" className="underline" onClick={() => void store.load(artifact.fileKey)}>다시 시도</button>
+              Couldn't load the conversation{" "}
+              <button type="button" className="underline" onClick={() => void store.load(artifact.fileKey)}>Try again</button>
             </div>
           ) : null}
           <div className="space-y-4">
@@ -214,10 +214,10 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           onFocus={() => setSheet(true)}
           className="max-h-32 flex-1 resize-none bg-transparent text-[13.5px] outline-none placeholder:text-[#9a9a9a]"
         />
-        <span className="rounded-full bg-[#f2f2f2] px-2 py-0.5 text-[11.5px] text-ink-2">{artifact.source.agent ?? "기본 에이전트"}</span>
+        <span className="rounded-full bg-[#f2f2f2] px-2 py-0.5 text-[11.5px] text-ink-2">{artifact.source.agent ?? "Default agent"}</span>
         <button
           type="button"
-          aria-label="보내기"
+          aria-label="Send"
           disabled={!!running || !draft.trim()}
           onClick={() => void send(draft)}
           className={cn("flex size-[30px] items-center justify-center rounded-full bg-primary text-primary-foreground", (running || !draft.trim()) && "opacity-40")}

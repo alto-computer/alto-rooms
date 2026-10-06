@@ -7,7 +7,7 @@ use std::path::Path;
 
 pub(crate) const DEFAULT_AGENT: &str = "claude-code";
 pub(crate) const DEFAULT_PREAMBLE: &str =
-    "[Rooms] 사용자가 Rooms 앱에서 위 HTML 문서를 보며 묻습니다. 마크다운으로 짧게 답하세요. 파일을 만들거나 고치지 마세요.";
+    "[Rooms] The user is reading the HTML document below in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

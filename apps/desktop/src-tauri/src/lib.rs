@@ -53,7 +53,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()?;
     let find = MenuItemBuilder::with_id(MENU_FIND, "Find").accelerator("CmdOrCtrl+K").build(app)?;
     let sidebar = MenuItemBuilder::with_id(MENU_TOGGLE_SIDEBAR, "Toggle Sidebar").accelerator("CmdOrCtrl+B").build(app)?;
-    let ask = MenuItemBuilder::with_id(MENU_TOGGLE_ASK, "묻기 바").accelerator("CmdOrCtrl+J").build(app)?;
+    let ask = MenuItemBuilder::with_id(MENU_TOGGLE_ASK, "Ask Bar").accelerator("CmdOrCtrl+J").build(app)?;
     let back = MenuItemBuilder::with_id(MENU_BACK, "Back").accelerator("CmdOrCtrl+[").build(app)?;
     let forward = MenuItemBuilder::with_id(MENU_FORWARD, "Forward").accelerator("CmdOrCtrl+]").build(app)?;
     let view_menu = SubmenuBuilder::new(app, "View")

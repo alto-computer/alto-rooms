@@ -21,7 +21,7 @@ use std::time::Duration;
 
 pub const MAX_RUNNING: usize = 4;
 const MAX_QUESTION_CHARS: usize = 8_000;
-const RESTARTED: &str = "Rooms가 다시 시작돼서 중단됐어요";
+const RESTARTED: &str = "Stopped because Rooms restarted";
 
 #[derive(Debug)]
 pub enum AskError { BadRequest(String), NotFound, Busy, Capacity, AgentConfig(String), Io(String) }
@@ -30,11 +30,11 @@ impl std::fmt::Display for AskError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AskError::BadRequest(m) => write!(f, "{m}"),
-            AskError::NotFound => write!(f, "이 문서를 찾을 수 없어요"),
-            AskError::Busy => write!(f, "답을 기다리는 중이에요"),
-            AskError::Capacity => write!(f, "다른 질문이 끝나면 다시 보내 주세요"),
-            AskError::AgentConfig(m) => write!(f, "에이전트 설정을 읽지 못했어요: {m}"),
-            AskError::Io(m) => write!(f, "기록을 저장하지 못했어요: {m}"),
+            AskError::NotFound => write!(f, "Can't find this doc"),
+            AskError::Busy => write!(f, "Waiting for an answer"),
+            AskError::Capacity => write!(f, "Too many questions running — try again when one finishes"),
+            AskError::AgentConfig(m) => write!(f, "Couldn't read agent settings: {m}"),
+            AskError::Io(m) => write!(f, "Couldn't save the conversation: {m}"),
         }
     }
 }
@@ -107,7 +107,7 @@ impl Asks {
         let _rt = self.0.rt.as_ref().map(|h| h.enter());
         let q = question.trim();
         if q.is_empty() || q.chars().count() > MAX_QUESTION_CHARS {
-            return Err(AskError::BadRequest(format!("질문은 1–{MAX_QUESTION_CHARS}자여야 해요")));
+            return Err(AskError::BadRequest(format!("A question must be 1–{MAX_QUESTION_CHARS} characters")));
         }
         let core = &self.0.core;
         let artifact = core.list_artifacts(&room.to_string()).map_err(|_| AskError::NotFound)?
@@ -141,9 +141,9 @@ impl Asks {
             Err(e) => {
                 drop(running);
                 let msg = if e.kind() == std::io::ErrorKind::NotFound {
-                    format!("명령을 찾을 수 없어요: {} — 설정: {}", argv[0], self.config_path().display())
+                    format!("Command not found: {} — settings: {}", argv[0], self.config_path().display())
                 } else {
-                    format!("명령을 실행하지 못했어요: {} ({e})", argv[0])
+                    format!("Couldn't run {} ({e})", argv[0])
                 };
                 self.finish(turn.clone(), AskStatus::Failed, String::new(), Some(msg));
             }
@@ -157,7 +157,7 @@ impl Asks {
                         Ok(Outcome::Exited { code: 0, stdout, .. }) => (AskStatus::Done, run::clean_output(stdout.as_bytes()), None),
                         Ok(Outcome::Exited { code, stdout, stderr_tail }) => {
                             let last = run::clean_output(stderr_tail.as_bytes()).lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string);
-                            let mut m = format!("{}가 오류로 끝났어요 (code {code})", t.agent);
+                            let mut m = format!("{} exited with an error (code {code})", t.agent);
                             if let Some(l) = last { m.push('\n'); m.push_str(&l); }
                             (AskStatus::Failed, run::clean_output(stdout.as_bytes()), Some(m))
                         }
@@ -165,11 +165,11 @@ impl Asks {
                             let a = run::clean_output(stdout.as_bytes());
                             match reason {
                                 Reason::Cancelled | Reason::Shutdown => (AskStatus::Cancelled, a, None),
-                                Reason::Timeout => (AskStatus::Failed, a, Some("시간이 너무 오래 걸려 멈췄어요".into())),
-                                Reason::TooLong => (AskStatus::Failed, a, Some("답이 너무 길어요".into())),
+                                Reason::Timeout => (AskStatus::Failed, a, Some("Stopped: took too long".into())),
+                                Reason::TooLong => (AskStatus::Failed, a, Some("Stopped: the answer was too long".into())),
                             }
                         }
-                        Err(_) => (AskStatus::Failed, String::new(), Some("내부 오류".into())),
+                        Err(_) => (AskStatus::Failed, String::new(), Some("Internal error".into())),
                     };
                     me.finish(t, status, answer, error);
                 });
