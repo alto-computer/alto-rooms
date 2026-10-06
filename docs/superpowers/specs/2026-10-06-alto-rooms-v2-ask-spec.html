@@ -92,6 +92,7 @@
   <a href="#s9">9. Testing <span class="badge">🟢</span></a>
   <a href="#s10">10. Senior Review <span class="badge">🟢</span></a>
   <a href="#s11">11. Open Questions <span class="badge">🟡</span></a>
+  <a href="#s12">12. 만든 대화 연결 <span class="badge">🟢</span></a>
   <h4 style="margin-top:24px">Legend</h4>
   <div style="font-size:12px; line-height:1.7;">🟢 done · 🟡 draft · 🔴 blocked<br><mark class="ambiguous">text</mark> = open ambiguity</div>
 </nav>
@@ -731,7 +732,29 @@ Question: {question}</code></pre>
 <h2 id="s11"><span class="num">11.</span> Open Questions <span class="badge badge-warn">🟡</span></h2>
 <ul>
   <li><mark class="ambiguous">aside가 만든 아티팩트에 <code>rooms:agent=aside</code>/<code>rooms:session</code>을 넣게 하는 방법(aside 쪽 스킬/지침)은 이 스펙 밖 — Rooms 쪽 준비는 끝(프로필 기본값).</mark></li>
-  <li><mark class="ambiguous">세션 ID가 채워진 문서가 지금은 거의 없다(온보딩 스킬이 <code>sessions</code>를 버림, 원본은 안 고침). v2 직후 별도 작업으로 "스킬이 링크할 때 세션을 Rooms 쪽 사이드카(<code>.rooms/sources.json</code> 등)에 기록"할지?</mark> — v2는 meta 태그만 읽고, 없으면 new 모드로 동작하므로 이 스펙의 완료를 막지 않는다.</li>
+  <li><s>세션 ID가 채워진 문서가 지금은 거의 없다</s> → §12에서 해결. <mark class="ambiguous">(아래는 원래 질문)(온보딩 스킬이 <code>sessions</code>를 버림, 원본은 안 고침). v2 직후 별도 작업으로 "스킬이 링크할 때 세션을 Rooms 쪽 사이드카(<code>.rooms/sources.json</code> 등)에 기록"할지?</mark> — v2는 meta 태그만 읽고, 없으면 new 모드로 동작하므로 이 스펙의 완료를 막지 않는다.</li>
+</ul>
+
+
+<!-- ============================================== -->
+<h2 id="s12"><span class="num">12.</span> 만든 대화 연결 — sources.json (v2.1) <span class="badge badge-ok">🟢</span></h2>
+<p class="meta">2026-10-06 추가. 실사용에서 발견: 온보딩이 세션을 찾고도(<code>find_html.py</code>의 <code>sessions</code>) 기록하지 않아, 메타 없는 문서는 전부 new 모드가 됐다(§11 열린 질문의 실체).</p>
+<h3>결정</h3>
+<ul>
+  <li><strong>기록은 정리 도구가, 결정론적으로.</strong> <code>find_html.py --record-sources</code>가 찾은 모든 후보(이미 링크된 문서 포함)의 최신 작성 기록(agent, session, cwd)을 <code>&lt;home&gt;/.rooms/sources.json</code>에 적는다. LLM 판단 없음.</li>
+  <li><strong>roomsd는 읽기만.</strong> 묻기 시작 시 문서에 유효한 <code>rooms:session</code> 메타가 없으면, 원본 realpath로 <code>sources.json</code>을 찾아 <code>source</code>를 채운다. 메타가 있으면 메타가 이긴다. 프로토콜·색인 변경 없음. Rooms 코어는 여전히 에이전트 로그 형식을 모른다.</li>
+  <li><strong>스킬 v5.</strong> 첫 정리·재정리·새 문서 링크(습관) 때마다 <code>--record-sources</code>로 실행. 기존 설치는 "rooms 정리해줘" 때 버전 확인으로 자동 업데이트.</li>
+  <li><strong>못 찾으면 알린다.</strong> new 모드 시트 머리: "{agent} · new conversation — couldn't find the thread that made this doc".</li>
+</ul>
+<h3>sources.json 형식</h3>
+<pre><code>{ "version": 1,
+  "sources": {
+    "/abs/realpath/of/doc.html": { "agent": "claude-code", "session": "0a295c02-…", "cwd": "/abs/cwd", "writtenAt": "2026-10-01T00:22:51Z" }
+  } }</code></pre>
+<ul>
+  <li>쓰기: 기존 파일을 읽어 병합 → 같은 경로는 <code>writtenAt</code>이 같거나 더 새로울 때만 덮어씀 → 임시 파일 + rename(원자적). 파일이 깨져 있으면 빈 것으로 보고 새로 씀.</li>
+  <li>값: 그 원본의 <strong>마지막 쓰기</strong>의 agent/session/cwd. session이 없으면 기록하지 않음.</li>
+  <li>읽기(roomsd): 매 묻기마다 파일을 읽음(작음, 캐시 없음). 없거나 깨지면 None. 값은 R0 검증(valid_ident, cwd 절대·존재)을 그대로 거친다.</li>
 </ul>
 
 </main>
