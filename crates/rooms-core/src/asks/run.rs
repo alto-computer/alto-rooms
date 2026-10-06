@@ -51,6 +51,16 @@ fn signal_group(pid: i32, sig: i32) {
     unsafe { libc::killpg(pid, sig); }
 }
 
+/// SIGTERM the child's process group, SIGKILL after the grace period, then reap the child.
+async fn terminate(child: &mut tokio::process::Child, pid: Option<i32>, reason: Reason, kill_grace: Duration) {
+    if let Some(pid) = pid {
+        signal_group(pid, libc::SIGTERM);
+        let grace = if reason == Reason::Shutdown { Duration::from_millis(300) } else { kill_grace };
+        if tokio::time::timeout(grace, child.wait()).await.is_err() { signal_group(pid, libc::SIGKILL); }
+    }
+    let _ = child.wait().await;
+}
+
 pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
     let mut cmd = tokio::process::Command::new(&spec.argv[0]);
     cmd.args(&spec.argv[1..]).current_dir(&spec.cwd)
@@ -65,7 +75,7 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
     let limits = spec.limits;
     let done = tokio::spawn(async move {
         let tail_max = limits.stderr_tail;
-        let err_task = tokio::spawn(async move {
+        let mut err_task = tokio::spawn(async move {
             let (mut tail, mut buf) = (Vec::new(), [0u8; 4096]);
             while let Ok(n) = stderr.read(&mut buf).await {
                 if n == 0 { break; }
@@ -92,23 +102,30 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
             }
         };
         let stdout_text = String::from_utf8_lossy(&out).into_owned();
-        match reason {
-            None => {
-                let code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
-                let stderr_tail = err_task.await.unwrap_or_default();
-                Outcome::Exited { code, stdout: stdout_text, stderr_tail }
-            }
-            Some(reason) => {
-                if let Some(pid) = pid {
-                    signal_group(pid, libc::SIGTERM);
-                    let grace = if reason == Reason::Shutdown { Duration::from_millis(300) } else { limits.kill_grace };
-                    if tokio::time::timeout(grace, child.wait()).await.is_err() { signal_group(pid, libc::SIGKILL); }
+        // After stdout EOF the child may still run (or hold descendants): keep racing
+        // its exit against the deadline and kill requests.
+        let reason = match reason {
+            Some(r) => Some(r),
+            None => loop {
+                tokio::select! {
+                    status = child.wait() => {
+                        let code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
+                        // A descendant may still hold stderr open; do not wait for it.
+                        let stderr_tail = match tokio::time::timeout(Duration::from_millis(200), &mut err_task).await {
+                            Ok(t) => t.unwrap_or_default(),
+                            Err(_) => { err_task.abort(); String::new() }
+                        };
+                        return Outcome::Exited { code, stdout: stdout_text, stderr_tail };
+                    }
+                    _ = &mut deadline => break Some(Reason::Timeout),
+                    Some(r) = rx.recv() => break Some(r),
                 }
-                let _ = child.wait().await;
-                err_task.abort();
-                Outcome::Killed { reason, stdout: stdout_text }
-            }
-        }
+            },
+        };
+        let reason = reason.expect("loop only breaks with a reason");
+        terminate(&mut child, pid, reason, limits.kill_grace).await;
+        err_task.abort();
+        Outcome::Killed { reason, stdout: stdout_text }
     });
     Ok(Running { killer: Killer(tx), done })
 }
@@ -175,5 +192,33 @@ mod tests {
     async fn missing_program_is_a_spawn_error() {
         let s = SpawnSpec { argv: vec!["definitely-not-a-cli-xyz".into()], cwd: std::env::temp_dir(), path_env: Some("/nonexistent".into()), limits: Limits::default() };
         assert_eq!(spawn_agent(s).err().unwrap().kind(), std::io::ErrorKind::NotFound);
+    }
+
+    async fn within_5s<T>(f: impl std::future::Future<Output = T>) -> T {
+        tokio::time::timeout(Duration::from_secs(5), f).await.expect("must not hang")
+    }
+
+    #[tokio::test]
+    async fn timeout_applies_after_stdout_closes() {
+        let l = Limits { timeout: Duration::from_millis(300), ..Limits::default() };
+        let r = spawn_agent(spec("exec 1>&-; sleep 30", l)).unwrap();
+        let out = within_5s(r.done).await.unwrap();
+        assert!(matches!(out, Outcome::Killed { reason: Reason::Timeout, .. }), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn cancel_applies_after_stdout_closes() {
+        let r = spawn_agent(spec("exec 1>&-; sleep 30", Limits::default())).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        r.killer.kill(Reason::Cancelled);
+        let out = within_5s(r.done).await.unwrap();
+        assert!(matches!(out, Outcome::Killed { reason: Reason::Cancelled, .. }), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn exit_does_not_wait_for_a_descendant_holding_stderr() {
+        let r = spawn_agent(spec("sleep 30 >/dev/null & exit 0", Limits::default())).unwrap();
+        let out = within_5s(r.done).await.unwrap();
+        assert!(matches!(out, Outcome::Exited { code: 0, .. }), "{out:?}");
     }
 }
