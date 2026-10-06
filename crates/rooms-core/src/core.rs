@@ -220,6 +220,13 @@ impl RoomsCore {
 
     pub fn current_seq(&self) -> u64 { self.seq.load(Ordering::SeqCst) }
 
+    /// `ask.started` / `ask.done` from `asks::Asks`: same seq and broadcast as every other event.
+    pub fn emit_ask(&self, kind: EventKind) {
+        debug_assert!(matches!(kind, EventKind::AskStarted { .. } | EventKind::AskDone { .. }));
+        let mut inner = self.inner.lock().unwrap();
+        self.emit(&mut inner, kind);
+    }
+
     /// Must be called with `Inner` held (the `&mut Inner` proves it): that keeps the increment and
     /// the send of concurrent emitters ordered, so receivers see strictly increasing seqs.
     fn emit(&self, _inner: &mut Inner, kind: EventKind) {
