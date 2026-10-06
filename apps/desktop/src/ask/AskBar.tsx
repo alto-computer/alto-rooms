@@ -32,8 +32,8 @@ function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop:
     <div className="space-y-2">
       <div className="ml-auto w-fit max-w-[80%] rounded-[10px] bg-[#f2f2f2] px-3 py-1.5 whitespace-pre-wrap">{t.question}</div>
       {t.status === "running" ? (
-        <div className="flex items-center gap-3 text-[12.5px] text-ink-2">
-          <img src={clewSleep} alt="" className="w-[120px]" />
+        <div className="flex items-center gap-2 text-[12.5px] text-ink-2">
+          <img src={clewSleep} alt="" className="w-8 shrink-0" />
           <span>{t.agent}가 답을 쓰고 있어요…</span>
           <button type="button" className="ml-auto underline" onClick={onStop}>멈추기</button>
         </div>
@@ -74,11 +74,21 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const [sendError, setSendError] = useState<string | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  /** Set synchronously on send, so a second Enter before the turn shows up does nothing. */
+  const sending = useRef(false);
+  const loading = useRef<string | null>(null);
   const shown = open && !readOnly;
+  const loaded = thread?.loaded ?? false;
 
+  // An ask event from another client creates the thread unloaded: its older turns still need loading.
   useEffect(() => {
-    if (shown && !thread) void store.load(artifact.fileKey);
-  }, [shown, thread, store, artifact.fileKey]);
+    if (!shown || loaded || loading.current === artifact.fileKey) return;
+    const key = artifact.fileKey;
+    loading.current = key;
+    void store.load(key).finally(() => {
+      if (loading.current === key) loading.current = null;
+    });
+  }, [shown, loaded, store, artifact.fileKey]);
   useEffect(() => {
     if (shown) input.current?.focus();
   }, [shown]);
@@ -86,14 +96,22 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   useEffect(() => {
     bottom.current?.scrollIntoView?.({ block: "end" });
   }, [turns.length, turns.at(-1)?.status]);
+  const running = turns.find((t) => t.status === "running");
+  const runningId = running?.id;
+  const wasRunning = useRef(false);
+  // When the running turn finishes, the input is writable again: put the caret back in it.
+  useEffect(() => {
+    if (wasRunning.current && !runningId && shown) input.current?.focus();
+    wasRunning.current = !!runningId;
+  }, [runningId, shown]);
 
   if (!shown) return null;
-  const running = turns.find((t) => t.status === "running");
   const last = turns.at(-1);
 
   const send = async (question: string) => {
     const q = question.trim();
-    if (!q || running) return;
+    if (!q || running || sending.current) return;
+    sending.current = true;
     setSendError(null);
     try {
       await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, q);
@@ -101,6 +119,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       setSheet(true);
     } catch (e) {
       setSendError(e instanceof RoomsApiError ? e.message : GENERIC_ERROR);
+    } finally {
+      sending.current = false;
     }
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -143,7 +163,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           ref={input}
           rows={1}
           value={draft}
-          disabled={!!running}
+          readOnly={!!running}
           placeholder={PLACEHOLDER}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}

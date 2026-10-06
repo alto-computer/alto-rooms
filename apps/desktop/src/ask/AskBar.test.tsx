@@ -53,11 +53,36 @@ describe("AskBar", () => {
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?" }));
     expect(await screen.findByText("claude-code가 답을 쓰고 있어요…")).toBeTruthy();
     expect((input as HTMLTextAreaElement).value).toBe("");
-    expect((input as HTMLTextAreaElement).disabled).toBe(true);
+    // readOnly, not disabled: Esc still folds the sheet and focus stays in the bar
+    expect((input as HTMLTextAreaElement).disabled).toBe(false);
+    expect((input as HTMLTextAreaElement).readOnly).toBe(true);
+    input.blur();
     act(() => emit({ type: "ask.done", turn: turn({ id: "ask-왜?", status: "done", answer: "**굵게** 답", endedAt: "2026-10-06T10:00:12+09:00" }) }));
     expect((await screen.findByText("굵게")).tagName).toBe("STRONG");
+    expect((input as HTMLTextAreaElement).readOnly).toBe(false);
+    expect(document.activeElement).toBe(input);
     expect(screen.getByText(/12초/)).toBeTruthy();
     expect(screen.getByText("claude-code · 만든 대화에 이어서")).toBeTruthy();
+  });
+
+  it("a fast double Enter sends once", async () => {
+    const { client } = await setup();
+    act(() => store.toggle());
+    const input = await screen.findByPlaceholderText("이 문서에 대해 묻기…");
+    fireEvent.change(input, { target: { value: "한 번만" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await screen.findByText("claude-code가 답을 쓰고 있어요…");
+    expect(client.startAsk).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads older turns even when another client's ask event created the thread first", async () => {
+    const { client, emit } = await setup({ k1: [turn({ id: "old", question: "예전 질문", status: "done", answer: "예전 답", endedAt: "2026-10-06T09:30:00+09:00" })] });
+    act(() => emit({ type: "ask.started", turn: turn({ id: "new", question: "다른 창 질문" }) }));
+    act(() => store.toggle());
+    expect(await screen.findByText("예전 답")).toBeTruthy();
+    expect(screen.getByText("다른 창 질문")).toBeTruthy();
+    expect(client.askThread).toHaveBeenCalledWith("k1");
   });
 
   it("shows a loaded thread, failed turns with retry, and cancelled turns", async () => {
