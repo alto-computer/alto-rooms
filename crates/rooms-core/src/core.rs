@@ -623,6 +623,36 @@ impl RoomsCore {
         }
     }
 
+    /// Installs the plugins the app ships (`src/<id>/`). A plugin seen for the first time is turned
+    /// on; every bundled version gets its declared permissions, since it comes with the app. A user's
+    /// "off" stays off. Returns the ids it copied.
+    pub fn install_bundled_plugins(&self, src: &std::path::Path) -> Result<Vec<String>, CoreError> {
+        let Ok(rd) = std::fs::read_dir(src) else { return Ok(Vec::new()) };
+        let mut dirs: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        dirs.sort();
+        let mut copied = Vec::new();
+        for dir in dirs {
+            let Some(m) = crate::plugins::install_bundled(&self.home, &dir)? else { continue };
+            let mut inner = self.inner.lock().unwrap();
+            let st = &mut inner.state.plugins;
+            if !st.bundled.contains(&m.id) {
+                st.bundled.push(m.id.clone());
+                st.bundled.sort();
+                if !st.enabled.contains(&m.id) {
+                    st.enabled.push(m.id.clone());
+                    st.enabled.sort();
+                }
+            }
+            st.grants.insert(m.id.clone(), m.permissions.clone());
+            inner.state.save()?;
+            copied.push(m.id);
+        }
+        if !copied.is_empty() {
+            self.plugins_changed();
+        }
+        Ok(copied)
+    }
+
     /// Tells clients the plugin list may have changed (the watcher calls this).
     pub fn plugins_changed(&self) {
         let mut inner = self.inner.lock().unwrap();

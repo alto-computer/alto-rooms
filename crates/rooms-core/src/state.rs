@@ -21,6 +21,9 @@ pub struct PluginState {
     pub enabled: Vec<String>,
     #[serde(default)]
     pub grants: std::collections::BTreeMap<String, Vec<String>>,
+    /// Plugins that came with the app and were turned on once; a later "off" is the user's to keep.
+    #[serde(default)]
+    pub bundled: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

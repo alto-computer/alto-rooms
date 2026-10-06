@@ -13,6 +13,12 @@ async fn main() {
     let files_l = tokio::net::TcpListener::bind(format!("127.0.0.1:{fp}")).await.unwrap_or_else(|e| { eprintln!("port {fp}: {e}"); std::process::exit(2) });
     let _lock = acquire_home_lock(&home).unwrap_or_else(|e| { eprintln!("roomsd: {}/.rooms/lock: {e}", home.display()); std::process::exit(2) });
     let (core, _watch) = rooms_core::watch::open_and_watch(&home).expect("open rooms home");
+    // Plugins that ship with the desktop app (it passes their folder).
+    if let Ok(dir) = std::env::var("ROOMS_BUNDLED_PLUGINS") {
+        if let Err(e) = core.install_bundled_plugins(std::path::Path::new(&dir)) {
+            eprintln!("roomsd: bundled plugins: {e}");
+        }
+    }
     let token = write_token(core.home()).expect("write token");
     let st = AppState { core, token, read_only: false, files_origin: format!("http://127.0.0.1:{fp}"), net };
     let api = build_api_router(st.clone()).into_make_service_with_connect_info::<SocketAddr>();

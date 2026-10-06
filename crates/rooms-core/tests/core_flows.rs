@@ -1064,3 +1064,85 @@ fn turning_on_grants_only_what_was_shown_and_turning_off_keeps_the_approval() {
     let p = core.set_plugin_enabled("echo", true, Some(vec!["downloads".into(), "rooms.read".into(), "clipboard".into()])).unwrap();
     assert_eq!(p.granted, Some(vec!["rooms.read".to_string(), "clipboard".to_string()]));
 }
+
+// ---- bundled plugins ----
+
+const GOALS: &str = r#"{"id":"goals","name":"Goals","version":"0.1.0","minAppVersion":"0.4.0",
+    "permissions":["rooms.read"],"slots":{"tab":{"title":"Goals","icon":"target","sidebar":true}}}"#;
+
+/// A folder the app ships: `<src>/goals/{manifest.json,index.html,main.js}`.
+fn bundle(src: &std::path::Path, manifest: &str, main: &str) {
+    let dir = src.join("goals");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("assets")).unwrap();
+    fs::write(dir.join("manifest.json"), manifest).unwrap();
+    fs::write(dir.join("index.html"), "<p>goals</p>").unwrap();
+    fs::write(dir.join("assets/main.js"), main).unwrap();
+}
+
+fn goals(core: &RoomsCore) -> PluginInfo {
+    core.plugins().into_iter().find(|p| p.id == "goals").unwrap()
+}
+
+#[test]
+fn bundled_plugins_are_installed_and_on_without_asking() {
+    let (d, core) = home();
+    let src = tempfile::tempdir().unwrap();
+    bundle(src.path(), GOALS, "v1");
+    assert_eq!(core.install_bundled_plugins(src.path()).unwrap(), vec!["goals"]);
+    let p = goals(&core);
+    assert!(p.enabled && !p.needs_approval);
+    assert_eq!(p.granted.as_deref(), Some(&["rooms.read".to_string()][..]));
+    assert_eq!(fs::read_to_string(d.path().join(".rooms/plugins/goals/assets/main.js")).unwrap(), "v1");
+    core.write_plugin_data("goals", "goals.json", "{}").unwrap();
+
+    // Same version again: nothing to do.
+    assert!(core.install_bundled_plugins(src.path()).unwrap().is_empty());
+}
+
+#[test]
+fn a_new_bundled_version_replaces_code_keeps_data_and_respects_turn_off() {
+    let (d, core) = home();
+    let src = tempfile::tempdir().unwrap();
+    bundle(src.path(), GOALS, "v1");
+    core.install_bundled_plugins(src.path()).unwrap();
+    core.write_plugin_data("goals", "goals.json", "{\"mine\":1}").unwrap();
+    fs::write(d.path().join(".rooms/plugins/goals/assets/old.js"), "stale").unwrap();
+    core.set_plugin_enabled("goals", false, None).unwrap();
+
+    let v2 = GOALS.replace("0.1.0", "0.2.0").replace(r#"["rooms.read"]"#, r#"["rooms.read","clipboard"]"#);
+    bundle(src.path(), &v2, "v2");
+    assert_eq!(core.install_bundled_plugins(src.path()).unwrap(), vec!["goals"]);
+    let dir = d.path().join(".rooms/plugins/goals");
+    assert_eq!(fs::read_to_string(dir.join("assets/main.js")).unwrap(), "v2");
+    assert!(!dir.join("assets/old.js").exists());
+    assert_eq!(fs::read_to_string(dir.join("data/goals.json")).unwrap(), "{\"mine\":1}");
+    let p = goals(&core);
+    assert!(!p.enabled, "turned off stays off");
+    assert!(!p.needs_approval, "bundled permissions are granted with the app");
+
+    // Removed by the user: comes back with the app, still off.
+    fs::remove_dir_all(&dir).unwrap();
+    core.install_bundled_plugins(src.path()).unwrap();
+    assert!(!goals(&core).enabled);
+}
+
+#[test]
+fn bundled_plugins_never_replace_a_users_own_plugin_or_install_invalid_ones() {
+    let (d, core) = home();
+    let mine = d.path().join(".rooms/plugins/goals");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(mine.join("manifest.json"), GOALS.replace("Goals\",\"version", "My goals\",\"version")).unwrap();
+    fs::write(mine.join("index.html"), "mine").unwrap();
+    let src = tempfile::tempdir().unwrap();
+    bundle(src.path(), &GOALS.replace("0.1.0", "0.9.0"), "v9");
+    assert!(core.install_bundled_plugins(src.path()).unwrap().is_empty());
+    assert_eq!(fs::read_to_string(mine.join("index.html")).unwrap(), "mine");
+    assert!(!goals(&core).enabled);
+
+    let (_d2, core2) = home();
+    let bad = tempfile::tempdir().unwrap();
+    bundle(bad.path(), "{", "x");
+    assert!(core2.install_bundled_plugins(bad.path()).unwrap().is_empty());
+    assert!(core2.plugins().is_empty());
+}
