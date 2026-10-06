@@ -18,4 +18,10 @@ $("save").onclick = async () => {
   show("out", `saved ${key}`);
 };
 $("load").onclick = async () => show("out", `loaded ${(await rooms.storage.read("echo.txt")) ?? "nothing"}`);
-$("rooms").onclick = async () => show("out", (await rooms.rooms.list()).map((r) => r.name).join(", "));
+$("rooms").onclick = async () => {
+  try {
+    show("out", (await rooms.rooms.list()).map((r) => r.name).join(", "));
+  } catch (e) {
+    show("out", `error ${(e as { code?: string }).code}`);
+  }
+};
