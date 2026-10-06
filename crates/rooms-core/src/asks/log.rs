@@ -20,14 +20,15 @@ impl AskLog {
     }
 
     pub fn read(&self, file_key: &str) -> std::io::Result<Vec<AskTurn>> {
-        let text = match std::fs::read_to_string(self.path(file_key)) {
-            Ok(t) => t,
+        // Bytes, not a String: one torn line with invalid UTF-8 must not make the whole file unreadable.
+        let bytes = match std::fs::read(self.path(file_key)) {
+            Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(e),
         };
         let mut out: Vec<AskTurn> = Vec::new();
-        for line in text.lines() {
-            let Ok(t) = serde_json::from_str::<AskTurn>(line) else { continue };
+        for line in bytes.split(|b| *b == b'\n') {
+            let Ok(t) = serde_json::from_str::<AskTurn>(&String::from_utf8_lossy(line)) else { continue };
             match out.iter_mut().find(|x| x.id == t.id) {
                 Some(slot) => *slot = t,
                 None => out.push(t),
@@ -69,5 +70,17 @@ mod tests {
         assert_eq!(got[0].answer, "A");
         let mode = std::fs::metadata(d.path().join("asks")).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
+    }
+
+    #[test]
+    fn a_line_with_invalid_utf8_is_skipped_not_fatal() {
+        let d = tempfile::tempdir().unwrap();
+        let log = AskLog::new(d.path().join("asks"));
+        log.append(&t("a", AskStatus::Done, "A")).unwrap();
+        std::fs::OpenOptions::new().append(true).open(d.path().join("asks/k1.jsonl")).unwrap()
+            .write_all(b"{\"id\":\"x\xff\xfe torn\n").unwrap();
+        log.append(&t("b", AskStatus::Done, "B")).unwrap();
+        let got = log.read("k1").unwrap();
+        assert_eq!(got.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
     }
 }
