@@ -1,11 +1,13 @@
 import type { ApiError } from "./generated/ApiError";
 import type { Artifact } from "./generated/Artifact";
+import type { AskTurn } from "./generated/AskTurn";
 import type { Info } from "./generated/Info";
 import type { JournalDay } from "./generated/JournalDay";
 import type { Note } from "./generated/Note";
 import type { PluginInfo } from "./generated/PluginInfo";
 import type { Room } from "./generated/Room";
 import type { RoomsEvent } from "./generated/RoomsEvent";
+import type { StartAsk } from "./generated/StartAsk";
 
 export type Snapshot<T> = { data: T; seq: number };
 
@@ -74,6 +76,9 @@ export function createRoomsClient(baseUrl: string, token?: string) {
      *  404 `room_not_found` / `not_found`. */
     moveArtifact: (roomId: string, artifactId: string, toRoomId: string) =>
       write<Artifact>("POST", "/v1/artifacts/move", JSON.stringify({ roomId, artifactId, toRoomId })),
+    startAsk: (req: StartAsk) => write<AskTurn>("POST", "/v1/asks", JSON.stringify(req)),
+    askThread: async (fileKey: string) => (await get<AskTurn[]>(`/v1/asks?fileKey=${encodeURIComponent(fileKey)}`)).data,
+    cancelAsk: (askId: string) => write<void>("DELETE", `/v1/asks/${encodeURIComponent(askId)}`, ""),
     listPlugins: async () => (await get<PluginInfo[]>("/v1/plugins")).data,
     /** Turning on grants `permissions` (what the user was shown) that the manifest still declares; off keeps the approval. */
     setPluginEnabled: (id: string, enabled: boolean, permissions?: string[]) =>
