@@ -14,14 +14,26 @@ pub struct RoomRecord {
     pub ino: Option<u64>,
 }
 
+/// Which plugins the user turned on, and the permissions they saw when they did.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginState {
+    #[serde(default)]
+    pub enabled: Vec<String>,
+    #[serde(default)]
+    pub grants: std::collections::BTreeMap<String, Vec<String>>,
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct Disk {
     rooms: Vec<RoomRecord>,
+    #[serde(default)]
+    plugins: PluginState,
 }
 
 pub struct StateStore {
     pub path: PathBuf,
     pub rooms: Vec<RoomRecord>,
+    pub plugins: PluginState,
 }
 
 impl StateStore {
@@ -44,6 +56,7 @@ impl StateStore {
                     return Ok(StateStore {
                         path,
                         rooms: Vec::new(),
+                        plugins: PluginState::default(),
                     });
                 }
             },
@@ -63,6 +76,7 @@ impl StateStore {
         Ok(StateStore {
             path,
             rooms: disk.rooms,
+            plugins: disk.plugins,
         })
     }
 
@@ -70,6 +84,7 @@ impl StateStore {
         let tmp = self.path.with_extension("json.tmp");
         let body = serde_json::to_vec_pretty(&Disk {
             rooms: self.rooms.clone(),
+            plugins: self.plugins.clone(),
         })
         .map_err(|e| CoreError::WriteFailed(e.to_string()))?;
         std::fs::write(&tmp, body)?;

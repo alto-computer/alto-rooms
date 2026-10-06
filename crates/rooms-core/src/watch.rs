@@ -69,10 +69,31 @@ fn spawn_coalescer(min_gap: Duration, mut run: impl FnMut() -> bool + Send + 'st
     tx
 }
 
+/// A path under `<plugins>/<id>/` that is not inside that plugin's `data/` (or `<plugins>/<id>` itself).
+fn is_plugin_code_path(plugins_dir: &Path, p: &Path) -> bool {
+    let Ok(rest) = p.strip_prefix(plugins_dir) else { return false };
+    let mut parts = rest.components();
+    parts.next().is_some() && parts.next().is_none_or(|c| c.as_os_str() != "data")
+}
+
+#[cfg(test)]
+#[test]
+fn plugin_code_paths_exclude_data() {
+    let d = Path::new("/h/.rooms/plugins");
+    assert!(is_plugin_code_path(d, Path::new("/h/.rooms/plugins/echo")));
+    assert!(is_plugin_code_path(d, Path::new("/h/.rooms/plugins/echo/manifest.json")));
+    assert!(is_plugin_code_path(d, Path::new("/h/.rooms/plugins/echo/assets/x.js")));
+    assert!(!is_plugin_code_path(d, Path::new("/h/.rooms/plugins/echo/data/notes/a.txt")));
+    assert!(!is_plugin_code_path(d, Path::new("/h/.rooms/plugins/echo/data")));
+    assert!(!is_plugin_code_path(d, Path::new("/h/.rooms/state.json")));
+    assert!(!is_plugin_code_path(d, Path::new("/h/.rooms/plugins")));
+}
+
 pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     let c2 = core.clone();
     let rooms_dir = core.home().join(".rooms");
     let home = core.home().to_path_buf();
+    let plugins_dir = crate::plugins::plugins_dir(core.home());
     // Watcher-triggered full resyncs run coalesced on a worker that holds only a weak core; it ends
     // when the debouncer (owner of `resync`) is dropped or the core is gone.
     let wresync = core.downgrade();
@@ -92,6 +113,10 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                 let _ = resync.send(());
             }
             Ok(events) => {
+                // A plugin's code or manifest changed (its own data/ writes don't count): clients list again.
+                if events.iter().flat_map(|ev| ev.paths.iter()).any(|p| is_plugin_code_path(&plugins_dir, p)) {
+                    c2.plugins_changed();
+                }
                 let paths: Vec<PathBuf> = events.iter().flat_map(|ev| ev.paths.iter())
                     .filter(|p| !p.starts_with(&rooms_dir)).cloned().collect();
                 // A direct child of home (or a path no room owns yet) may be a folder created,

@@ -3,6 +3,7 @@ pub mod error;
 pub mod index;
 pub mod meta;
 pub mod onboarding;
+pub mod plugins;
 pub mod rules;
 pub mod state;
 pub mod walk;

@@ -977,3 +977,72 @@ fn artifact_by_file_key_finds_first_in_room_order() {
     assert_eq!(core.artifact_by_file_key(&key).unwrap().room_id, b);
     assert!(core.artifact_by_file_key("0000000000000000").is_none());
 }
+
+// ---- plugins ----
+
+const ECHO: &str = r#"{"id":"echo","name":"Echo","version":"0.1.0","minAppVersion":"0.3.0",
+    "permissions":["rooms.read"],"slots":{"tab":{"title":"Echo","sidebar":true}}}"#;
+
+fn install(home: &std::path::Path, manifest: &str) {
+    let dir = home.join(".rooms/plugins/echo");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("manifest.json"), manifest).unwrap();
+    fs::write(dir.join("index.html"), "<p>echo</p>").unwrap();
+}
+
+#[test]
+fn plugin_enable_and_grants_persist() {
+    let (d, core) = home();
+    install(d.path(), ECHO);
+    let p = core.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert_eq!(p.status, PluginStatus::Ok);
+    assert!(!p.enabled && p.needs_approval);
+    assert_eq!(core.read_plugin_data("echo", "x.txt").unwrap_err(), CoreError::NotFound);
+
+    let p = core.set_plugin_enabled("echo", true).unwrap();
+    assert!(p.enabled && !p.needs_approval);
+    core.write_plugin_data("echo", "x.txt", "hi").unwrap();
+    assert_eq!(core.read_plugin_data("echo", "x.txt").unwrap().as_deref(), Some("hi"));
+    assert_eq!(core.list_plugin_data("echo", "").unwrap(), vec!["x.txt"]);
+
+    let reopened = RoomsCore::open(d.path()).unwrap();
+    let p = reopened.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert!(p.enabled && !p.needs_approval);
+
+    install(d.path(), &ECHO.replace(r#"["rooms.read"]"#, r#"["rooms.read","clipboard"]"#));
+    let p = reopened.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert!(p.enabled && p.needs_approval);
+
+    let p = reopened.set_plugin_enabled("echo", false).unwrap();
+    assert!(!p.enabled);
+    assert_eq!(reopened.set_plugin_enabled("nope", true).unwrap_err(), CoreError::NotFound);
+}
+
+#[test]
+fn invalid_plugins_are_listed_but_cannot_be_enabled() {
+    let (d, core) = home();
+    install(d.path(), "{");
+    let p = core.plugins().into_iter().find(|p| p.id == "echo").unwrap();
+    assert_eq!(p.status, PluginStatus::Invalid);
+    assert!(p.reason.is_some() && !p.needs_approval);
+    assert!(matches!(core.set_plugin_enabled("echo", true).unwrap_err(), CoreError::InvalidInput(_)));
+}
+
+#[test]
+fn plugins_changed_emits_event() {
+    let (_d, core) = home();
+    let mut rx = core.subscribe();
+    core.plugins_changed();
+    assert!(matches!(rx.try_recv().unwrap().kind, EventKind::PluginsChanged {}));
+}
+
+#[test]
+fn plugin_assets_resolve_and_data_stays_private() {
+    let (d, core) = home();
+    install(d.path(), ECHO);
+    core.set_plugin_enabled("echo", true).unwrap();
+    core.write_plugin_data("echo", "x.txt", "hi").unwrap();
+    assert!(core.resolve_plugin_file("echo", "index.html").unwrap().ends_with("index.html"));
+    assert!(core.resolve_plugin_file("echo", "data/x.txt").is_err());
+    assert!(core.resolve_plugin_file("nope", "index.html").is_err());
+}
