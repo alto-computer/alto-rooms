@@ -43,6 +43,9 @@ fn export_typescript_bindings() {
     JournalDay::export_all().unwrap();
     Info::export_all().unwrap();
     RoomsEvent::export_all().unwrap();
+    ToolInfo::export_all().unwrap();
+    ToolCall::export_all().unwrap();
+    ToolResult::export_all().unwrap();
     ApiError::export_all().unwrap();
     AskTurn::export_all().unwrap();
     StartAsk::export_all().unwrap();
@@ -65,4 +68,18 @@ fn ask_events_are_camel_and_tagged() {
     assert_eq!(d["type"], "ask.done");
     let s: StartAsk = serde_json::from_str(r#"{"roomId":"r","artifactId":"a","question":"hi"}"#).unwrap();
     assert_eq!((s.room_id.as_str(), s.artifact_id.as_str(), s.question.as_str()), ("r", "a", "hi"));
+}
+
+#[test]
+fn plugin_data_changed_and_tool_types_have_camel_case_json() {
+    let e = serde_json::to_value(&RoomsEvent { seq: 9, kind: EventKind::PluginDataChanged { plugin_id: "p".into(), path: "notes/a.jsonl".into() } }).unwrap();
+    assert_eq!(e["type"], "plugin.data.changed");
+    assert_eq!(e["pluginId"], "p");
+    assert_eq!(e["path"], "notes/a.jsonl");
+    let i = serde_json::to_value(&ToolInfo { plugin_id: "p".into(), name: "t".into(), description: "d".into(), input: serde_json::json!({"type":"object"}) }).unwrap();
+    assert_eq!(i["pluginId"], "p");
+    assert_eq!(i["input"]["type"], "object");
+    let c: ToolCall = serde_json::from_str(r#"{"pluginId":"p","name":"t","input":{"doc":"x"}}"#).unwrap();
+    assert_eq!((c.plugin_id.as_str(), c.input["doc"].as_str()), ("p", Some("x")));
+    assert_eq!(serde_json::to_value(&ToolResult { path: "a".into() }).unwrap()["path"], "a");
 }

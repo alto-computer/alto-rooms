@@ -20,3 +20,6 @@ export * from "./generated/RoomStatus";
 export * from "./generated/RoomsEvent";
 export * from "./generated/Source";
 export * from "./generated/StartAsk";
+export * from "./generated/ToolCall";
+export * from "./generated/ToolInfo";
+export * from "./generated/ToolResult";

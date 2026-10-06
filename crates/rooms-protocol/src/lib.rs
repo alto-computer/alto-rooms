@@ -164,6 +164,29 @@ pub struct AskTurn {
     pub ended_at: Option<String>,
 });
 
+wire!(
+/// A tool a plugin declares in its manifest; `input` is a JSON Schema for the agent (stored, not enforced).
+pub struct ToolInfo {
+    pub plugin_id: String,
+    pub name: String,
+    pub description: String,
+    #[ts(type = "unknown")]
+    pub input: serde_json::Value,
+});
+
+wire!(pub struct ToolCall {
+    pub plugin_id: String,
+    pub name: String,
+    #[ts(type = "unknown")]
+    pub input: serde_json::Value,
+});
+
+wire!(
+/// The data path (under the plugin's `data/`) a tool call appended to.
+pub struct ToolResult {
+    pub path: String,
+});
+
 wire!(pub struct StartAsk {
     pub room_id: RoomId,
     pub artifact_id: ArtifactId,
@@ -181,6 +204,8 @@ pub enum EventKind {
     #[serde(rename = "rooms.reordered", rename_all = "camelCase")] RoomsReordered { room_ids: Vec<RoomId> },
     /// Something under `.rooms/plugins/` changed (outside plugins' `data/`) or a plugin was turned on/off: list again.
     #[serde(rename = "plugins.changed")] PluginsChanged {},
+    /// A tool call appended to a plugin's data file (bridge writes do not emit this).
+    #[serde(rename = "plugin.data.changed", rename_all = "camelCase")] PluginDataChanged { plugin_id: String, path: String },
     #[serde(rename = "artifact.added")] ArtifactAdded { artifact: Artifact },
     #[serde(rename = "artifact.updated")] ArtifactUpdated { artifact: Artifact },
     #[serde(rename = "artifact.removed", rename_all = "camelCase")] ArtifactRemoved { room_id: RoomId, artifact_id: ArtifactId },
