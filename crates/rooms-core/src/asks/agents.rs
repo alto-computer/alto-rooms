@@ -52,8 +52,8 @@ fn argv(parts: &[&str]) -> Vec<String> { parts.iter().map(|s| s.to_string()).col
 fn builtin() -> BTreeMap<String, Profile> {
     BTreeMap::from([
         ("claude-code".to_string(), Profile {
-            resume: Some(argv(&["claude", "-p", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "{prompt}"])),
-            new: argv(&["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "{prompt}"]),
+            resume: Some(argv(&["claude", "-p", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "{prompt}"])),
+            new: argv(&["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "{prompt}"]),
         }),
         ("codex".to_string(), Profile {
             resume: Some(argv(&["codex", "exec", "fork", "{session}", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "{prompt}"])),
@@ -161,7 +161,7 @@ mod tests {
         let a = AgentProfiles::load(&p).unwrap();
         let plan = a.plan(Some("claude-code"), Some("S1"));
         assert_eq!(plan.mode, AskMode::Resume);
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--allowedTools=mcp__rooms", "Q"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "Q"]);
         assert_eq!(a.preamble(), DEFAULT_PREAMBLE);
     }
 
@@ -182,7 +182,7 @@ mod tests {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("my-agent"), Some("S1"));
         assert_eq!((plan.agent.as_str(), plan.mode), ("claude-code", AskMode::New));
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--allowedTools=mcp__rooms", "Q"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "Q"]);
     }
 
     #[test]
@@ -227,9 +227,14 @@ new = ["codex2", "{prompt}"]
         let a = AgentProfiles::load(&p).unwrap();
         let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json" };
         assert_eq!(a.plan(Some("claude-code"), None).render(&v),
-            vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "Q"]);
+            vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "Q"]);
         let resumed = a.plan(Some("claude-code"), Some("S1")).render(&v);
-        assert!(resumed.windows(3).any(|w| w == ["--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms"]));
+        assert!(resumed.windows(4).any(|w| w == ["--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms"]));
+        // without a config the pair is dropped but strict stays: the ask gets no MCP at all
+        for (name, sess) in [("claude-code", None), ("claude-code", Some("S1"))] {
+            let out = a.plan(Some(name), sess).render(&vars("Q"));
+            assert!(out.contains(&"--strict-mcp-config".to_string()) && !out.contains(&"--mcp-config".to_string()), "{out:?}");
+        }
     }
 
     #[test]

@@ -72,7 +72,7 @@ async fn mcp_config_arg_is_passed_only_when_the_file_exists() {
     let done = wait_done(&mut rx, &t.id).await;
     let canon = std::fs::canonicalize(&mcp).unwrap();
     assert!(done.answer.contains(&format!("[--mcp-config] [{}]", canon.display())), "{}", done.answer);
-    assert!(done.answer.contains("Rooms doc: "), "{}", done.answer);
+    assert!(done.answer.contains(&format!("Rooms doc: {}\n", t.file_key)), "{}", done.answer);
 }
 
 #[tokio::test]
