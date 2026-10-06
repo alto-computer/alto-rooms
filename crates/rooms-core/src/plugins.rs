@@ -204,6 +204,27 @@ pub fn write_data(dir: &Path, rel: &str, text: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Appends `line` (which carries its own newline) to a data file with one `O_APPEND` write, so
+/// concurrent appends never interleave. The file (existing length + `line`) must stay within
+/// `MAX_DATA_BYTES`; the check and the write share one lock, so the cap is exact in this process.
+pub fn append_data(dir: &Path, rel: &str, line: &str) -> Result<(), CoreError> {
+    use std::io::Write;
+    static APPEND: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let p = data_file(dir, rel)?;
+    let _guard = APPEND.lock().unwrap_or_else(|e| e.into_inner());
+    let have = match std::fs::symlink_metadata(&p) {
+        Ok(m) if m.is_file() => m.len() as usize,
+        Ok(_) => return Err(CoreError::InvalidInput("is a folder".into())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(e) => return Err(e.into()),
+    };
+    if have.saturating_add(line.len()) > MAX_DATA_BYTES { return Err(CoreError::InvalidInput("too_large".into())); }
+    std::fs::create_dir_all(p.parent().ok_or_else(invalid_path)?)?;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&p)?;
+    f.write_all(line.as_bytes())?;
+    Ok(())
+}
+
 /// Files under data/ (relative, `/`-joined, sorted) whose path starts with `prefix`. Skips hidden
 /// temp files and never follows symlinks.
 pub fn list_data(dir: &Path, prefix: &str) -> Result<Vec<String>, CoreError> {

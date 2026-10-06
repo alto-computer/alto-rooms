@@ -605,6 +605,39 @@ impl RoomsCore {
         }
     }
 
+    /// The tools of valid, enabled plugins, in plugin-id then manifest order.
+    pub fn list_tools(&self) -> Vec<ToolInfo> {
+        let enabled = self.inner.lock().unwrap().state.plugins.enabled.clone();
+        let mut out = Vec::new();
+        for (_, r) in crate::plugins::scan(&self.home) {
+            let Ok((m, _)) = r else { continue };
+            if !enabled.contains(&m.id) { continue; }
+            for t in &m.tools {
+                out.push(ToolInfo { plugin_id: m.id.clone(), name: t.name.clone(), description: t.description.clone(), input: t.input.clone() });
+            }
+        }
+        out
+    }
+
+    /// Appends the call's input, as one envelope line, to the plugin's data file the tool declares
+    /// for the resolved document, then emits `plugin.data.changed`. See `crate::tools`.
+    pub fn call_tool(&self, call: &ToolCall) -> Result<ToolResult, CoreError> {
+        let dir = self.usable_plugin_dir(&call.plugin_id)?;
+        let tool = crate::plugins::scan(&self.home).into_iter()
+            .filter_map(|(_, r)| r.ok()).map(|(m, _)| m)
+            .find(|m| m.id == call.plugin_id)
+            .and_then(|m| m.tools.into_iter().find(|t| t.name == call.name))
+            .ok_or(CoreError::NotFound)?;
+        let doc = crate::tools::doc_of(&call.input)?;
+        let file_key = crate::tools::resolve_doc(self, doc)?;
+        let path = tool.append_to.replace("{doc}", &file_key);
+        let line = crate::tools::envelope_line(&chrono::Local::now().to_rfc3339(), &call.name, &call.input);
+        crate::plugins::append_data(&dir, &path, &line)?;
+        let mut inner = self.inner.lock().unwrap();
+        self.emit(&mut inner, EventKind::PluginDataChanged { plugin_id: call.plugin_id.clone(), path: path.clone() });
+        Ok(ToolResult { path })
+    }
+
     pub fn read_plugin_data(&self, id: &str, rel: &str) -> Result<Option<String>, CoreError> {
         crate::plugins::read_data(&self.usable_plugin_dir(id)?, rel)
     }

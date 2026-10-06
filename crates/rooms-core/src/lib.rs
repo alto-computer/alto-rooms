@@ -7,6 +7,7 @@ pub mod onboarding;
 pub mod plugins;
 pub mod rules;
 pub mod state;
+pub mod tools;
 pub mod walk;
 pub mod watch;
 
