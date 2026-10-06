@@ -36,7 +36,18 @@ impl IntoResponse for AskErr {
 
 pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
     let Json(b) = b.map_err(|e| AskError::BadRequest(e.body_text()))?;
-    Ok((StatusCode::ACCEPTED, Json(st.asks.start(&b.room_id, &b.artifact_id, &b.question)?)))
+    let turn = ask_blocking(&st, move |a| a.start(&b.room_id, &b.artifact_id, &b.question)).await?;
+    Ok((StatusCode::ACCEPTED, Json(turn)))
+}
+
+/// `blocking` for `Asks`: start/thread do SQLite and file IO under a std Mutex.
+async fn ask_blocking<T, F>(st: &AppState, f: F) -> Result<T, AskErr>
+where
+    T: Send + 'static,
+    F: FnOnce(&rooms_core::asks::Asks) -> Result<T, AskError> + Send + 'static,
+{
+    let asks = st.asks.clone();
+    tokio::task::spawn_blocking(move || f(&asks)).await.map_err(|e| AskError::Io(e.to_string()))?.map_err(AskErr)
 }
 
 #[derive(Deserialize)]
@@ -45,7 +56,7 @@ pub struct AskQuery { file_key: String }
 
 pub async fn ask_thread(State(st): State<AppState>, q: Result<Query<AskQuery>, QueryRejection>) -> Result<Json<Vec<AskTurn>>, AskErr> {
     let Query(q) = q.map_err(|e| AskError::BadRequest(e.body_text()))?;
-    Ok(Json(st.asks.thread(&q.file_key)?))
+    Ok(Json(ask_blocking(&st, move |a| a.thread(&q.file_key)).await?))
 }
 
 pub async fn cancel_ask(State(st): State<AppState>, Path(ask_id): Path<String>) -> StatusCode {

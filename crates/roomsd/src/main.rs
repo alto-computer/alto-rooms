@@ -20,7 +20,9 @@ async fn main() {
         }
     }
     let token = write_token(core.home()).expect("write token");
-    let asks = rooms_core::asks::Asks::new(core.clone(), rooms_core::asks::login_path().await);
+    // The login-shell PATH arrives in the background: startup never waits on the user's shell.
+    let asks = rooms_core::asks::Asks::new(core.clone(), None);
+    asks.resolve_login_path();
     let st = AppState { core, asks: asks.clone(), token, read_only: false, files_origin: format!("http://127.0.0.1:{fp}"), net };
     let api = build_api_router(st.clone()).into_make_service_with_connect_info::<SocketAddr>();
     // files router has no ConnectInfo extractor

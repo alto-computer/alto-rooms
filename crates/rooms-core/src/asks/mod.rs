@@ -15,7 +15,8 @@ use rooms_protocol::{AskStatus, AskTurn, EventKind};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 pub const MAX_RUNNING: usize = 4;
@@ -40,21 +41,42 @@ impl std::fmt::Display for AskError {
 
 struct Entry { file_key: String, killer: Killer }
 
-struct Inner { core: RoomsCore, log: AskLog, login_path: Option<String>, limits: Limits, running: Mutex<HashMap<String, Entry>> }
+struct Inner {
+    core: RoomsCore,
+    log: AskLog,
+    /// Filled once the login shell answers; until then agents get roomsd's own PATH.
+    login_path: OnceLock<String>,
+    limits: Limits,
+    running: Mutex<HashMap<String, Entry>>,
+    /// Set under the `running` lock by `shutdown`; `start` checks it under the same lock.
+    shutting_down: AtomicBool,
+    /// `start` may run on the blocking pool (routes), where it still needs a runtime to spawn on.
+    rt: Option<tokio::runtime::Handle>,
+}
 
 #[derive(Clone)]
 pub struct Asks(Arc<Inner>);
 
 fn now() -> String { chrono::Local::now().to_rfc3339() }
 
+const PATH_SENTINEL: &str = "__ROOMS_PATH__";
+
 /// PATH from the user's login shell (R12): a GUI-launched roomsd doesn't have it. ≤ 2 s.
 pub async fn login_path() -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut cmd = tokio::process::Command::new(shell);
-    cmd.args(["-l", "-c", "printf %s \"$PATH\""]).stdin(std::process::Stdio::null()).kill_on_drop(true);
+    let script = format!("printf '{PATH_SENTINEL}%s' \"$PATH\"");
+    cmd.args(["-l", "-c", &script]).stdin(std::process::Stdio::null()).kill_on_drop(true);
     let out = tokio::time::timeout(Duration::from_secs(2), cmd.output()).await.ok()?.ok()?;
-    let path = String::from_utf8(out.stdout).ok()?;
-    (out.status.success() && !path.trim().is_empty()).then(|| path.trim().to_string())
+    if !out.status.success() { return None; }
+    parse_login_path(&out.stdout)
+}
+
+/// The text after the LAST sentinel: whatever a `.zprofile` prints before it is ignored.
+fn parse_login_path(stdout: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(stdout);
+    let path = text.rsplit_once(PATH_SENTINEL)?.1.trim();
+    (!path.is_empty()).then(|| path.to_string())
 }
 
 impl Asks {
@@ -62,12 +84,27 @@ impl Asks {
 
     pub fn with_limits(core: RoomsCore, login_path: Option<String>, limits: Limits) -> Self {
         let log = AskLog::new(core.home().join(".rooms/asks"));
-        Self(Arc::new(Inner { core, log, login_path, limits, running: Mutex::new(HashMap::new()) }))
+        let cell = OnceLock::new();
+        if let Some(p) = login_path { let _ = cell.set(p); }
+        Self(Arc::new(Inner {
+            core, log, login_path: cell, limits, running: Mutex::new(HashMap::new()),
+            shutting_down: AtomicBool::new(false), rt: tokio::runtime::Handle::try_current().ok(),
+        }))
+    }
+
+    /// Ask the login shell for PATH in the background so startup never waits on it (≤ 2 s).
+    pub fn resolve_login_path(&self) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            if let Some(p) = login_path().await { let _ = me.0.login_path.set(p); }
+        });
     }
 
     fn config_path(&self) -> PathBuf { self.0.core.home().join(".rooms/agents.toml") }
 
+    /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
     pub fn start(&self, room: &str, artifact_id: &str, question: &str) -> Result<AskTurn, AskError> {
+        let _rt = self.0.rt.as_ref().map(|h| h.enter());
         let q = question.trim();
         if q.is_empty() || q.chars().count() > MAX_QUESTION_CHARS {
             return Err(AskError::BadRequest(format!("질문은 1–{MAX_QUESTION_CHARS}자여야 해요")));
@@ -87,6 +124,7 @@ impl Asks {
         let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
 
         let mut running = self.0.running.lock().unwrap();
+        if self.0.shutting_down.load(Ordering::SeqCst) { return Err(AskError::Capacity); }
         if running.values().any(|e| e.file_key == artifact.file_key) { return Err(AskError::Busy); }
         if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
         let prior = self.read_thread(&running, &artifact.file_key)?;
@@ -98,7 +136,7 @@ impl Asks {
         };
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
         core.emit_ask(EventKind::AskStarted { turn: turn.clone() });
-        let spawned = spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.clone(), limits: self.0.limits });
+        let spawned = spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.get().cloned(), limits: self.0.limits });
         match spawned {
             Err(e) => {
                 drop(running);
@@ -174,11 +212,30 @@ impl Asks {
 
     /// Kill everything still running (roomsd is stopping; the app gives it 1 s). Waits ≤ 700 ms
     /// for the cancelled records; anything unrecorded reads back as failed (RESTARTED) later.
+    /// New asks are refused from here on, so nothing is spawned that nobody would kill.
     pub async fn shutdown(&self) {
-        for e in self.0.running.lock().unwrap().values() { e.killer.kill(Reason::Shutdown); }
+        {
+            let running = self.0.running.lock().unwrap();
+            self.0.shutting_down.store(true, Ordering::SeqCst);
+            for e in running.values() { e.killer.kill(Reason::Shutdown); }
+        }
         let deadline = tokio::time::Instant::now() + Duration::from_millis(700);
         while !self.0.running.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn login_path_is_the_text_after_the_last_sentinel() {
+        assert_eq!(parse_login_path(b"__ROOMS_PATH__/usr/bin:/bin").as_deref(), Some("/usr/bin:/bin"));
+        let noisy = b"Welcome!\nfake __ROOMS_PATH__/evil\n\x1b[0m__ROOMS_PATH__/opt/homebrew/bin:/usr/bin\n";
+        assert_eq!(parse_login_path(noisy).as_deref(), Some("/opt/homebrew/bin:/usr/bin"));
+        assert_eq!(parse_login_path(b"no sentinel here"), None);
+        assert_eq!(parse_login_path(b"__ROOMS_PATH__  "), None);
     }
 }

@@ -175,3 +175,11 @@ async fn capacity_is_four() {
     assert!(matches!(asks.start(&room.id, &arts[4].id, "SLEEP"), Err(AskError::Capacity)));
     asks.shutdown().await;
 }
+
+#[tokio::test]
+async fn start_after_shutdown_is_refused() {
+    let (_d, core, room, art) = setup("");
+    let asks = Asks::new(core.clone(), None);
+    asks.shutdown().await;
+    assert!(matches!(asks.start(&room, &art, "q"), Err(AskError::Capacity)));
+}
