@@ -3,7 +3,6 @@ import Markdown, { type Components } from "react-markdown";
 import { ArrowUp } from "lucide-react";
 import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
-import clewSleep from "@/assets/clew-sleep.svg";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -26,6 +25,29 @@ function seconds(t: AskTurn): number | null {
   return Math.max(0, Math.round((Date.parse(t.endedAt) - Date.parse(t.startedAt)) / 1000));
 }
 
+/** Seconds since `startedAt`, ticking every second while mounted. */
+function useElapsed(startedAt: string): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
+  return Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1000));
+}
+
+/** Codex-style waiting line: a shimmer sweeping over the text, then the elapsed seconds. */
+function Thinking({ t }: { t: AskTurn }) {
+  const secs = useElapsed(t.startedAt);
+  return (
+    <>
+      <span className="animate-shimmer bg-linear-to-r from-ink-2 via-[#c9c9c9] to-ink-2 bg-[length:200%_100%] bg-clip-text text-transparent motion-reduce:animate-none motion-reduce:text-ink-2">
+        생각하는 중
+      </span>
+      <span className="text-ink-3">({secs}초)</span>
+    </>
+  );
+}
+
 function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop: () => void }) {
   const secs = seconds(t);
   return (
@@ -33,8 +55,7 @@ function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop:
       <div className="ml-auto w-fit max-w-[80%] rounded-[10px] bg-[#f2f2f2] px-3 py-1.5 whitespace-pre-wrap">{t.question}</div>
       {t.status === "running" ? (
         <div className="flex items-center gap-2 text-[12.5px] text-ink-2">
-          <img src={clewSleep} alt="" className="w-8 shrink-0" />
-          <span>{t.agent}가 답을 쓰고 있어요…</span>
+          <Thinking t={t} />
           <button type="button" className="ml-auto underline" onClick={onStop}>멈추기</button>
         </div>
       ) : (

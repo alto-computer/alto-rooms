@@ -100,6 +100,9 @@
 
   --font-sans:"Jost","Futura","Avenir Next",ui-sans-serif,system-ui,sans-serif;
   --font-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  /* ask bar waiting text: a highlight sweeping left to right (no built-in Tailwind shimmer) */
+  --animate-shimmer:shimmer 1.6s linear infinite;
+  @keyframes shimmer { from { background-position:100% 0 } to { background-position:-100% 0 } }
 }
 
 @custom-variant dark (&:is(.dark *));

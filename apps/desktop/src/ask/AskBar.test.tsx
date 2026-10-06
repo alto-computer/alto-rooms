@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
@@ -51,7 +51,7 @@ describe("AskBar", () => {
     expect(client.startAsk).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?" }));
-    expect(await screen.findByText("claude-code가 답을 쓰고 있어요…")).toBeTruthy();
+    expect(await screen.findByText("생각하는 중")).toBeTruthy();
     expect((input as HTMLTextAreaElement).value).toBe("");
     // readOnly, not disabled: Esc still folds the sheet and focus stays in the bar
     expect((input as HTMLTextAreaElement).disabled).toBe(false);
@@ -72,7 +72,7 @@ describe("AskBar", () => {
     fireEvent.change(input, { target: { value: "한 번만" } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
-    await screen.findByText("claude-code가 답을 쓰고 있어요…");
+    await screen.findByText("생각하는 중");
     expect(client.startAsk).toHaveBeenCalledTimes(1);
   });
 
@@ -95,6 +95,22 @@ describe("AskBar", () => {
     expect(screen.getByText("멈췄어요")).toBeTruthy();
     fireEvent.click(screen.getByText("다시 묻기"));
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q0" }));
+  });
+
+  it("waiting shows a thinking line with a live elapsed counter, no image", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await setup({ k1: [turn({ startedAt: new Date().toISOString() })] });
+      act(() => store.toggle());
+      const text = await screen.findByText("생각하는 중");
+      const row = text.parentElement!;
+      expect(row.querySelector("img")).toBeNull();
+      expect(row.textContent).toContain("(0초)");
+      act(() => vi.advanceTimersByTime(2000));
+      expect(row.textContent).toContain("(2초)");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stop button cancels the running turn", async () => {
