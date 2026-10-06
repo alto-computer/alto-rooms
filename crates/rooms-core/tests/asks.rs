@@ -194,8 +194,7 @@ fn write_sources(home: &std::path::Path, doc: &std::path::Path, agent: &str, ses
     std::fs::write(home.join(".rooms/sources.json"), body.to_string()).unwrap();
 }
 
-fn doc_path(d: &tempfile::TempDir, core: &RoomsCore, room: &str) -> std::path::PathBuf {
-    let _ = d;
+fn doc_path(core: &RoomsCore, room: &str) -> std::path::PathBuf {
     core.room_root(&room.to_string()).unwrap().0.join("doc.html")
 }
 
@@ -204,7 +203,7 @@ async fn sidecar_resumes_when_doc_has_no_meta() {
     let cwd = tempfile::tempdir().unwrap();
     let real = std::fs::canonicalize(cwd.path()).unwrap();
     let (d, core, room, art) = setup("");
-    write_sources(d.path(), &doc_path(&d, &core, &room), "claude-code", "S-9", &real.to_string_lossy());
+    write_sources(d.path(), &doc_path(&core, &room), "claude-code", "S-9", &real.to_string_lossy());
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
     let t = asks.start(&room, &art, "q").unwrap();
@@ -217,7 +216,7 @@ async fn sidecar_resumes_when_doc_has_no_meta() {
 #[tokio::test]
 async fn meta_session_wins_over_sidecar() {
     let (d, core, room, art) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#);
-    write_sources(d.path(), &doc_path(&d, &core, &room), "claude-code", "S-9", "/");
+    write_sources(d.path(), &doc_path(&core, &room), "claude-code", "S-9", "/");
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
     let t = asks.start(&room, &art, "q").unwrap();
@@ -228,7 +227,7 @@ async fn meta_session_wins_over_sidecar() {
 #[tokio::test]
 async fn sidecar_entry_is_used_whole_not_mixed_with_meta_agent() {
     let (d, core, room, art) = setup(r#"<meta name="rooms:agent" content="codex">"#);
-    write_sources(d.path(), &doc_path(&d, &core, &room), "claude-code", "S-9", "/");
+    write_sources(d.path(), &doc_path(&core, &room), "claude-code", "S-9", "/");
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
     let t = asks.start(&room, &art, "q").unwrap();
@@ -240,7 +239,7 @@ async fn sidecar_entry_is_used_whole_not_mixed_with_meta_agent() {
 #[tokio::test]
 async fn sidecar_values_are_still_validated() {
     let (d, core, room, art) = setup("");
-    write_sources(d.path(), &doc_path(&d, &core, &room), "claude-code", "--bad", "/");
+    write_sources(d.path(), &doc_path(&core, &room), "claude-code", "--bad", "/");
     let asks = Asks::new(core.clone(), None);
     let t = asks.start(&room, &art, "q").unwrap();
     assert_eq!(t.mode, AskMode::New);
