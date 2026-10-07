@@ -103,6 +103,28 @@ pub async fn login_path() -> Option<String> {
     parse_login_path(&out.stdout)
 }
 
+/// How a finished run of `agent` ends its turn: (status, answer, error shown to the user). The
+/// answer is the cleaned stdout, kept even when the run failed or was stopped.
+fn turn_end(agent: &str, outcome: Outcome) -> (AskStatus, String, Option<String>) {
+    match outcome {
+        Outcome::Exited { code: 0, stdout, .. } => (AskStatus::Done, run::clean_output(stdout.as_bytes()), None),
+        Outcome::Exited { code, stdout, stderr_tail } => {
+            let last = run::clean_output(stderr_tail.as_bytes()).lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string);
+            let mut m = format!("{agent} exited with an error (code {code})");
+            if let Some(l) = last { m.push('\n'); m.push_str(&l); }
+            (AskStatus::Failed, run::clean_output(stdout.as_bytes()), Some(m))
+        }
+        Outcome::Killed { reason, stdout } => {
+            let a = run::clean_output(stdout.as_bytes());
+            match reason {
+                Reason::Cancelled | Reason::Shutdown => (AskStatus::Cancelled, a, None),
+                Reason::Timeout => (AskStatus::Failed, a, Some("Stopped: took too long".into())),
+                Reason::TooLong => (AskStatus::Failed, a, Some("Stopped: the answer was too long".into())),
+            }
+        }
+    }
+}
+
 /// The first line after the LAST sentinel: whatever `.zprofile` prints before it, or `.zlogout`
 /// after it, is ignored.
 fn parse_login_path(stdout: &[u8]) -> Option<String> {
@@ -137,8 +159,7 @@ impl Asks {
     /// Which doc, agent, template, session and cwd an ask from `artifact_id` would use.
     fn resolve(&self, room: &str, artifact_id: &str) -> Result<Resolved, AskError> {
         let core = &self.0.core;
-        let artifact = core.list_artifacts(&room.to_string()).map_err(|_| AskError::NotFound)?
-            .into_iter().find(|a| a.id == artifact_id).ok_or(AskError::NotFound)?;
+        let artifact = core.artifact(&room.to_string(), artifact_id).ok().flatten().ok_or(AskError::NotFound)?;
         if !valid_file_key(&artifact.file_key) { return Err(AskError::BadRequest("bad file key".into())); }
         let file_abs = core.resolve_file(&room.to_string(), &artifact.rel_path).map_err(|_| AskError::NotFound)?;
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
@@ -214,21 +235,7 @@ impl Asks {
                 let t = turn.clone();
                 tokio::spawn(async move {
                     let (status, answer, error) = match done.await {
-                        Ok(Outcome::Exited { code: 0, stdout, .. }) => (AskStatus::Done, run::clean_output(stdout.as_bytes()), None),
-                        Ok(Outcome::Exited { code, stdout, stderr_tail }) => {
-                            let last = run::clean_output(stderr_tail.as_bytes()).lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string);
-                            let mut m = format!("{} exited with an error (code {code})", t.agent);
-                            if let Some(l) = last { m.push('\n'); m.push_str(&l); }
-                            (AskStatus::Failed, run::clean_output(stdout.as_bytes()), Some(m))
-                        }
-                        Ok(Outcome::Killed { reason, stdout }) => {
-                            let a = run::clean_output(stdout.as_bytes());
-                            match reason {
-                                Reason::Cancelled | Reason::Shutdown => (AskStatus::Cancelled, a, None),
-                                Reason::Timeout => (AskStatus::Failed, a, Some("Stopped: took too long".into())),
-                                Reason::TooLong => (AskStatus::Failed, a, Some("Stopped: the answer was too long".into())),
-                            }
-                        }
+                        Ok(outcome) => turn_end(&t.agent, outcome),
                         Err(_) => (AskStatus::Failed, String::new(), Some("Internal error".into())),
                     };
                     me.finish(t, status, answer, error);
@@ -299,6 +306,24 @@ mod tests {
         assert_eq!(wire(AskError::Capacity), (409, "ask_capacity", "Too many questions running — try again when one finishes".into()));
         assert_eq!(wire(AskError::AgentConfig("x".into())), (422, "agent_config", "Couldn't read agent settings: x".into()));
         assert_eq!(wire(AskError::Io("x".into())), (500, "io", "Couldn't save the conversation: x".into()));
+    }
+
+    fn exited(code: i32, stdout: &str, stderr_tail: &str) -> Outcome {
+        Outcome::Exited { code, stdout: stdout.into(), stderr_tail: stderr_tail.into() }
+    }
+
+    fn killed(reason: Reason, stdout: &str) -> Outcome { Outcome::Killed { reason, stdout: stdout.into() } }
+
+    #[test]
+    fn turn_end_maps_every_outcome() {
+        assert_eq!(turn_end("codex", exited(0, "\x1b[1mhi\x1b[0m\n", "noise")), (AskStatus::Done, "hi".into(), None));
+        assert_eq!(turn_end("codex", exited(2, "partial", "warn\nboom: bad flag\n\n")),
+            (AskStatus::Failed, "partial".into(), Some("codex exited with an error (code 2)\nboom: bad flag".into())));
+        assert_eq!(turn_end("codex", exited(1, "", "  \n")), (AskStatus::Failed, String::new(), Some("codex exited with an error (code 1)".into())));
+        assert_eq!(turn_end("codex", killed(Reason::Cancelled, "so far")), (AskStatus::Cancelled, "so far".into(), None));
+        assert_eq!(turn_end("codex", killed(Reason::Shutdown, "")), (AskStatus::Cancelled, String::new(), None));
+        assert_eq!(turn_end("codex", killed(Reason::Timeout, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: took too long".into())));
+        assert_eq!(turn_end("codex", killed(Reason::TooLong, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: the answer was too long".into())));
     }
 
     #[test]

@@ -90,6 +90,14 @@ impl RoomsCore {
         inner.index.list(room)
     }
 
+    /// One artifact of `room` by id (an index lookup); an unknown room is `RoomNotFound`, as in
+    /// `list_artifacts`.
+    pub fn artifact(&self, room: &RoomId, id: &str) -> Result<Option<Artifact>, CoreError> {
+        let inner = lock(&self.inner);
+        if room != JOURNAL_ROOM_ID && inner.state.find(room).is_none() { return Err(CoreError::RoomNotFound); }
+        inner.index.get(room, id)
+    }
+
     /// The artifact holding the original with `file_key`: when several rooms link it, the first in
     /// sidebar order, then the journal. `None` if no artifact has that key.
     pub fn artifact_by_file_key(&self, file_key: &str) -> Option<Artifact> {
