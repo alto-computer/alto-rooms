@@ -1,6 +1,6 @@
 use crate::rules::{classify_path, PathClass, DEFAULT_IGNORED_DIRS};
-use ignore::gitignore::GitignoreBuilder;
-use ignore::{Match, WalkBuilder};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -97,25 +97,39 @@ fn named_exactly(abs: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|rd| rd.flatten().any(|e| e.file_name() == name))
 }
 
-/// Whether the ignore files `scan_room` honors exclude `rel`: `.roomsignore` (and `.gitignore`
-/// when `honor_gitignore`) in each folder from `rel`'s parent up to `root`. The deepest file with
-/// a matching rule decides; within one folder `.roomsignore` comes first.
-fn is_ignored(root: &Path, rel: &Path, honor_gitignore: bool) -> bool {
-    let names: &[&str] = if honor_gitignore { &[".roomsignore", ".gitignore"] } else { &[".roomsignore"] };
-    let abs = root.join(rel);
-    for dir in rel.ancestors().skip(1).map(|a| root.join(a)) {
-        for name in names {
+/// The ignore files `scan_room` honors in one folder.
+struct FolderRules { rooms: Option<Gitignore>, git: Option<Gitignore> }
+
+impl FolderRules {
+    fn load(dir: &Path, honor_gitignore: bool) -> FolderRules {
+        let read = |name: &str| {
             let file = dir.join(name);
-            if !file.is_file() { continue; }
-            let mut b = GitignoreBuilder::new(&dir);
-            if b.add(&file).is_some() { continue; }
-            let Ok(rules) = b.build() else { continue };
-            match rules.matched_path_or_any_parents(&abs, false) {
-                Match::Ignore(_) => return true,
-                Match::Whitelist(_) => return false,
-                Match::None => {}
-            }
-        }
+            if !file.is_file() { return None; }
+            let mut b = GitignoreBuilder::new(dir);
+            if b.add(&file).is_some() { return None; }
+            b.build().ok()
+        };
+        FolderRules { rooms: read(".roomsignore"), git: if honor_gitignore { read(".gitignore") } else { None } }
+    }
+}
+
+/// Whether the ignore files `scan_room` honors exclude `rel`, decided as the walk does: each
+/// folder on the way down is checked first (the walk never enters an ignored folder, so nothing
+/// below it can be re-included), with the rules from the folders above it. For one path, the
+/// deepest `.roomsignore` rule that matches decides; only if none does, the deepest `.gitignore`.
+fn is_ignored(root: &Path, rel: &Path, honor_gitignore: bool) -> bool {
+    let names: Vec<_> = rel.components().collect();
+    let mut levels: Vec<FolderRules> = Vec::new();
+    let mut dir = root.to_path_buf();
+    for (i, name) in names.iter().enumerate() {
+        levels.push(FolderRules::load(&dir, honor_gitignore));
+        let path = dir.join(name);
+        let is_dir = i + 1 < names.len();
+        let deepest = |pick: fn(&FolderRules) -> Option<&Gitignore>| {
+            levels.iter().rev().filter_map(pick).map(|g| g.matched(&path, is_dir)).find(|m| !m.is_none())
+        };
+        if deepest(|l| l.rooms.as_ref()).or_else(|| deepest(|l| l.git.as_ref())).is_some_and(|m| m.is_ignore()) { return true; }
+        dir = path;
     }
     false
 }
@@ -214,14 +228,34 @@ mod tests {
             let mut expected: Vec<&str> = expected.iter().chain(extra).copied().collect();
             expected.sort();
             assert_eq!(rels(&walked), expected, "gitignore: {honor}");
-            let mut paths = all_paths(&r);
-            paths.push(in_linked_dir.to_path_buf());
-            for rel in paths {
-                let want = walked.iter().find(|e| Path::new(&e.rel_path) == rel);
-                let got = entry_at(&r, &rel, honor, false);
-                assert_eq!(got.as_ref().map(|e| (&e.target, &e.class)), want.map(|e| (&e.target, &e.class)), "{rel:?} (gitignore: {honor})");
-            }
+            assert_agrees(&r, honor, &[in_linked_dir]);
         }
+    }
+
+    /// `entry_at` finds exactly what `scan_room` lists, for every path under `r` plus `extra`.
+    fn assert_agrees(r: &Path, honor: bool, extra: &[&Path]) {
+        let walked = scan_room(r, honor, false);
+        let mut paths = all_paths(r);
+        paths.extend(extra.iter().map(|p| p.to_path_buf()));
+        for rel in paths {
+            let want = walked.iter().find(|e| Path::new(&e.rel_path) == rel);
+            let got = entry_at(r, &rel, honor, false);
+            assert_eq!(got.as_ref().map(|e| (&e.target, &e.class)), want.map(|e| (&e.target, &e.class)), "{rel:?} (gitignore: {honor})");
+        }
+    }
+
+    #[test]
+    fn entry_at_follows_the_walks_ignore_precedence() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        for dir in ["gen", "sub", "deep/x"] { fs::create_dir_all(r.join(dir)).unwrap(); }
+        for f in ["gen/k.html", "sub/a.html", "deep/x/y.html", "deep/z.html"] { fs::write(r.join(f), "").unwrap(); }
+        // A file under an ignored folder can't be re-included; .roomsignore at any depth beats .gitignore.
+        fs::write(r.join(".roomsignore"), "gen/\n!gen/k.html\nsub/a.html\n").unwrap();
+        fs::write(r.join("sub/.gitignore"), "!a.html\n").unwrap();
+        fs::write(r.join(".gitignore"), "deep/\n").unwrap();
+        fs::write(r.join("deep/.roomsignore"), "!x/\n").unwrap();
+        for honor in [false, true] { assert_agrees(r, honor, &[]); }
     }
 
     #[test]
