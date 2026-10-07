@@ -64,6 +64,19 @@ test("AC-9: Open in new tab opens a doc tab with the files-origin iframe", async
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts allow-popups");
 });
 
+test("an open doc reloads when its file is rewritten", async ({ page, daemon }) => {
+  await openApp(page);
+  await createRoomInUi(page, "연구 도구");
+  await daemon.write("연구-도구/a.html", "<title>첫 문서</title><p>v1</p>");
+  const c = card(page, "첫 문서");
+  await expect(c).toBeVisible({ timeout: 2000 });
+  await c.click();
+  const doc = page.frameLocator('[role="tabpanel"] iframe');
+  await expect(doc.locator("p")).toHaveText("v1");
+  await daemon.write("연구-도구/a.html", "<title>첫 문서</title><p>v2</p>");
+  await expect(doc.locator("p")).toHaveText("v2", { timeout: 3000 });
+});
+
 test("AC-14: ⌘B hides the sidebar and ⌘B brings it back", async ({ page, daemon: _daemon }) => {
   await openApp(page);
   await page.keyboard.press(`${MOD}+b`);

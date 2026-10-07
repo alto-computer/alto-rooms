@@ -178,6 +178,7 @@ export function fakeClient(
     }),
     askThread: vi.fn(async (fileKey: string) => state.asks[fileKey] ?? []),
     cancelAsk: vi.fn(async () => {}),
+    // Like the real client minus encoding, and unversioned so tests can match plain paths.
     fileUrl: (i: Info, a: Artifact) => `${i.filesOrigin}/${a.roomId}/${a.relPath}`,
     subscribe: (cb: (e: RoomsEvent) => void) => {
       onEvent = cb;
