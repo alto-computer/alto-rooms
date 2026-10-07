@@ -1,214 +1,20 @@
-import { Activity, lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Activity, lazy, Suspense, useCallback, useState, type CSSProperties } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAsksStore, useReadOnly, useViewer, useViewerStore } from "@/data/hooks";
-import type { Tab, ViewerStore } from "@/data/viewerStore";
-import {
-  listenAll,
-  MENU_BACK,
-  MENU_CLOSE_TAB,
-  MENU_FIND,
-  MENU_FORWARD,
-  MENU_NEW_TAB,
-  MENU_NEXT_TAB,
-  MENU_PREV_TAB,
-  MENU_REOPEN_TAB,
-  MENU_TOGGLE_ASK,
-  MENU_TOGGLE_SIDEBAR,
-} from "@/lib/appEvents";
-import { isTauri } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
-import { DocView } from "@/views/DocView";
-import { JournalView } from "@/views/JournalView";
-import { NoteView } from "@/views/NoteView";
-import { NewTabView } from "@/views/NewTabView";
-import { RoomView } from "@/views/RoomView";
 import { EnableCard } from "@/plugins/EnableCard";
-import { PluginSlot } from "@/plugins/PluginSlot";
-import { allowedWithFocus, historyKey, isMenuHistoryKey, isMenuTabKey, isTextField, keyAction, tabKey, type ShortcutAction, type TabKey } from "./shortcuts";
 import { CurrentTabContext, TabVisibleContext } from "./currentTab";
 import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, tabDomId } from "./tabIds";
 import { TabBar } from "./TabBar";
-
-/** Runs a shell action (callers check the focus rule first). */
-function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => void, toggleAsk: () => void) {
-  const s = viewer.getState();
-  switch (action) {
-    case "toggle-sidebar":
-      viewer.setSidebarOpen(!s.sidebarOpen);
-      break;
-    case "close-tab":
-      if (s.activeId) viewer.close(s.activeId);
-      break;
-    case "new-tab":
-      viewer.open({ kind: "new" });
-      break;
-    case "find":
-      openFind();
-      break;
-    case "toggle-ask":
-      toggleAsk();
-      break;
-  }
-}
-
-/**
- * ⌘B sidebar, ⌘W close tab, ⌘T new tab, ⌘K quick find, ⌘J ask bar. Bound on window.
- * In Tauri all five belong to the native menu (which emits `menu://…`), so the
- * page leaves them alone and they never fire twice. Either way the same focus
- * rule applies: ⌘K and ⌘J work from a text field, the others don't (except ⌘W from
- * the note body).
- */
-function useShortcuts(viewer: ViewerStore, openFind: () => void, toggleAsk: () => void) {
-  useEffect(() => {
-    const menuOwned = isTauri();
-    const onKey = (e: KeyboardEvent) => {
-      const action = keyAction(e);
-      if (!action) return;
-      if (menuOwned) return;
-      if (!allowedWithFocus(action, e.target instanceof Element ? e.target : null)) return;
-      e.preventDefault();
-      runAction(action, viewer, openFind, toggleAsk);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [viewer, openFind, toggleAsk]);
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    const fromMenu = (action: ShortcutAction) => () => {
-      if (allowedWithFocus(action, document.activeElement)) runAction(action, viewer, openFind, toggleAsk);
-    };
-    return listenAll({
-      [MENU_NEW_TAB]: fromMenu("new-tab"),
-      [MENU_CLOSE_TAB]: fromMenu("close-tab"),
-      [MENU_FIND]: fromMenu("find"),
-      [MENU_TOGGLE_SIDEBAR]: fromMenu("toggle-sidebar"),
-      [MENU_TOGGLE_ASK]: fromMenu("toggle-ask"),
-    });
-  }, [viewer, openFind, toggleAsk]);
-}
-
-/**
- * Back/forward in the active tab: ⌘[ / ⌘] and ⌘← / ⌘→ (not from a text field, where
- * they indent or move the caret) and the mouse's back/forward buttons (3/4). In
- * Tauri the native menu (View › Back/Forward) owns ⌘[ / ⌘], as with the other shortcuts.
- */
-function useHistoryNav(viewer: ViewerStore) {
-  useEffect(() => {
-    const menuOwned = isTauri();
-    const go = (dir: "back" | "forward") => (dir === "back" ? viewer.back() : viewer.forward());
-    const unlisten = menuOwned
-      ? listenAll({
-          [MENU_BACK]: () => !isTextField(document.activeElement) && go("back"),
-          [MENU_FORWARD]: () => !isTextField(document.activeElement) && go("forward"),
-        })
-      : null;
-    const onKey = (e: KeyboardEvent) => {
-      if (menuOwned && isMenuHistoryKey(e)) return;
-      const dir = historyKey(e);
-      if (!dir || isTextField(e.target instanceof Element ? e.target : null)) return;
-      e.preventDefault();
-      go(dir);
-    };
-    const onMouse = (e: MouseEvent) => {
-      if (e.button !== 3 && e.button !== 4) return;
-      e.preventDefault();
-      if (e.button === 3) viewer.back();
-      else viewer.forward();
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("mouseup", onMouse);
-    return () => {
-      unlisten?.();
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("mouseup", onMouse);
-    };
-  }, [viewer]);
-}
-
-function runTabKey(k: TabKey, viewer: ViewerStore) {
-  if (k.kind === "at") viewer.activateAt(k.index);
-  else if (k.kind === "cycle") viewer.cycle(k.delta);
-  else viewer.reopen();
-}
-
-/**
- * Tab switching (see `tabKey`); works from text fields too, as in a browser. In Tauri the
- * native menu owns ⌘⇧[ / ⌘⇧] / ⌘⇧T; ⌘1–9 and ⌃Tab stay with the page.
- */
-function useTabKeys(viewer: ViewerStore) {
-  useEffect(() => {
-    const menuOwned = isTauri();
-    const unlisten = menuOwned
-      ? listenAll({
-          [MENU_NEXT_TAB]: () => viewer.cycle(1),
-          [MENU_PREV_TAB]: () => viewer.cycle(-1),
-          [MENU_REOPEN_TAB]: () => viewer.reopen(),
-        })
-      : null;
-    const onKey = (e: KeyboardEvent) => {
-      if (menuOwned && isMenuTabKey(e)) return;
-      const k = tabKey(e);
-      if (!k) return;
-      e.preventDefault();
-      // Let a field being edited (a rename) save on blur before its view goes away.
-      if (isTextField(document.activeElement)) (document.activeElement as HTMLElement).blur();
-      runTabKey(k, viewer);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      unlisten?.();
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [viewer]);
-}
-
-/** The active tab's view. Mounted per tab id and in-tab navigation, so mount = arriving. */
-function TabView({ tab }: { tab: Tab }) {
-  switch (tab.kind) {
-    case "room":
-      return <RoomView roomId={tab.roomId} />;
-    case "doc":
-      return <DocView roomId={tab.roomId} artifactId={tab.artifactId} />;
-    case "journal":
-      return <JournalView tabId={tab.id} date={tab.date} />;
-    case "note":
-      return <NoteView tabId={tab.id} date={tab.date} name={tab.name} />;
-    case "new":
-      return <NewTabView />;
-    case "plugin":
-      return <PluginSlot slot="tab" pluginId={tab.pluginId} context={{}} />;
-  }
-}
+import { TabView } from "./TabView";
+import { useMountedTabs } from "./useMountedTabs";
+import { useShellKeys } from "./useShellKeys";
 
 /** cmdk + dialog load on the first ⌘K, then stay mounted. */
 const QuickFind = lazy(() => import("@/views/QuickFind").then((m) => ({ default: m.QuickFind })));
-
-/** Doc tabs kept alive (hidden) after you leave them, so coming back is instant and keeps the doc's scroll. */
-const KEPT_DOC_TABS = 3;
-
-/**
- * The tabs whose views stay mounted: the active one, plus the few doc tabs viewed last.
- * A doc's iframe can't be reloaded to where it was (it's sandboxed), so these keep it
- * in a hidden <Activity>; other views remount on arrival (their "new since" baselines rely on it).
- */
-function useMountedTabs(tabs: Tab[], active: Tab | undefined): Tab[] {
-  const recent = useRef<string[]>([]);
-  if (active?.kind === "doc" && recent.current[0] !== active.id) {
-    recent.current = [active.id, ...recent.current.filter((id) => id !== active.id)].slice(0, KEPT_DOC_TABS + 1);
-  }
-  const kept = new Set(recent.current);
-  const mounted = tabs.filter((t) => t === active || (t.kind === "doc" && kept.has(t.id)));
-  // Rendered in the order they were first mounted, never in tab order: moving an iframe's
-  // DOM node reloads it, so reordering tabs (or switching between them) must not move any.
-  const order = useRef<string[]>([]);
-  const ids = new Set(mounted.map((t) => t.id));
-  order.current = [...order.current.filter((id) => ids.has(id)), ...mounted.map((t) => t.id).filter((id) => !order.current.includes(id))];
-  return order.current.map((id) => mounted.find((t) => t.id === id)!);
-}
 
 const SIDEBAR_STYLE = { "--sidebar-width": "232px" } as CSSProperties;
 
@@ -223,15 +29,12 @@ export function AppShell() {
   }, []);
   const asks = useAsksStore();
   const readOnly = useReadOnly();
-  const activeKind = tabs.find((t) => t.id === activeId)?.kind;
+  const active = tabs.find((t) => t.id === activeId);
+  const activeKind = active?.kind;
   const toggleAsk = useCallback(() => {
     if (activeKind === "doc" && !readOnly) asks.toggle();
   }, [activeKind, readOnly, asks]);
-  useShortcuts(viewer, openFind, toggleAsk);
-  useHistoryNav(viewer);
-  useTabKeys(viewer);
-
-  const active = tabs.find((t) => t.id === activeId);
+  useShellKeys(viewer, openFind, toggleAsk);
   const mounted = useMountedTabs(tabs, active);
 
   return (
