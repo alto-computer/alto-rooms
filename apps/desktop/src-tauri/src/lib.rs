@@ -121,6 +121,11 @@ pub fn run() {
         .manage(daemon::Daemon::default())
         .manage(flush::Flush::default())
         .menu(build_menu)
+        .setup(|app| {
+            // Start roomsd while the webview loads; the first `connect` awaits this.
+            app.state::<daemon::Daemon>().prewarm(app.handle().clone());
+            Ok(())
+        })
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_NEW_TAB => emit(app, "menu://new-tab"),
             MENU_CLOSE_TAB => emit(app, "menu://close-tab"),

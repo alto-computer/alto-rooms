@@ -25,18 +25,65 @@ pub struct Connection {
 #[derive(Default)]
 pub struct Daemon {
     inner: Mutex<Inner>,
+    /// The startup attempt begun in `setup()`, handed to the first `connect`.
+    warm: Prewarm<Result<Connection, String>>,
+}
+
+/// A one-shot background result: started once, taken (awaited) by the first caller.
+/// Later callers get `None` and do their own work.
+pub struct Prewarm<T>(std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<T>>>);
+
+impl<T> Default for Prewarm<T> {
+    fn default() -> Self {
+        Prewarm(std::sync::Mutex::new(None))
+    }
+}
+
+impl<T: Send + 'static> Prewarm<T> {
+    pub fn start(&self, fut: impl std::future::Future<Output = T> + Send + 'static) {
+        let handle = tauri::async_runtime::spawn(fut);
+        *self.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(handle);
+    }
+
+    /// The started result, once; `None` if nothing was started, it was already taken,
+    /// or the task panicked.
+    pub async fn take(&self) -> Option<T> {
+        let handle = self.0.lock().unwrap_or_else(|p| p.into_inner()).take()?;
+        handle.await.ok()
+    }
 }
 
 #[derive(Default)]
 struct Inner {
     child: Option<CommandChild>,
     conn: Option<Connection>,
+    /// Set on app exit: no attempt may spawn a sidecar after this (it would be orphaned).
+    closed: bool,
 }
 
 /// How long the sidecar gets to exit after SIGTERM before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(1);
+/// Total time a freshly spawned sidecar gets to answer `/v1/info`.
+const START_DEADLINE: Duration = Duration::from_secs(5);
+/// Readiness poll interval while the sidecar starts (a refused connect costs well under 1 ms).
+const READY_POLL: Duration = Duration::from_millis(20);
 
 impl Daemon {
+    /// Begin probing for (or spawning) roomsd now, from `Builder::setup()`, so sidecar
+    /// startup overlaps webview and JS bundle load. The first `connect` awaits it.
+    pub fn prewarm(&self, app: AppHandle) {
+        self.warm.start(async move {
+            let started = Instant::now();
+            let res = ensure(&app).await;
+            eprintln!(
+                "roomsd: startup {} in {:?} (from setup)",
+                if res.is_ok() { "ready" } else { "failed" },
+                started.elapsed()
+            );
+            res
+        });
+    }
+
     /// Stop the sidecar if (and only if) this app spawned it: SIGTERM, up to
     /// [`STOP_GRACE`] to exit, then SIGKILL.
     pub fn kill_spawned(&self) {
@@ -57,6 +104,7 @@ impl Daemon {
             }
         }
         inner.conn = None;
+        inner.closed = true;
     }
 }
 
@@ -226,10 +274,57 @@ fn should_clear(current_pid: Option<u32>, drain_pid: u32) -> bool {
     current_pid == Some(drain_pid)
 }
 
+/// Outcome of waiting for a freshly spawned sidecar.
+#[derive(Debug, PartialEq)]
+enum Ready {
+    /// `/v1/info` answered with this home.
+    Up(String),
+    /// The child exited before it answered.
+    Exited,
+    /// Nothing answered within the deadline.
+    TimedOut,
+}
+
+/// Polls `probe` every `interval` until it answers, `exited()` reports the child is gone,
+/// or `deadline` passes. `exited` is checked before each probe.
+async fn wait_ready<F, Fut>(deadline: Duration, interval: Duration, mut exited: impl FnMut() -> bool, mut probe: F) -> Ready
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+{
+    let until = Instant::now() + deadline;
+    loop {
+        if exited() {
+            return Ready::Exited;
+        }
+        if let Some(home) = probe().await {
+            return Ready::Up(home);
+        }
+        if Instant::now() >= until {
+            return Ready::TimedOut;
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
+
 #[tauri::command]
 pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connection, String> {
-    // Holding the lock for the whole call serializes concurrent connects.
+    // The first connect picks up the attempt started in setup(); later ones ("Try again",
+    // a respawn after the core died) run a fresh, idempotent attempt.
+    if let Some(res) = daemon.warm.take().await {
+        return res;
+    }
+    ensure(&app).await
+}
+
+/// Reuse a running roomsd, or spawn ours and wait for it. Idempotent.
+async fn ensure(app: &AppHandle) -> Result<Connection, String> {
+    let daemon = app.state::<Daemon>();
+    // Holding the lock for the whole call serializes concurrent attempts.
     let mut inner = daemon.inner.lock().await;
+    if inner.closed {
+        return Err(START_ERROR.to_string());
+    }
 
     if inner.child.is_some() {
         // Idempotent: our spawned child is alive and still healthy (re-probe once).
@@ -245,7 +340,7 @@ pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connec
         inner.conn = None;
         let release = Instant::now() + Duration::from_secs(2);
         while probe().await.is_some() && Instant::now() < release {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(READY_POLL).await;
         }
     } else if let Some(home) = probe().await {
         // Reuse a daemon that is already running (not ours).
@@ -268,29 +363,37 @@ pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connec
     let pid = child.pid();
     inner.child = Some(child);
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let home = loop {
-        // Early exit (exit code 2: busy port, lock held, bad config) means startup failed.
-        while let Ok(ev) = rx.try_recv() {
-            if let CommandEvent::Terminated(_) = ev {
-                inner.child = None;
-                // Another daemon may have won the race; reuse it if it is healthy.
-                return match probe().await {
-                    Some(home) => reuse(home),
-                    None => Err(START_ERROR.to_string()),
-                };
+    // Early exit (exit code 2: busy port, lock held, bad config) means startup failed.
+    let ready = wait_ready(
+        START_DEADLINE,
+        READY_POLL,
+        || {
+            while let Ok(ev) = rx.try_recv() {
+                if let CommandEvent::Terminated(_) = ev {
+                    return true;
+                }
             }
+            false
+        },
+        probe,
+    )
+    .await;
+    let home = match ready {
+        Ready::Up(home) => home,
+        Ready::Exited => {
+            inner.child = None;
+            // Another daemon may have won the race; reuse it if it is healthy.
+            return match probe().await {
+                Some(home) => reuse(home),
+                None => Err(START_ERROR.to_string()),
+            };
         }
-        if let Some(home) = probe().await {
-            break home;
-        }
-        if Instant::now() >= deadline {
+        Ready::TimedOut => {
             if let Some(child) = inner.child.take() {
                 let _ = child.kill();
             }
             return Err(START_ERROR.to_string());
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
     };
 
     let conn = match connection(home) {
@@ -473,6 +576,71 @@ mod tests {
         assert!(should_clear(Some(7), 7));
         assert!(!should_clear(Some(8), 7));
         assert!(!should_clear(None, 7));
+    }
+
+    #[test]
+    fn prewarm_hands_its_result_to_the_first_taker_only() {
+        tauri::async_runtime::block_on(async {
+            let warm: Prewarm<u32> = Prewarm::default();
+            assert_eq!(warm.take().await, None); // nothing started
+            warm.start(async {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                7
+            });
+            assert_eq!(warm.take().await, Some(7)); // awaits the in-flight task
+            assert_eq!(warm.take().await, None); // later connects do their own work
+        });
+    }
+
+    #[test]
+    fn prewarm_runs_before_anyone_asks() {
+        tauri::async_runtime::block_on(async {
+            let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let warm: Prewarm<()> = Prewarm::default();
+            let r = ran.clone();
+            warm.start(async move { r.store(true, std::sync::atomic::Ordering::SeqCst) });
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+            assert_eq!(warm.take().await, Some(()));
+        });
+    }
+
+    #[test]
+    fn wait_ready_returns_as_soon_as_the_probe_answers() {
+        tauri::async_runtime::block_on(async {
+            let calls = std::cell::Cell::new(0);
+            let started = Instant::now();
+            let r = wait_ready(Duration::from_secs(5), READY_POLL, || false, || {
+                calls.set(calls.get() + 1);
+                let n = calls.get();
+                async move { (n >= 3).then(|| "/h".to_string()) }
+            })
+            .await;
+            assert_eq!(r, Ready::Up("/h".to_string()));
+            assert_eq!(calls.get(), 3);
+            // Two 20 ms waits, not two 100 ms ones.
+            assert!(started.elapsed() < Duration::from_millis(150), "{:?}", started.elapsed());
+        });
+    }
+
+    #[test]
+    fn wait_ready_stops_on_exit_and_on_deadline() {
+        tauri::async_runtime::block_on(async {
+            let probes = std::cell::Cell::new(0);
+            let r = wait_ready(Duration::from_secs(5), READY_POLL, || true, || {
+                probes.set(probes.get() + 1);
+                async { None }
+            })
+            .await;
+            assert_eq!(r, Ready::Exited);
+            assert_eq!(probes.get(), 0);
+
+            let started = Instant::now();
+            let r = wait_ready(Duration::from_millis(100), READY_POLL, || false, || async { None }).await;
+            assert_eq!(r, Ready::TimedOut);
+            assert!(started.elapsed() >= Duration::from_millis(100));
+            assert!(started.elapsed() < Duration::from_millis(400));
+        });
     }
 
     #[test]
