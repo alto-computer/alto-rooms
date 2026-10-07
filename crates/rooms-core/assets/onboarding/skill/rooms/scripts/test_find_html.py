@@ -55,7 +55,7 @@ class Env:
                 f.write((l if isinstance(l, str) else json.dumps(l)) + "\n")
         return p
 
-    def aside_log(self, records, sid="pgt5w6Z3QGYfSZXr", days_ago=0, account="0"):
+    def aside_log(self, records, sid="ses0ExampleAside1", days_ago=0, account="0"):
         day = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
         d = os.path.join(self.aside, account, "sessions", "%s_%s" % (day, sid))
         os.makedirs(d, exist_ok=True)
@@ -679,9 +679,9 @@ class FindHtmlTest(unittest.TestCase):
         out = self.e.run("--record-sources")
         self.assertEqual(self.paths(out), [target])
         c = out["candidates"][0]
-        self.assertEqual((c["agent"], c["sessions"]), ("aside", ["pgt5w6Z3QGYfSZXr"]))
+        self.assertEqual((c["agent"], c["sessions"]), ("aside", ["ses0ExampleAside1"]))
         self.assertEqual(self.sources()["sources"], {target: {
-            "agent": "aside", "session": "pgt5w6Z3QGYfSZXr",
+            "agent": "aside", "session": "ses0ExampleAside1",
             "cwd": via_link, "writtenAt": c["last_written"]}})
 
     def test_aside_template_literal_and_bash(self):
@@ -730,7 +730,7 @@ class FindHtmlTest(unittest.TestCase):
         out = self.e.run("--record-sources")
         self.assertEqual(out["recorded"], 2)
         s = self.sources()["sources"]
-        self.assertEqual((s[a]["agent"], s[a]["session"]), ("aside", "pgt5w6Z3QGYfSZXr"))
+        self.assertEqual((s[a]["agent"], s[a]["session"]), ("aside", "ses0ExampleAside1"))
         self.assertEqual((s[c]["agent"], s[c]["session"]), ("claude-code", "cc-1"))
 
     def test_files_written_inside_rooms_are_recorded_but_not_candidates(self):

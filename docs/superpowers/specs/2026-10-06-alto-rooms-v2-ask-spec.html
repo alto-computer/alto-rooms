@@ -749,7 +749,7 @@ Question: {question}</code></pre>
 <h3>sources.json 형식</h3>
 <pre><code>{ "version": 1,
   "sources": {
-    "/abs/realpath/of/doc.html": { "agent": "claude-code", "session": "0a295c02-…", "cwd": "/abs/cwd", "writtenAt": "2026-10-01T00:22:51Z" }
+    "/abs/realpath/of/doc.html": { "agent": "claude-code", "session": "11111111-…", "cwd": "/abs/cwd", "writtenAt": "2026-10-01T00:22:51Z" }
   } }</code></pre>
 <ul>
   <li>쓰기: 기존 파일을 읽어 병합 → 같은 경로는 <code>writtenAt</code>이 같거나 더 새로울 때만 덮어씀 → 임시 파일 + rename(원자적). 파일이 깨져 있으면 빈 것으로 보고 새로 씀.</li>
