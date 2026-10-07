@@ -56,7 +56,9 @@ export function TabItem({
       role="presentation"
       data-active={active || undefined}
       className={cn(
-        "group relative flex min-w-[112px] flex-[0_1_220px]",
+        // The 220px width also sets the strip's own size: Chrome sizes a flex row from its items'
+        // widths, not their flex-basis, so without it every tab shrank to fit its label.
+        "group relative flex w-[220px] min-w-[112px] flex-[0_1_220px]",
         // Chrome's divider between resting tabs: it marks where a tab with a short label ends,
         // and gives way next to the active and the hovered tab, whose own box shows the edge.
         "before:absolute before:top-1/2 before:-left-[2.5px] before:h-4 before:w-px before:-translate-y-1/2 before:bg-[#dcdcdc]",
@@ -85,7 +87,7 @@ export function TabItem({
             className={cn(
               // The active tab keeps room for its always-visible close button; the others never
               // change padding on hover (their close button fades in over the label's end instead).
-              "flex min-h-[34px] w-full min-w-0 items-center gap-2 rounded-lg border pl-3 text-[14px]",
+              "flex min-h-[34px] w-full min-w-0 items-center gap-2 rounded-lg border pl-3 text-left text-[14px]",
               "focus-visible:outline-2 focus-visible:outline-ink",
               active ? "pr-8" : "pr-3",
               active ? "border-[#ddd] bg-white text-[#222]" : "border-transparent text-[#6a6a6a] group-focus-within:bg-[#efefef] hover:bg-[#efefef] hover:text-[#222]",
@@ -93,15 +95,18 @@ export function TabItem({
             )}
           >
             <Icon size={15} strokeWidth={1.75} aria-hidden className="shrink-0" />
-            <span className="truncate">
+            {/* Chrome style: a long label fades out at the tab's end instead of an ellipsis, so more of it shows. */}
+            <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_left,transparent,#000_20px)]">
               <TabLabel tab={tab} />
             </span>
           </button>
         </TooltipTrigger>
-        {/* The full title, for labels the tab cuts off. */}
-        <TooltipContent side="bottom" sideOffset={6} className="max-w-[360px]">
-          <TabLabel tab={tab} />
-        </TooltipContent>
+        {/* The full title, for labels the tab cuts off; never over a tab being dragged. */}
+        {sort.isDragging ? null : (
+          <TooltipContent side="bottom" sideOffset={6} className="max-w-[360px]">
+            <TabLabel tab={tab} />
+          </TooltipContent>
+        )}
       </Tooltip>
       <button
         type="button"
@@ -110,7 +115,7 @@ export function TabItem({
         onClick={(e) => onClose(e.detail > 0 ? e.currentTarget.parentElement?.getBoundingClientRect().width : undefined)}
         onAuxClick={middle}
         className={cn(
-          "absolute top-1/2 right-[1px] flex h-[32px] -translate-y-1/2 items-center rounded-r-lg pr-[7px] text-[#6a6a6a] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-ink",
+          "absolute top-1/2 right-[1px] flex h-[32px] -translate-y-1/2 items-center rounded-r-lg pr-2 text-[#6a6a6a] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-ink",
           "transition-opacity duration-150",
           active
             ? "bg-white opacity-100"
