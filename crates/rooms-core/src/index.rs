@@ -67,9 +67,13 @@ const SCHEMA_VERSION: i64 = 3;
 
 /// Version 2 lacked the stamp columns; rows keep everything else (first-seen times, file keys)
 /// and a zero stamp, which never matches, so each file is read once more.
+/// One transaction with the version bump, so a crash midway cannot leave the columns half added.
 const MIGRATE_2_TO_3: &str = "
+BEGIN;
 ALTER TABLE artifacts ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE artifacts ADD COLUMN size INTEGER NOT NULL DEFAULT 0;
+PRAGMA user_version = 3;
+COMMIT;
 ";
 
 const SCHEMA: &str = "

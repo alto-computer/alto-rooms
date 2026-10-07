@@ -236,7 +236,11 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     let pending = Arc::new(Mutex::new(Pending::default()));
     let (wwork, pending_w) = (core.downgrade(), pending.clone());
     let work = spawn_coalescer(Duration::ZERO, move || match wwork.upgrade() {
-        Some(core) => { run_pending(&core, std::mem::take(&mut *pending_w.lock().unwrap())); true }
+        Some(core) => {
+            let work = std::mem::take(&mut *pending_w.lock().unwrap()); // released before the rescans
+            run_pending(&core, work);
+            true
+        }
         None => false,
     });
     let (wcore_cb, pending_cb, work_cb, resync_cb) = (core.downgrade(), pending.clone(), work.clone(), resync.clone());
