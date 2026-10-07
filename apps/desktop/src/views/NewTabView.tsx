@@ -1,12 +1,13 @@
 import { useMemo, useRef } from "react";
 import type { Artifact } from "@alto-rooms/protocol-ts";
-import { useReadOnly, useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
+import { useOpenDoc, useReadOnly, useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
 import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { artifactDragSource, INBOX_ID } from "@/lib/drag";
 import { OnboardingCard } from "./OnboardingCard";
 import { wantsNewTab } from "@/lib/nav";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { useCurrentTabId } from "@/shell/currentTab";
+import { useVisitsAtArrival } from "./useVisitsAtArrival";
 
 /**
  * The new tab: per room, how many docs arrived since the last visit.
@@ -29,14 +30,9 @@ export function NewTabView() {
   const viewer = useViewerStore();
   const { rooms, artifacts, errors, info } = useRooms();
   const readOnly = useReadOnly();
-
-  const baselines = useRef<{ lastVisit: Record<string, string>; firstRunAt: string } | null>(null);
-  if (baselines.current === null) {
-    const v = viewer.getState();
-    baselines.current = { lastVisit: v.lastVisit, firstRunAt: v.firstRunAt };
-  }
-
-  const since = (roomId: string) => baselines.current!.lastVisit[roomId] ?? baselines.current!.firstRunAt;
+  const openDoc = useOpenDoc();
+  const visits = useVisitsAtArrival();
+  const { since } = visits;
   const changed = useMemo(
     () => rooms.filter((r) => r.updatedAt !== null && isNewSince(r.updatedAt, since(r.id))).map((r) => r.id),
     // `since` reads the baselines frozen at mount.
@@ -74,7 +70,7 @@ export function NewTabView() {
   const settled = info !== null && changed.every((id) => artifacts[id] !== undefined || errors[`room:${id}`] !== undefined);
   const roomsWithNew = cards.filter((c) => c.newCount > 0).length;
   // Rooms an agent organized since: never visited (no lastVisit entry), inbox aside.
-  const neverVisited = rooms.filter((r) => r.id !== INBOX_ID && baselines.current!.lastVisit[r.id] === undefined).length;
+  const neverVisited = rooms.filter((r) => r.id !== INBOX_ID && visits.lastVisit[r.id] === undefined).length;
 
   const inbox = useMemo(() => [...(artifacts[INBOX_ID] ?? [])].reverse(), [artifacts]);
 
@@ -87,7 +83,7 @@ export function NewTabView() {
       <InboxList
         artifacts={inbox}
         draggable={!readOnly}
-        onOpen={(a, newTab) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab)}
+        onOpen={openDoc}
       />
     ) : null;
 

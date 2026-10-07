@@ -1,4 +1,4 @@
-import { createContext, createElement, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { AsksStore, type AsksState } from "@/ask/asksStore";
 import { PluginsStore, type PluginsState } from "@/plugins/pluginsStore";
 import type { Artifact, Info, JournalDay, Room, createRoomsClient } from "@alto-rooms/protocol-ts";
@@ -164,4 +164,10 @@ export function useReadOnly(): boolean {
 export function useViewer(): ViewerState {
   const store = useViewerStore();
   return useSyncExternalStore(store.subscribe, store.getState);
+}
+
+/** Opens a doc in this tab, or in a new one when `newTab` (see `wantsNewTab`). */
+export function useOpenDoc(): (a: Artifact, newTab: boolean) => void {
+  const viewer = useViewerStore();
+  return useCallback((a: Artifact, newTab: boolean) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab), [viewer]);
 }

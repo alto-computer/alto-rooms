@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { RoomsApiError, type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
-import { useClient, useJournalDay, useInfo, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
+import { useClient, useJournalDay, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
@@ -12,6 +12,7 @@ import { useCurrentTabId } from "@/shell/currentTab";
 import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from "@/lib/notes";
 import otterAvatar from "@/assets/otter-avatar.svg";
 import { ArtifactCard } from "./ArtifactCard";
+import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { WeekStrip } from "./WeekStrip";
 
 /** The viewer's initial comes from the OS account name; it never changes during a run, so it is fetched once. */
@@ -151,21 +152,15 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const rooms = useRoomList();
   const info = useInfo();
   const viewer = useViewerStore();
-  const openDoc = useCallback((a: Artifact, newTab: boolean) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab), [viewer]);
+  const openDoc = useOpenDoc();
   const day = useJournalDay(date);
   const loadError = useScopeError(`day:${date}`);
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const initial = useViewerInitial();
   const readOnly = useReadOnly();
 
-  // New-doc dots: frozen at activation (AppShell mounts this per activation),
-  // per artifact, against its own room's last visit — as in RoomView.
-  const visits = useRef<{ lastVisit: Record<string, string>; firstRunAt: string } | null>(null);
-  if (visits.current === null) {
-    const v = viewer.getState();
-    visits.current = { lastVisit: v.lastVisit, firstRunAt: v.firstRunAt };
-  }
-  const baselineFor = (roomId: string) => visits.current!.lastVisit[roomId] ?? visits.current!.firstRunAt;
+  // New-doc dots: per artifact, against its own room's last visit — as in RoomView.
+  const visits = useVisitsAtArrival();
 
   const setDate = (next: string) => {
     const id = tabId ?? viewer.getState().tabs.find((t) => t.kind === "journal")?.id;
@@ -209,7 +204,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
                     artifact={artifact}
                     info={info}
                     label={label}
-                    isNew={isNewSince(artifact.createdAt, baselineFor(artifact.roomId))}
+                    isNew={isNewSince(artifact.createdAt, visits.since(artifact.roomId))}
                     size="journal"
                     onOpen={openDoc}
                   />
