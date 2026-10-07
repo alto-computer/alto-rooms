@@ -155,7 +155,7 @@ impl Index {
         })
     }
 
-    pub fn remove_one(&mut self, room_id: &str, rel_path: &str) -> Result<Option<Change>, CoreError> {
+    fn remove_one(&mut self, room_id: &str, rel_path: &str) -> Result<Option<Change>, CoreError> {
         let id = artifact_id(room_id, rel_path);
         let day: Option<String> = self.conn.query_row("SELECT created_day FROM artifacts WHERE id = ?1", params![id], |r| r.get(0))
             .optional()?;
@@ -247,7 +247,8 @@ impl Index {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(CoreError::from)
     }
 
-    /// Kept for callers and tests: the three phases in one call (used where no lock split matters).
+    /// The three scan phases in one call, for tests (the core splits them around its lock).
+    #[cfg(test)]
     pub fn backfill(&mut self, room_id: &str, entries: &[ScanEntry]) -> Result<Vec<Change>, CoreError> {
         let fps = self.fingerprints(room_id)?;
         let facts: Vec<FileFacts> = entries.iter().filter_map(|e| read_entry(room_id, e, fps.get(&e.rel_path))).collect();

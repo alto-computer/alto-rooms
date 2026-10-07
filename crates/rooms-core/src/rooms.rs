@@ -1,5 +1,6 @@
 //! The room list: lookups, and creating, linking, renaming and reordering rooms.
 
+use crate::lock::lock;
 use crate::core::{Inner, RoomsCore};
 use crate::error::CoreError;
 use crate::rules::{room_slug, slug_key, validate_room_name};
@@ -9,12 +10,12 @@ use std::path::{Path, PathBuf};
 
 impl RoomsCore {
     pub fn list_rooms(&self) -> Vec<Room> {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock(&self.inner);
         inner.state.rooms.iter().map(|r| Self::to_room(&inner, r)).collect()
     }
 
     pub fn room_root(&self, room: &RoomId) -> Option<(PathBuf, RoomKind)> {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock(&self.inner);
         if room == JOURNAL_ROOM_ID { return Some((inner.home.join("journal"), RoomKind::Journal)); }
         inner.state.find(room).map(|r| (r.path.clone(), r.kind))
     }
@@ -28,7 +29,7 @@ impl RoomsCore {
     /// Every room root (journal included), longest first, for mapping many paths to rooms with one
     /// lock (see `owner_of`).
     pub fn room_roots(&self) -> Vec<(RoomId, PathBuf)> {
-        let mut roots: Vec<_> = Self::all_roots(&self.inner.lock().unwrap()).into_iter().map(|(id, root, _)| (id, root)).collect();
+        let mut roots: Vec<_> = Self::all_roots(&lock(&self.inner)).into_iter().map(|(id, root, _)| (id, root)).collect();
         roots.sort_by_key(|(_, root)| std::cmp::Reverse(root.as_os_str().len()));
         roots
     }
@@ -36,7 +37,7 @@ impl RoomsCore {
     /// Roots of the linked rooms not flagged unavailable. Unlike `list_rooms` it computes no
     /// per-room counts, so the watcher's periodic checks barely hold the lock.
     pub fn linked_roots(&self) -> Vec<PathBuf> {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock(&self.inner);
         inner.state.rooms.iter()
             .filter(|r| r.kind == RoomKind::Linked && !inner.unavailable.contains(&r.id))
             .map(|r| r.path.clone()).collect()
@@ -52,7 +53,7 @@ impl RoomsCore {
     pub fn create_room(&self, name: &str) -> Result<Room, CoreError> {
         let name = validate_room_name(name)?;
         let slug = room_slug(&name);
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         // The stat + mkdir below stay under the lock on purpose: the slug check and the folder
         // creation must be atomic with respect to other create/rename calls.
         if Self::slug_taken(&inner, &slug) { return Err(CoreError::RoomExists); }
@@ -72,7 +73,7 @@ impl RoomsCore {
     pub fn link_folder(&self, path: &Path, name: Option<&str>) -> Result<Room, CoreError> {
         let real = std::fs::canonicalize(path).map_err(|_| CoreError::InvalidLinkPath("not found".into()))?;
         if !real.is_dir() || std::fs::read_dir(&real).is_err() { return Err(CoreError::InvalidLinkPath("not a readable directory".into())); }
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         if real == inner.home || inner.home.starts_with(&real) || real.starts_with(&inner.home) {
             return Err(CoreError::InvalidLinkPath("home".into()));
         }
@@ -93,9 +94,9 @@ impl RoomsCore {
 
     pub fn rename_room(&self, room: &RoomId, name: &str) -> Result<Room, CoreError> {
         let name = validate_room_name(name)?;
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         let rec = inner.state.find(room).cloned().ok_or(CoreError::RoomNotFound)?;
-        if rec.id == "inbox" { return Err(CoreError::InvalidRoomName); }
+        if rec.id == INBOX_ROOM_ID { return Err(CoreError::InvalidRoomName); }
         if Self::slug_taken_except(&inner, &room_slug(&name), Some(&rec.id)) { return Err(CoreError::RoomExists); }
         // The stat + rename below stay under the lock on purpose: the slug check and the folder
         // rename must be atomic with respect to other create/rename calls.
@@ -108,13 +109,13 @@ impl RoomsCore {
             }
             p
         } else { rec.path.clone() };
-        {
-            let r = inner.state.find_mut(room).unwrap();
+        let updated = {
+            let r = inner.state.find_mut(room).ok_or(CoreError::RoomNotFound)?; // found above, same lock
             r.name = name;
             r.path = new_path;
-        }
+            r.clone()
+        };
         inner.state.save()?;
-        let updated = inner.state.find(room).cloned().unwrap();
         let room_v = Self::to_room(&inner, &updated);
         self.emit(&mut inner, EventKind::RoomUpdated { room: room_v.clone() });
         Ok(room_v)
@@ -123,12 +124,12 @@ impl RoomsCore {
     /// Moves `room` to position `to` among the rooms other than the inbox, which keeps its place
     /// (`to` past the end = last). Saves state.json and emits `rooms.reordered` with the full order.
     pub fn move_room(&self, room: &RoomId, to: usize) -> Result<Vec<RoomId>, CoreError> {
-        if room == "inbox" { return Err(CoreError::InvalidInput("the inbox can't be moved".into())); }
-        let mut inner = self.inner.lock().unwrap();
+        if room == INBOX_ROOM_ID { return Err(CoreError::InvalidInput("the inbox can't be moved".into())); }
+        let mut inner = lock(&self.inner);
         let from = inner.state.rooms.iter().position(|r| &r.id == room).ok_or(CoreError::RoomNotFound)?;
         let rec = inner.state.rooms.remove(from);
         let rooms = &inner.state.rooms;
-        let at = rooms.iter().enumerate().filter(|(_, r)| r.id != "inbox").nth(to).map(|(i, _)| i).unwrap_or(rooms.len());
+        let at = rooms.iter().enumerate().filter(|(_, r)| r.id != INBOX_ROOM_ID).nth(to).map(|(i, _)| i).unwrap_or(rooms.len());
         inner.state.rooms.insert(at, rec);
         inner.state.save()?;
         let room_ids: Vec<RoomId> = inner.state.rooms.iter().map(|r| r.id.clone()).collect();

@@ -1,4 +1,5 @@
-use crate::rules::DEFAULT_IGNORED_DIRS;
+use crate::lock::lock;
+use crate::rules::{is_html, DEFAULT_IGNORED_DIRS};
 use crate::scan::owner_of;
 use crate::{CoreError, RoomsCore};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -24,7 +25,7 @@ pub struct WatchHandle {
 const RETRY_INTERVAL: Duration = Duration::from_secs(2);
 
 fn watch_dir(deb: &Mutex<Deb>, path: &Path) -> Result<(), notify::Error> {
-    deb.lock().unwrap().watch(path, RecursiveMode::Recursive)
+    lock(deb).watch(path, RecursiveMode::Recursive)
 }
 
 /// Linked roots live outside home, so each needs its own watch. Simple retry model:
@@ -37,15 +38,15 @@ fn watch_dir(deb: &Mutex<Deb>, path: &Path) -> Result<(), notify::Error> {
 fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<HashSet<PathBuf>>, failed: &Mutex<HashSet<PathBuf>>) -> bool {
     let mut touched = false;
     for p in core.linked_roots() {
-        if watched.lock().unwrap().contains(&p) { continue; }
+        if lock(watched).contains(&p) { continue; }
         touched = true;
         match watch_dir(deb, &p) {
             Ok(()) => {
-                failed.lock().unwrap().remove(&p);
-                watched.lock().unwrap().insert(p);
+                lock(failed).remove(&p);
+                lock(watched).insert(p);
             }
             Err(e) => {
-                if failed.lock().unwrap().insert(p.clone()) {
+                if lock(failed).insert(p.clone()) {
                     eprintln!("rooms-core: failed to watch linked room {}: {e}", p.display());
                 }
             }
@@ -167,7 +168,7 @@ struct Pending {
 }
 
 fn has_doc_ext(p: &Path) -> bool {
-    p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).is_some_and(|e| matches!(e.as_str(), "html" | "htm" | "md"))
+    is_html(p) || p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md"))
 }
 
 /// Records what a change at `p` (seen by the home or a linked-root watch) asks for. `roots` are
@@ -227,7 +228,7 @@ fn sync_target_watch(core: &RoomsCore, tw: &Mutex<TargetWatch>) -> bool {
     let want: HashSet<PathBuf> = core.outside_targets().iter()
         .filter_map(|t| t.parent()?.ancestors().find(|a| a.is_dir()).map(Path::to_path_buf))
         .collect();
-    let mut tw = tw.lock().unwrap();
+    let mut tw = lock(tw);
     let TargetWatch { watcher, watched, failed, failed_at } = &mut *tw;
     if want == *watched { failed.clear(); return false; }
     let only_retries = want.difference(watched).all(|d| failed.contains(d)) && watched.is_subset(&want);
@@ -271,7 +272,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     let (wwork, pending_w) = (core.downgrade(), pending.clone());
     let work = spawn_coalescer(Duration::ZERO, move || match wwork.upgrade() {
         Some(core) => {
-            let work = std::mem::take(&mut *pending_w.lock().unwrap()); // released before the rescans
+            let work = std::mem::take(&mut *lock(&pending_w)); // released before the rescans
             run_pending(&core, work);
             true
         }
@@ -296,7 +297,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                     c2.plugins_changed();
                 }
                 let roots = c2.room_roots();
-                let mut pending = pending_cb.lock().unwrap();
+                let mut pending = lock(&pending_cb);
                 for p in events.iter().flat_map(|ev| ev.paths.iter()) {
                     if !p.starts_with(&rooms_dir) {
                         note_change(&mut pending, &roots, &home, p);
@@ -334,7 +335,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         Ok(ev) => {
             let mut folder_changed = false;
             {
-                let mut pending = pending_t.lock().unwrap();
+                let mut pending = lock(&pending_t);
                 for p in ev.paths {
                     if has_doc_ext(&p) && !p.is_dir() {
                         pending.targets.insert(p);
@@ -355,7 +356,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         let (Some(core), Some(tw)) = (wcore_ts.upgrade(), wtargets.upgrade()) else { return false };
         // Edits made while the stream restarted are lost: re-check every outside original.
         if sync_target_watch(&core, &tw) {
-            pending_ts.lock().unwrap().targets.extend(core.outside_targets());
+            lock(&pending_ts).targets.extend(core.outside_targets());
             let _ = work_ts.send(());
         }
         true
@@ -386,9 +387,9 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                 let (Some(core), Some(deb)) = (wcore3.upgrade(), wdeb3.upgrade()) else { break };
                 if room.status == RoomStatus::Unavailable {
                     let p = PathBuf::from(&room.path);
-                    f3.lock().unwrap().remove(&p);
-                    if w3.lock().unwrap().remove(&p) {
-                        let _ = deb.lock().unwrap().unwatch(&p);
+                    lock(&f3).remove(&p);
+                    if lock(&w3).remove(&p) {
+                        let _ = lock(&deb).unwatch(&p);
                         let _ = rescan3.send(());
                     }
                 } else if ensure_linked_watched(&core, &deb, &w3, &f3) {
@@ -408,7 +409,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         core.rescan_unavailable();
         if ensure_linked_watched(&core, &deb, &watched, &failed) { let _ = rescan.send(()); }
         // Retries original folders that could not be watched (the sync itself waits out the backoff).
-        if wtargets_tick.upgrade().is_some_and(|tw| !tw.lock().unwrap().failed.is_empty()) { let _ = target_sync_tick.send(()); }
+        if wtargets_tick.upgrade().is_some_and(|tw| !lock(&tw).failed.is_empty()) { let _ = target_sync_tick.send(()); }
     });
     Ok(WatchHandle { _debouncer: deb, _targets: targets })
 }

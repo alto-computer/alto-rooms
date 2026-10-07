@@ -4,6 +4,7 @@
 //! list), `home_sync` (folders changed in Finder), `scan` (keeping the index in step with disk),
 //! `artifacts`, `journal` and `plugins`.
 
+use crate::lock::lock;
 use crate::dangling::DanglingLinks;
 use crate::error::CoreError;
 use crate::home_sync::{list_home_dirs, reconcile_home_dirs, HomeChange};
@@ -81,14 +82,14 @@ impl RoomsCore {
         std::fs::create_dir_all(home)?;
         let home = std::fs::canonicalize(home)?;
         let dot = home.join(".rooms");
+        let inbox = home.join("inbox");
         std::fs::create_dir_all(home.join("journal"))?;
-        std::fs::create_dir_all(home.join("inbox"))?;
+        std::fs::create_dir_all(&inbox)?;
         let mut state = StateStore::load(&dot)?;
         // ensure inbox record; journal is implicit (constant id)
-        if !state.rooms.iter().any(|r| r.kind == RoomKind::Owned && r.path == home.join("inbox")) {
-            let (dev, ino) = inode_of(&home.join("inbox")).unzip();
-            state.rooms.insert(0, RoomRecord { id: "inbox".into(), name: "inbox".into(), kind: RoomKind::Owned,
-                path: home.join("inbox"), dev, ino });
+        if !state.rooms.iter().any(|r| r.kind == RoomKind::Owned && r.path == inbox) {
+            let (dev, ino) = inode_of(&inbox).unzip();
+            state.rooms.insert(0, RoomRecord { id: INBOX_ROOM_ID.into(), name: "inbox".into(), kind: RoomKind::Owned, path: inbox, dev, ino });
             state.save()?;
         }
         // adopt / follow / drop owned folders changed in Finder while we were not running
@@ -131,7 +132,7 @@ impl RoomsCore {
     /// `ask.started` / `ask.done` from `asks::Asks`: same seq and broadcast as every other event.
     pub fn emit_ask(&self, kind: EventKind) {
         debug_assert!(matches!(kind, EventKind::AskStarted { .. } | EventKind::AskDone { .. }));
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         self.emit(&mut inner, kind);
     }
 

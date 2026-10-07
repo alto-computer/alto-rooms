@@ -110,7 +110,7 @@ pub fn load_manifest(dir: &Path) -> Result<Manifest, String> {
                 "artifact.sidePanel" => slots.artifact_side_panel = Some(SidePanelSlot { title: title(sv)? }),
                 "tab" => {
                     let icon = sv.get("icon").and_then(Value::as_str).map(str::to_string);
-                    if icon.as_deref().is_some_and(|i| !ICONS.contains(&i)) { return Err(format!("unknown icon: {}", icon.unwrap())); }
+                    if let Some(i) = icon.as_deref().filter(|i| !ICONS.contains(i)) { return Err(format!("unknown icon: {i}")); }
                     slots.tab = Some(TabSlot { title: title(sv)?, icon, sidebar: sv.get("sidebar").and_then(Value::as_bool).unwrap_or(false) });
                 }
                 other => eprintln!("rooms-core: plugin {id}: ignoring unknown slot {other}"),

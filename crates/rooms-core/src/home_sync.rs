@@ -1,9 +1,10 @@
 //! Owned rooms follow their folders directly under home: a folder made in Finder becomes a room,
 //! a renamed one keeps its room (matched by inode), a deleted one takes its room with it.
 
+use crate::lock::lock;
 use crate::core::RoomsCore;
 use crate::state::{inode_of, RoomRecord, StateStore};
-use rooms_protocol::{EventKind, RoomId, RoomKind};
+use rooms_protocol::{EventKind, RoomId, RoomKind, INBOX_ROOM_ID};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -44,14 +45,10 @@ pub(crate) fn reconcile_home_dirs(home: &Path, listing: Option<Vec<HomeDir>>, st
     for HomeDir { path: p, name, dev, ino } in listing {
         if state.rooms.iter().any(|r| r.path == p) { continue; }
         if let (Some(dv), Some(io)) = (dev, ino) {
-            let renamed = state.rooms.iter()
-                .find(|r| r.id != "inbox" && r.dev == Some(dv) && r.ino == Some(io))
-                .map(|r| r.id.clone());
-            if let Some(id) = renamed {
-                let rec = state.find_mut(&id).unwrap();
-                rec.path = p.clone();
-                rec.name = name.clone();
-                out.push(HomeChange::Renamed(id));
+            if let Some(rec) = state.find_by_inode_mut(dv, io) {
+                rec.path = p;
+                rec.name = name;
+                out.push(HomeChange::Renamed(rec.id.clone()));
                 continue;
             }
         }
@@ -62,7 +59,7 @@ pub(crate) fn reconcile_home_dirs(home: &Path, listing: Option<Vec<HomeDir>>, st
     // Per-room `symlink_metadata` under the lock is intentional: a cheap stat over the handful of
     // owned rooms, and it must see the same state the listing above was reconciled against.
     let gone: Vec<RoomId> = state.rooms.iter()
-        .filter(|r| r.kind == RoomKind::Owned && r.id != "inbox" && r.path.starts_with(home) && std::fs::symlink_metadata(&r.path).is_err())
+        .filter(|r| r.kind == RoomKind::Owned && r.id != INBOX_ROOM_ID && r.path.starts_with(home) && std::fs::symlink_metadata(&r.path).is_err())
         // Protected only if its inode is listed at a path no OTHER room record holds: when another
         // room owns that path (`rm -rf b && mv a b`), room a's folder really is gone.
         .filter(|r| {
@@ -78,7 +75,7 @@ pub(crate) fn reconcile_home_dirs(home: &Path, listing: Option<Vec<HomeDir>>, st
 impl RoomsCore {
     /// Re-reads the direct children of home (called by the watcher when a batch touches one):
     /// emits room.added / room.updated (Finder rename, same id) / room.removed. Returns the ids
-    /// of added or renamed rooms, plus "inbox" when its folder had to be recreated, so the caller
+    /// of added or renamed rooms, plus the inbox when its folder had to be recreated, so the caller
     /// can scan them.
     pub fn sync_home_dirs(&self) -> Vec<RoomId> {
         self.sync_home_dirs_with(list_home_dirs)
@@ -90,7 +87,7 @@ impl RoomsCore {
         let mut touched = Vec::new();
         let mut removed = Vec::new();
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock(&self.inner);
             let home = inner.home.clone();
             // Listed under `Inner` on purpose (an exception to "no IO under the lock"): it is a few
             // direntries, and a listing taken before the lock can predate a rename_room / Finder
@@ -127,7 +124,7 @@ impl RoomsCore {
         // Map lock only (no room scan lock, no Inner). An in-flight scan keeps its own Arc and its
         // apply step sees the room gone.
         if !removed.is_empty() {
-            let mut locks = self.scan_locks.lock().unwrap();
+            let mut locks = lock(&self.scan_locks);
             for id in &removed { locks.remove(id); }
         }
         // The inbox record never follows its folder: if `inbox` was renamed away (adopted above as a
@@ -135,7 +132,7 @@ impl RoomsCore {
         let inbox = self.home.join("inbox");
         if !inbox.is_dir() {
             match std::fs::create_dir_all(&inbox) {
-                Ok(()) => touched.push("inbox".into()),
+                Ok(()) => touched.push(INBOX_ROOM_ID.into()),
                 Err(e) => eprintln!("rooms-core: recreating inbox failed: {e}"),
             }
         }

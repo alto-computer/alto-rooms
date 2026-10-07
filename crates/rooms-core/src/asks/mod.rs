@@ -8,6 +8,7 @@ pub(crate) mod sources;
 
 pub use run::Limits;
 
+use crate::lock::lock;
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
@@ -179,7 +180,7 @@ impl Asks {
         }
         let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
 
-        let mut running = self.0.running.lock().unwrap();
+        let mut running = lock(&self.0.running);
         if self.0.shutting_down.load(Ordering::SeqCst) { return Err(AskError::Capacity); }
         if running.values().any(|e| e.file_key == artifact.file_key) { return Err(AskError::Busy); }
         if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
@@ -244,7 +245,7 @@ impl Asks {
         turn.error = error;
         turn.ended_at = Some(now());
         if let Err(e) = self.0.log.append(&turn) { eprintln!("roomsd: ask {}: could not record: {e}", turn.id); }
-        self.0.running.lock().unwrap().remove(&turn.id);
+        lock(&self.0.running).remove(&turn.id);
         self.0.core.emit_ask(EventKind::AskDone { turn });
     }
 
@@ -261,12 +262,12 @@ impl Asks {
 
     pub fn thread(&self, file_key: &str) -> Result<Vec<AskTurn>, AskError> {
         if !valid_file_key(file_key) { return Err(AskError::BadRequest("bad file key".into())); }
-        let running = self.0.running.lock().unwrap();
+        let running = lock(&self.0.running);
         self.read_thread(&running, file_key)
     }
 
     pub fn cancel(&self, ask_id: &str) {
-        if let Some(e) = self.0.running.lock().unwrap().get(ask_id) { e.killer.kill(Reason::Cancelled); }
+        if let Some(e) = lock(&self.0.running).get(ask_id) { e.killer.kill(Reason::Cancelled); }
     }
 
     /// Kill everything still running (roomsd is stopping; the app gives it 1 s). Waits ≤ 700 ms
@@ -274,12 +275,12 @@ impl Asks {
     /// New asks are refused from here on, so nothing is spawned that nobody would kill.
     pub async fn shutdown(&self) {
         {
-            let running = self.0.running.lock().unwrap();
+            let running = lock(&self.0.running);
             self.0.shutting_down.store(true, Ordering::SeqCst);
             for e in running.values() { e.killer.kill(Reason::Shutdown); }
         }
         let deadline = tokio::time::Instant::now() + Duration::from_millis(700);
-        while !self.0.running.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
+        while !lock(&self.0.running).is_empty() && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }

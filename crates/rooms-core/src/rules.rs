@@ -9,7 +9,8 @@ pub const RESERVED_NAMES: [&str; 2] = ["journal", "inbox"];
 #[derive(Debug, PartialEq, Eq)]
 pub enum PathClass { Artifact, Note { date: String }, Ignored }
 
-fn is_html(p: &Path) -> bool {
+/// `.html` or `.htm`, any case.
+pub(crate) fn is_html(p: &Path) -> bool {
     matches!(p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(), Some("html" | "htm"))
 }
 

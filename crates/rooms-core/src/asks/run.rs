@@ -1,4 +1,5 @@
 //! Runs one agent CLI: no shell, its own process group, stdin /dev/null, with limits (spec R8, S6).
+use crate::lock::lock;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -83,7 +84,7 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
     // macOS has no pipe2: std makes each pipe, then marks it close-on-exec. Two concurrent spawns
     // could leak one child's pipe ends into the other (and its long-lived descendants), so spawn one at a time.
     static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let mut child = { let _g = SPAWN.lock().unwrap_or_else(|e| e.into_inner()); cmd.spawn()? };
+    let mut child = { let _g = lock(&SPAWN); cmd.spawn()? };
     let pid = child.id().map(|p| p as i32);
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut stderr = child.stderr.take().expect("piped stderr");

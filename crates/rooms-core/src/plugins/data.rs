@@ -1,6 +1,7 @@
 //! A plugin's own storage under `data/`, and the assets it serves from its folder. Pure file
 //! functions over a plugin folder; `RoomsCore` checks the plugin may use them first.
 
+use crate::lock::lock;
 use super::DATA;
 use crate::error::CoreError;
 use std::path::{Component, Path, PathBuf};
@@ -61,7 +62,7 @@ pub fn append_data(dir: &Path, rel: &str, line: &str) -> Result<(), CoreError> {
     use std::io::Write;
     static APPEND: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let p = data_file(dir, rel)?;
-    let _guard = APPEND.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&APPEND);
     let have = match std::fs::symlink_metadata(&p) {
         Ok(m) if m.is_file() => m.len() as usize,
         Ok(_) => return Err(CoreError::InvalidInput("is a folder".into())),

@@ -3,6 +3,7 @@
 //! Note IO runs without `Inner`, under `notes_lock` (lock order: notes_lock → Inner); `Inner` is
 //! taken only to emit.
 
+use crate::lock::lock;
 use crate::core::RoomsCore;
 use crate::error::CoreError;
 use crate::rules::{classify_path, slug_key, validate_iso_date, validate_note_name, PathClass};
@@ -15,7 +16,7 @@ const MAX_NOTE_BYTES: usize = 1_048_576;
 impl RoomsCore {
     pub fn journal_day(&self, date: &IsoDate) -> Result<JournalDay, CoreError> {
         validate_iso_date(date)?;
-        let rows = { self.inner.lock().unwrap().index.by_day(date)? };
+        let rows = { lock(&self.inner).index.by_day(date)? };
         let mut seen = HashSet::new();
         let mut artifacts = Vec::new();
         for (a, target) in rows {
@@ -43,7 +44,7 @@ impl RoomsCore {
         if body.len() > MAX_NOTE_BYTES { return Err(CoreError::InvalidInput("note too large".into())); }
         // `notes_lock` is held across the write, the rename and the emit so NoteSaved order
         // equals file order.
-        let _notes = self.notes_lock.lock().unwrap();
+        let _notes = lock(&self.notes_lock);
         let dir = self.home.join("journal").join(date);
         std::fs::create_dir_all(&dir)?;
         let path = dir.join(&name);
@@ -52,7 +53,7 @@ impl RoomsCore {
         std::fs::rename(&tmp, &path)?;
         let (_, updated) = crate::meta::file_times(&path);
         let note = Note { date: date.clone(), name: name.clone(), rel_path: format!("{date}/{name}"), updated_at: updated, author: Author::Me };
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         self.emit(&mut inner, EventKind::NoteSaved { note: note.clone() });
         Ok(note)
     }
@@ -65,7 +66,7 @@ impl RoomsCore {
         validate_iso_date(date)?;
         let from = validate_note_name(from)?;
         let to = validate_note_name(to)?;
-        let _notes = self.notes_lock.lock().unwrap();
+        let _notes = lock(&self.notes_lock);
         let dir = self.home.join("journal").join(date);
         let src = dir.join(&from);
         if !std::fs::symlink_metadata(&src).map(|m| m.is_file()).unwrap_or(false) { return Err(CoreError::NotFound); }
@@ -85,7 +86,7 @@ impl RoomsCore {
         let (_, updated) = crate::meta::file_times(&dst);
         let note = Note { date: date.clone(), name: to.clone(), rel_path: format!("{date}/{to}"), updated_at: updated, author: Author::Me };
         if from != to {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock(&self.inner);
             self.emit(&mut inner, EventKind::NoteRemoved { date: date.clone(), name: from });
             self.emit(&mut inner, EventKind::NoteSaved { note: note.clone() });
         }
@@ -97,7 +98,7 @@ impl RoomsCore {
     pub fn read_note(&self, date: &IsoDate, name: &str) -> Result<String, CoreError> {
         validate_iso_date(date)?;
         let name = validate_note_name(name)?;
-        let _notes = self.notes_lock.lock().unwrap();
+        let _notes = lock(&self.notes_lock);
         let path = self.home.join("journal").join(date).join(&name);
         match std::fs::read_to_string(&path) {
             Ok(s) => Ok(s),

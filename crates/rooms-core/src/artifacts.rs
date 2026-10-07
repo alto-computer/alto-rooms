@@ -1,8 +1,10 @@
 //! Artifacts: lookups, moving one between owned rooms, and resolving a room file to serve.
 
+use crate::lock::lock;
 use crate::core::{Inner, RoomsCore};
 use crate::error::CoreError;
 use crate::index::Change;
+use crate::rules::is_html;
 use rooms_protocol::*;
 use std::path::{Path, PathBuf};
 
@@ -30,7 +32,6 @@ impl How {
     /// refused.
     fn detect(src: &Path) -> Result<How, CoreError> {
         let meta = std::fs::symlink_metadata(src).map_err(|_| CoreError::NotFound)?;
-        let is_html = |p: &Path| p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"));
         if meta.file_type().is_symlink() {
             let ok = std::fs::metadata(src).is_ok_and(|m| m.is_file()) && std::fs::canonicalize(src).is_ok_and(|t| is_html(&t));
             if !ok { return Err(CoreError::InvalidInput("symlink does not point to an html file".into())); }
@@ -84,7 +85,7 @@ impl How {
 
 impl RoomsCore {
     pub fn list_artifacts(&self, room: &RoomId) -> Result<Vec<Artifact>, CoreError> {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock(&self.inner);
         if room != JOURNAL_ROOM_ID && inner.state.find(room).is_none() { return Err(CoreError::RoomNotFound); }
         inner.index.list(room)
     }
@@ -92,7 +93,7 @@ impl RoomsCore {
     /// The artifact holding the original with `file_key`: when several rooms link it, the first in
     /// sidebar order, then the journal. `None` if no artifact has that key.
     pub fn artifact_by_file_key(&self, file_key: &str) -> Option<Artifact> {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock(&self.inner);
         let mut hits = inner.index.by_file_key(file_key).ok()?;
         let rank = |room: &str| inner.state.rooms.iter().position(|r| r.id == room).unwrap_or(usize::MAX);
         hits.sort_by_key(|a| rank(&a.room_id));
@@ -121,18 +122,18 @@ impl RoomsCore {
         let check = |inner: &Inner| -> Result<(PathBuf, PathBuf), CoreError> {
             let from_root = Self::owned_root(inner, from_room)?;
             let to_root = Self::owned_root(inner, to_room)?;
-            if to_room == "inbox" { return Err(CoreError::InvalidInput("cannot move into inbox".into())); }
+            if to_room == INBOX_ROOM_ID { return Err(CoreError::InvalidInput("cannot move into inbox".into())); }
             if from_room == to_room { return Err(CoreError::InvalidInput("source and target room are the same".into())); }
             Ok((from_root, to_root))
         };
-        check(&self.inner.lock().unwrap())?; // fail fast before waiting on scan locks
+        check(&lock(&self.inner))?; // fail fast before waiting on scan locks
         let (first, second) = if from_room < to_room { (from_room, to_room) } else { (to_room, from_room) };
         let (l1, l2) = (self.scan_lock(first), self.scan_lock(second));
-        let _g1 = l1.lock().unwrap(); // lock order: room scan locks (by id) → Inner
-        let _g2 = l2.lock().unwrap();
+        let _g1 = lock(&l1); // lock order: room scan locks (by id) → Inner
+        let _g2 = lock(&l2);
         // Re-read under the scan locks: the rooms may have been renamed or removed meanwhile.
         let (from_root, to_root, art) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock(&self.inner);
             let (f, t) = check(&inner)?;
             let art = inner.index.get(from_room, artifact_id)?.ok_or(CoreError::NotFound)?;
             (f, t, art)
@@ -144,7 +145,7 @@ impl RoomsCore {
         let dst = to_root.join(&to_rel);
         how.place(&src, &dst)?;
         let new_target = how.new_target(&dst);
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         #[cfg(test)]
         let fail = FAIL_REASSIGN.with(|c| c.get());
         #[cfg(not(test))]
@@ -183,8 +184,7 @@ impl RoomsCore {
         let target = std::fs::canonicalize(&joined).map_err(|_| CoreError::PathEscape)?;
         if !target.is_file() { return Err(CoreError::PathEscape); }
         if meta.file_type().is_symlink() {
-            let is_html = target.extension().and_then(|e| e.to_str()).map(|e| matches!(e.to_ascii_lowercase().as_str(), "html" | "htm")).unwrap_or(false);
-            if !(target.is_file() && is_html) { return Err(CoreError::PathEscape); }
+            if !(target.is_file() && is_html(&target)) { return Err(CoreError::PathEscape); }
             return Ok(target);
         }
         if !target.starts_with(&root_real) { return Err(CoreError::PathEscape); }
@@ -200,11 +200,11 @@ mod tests {
 
     #[test]
     fn move_waits_for_an_in_flight_rescan_and_later_rescans_are_no_ops() {
-        let _g = HOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = lock(&HOOK_TESTS);
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
         let r = core.create_room("r").unwrap();
-        let inbox: RoomId = "inbox".into();
+        let inbox: RoomId = INBOX_ROOM_ID.into();
         std::fs::write(core.home().join("inbox/a.html"), "<title>a</title>").unwrap();
         core.rescan_room(&inbox);
         let a = core.list_artifacts(&inbox).unwrap().remove(0);
@@ -246,7 +246,7 @@ mod tests {
         let o = tempfile::tempdir().unwrap();
         let orig = std::fs::canonicalize(o.path()).unwrap().join("x.html");
         std::fs::write(&orig, "<title>x</title>").unwrap();
-        let inbox: RoomId = "inbox".into();
+        let inbox: RoomId = INBOX_ROOM_ID.into();
         std::os::unix::fs::symlink(&orig, core.home().join("inbox/abs.html")).unwrap();
         std::fs::create_dir_all(core.home().join("inbox/sub")).unwrap();
         std::os::unix::fs::symlink("../abs.html", core.home().join("inbox/sub/rel.html")).unwrap();

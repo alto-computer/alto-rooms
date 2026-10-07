@@ -6,6 +6,7 @@
 //! against fingerprints taken under `Inner`), then apply under `Inner`. Scans of one room are
 //! serialized by its scan lock, so the last scan to apply is the latest.
 
+use crate::lock::lock;
 use crate::core::{Inner, RoomsCore};
 use crate::dangling::DanglingLinks;
 use crate::error::CoreError;
@@ -41,7 +42,7 @@ impl RoomsCore {
     pub fn resync_all(&self) {
         self.rescan_all();
         // Resync is emitted even if the rescan failed, on purpose, so clients refetch.
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         self.emit(&mut inner, EventKind::Resync { room_id: None });
     }
 
@@ -53,7 +54,7 @@ impl RoomsCore {
     }
 
     pub fn backfill_all(&self) -> Result<(), CoreError> {
-        let roots = { Self::all_roots(&self.inner.lock().unwrap()) };
+        let roots = { Self::all_roots(&lock(&self.inner)) };
         let mut first_err = None;
         for (id, _, _) in roots {
             if let Err(e) = self.try_rescan_room(&id) { first_err.get_or_insert(e); }
@@ -62,17 +63,17 @@ impl RoomsCore {
     }
 
     pub(crate) fn scan_lock(&self, room: &RoomId) -> Arc<Mutex<()>> {
-        self.scan_locks.lock().unwrap().entry(room.clone()).or_default().clone()
+        lock(&self.scan_locks).entry(room.clone()).or_default().clone()
     }
 
     /// Rescan pipeline. Only the short index steps hold `Inner`; listing and reading files do not.
     fn try_rescan_room(&self, room: &RoomId) -> Result<(), CoreError> {
-        let lock = self.scan_lock(room);
-        let _serial = lock.lock().unwrap(); // lock order: room scan lock → Inner
+        let serial = self.scan_lock(room);
+        let _serial = lock(&serial); // lock order: room scan lock → Inner
         let Some((root, kind)) = self.room_root(room) else { return Ok(()) };
-        if !root_available(&root) { self.mark_unavailable(&mut self.inner.lock().unwrap(), room); return Ok(()); }
+        if !root_available(&root) { self.mark_unavailable(&mut lock(&self.inner), room); return Ok(()); }
         let entries = scan_room(&root, kind == RoomKind::Linked, kind == RoomKind::Journal); // no lock
-        let fps = { self.inner.lock().unwrap().index.fingerprints(room)? };
+        let fps = { lock(&self.inner).index.fingerprints(room)? };
         let facts: Vec<_> = entries.iter().filter_map(|e| read_entry(room, e, fps.get(&e.rel_path))).collect(); // no lock
         let present: HashSet<String> = entries.iter().filter(|e| e.class == PathClass::Artifact).map(|e| e.rel_path.clone()).collect();
         let lost: HashMap<String, PathBuf> = fps.into_iter().filter(|(rel, _)| !present.contains(rel)).map(|(rel, fp)| (rel, PathBuf::from(fp.target))).collect();
@@ -86,10 +87,10 @@ impl RoomsCore {
     /// is an artifact now is upserted, any other path's row is removed. Same locking as
     /// `try_rescan_room`; an unavailable root takes the full rescan, which flags it.
     fn try_rescan_paths(&self, room: &RoomId, rels: &[PathBuf]) -> Result<(), CoreError> {
-        let lock = self.scan_lock(room);
-        let _serial = lock.lock().unwrap(); // lock order: room scan lock → Inner
+        let serial = self.scan_lock(room);
+        let _serial = lock(&serial); // lock order: room scan lock → Inner
         let Some((root, kind)) = self.room_root(room) else { return Ok(()) };
-        if !root_available(&root) { self.mark_unavailable(&mut self.inner.lock().unwrap(), room); return Ok(()); }
+        if !root_available(&root) { self.mark_unavailable(&mut lock(&self.inner), room); return Ok(()); }
         let (honor_gitignore, in_journal) = (kind == RoomKind::Linked, kind == RoomKind::Journal);
         let mut facts = Vec::new();
         let mut gone = Vec::new();
@@ -97,7 +98,7 @@ impl RoomsCore {
         let mut lost = HashMap::new();
         for rel in rels {
             let rel_path = rel.to_string_lossy().replace('\\', "/");
-            let fp = { self.inner.lock().unwrap().index.fingerprint(room, &rel_path)? };
+            let fp = { lock(&self.inner).index.fingerprint(room, &rel_path)? };
             match crate::walk::entry_at(&root, rel, honor_gitignore, in_journal) {
                 Some(e) if e.class == PathClass::Artifact => {
                     facts.extend(read_entry(room, &e, fp.as_ref())); // no lock
@@ -123,10 +124,10 @@ impl RoomsCore {
         #[cfg(test)]
         {
             // Clone out and release the hook mutex before calling, so the hook never serializes scans.
-            let hook = BEFORE_APPLY_HOOK.lock().unwrap().clone();
+            let hook = lock(&BEFORE_APPLY_HOOK).clone();
             if let Some(h) = hook { h(room); }
         }
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         // Removed while we were reading (Finder delete) → write nothing for it. Renamed while we were
         // reading (root moved) → our entries describe the old root; the rename's follow-up rescan
         // does the work.
@@ -152,7 +153,7 @@ impl RoomsCore {
     /// Rescans every room currently flagged unavailable (the watcher calls this periodically so a
     /// returning folder is picked up even though nothing watches its path while it is gone).
     pub fn rescan_unavailable(&self) {
-        let ids: Vec<RoomId> = { self.inner.lock().unwrap().unavailable.iter().cloned().collect() };
+        let ids: Vec<RoomId> = { lock(&self.inner).unavailable.iter().cloned().collect() };
         for id in ids { self.rescan_room(&id); }
     }
 
@@ -187,7 +188,7 @@ impl RoomsCore {
     }
 
     fn links_to<'a>(&self, paths: impl IntoIterator<Item = &'a Path>, under: bool) -> Vec<(RoomId, PathBuf)> {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock(&self.inner);
         let mut out = Vec::new();
         for p in paths {
             let key = p.to_string_lossy();
@@ -203,7 +204,7 @@ impl RoomsCore {
 
     /// Paths (relative to the root) of `room`'s artifacts at or under any of `rels`.
     pub fn artifacts_under(&self, room: &RoomId, rels: &HashSet<PathBuf>) -> Vec<PathBuf> {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock(&self.inner);
         let mut out = Vec::new();
         for rel in rels {
             match inner.index.rel_paths_under(room, &rel.to_string_lossy()) {
@@ -218,7 +219,7 @@ impl RoomsCore {
     /// root, so no room watch sees them.
     pub fn outside_targets(&self) -> Vec<PathBuf> {
         let (targets, linked) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock(&self.inner);
             let linked: Vec<PathBuf> = inner.state.rooms.iter().filter(|r| r.kind == RoomKind::Linked).map(|r| r.path.clone()).collect();
             let mut targets: Vec<PathBuf> = inner.index.targets().unwrap_or_default().into_iter().map(PathBuf::from).collect();
             targets.extend(inner.dangling.targets().cloned());
@@ -238,9 +239,9 @@ pub(crate) mod test_hooks {
     /// Serializes the tests that install the global hook.
     pub(crate) static HOOK_TESTS: Mutex<()> = Mutex::new(());
 
-    pub(crate) fn set_hook(h: impl Fn(&str) + Send + Sync + 'static) { *BEFORE_APPLY_HOOK.lock().unwrap() = Some(Arc::new(h)); }
+    pub(crate) fn set_hook(h: impl Fn(&str) + Send + Sync + 'static) { *lock(&BEFORE_APPLY_HOOK) = Some(Arc::new(h)); }
 
-    pub(crate) fn clear_hook() { *BEFORE_APPLY_HOOK.lock().unwrap() = None; }
+    pub(crate) fn clear_hook() { *lock(&BEFORE_APPLY_HOOK) = None; }
 
     /// Installs a hook that blocks the FIRST scan of `room` before its apply phase: it signals
     /// `entered` and waits for `release`. Later scans pass through.
@@ -251,7 +252,7 @@ pub(crate) mod test_hooks {
         let state = Mutex::new(Some((entered_tx, release_rx)));
         set_hook(move |r: &str| {
             if r != room { return; }
-            let Some((entered, release)) = state.lock().unwrap().take() else { return };
+            let Some((entered, release)) = lock(&state).take() else { return };
             entered.send(()).unwrap();
             release.recv().unwrap();
         });
@@ -271,7 +272,7 @@ mod tests {
 
     #[test]
     fn root_vanishing_before_apply_flags_unavailable_and_keeps_rows() {
-        let _g = HOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = lock(&HOOK_TESTS);
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
         let team = tempfile::tempdir().unwrap();
@@ -283,7 +284,7 @@ mod tests {
         let (id, from, to) = (r.id.clone(), root.clone(), team.path().join("moved"));
         let once = Mutex::new(true);
         set_hook(move |room: &str| {
-            if room == id && std::mem::take(&mut *once.lock().unwrap()) { std::fs::rename(&from, &to).unwrap(); }
+            if room == id && std::mem::take(&mut *lock(&once)) { std::fs::rename(&from, &to).unwrap(); }
         });
         let mut rx = core.subscribe();
         core.rescan_room(&r.id);
@@ -298,7 +299,7 @@ mod tests {
 
     #[test]
     fn later_scan_waits_for_earlier_scan_so_deleted_file_is_not_resurrected() {
-        let _g = HOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = lock(&HOOK_TESTS);
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
         let r = core.create_room("r").unwrap();
@@ -321,7 +322,7 @@ mod tests {
 
     #[test]
     fn scan_whose_room_was_renamed_mid_scan_applies_nothing() {
-        let _g = HOOK_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = lock(&HOOK_TESTS);
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
         let r = core.create_room("r").unwrap();

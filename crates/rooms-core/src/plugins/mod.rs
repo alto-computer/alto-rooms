@@ -8,6 +8,7 @@ mod manifest;
 pub use data::{append_data, delete_data, list_data, read_data, resolve_asset, valid_path, write_data, MAX_DATA_BYTES};
 pub use manifest::{load_manifest, rev, Manifest, ICONS, PERMISSIONS};
 
+use crate::lock::lock;
 use crate::core::RoomsCore;
 use crate::error::CoreError;
 use crate::state::PluginState;
@@ -110,7 +111,7 @@ impl RoomsCore {
         }
     }
 
-    fn plugin_state(&self) -> PluginState { self.inner.lock().unwrap().state.plugins.clone() }
+    fn plugin_state(&self) -> PluginState { lock(&self.inner).state.plugins.clone() }
 
     /// Every plugin folder, sorted by id, with its enable state.
     pub fn plugins(&self) -> Vec<PluginInfo> {
@@ -132,7 +133,7 @@ impl RoomsCore {
             Err(reason) => return Err(CoreError::InvalidInput(reason)),
         };
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock(&self.inner);
             let st = &mut inner.state.plugins;
             st.enabled.retain(|x| x != id);
             if enabled {
@@ -155,7 +156,7 @@ impl RoomsCore {
     /// while closing).
     fn usable_plugin(&self, id: &str) -> Result<(PathBuf, Manifest), CoreError> {
         match find(&self.home, id) {
-            Some(Ok(m)) if self.inner.lock().unwrap().state.plugins.enabled.contains(&m.id) => Ok((plugins_dir(&self.home).join(id), m)),
+            Some(Ok(m)) if lock(&self.inner).state.plugins.enabled.contains(&m.id) => Ok((plugins_dir(&self.home).join(id), m)),
             _ => Err(CoreError::NotFound),
         }
     }
@@ -193,7 +194,7 @@ impl RoomsCore {
         let line = crate::tools::envelope_line(&chrono::Local::now().to_rfc3339(), &call.name, &call.input);
         // On this route a refused data path has always answered `invalid_input`, not `invalid_path`.
         append_data(&dir, &path, &line).map_err(|e| match e { CoreError::InvalidPath => CoreError::InvalidInput("invalid_path".into()), e => e })?;
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         self.emit(&mut inner, EventKind::PluginDataChanged { plugin_id: call.plugin_id.clone(), path: path.clone() });
         Ok(ToolResult { path })
     }
@@ -233,7 +234,7 @@ impl RoomsCore {
         let mut copied = Vec::new();
         for dir in dirs {
             let Some(m) = install_bundled(&self.home, &dir)? else { continue };
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock(&self.inner);
             let st = &mut inner.state.plugins;
             if !st.bundled.contains(&m.id) {
                 st.bundled.push(m.id.clone());
@@ -255,7 +256,7 @@ impl RoomsCore {
 
     /// Tells clients the plugin list may have changed (the watcher calls this).
     pub fn plugins_changed(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock(&self.inner);
         self.emit(&mut inner, EventKind::PluginsChanged {});
     }
 }

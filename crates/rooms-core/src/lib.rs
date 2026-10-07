@@ -6,6 +6,7 @@ pub mod error;
 mod home_sync;
 pub mod index;
 mod journal;
+mod lock;
 pub mod meta;
 pub mod onboarding;
 pub mod plugins;

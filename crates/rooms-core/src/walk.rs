@@ -1,4 +1,4 @@
-use crate::rules::{classify_path, PathClass, DEFAULT_IGNORED_DIRS};
+use crate::rules::{classify_path, is_html, PathClass, DEFAULT_IGNORED_DIRS};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
@@ -11,19 +11,12 @@ pub struct ScanEntry {
     pub class: PathClass,
 }
 
-fn is_html_ext(p: &Path) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"))
-        .unwrap_or(false)
-}
-
 /// Canonical target of a file symlink that resolves to a regular `.html`/`.htm` file. Directory
 /// symlinks inside rooms are never followed.
 pub fn symlink_html_target(link: &Path) -> Option<PathBuf> {
     let m = std::fs::metadata(link).ok()?;
     if !m.is_file() { return None; }
-    std::fs::canonicalize(link).ok().filter(|t| is_html_ext(t))
+    std::fs::canonicalize(link).ok().filter(|t| is_html(t))
 }
 
 pub fn scan_room(root: &Path, honor_gitignore: bool, in_journal: bool) -> Vec<ScanEntry> {
