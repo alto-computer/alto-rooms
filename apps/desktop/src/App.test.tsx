@@ -41,7 +41,7 @@ vi.mock("@alto-rooms/protocol-ts", async (importOriginal) => {
 });
 
 const conn = (token = "t1"): Connection => ({ baseUrl: "http://127.0.0.1:4317", token, home: "/h" });
-const CORE_ERROR = "Couldn't start the Rooms core";
+const CORE_ERROR = "Couldn't connect to Rooms";
 
 beforeEach(() => {
   vi.useFakeTimers();
