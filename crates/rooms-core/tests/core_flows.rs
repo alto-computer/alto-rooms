@@ -1164,3 +1164,100 @@ fn a_big_batch_is_one_room_resync_and_a_small_one_is_per_file() {
     let adds = drain(&mut rx).iter().filter(|e| matches!(e.kind, EventKind::ArtifactAdded { .. })).count();
     assert_eq!(adds, 3);
 }
+
+fn title_updated(k: &EventKind, title: &str) -> bool {
+    matches!(k, EventKind::ArtifactUpdated { artifact } if artifact.title == title)
+}
+
+#[test]
+fn editing_a_symlinks_original_outside_every_room_updates_the_artifact() {
+    let d = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let orig = fs::canonicalize(outside.path()).unwrap().join("orig.html");
+    fs::write(&orig, "<title>v1</title>").unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let mut rx = core.subscribe();
+    symlink(&orig, d.path().join("inbox/link.html")).unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.title == "v1"), slow(Duration::from_secs(2)));
+    std::thread::sleep(Duration::from_millis(500)); // the original's folder gets watched
+    fs::write(&orig, "<title>v2</title>").unwrap();
+    wait_for(&mut rx, |k| title_updated(k, "v2"), slow(Duration::from_secs(2)));
+    // An editor's save: write a temp file, rename it over the original.
+    let tmp = orig.with_file_name(".orig.html.swp");
+    fs::write(&tmp, "<title>v3</title>").unwrap();
+    fs::rename(&tmp, &orig).unwrap();
+    wait_for(&mut rx, |k| title_updated(k, "v3"), slow(Duration::from_secs(2)));
+}
+
+#[test]
+fn editing_an_original_in_another_room_updates_the_link_too() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let a = core.create_room("a").unwrap();
+    core.create_room("b").unwrap();
+    let orig = core.home().join("b/orig.html");
+    fs::write(&orig, "<title>v1</title>").unwrap();
+    symlink(&orig, core.home().join("a/link.html")).unwrap();
+    core.rescan_room(&a.id);
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::write(&orig, "<title>v2</title>").unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactUpdated { artifact } if artifact.room_id == a.id && artifact.title == "v2"), slow(Duration::from_secs(2)));
+}
+
+#[test]
+fn a_folder_moved_into_a_room_adds_its_files() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    let staging = d.path().join("journal/.staging"); // same volume, not scanned
+    fs::create_dir_all(staging.join("sub")).unwrap();
+    fs::write(staging.join("sub/x.html"), "<title>x</title>").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::rename(&staging, d.path().join("a/moved")).unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.room_id == r.id && artifact.rel_path == "moved/sub/x.html"), slow(Duration::from_secs(2)));
+}
+
+#[test]
+fn deleting_a_file_under_the_watcher_removes_only_it() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    fs::write(d.path().join("a/keep.html"), "").unwrap();
+    fs::write(d.path().join("a/drop.html"), "").unwrap();
+    core.rescan_room(&r.id);
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::remove_file(d.path().join("a/drop.html")).unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactRemoved { .. }), slow(Duration::from_secs(2)));
+    let rels: Vec<String> = core.list_artifacts(&r.id).unwrap().into_iter().map(|a| a.rel_path).collect();
+    assert_eq!(rels, ["keep.html"]);
+}
+
+#[test]
+fn rescan_paths_touches_only_the_given_paths() {
+    let (d, core) = home();
+    let r = core.create_room("a").unwrap();
+    fs::write(d.path().join("a/old.html"), "").unwrap();
+    fs::write(d.path().join("a/gone.html"), "").unwrap();
+    core.rescan_room(&r.id);
+    fs::remove_file(d.path().join("a/gone.html")).unwrap();
+    fs::write(d.path().join("a/new.html"), "").unwrap();
+    fs::write(d.path().join("a/unasked.html"), "").unwrap();
+    fs::write(d.path().join("a/.roomsignore"), "ign.html\n").unwrap();
+    fs::write(d.path().join("a/ign.html"), "").unwrap();
+    let mut rx = core.subscribe();
+    let rels = ["gone.html", "new.html", "ign.html", "old.html"].map(std::path::PathBuf::from);
+    core.rescan_paths(&r.id, &rels);
+    let mut got: Vec<String> = core.list_artifacts(&r.id).unwrap().into_iter().map(|a| a.rel_path).collect();
+    got.sort();
+    assert_eq!(got, ["new.html", "old.html"]);
+    let kinds: Vec<&str> = drain(&mut rx).iter().filter_map(|e| match e.kind {
+        EventKind::ArtifactAdded { .. } => Some("added"),
+        EventKind::ArtifactRemoved { .. } => Some("removed"),
+        EventKind::ArtifactUpdated { .. } => Some("updated"),
+        _ => None,
+    }).collect();
+    assert_eq!(kinds, ["added", "removed"], "old.html is unchanged");
+}

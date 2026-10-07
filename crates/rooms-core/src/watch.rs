@@ -1,9 +1,10 @@
 use crate::rules::DEFAULT_IGNORED_DIRS;
+use crate::core::owner_of;
 use crate::{CoreError, RoomsCore};
-use notify::RecursiveMode;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, NoCache};
-use rooms_protocol::{EventKind, RoomKind, RoomStatus};
-use std::collections::HashSet;
+use rooms_protocol::{EventKind, RoomId, RoomKind, RoomStatus};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -11,11 +12,12 @@ use tokio::sync::broadcast::error::RecvError;
 
 /// No file-id cache: it walks and stats every watched tree (node_modules, .git included) on each
 /// watch(), and rescans never rely on rename stitching.
-type Deb = Debouncer<notify::RecommendedWatcher, NoCache>;
+type Deb = Debouncer<RecommendedWatcher, NoCache>;
 
 /// Dropping this stops watching.
 pub struct WatchHandle {
     _debouncer: Arc<Mutex<Deb>>,
+    _targets: Arc<Mutex<TargetWatch>>,
 }
 
 /// How often rooms flagged unavailable are re-checked (their paths are not watchable while gone).
@@ -133,8 +135,92 @@ fn plugin_code_paths_exclude_data() {
     assert!(!is_plugin_code_path(d, Path::new("/h/.rooms/plugins")));
 }
 
+/// Work the watchers found, merged until the rescan worker takes it.
+#[derive(Default)]
+struct Pending {
+    /// Reconcile home's folders: a room folder may have been created, renamed or deleted.
+    sync_home: bool,
+    /// Rooms to rescan whole: a folder, an ignore file or the root itself changed.
+    rooms: HashSet<RoomId>,
+    /// Paths (relative to their room's root) to rescan one by one.
+    paths: HashMap<RoomId, HashSet<PathBuf>>,
+    /// Changed files that may be the original of linked artifacts, in any room.
+    targets: HashSet<PathBuf>,
+}
+
+fn has_doc_ext(p: &Path) -> bool {
+    p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).is_some_and(|e| matches!(e.as_str(), "html" | "htm" | "md"))
+}
+
+/// Records what a change at `p` (seen by the home or a linked-root watch) asks for. `roots` are
+/// `RoomsCore::room_roots`.
+fn note_change(pending: &mut Pending, roots: &[(RoomId, PathBuf)], home: &Path, p: &Path) {
+    let owner = owner_of(roots, p);
+    let Ok(rel) = p.strip_prefix(owner.map_or(home, |(_, root)| root.as_path())) else { return };
+    // Any direct child of home may be a room folder, whatever its name.
+    let top_level = p.parent() == Some(home);
+    if !top_level && !can_affect_index(rel, p) { return; }
+    let is_doc = has_doc_ext(p) && !p.is_dir();
+    if is_doc { pending.targets.insert(p.to_path_buf()); }
+    pending.sync_home |= top_level || owner.is_none();
+    let Some((room, _)) = owner else { return };
+    if is_doc {
+        pending.paths.entry(room.clone()).or_default().insert(rel.to_path_buf());
+    } else {
+        pending.rooms.insert(room.clone());
+    }
+}
+
+/// Does the work in `pending`: home folders first (new or renamed rooms are rescanned whole),
+/// then whole rooms, then single paths, including every artifact whose original changed.
+fn run_pending(core: &RoomsCore, pending: Pending) {
+    let Pending { sync_home, mut rooms, mut paths, targets } = pending;
+    if sync_home { rooms.extend(core.sync_home_dirs()); }
+    for (room, rel) in core.artifacts_with_targets(targets.iter().map(PathBuf::as_path)) {
+        paths.entry(room).or_default().insert(rel);
+    }
+    for room in &rooms { core.rescan_room(room); }
+    for (room, rels) in paths.into_iter().filter(|(room, _)| !rooms.contains(room)) {
+        core.rescan_paths(&room, &rels.into_iter().collect::<Vec<_>>());
+    }
+}
+
+/// Originals outside every watched root (home, linked roots) are seen by a watch of their
+/// folders, non-recursive. `wanted` is the folder set last asked for (some may have failed).
+struct TargetWatch {
+    watcher: RecommendedWatcher,
+    wanted: HashSet<PathBuf>,
+    watched: HashSet<PathBuf>,
+}
+
+/// Brings the target watch in line with the index. Returns whether the watch set changed.
+fn sync_target_watch(core: &RoomsCore, tw: &Mutex<TargetWatch>) -> bool {
+    let want: HashSet<PathBuf> = core.outside_targets().iter().filter_map(|t| t.parent().map(Path::to_path_buf)).collect();
+    let mut tw = tw.lock().unwrap();
+    if want == tw.wanted { return false; }
+    let TargetWatch { watcher, wanted, watched } = &mut *tw;
+    // One batch: FSEvents restarts its stream once, not once per folder.
+    let mut batch = watcher.paths_mut();
+    for d in watched.difference(&want) { let _ = batch.remove(d); }
+    let mut now = HashSet::new();
+    for d in &want {
+        if watched.contains(d) || batch.add(d, RecursiveMode::NonRecursive).is_ok() { now.insert(d.clone()); }
+    }
+    if let Err(e) = batch.commit() { eprintln!("rooms-core: updating the original-file watch failed: {e}"); }
+    *watched = now;
+    *wanted = want;
+    true
+}
+
+/// How long the debouncer waits for a path to go quiet, and how often it checks. Rescans are
+/// per path now, so this is most of a new file's latency.
+const DEBOUNCE: Duration = Duration::from_millis(80);
+const DEBOUNCE_TICK: Duration = Duration::from_millis(20);
+
+/// Minimum gap between syncs of the original-file watch (each change restarts its stream).
+const TARGET_SYNC_MIN_GAP: Duration = Duration::from_millis(250);
+
 pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
-    let c2 = core.clone();
     let rooms_dir = core.home().join(".rooms");
     let home = core.home().to_path_buf();
     let plugins_dir = crate::plugins::plugins_dir(core.home());
@@ -145,39 +231,38 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         Some(core) => { core.resync_all(); true }
         None => false,
     });
+    // Rescans run on their own worker, not on the watchers' threads: the callbacks only record
+    // what changed, and everything recorded while a rescan runs is served by the next one.
+    let pending = Arc::new(Mutex::new(Pending::default()));
+    let (wwork, pending_w) = (core.downgrade(), pending.clone());
+    let work = spawn_coalescer(Duration::ZERO, move || match wwork.upgrade() {
+        Some(core) => { run_pending(&core, std::mem::take(&mut *pending_w.lock().unwrap())); true }
+        None => false,
+    });
+    let (wcore_cb, pending_cb, work_cb, resync_cb) = (core.downgrade(), pending.clone(), work.clone(), resync.clone());
     let on_events = move |res: DebounceEventResult| {
+        let Some(c2) = wcore_cb.upgrade() else { return };
         match res {
             // Overflow (events were dropped) or a watcher error: per-room rescans can't be trusted.
             Ok(events) if events.iter().any(|ev| ev.need_rescan()) => {
                 eprintln!("rooms-core: watch_overflow: the watcher dropped events; resyncing everything");
-                let _ = resync.send(());
+                let _ = resync_cb.send(());
             }
             Err(errs) => {
                 for e in errs { eprintln!("rooms-core: watcher error: {e}"); }
-                let _ = resync.send(());
+                let _ = resync_cb.send(());
             }
             Ok(events) => {
                 // A plugin's code or manifest changed (its own data/ writes don't count): clients list again.
                 if events.iter().flat_map(|ev| ev.paths.iter()).any(|p| is_plugin_code_path(&plugins_dir, p)) {
                     c2.plugins_changed();
                 }
-                let paths = events.iter().flat_map(|ev| ev.paths.iter()).filter(|p| !p.starts_with(&rooms_dir));
-                // A direct child of home (or a path no room owns yet) may be a folder created,
-                // renamed or deleted in Finder: reconcile owned rooms first (emits room.* events).
-                let mut rooms = HashSet::new();
-                let mut sync_home = false;
-                for p in paths {
-                    let owner = c2.room_and_root_for_path(p);
-                    let root = owner.as_ref().map_or(home.as_path(), |(_, root)| root.as_path());
-                    let Ok(rel) = p.strip_prefix(root) else { continue };
-                    // Any direct child of home may be a room folder, whatever its name.
-                    let top_level = p.parent() == Some(home.as_path());
-                    if !top_level && !can_affect_index(rel, p) { continue; }
-                    sync_home |= top_level || owner.is_none();
-                    if let Some((id, _)) = owner { rooms.insert(id); }
+                let roots = c2.room_roots();
+                let mut pending = pending_cb.lock().unwrap();
+                for p in events.iter().flat_map(|ev| ev.paths.iter()).filter(|p| !p.starts_with(&rooms_dir)) {
+                    note_change(&mut pending, &roots, &home, p);
                 }
-                if sync_home { rooms.extend(c2.sync_home_dirs()); }
-                for id in rooms { c2.rescan_room(&id); }
+                let _ = work_cb.send(());
             }
         }
     };
@@ -188,16 +273,41 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         Some(core) => { core.rescan_all(); true }
         None => false,
     });
-    let debouncer = new_debouncer_opt::<_, notify::RecommendedWatcher, _>(Duration::from_millis(300), None, on_events, NoCache, notify::Config::default())
+    let debouncer = new_debouncer_opt::<_, RecommendedWatcher, _>(DEBOUNCE, Some(DEBOUNCE_TICK), on_events, NoCache, notify::Config::default())
         .map_err(|e| CoreError::WriteFailed(e.to_string()))?;
     let deb = Arc::new(Mutex::new(debouncer));
     watch_dir(&deb, core.home()).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
     let watched = Arc::new(Mutex::new(HashSet::new()));
     let failed = Arc::new(Mutex::new(HashSet::new()));
     ensure_linked_watched(&core, &deb, &watched, &failed); // the startup backfill covers the gap
+
+    // An edit to an original (or an editor's tmp + rename over it) refreshes its artifacts.
+    let (pending_t, work_t, resync_t) = (pending.clone(), work.clone(), resync.clone());
+    let target_watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
+        Ok(ev) if ev.need_rescan() => { let _ = resync_t.send(()); }
+        Ok(ev) => {
+            pending_t.lock().unwrap().targets.extend(ev.paths.into_iter().filter(|p| has_doc_ext(p)));
+            let _ = work_t.send(());
+        }
+        Err(e) => eprintln!("rooms-core: original-file watcher error: {e}"),
+    }).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
+    let targets = Arc::new(Mutex::new(TargetWatch { watcher: target_watcher, wanted: HashSet::new(), watched: HashSet::new() }));
+    let (wcore_ts, wtargets, pending_ts, work_ts) = (core.downgrade(), Arc::downgrade(&targets), pending.clone(), work.clone());
+    let target_sync = spawn_coalescer(TARGET_SYNC_MIN_GAP, move || {
+        let (Some(core), Some(tw)) = (wcore_ts.upgrade(), wtargets.upgrade()) else { return false };
+        // Edits made while the stream restarted are lost: re-check every outside original.
+        if sync_target_watch(&core, &tw) {
+            pending_ts.lock().unwrap().targets.extend(core.outside_targets());
+            let _ = work_ts.send(());
+        }
+        true
+    });
+    let _ = target_sync.send(()); // the index may already hold artifacts from the last run
+    drop((pending, work));
+
     // Helper threads hold only weak references, so dropping the handle and every RoomsCore ends them.
-    // (The debouncer callback owns a strong core; the debouncer's own thread drops it shortly after
-    // the Debouncer is dropped, since Drop only signals stop.)
+    // (The debouncer callback holds a weak core too; its thread ends shortly after the Debouncer
+    // is dropped, since Drop only signals stop.)
     let (wcore, wdeb) = (core.downgrade(), Arc::downgrade(&deb));
     let mut rx = core.subscribe();
     let (w3, f3) = (watched.clone(), failed.clone());
@@ -208,6 +318,9 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
             Ok(e) => {
                 let room = match e.kind {
                     EventKind::RoomAdded { room } | EventKind::RoomUpdated { room } if room.kind == RoomKind::Linked => room,
+                    // Artifacts (and so their originals) changed: the original-file watch may need to follow.
+                    EventKind::ArtifactAdded { .. } | EventKind::ArtifactUpdated { .. } | EventKind::ArtifactRemoved { .. }
+                    | EventKind::Resync { .. } => { let _ = target_sync.send(()); continue }
                     _ => continue,
                 };
                 let (Some(core), Some(deb)) = (wcore3.upgrade(), wdeb3.upgrade()) else { break };
@@ -221,8 +334,10 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                 } else if ensure_linked_watched(&core, &deb, &w3, &f3) {
                     let _ = rescan3.send(());
                 }
+                // A linked root came or went: originals under it move in or out of the target watch.
+                let _ = target_sync.send(());
             }
-            Err(RecvError::Lagged(_)) => continue,
+            Err(RecvError::Lagged(_)) => { let _ = target_sync.send(()); }
             Err(RecvError::Closed) => break,
         }
     });
@@ -233,7 +348,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         core.rescan_unavailable();
         if ensure_linked_watched(&core, &deb, &watched, &failed) { let _ = rescan.send(()); }
     });
-    Ok(WatchHandle { _debouncer: deb })
+    Ok(WatchHandle { _debouncer: deb, _targets: targets })
 }
 
 pub fn open_and_watch(home: &Path) -> Result<(RoomsCore, WatchHandle), CoreError> {

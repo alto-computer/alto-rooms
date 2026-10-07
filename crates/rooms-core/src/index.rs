@@ -148,24 +148,57 @@ impl Index {
 
     /// Phase 3, run under the core lock: one transaction. Upserts `facts`, removes rows not in `present`.
     pub fn apply(&mut self, room_id: &str, facts: &[FileFacts], present: &HashSet<String>) -> Result<Vec<Change>, CoreError> {
-        let mut changes = Vec::new();
-        self.conn.execute_batch("BEGIN").map_err(err)?;
-        let r = (|| -> Result<(), CoreError> {
-            for f in facts { if let Some(c) = self.upsert_facts(room_id, f)? { changes.push(c); } }
+        self.in_transaction(|ix, changes| {
+            for f in facts { changes.extend(ix.upsert_facts(room_id, f)?); }
             let existing: Vec<String> = {
-                let mut st = self.conn.prepare("SELECT rel_path FROM artifacts WHERE room_id = ?1").map_err(err)?;
+                let mut st = ix.conn.prepare("SELECT rel_path FROM artifacts WHERE room_id = ?1").map_err(err)?;
                 let rows = st.query_map(params![room_id], |r| r.get(0)).map_err(err)?;
                 rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?
             };
-            for rel in existing.into_iter().filter(|r| !present.contains(r)) {
-                if let Some(c) = self.remove_one(room_id, &rel)? { changes.push(c); }
-            }
+            for rel in existing.into_iter().filter(|r| !present.contains(r)) { changes.extend(ix.remove_one(room_id, &rel)?); }
             Ok(())
-        })();
-        match r {
-            Ok(()) => { self.conn.execute_batch("COMMIT").map_err(err)?; Ok(changes) }
+        })
+    }
+
+    /// `apply` for some paths only: upserts `facts` and removes the rows at `gone`, in one transaction.
+    pub fn apply_paths(&mut self, room_id: &str, facts: &[FileFacts], gone: &[String]) -> Result<Vec<Change>, CoreError> {
+        self.in_transaction(|ix, changes| {
+            for f in facts { changes.extend(ix.upsert_facts(room_id, f)?); }
+            for rel in gone { changes.extend(ix.remove_one(room_id, rel)?); }
+            Ok(())
+        })
+    }
+
+    /// Runs `f` in one transaction, collecting its changes; on error rolls back and forgets the
+    /// days it touched.
+    fn in_transaction(&mut self, f: impl FnOnce(&mut Self, &mut Vec<Change>) -> Result<(), CoreError>) -> Result<Vec<Change>, CoreError> {
+        let mut changes = Vec::new();
+        self.conn.execute_batch("BEGIN").map_err(err)?;
+        match f(self, &mut changes).and_then(|()| self.conn.execute_batch("COMMIT").map_err(err)) {
+            Ok(()) => Ok(changes),
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
         }
+    }
+
+    /// The fingerprint of the row at `room_id/rel_path`, if any.
+    pub fn fingerprint(&self, room_id: &str, rel_path: &str) -> Result<Option<Fingerprint>, CoreError> {
+        self.conn.prepare_cached("SELECT target, updated_at, created_day FROM artifacts WHERE id = ?1").map_err(err)?
+            .query_row(params![artifact_id(room_id, rel_path)], |r| Ok(Fingerprint { target: r.get(0)?, updated_at: r.get(1)?, created_day: r.get(2)? }))
+            .optional().map_err(err)
+    }
+
+    /// (room, rel_path) of every row whose original is `target`.
+    pub fn rows_with_target(&self, target: &str) -> Result<Vec<(String, String)>, CoreError> {
+        let mut st = self.conn.prepare_cached("SELECT room_id, rel_path FROM artifacts WHERE target = ?1").map_err(err)?;
+        let rows = st.query_map(params![target], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
+    }
+
+    /// Every distinct original path in the index.
+    pub fn targets(&self) -> Result<Vec<String>, CoreError> {
+        let mut st = self.conn.prepare("SELECT DISTINCT target FROM artifacts").map_err(err)?;
+        let rows = st.query_map([], |r| r.get(0)).map_err(err)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
     }
 
     /// Kept for callers and tests: the three phases in one call (used where no lock split matters).

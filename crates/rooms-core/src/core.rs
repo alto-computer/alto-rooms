@@ -24,6 +24,11 @@ fn root_available(root: &Path) -> bool {
     root.is_dir() && std::fs::read_dir(root).is_ok()
 }
 
+/// The room in `roots` (as `room_roots` returns them, longest first) owning `abs_path`, and its root.
+pub fn owner_of<'a>(roots: &'a [(RoomId, PathBuf)], abs_path: &Path) -> Option<&'a (RoomId, PathBuf)> {
+    roots.iter().find(|(_, root)| abs_path.starts_with(root))
+}
+
 #[derive(Clone)]
 pub struct RoomsCore {
     inner: Arc<Mutex<Inner>>,
@@ -327,18 +332,41 @@ impl RoomsCore {
         let lock = self.scan_lock(room);
         let _serial = lock.lock().unwrap(); // lock order: room scan lock → Inner
         let Some((root, kind)) = self.room_root(room) else { return Ok(()) };
-        if !root_available(&root) {
-            // Keep the rows; only flag the room (spec §2: 방은 유지, status unavailable, 이벤트 발행).
-            let mut inner = self.inner.lock().unwrap();
-            if inner.state.find(room).is_some() && inner.unavailable.insert(room.clone()) {
-                self.emit_room_updated(&mut inner, room);
-            }
-            return Ok(());
-        }
+        if !root_available(&root) { self.flag_unavailable(room); return Ok(()); }
         let entries = scan_room(&root, kind == RoomKind::Linked, kind == RoomKind::Journal); // no lock
         let fps = { self.inner.lock().unwrap().index.fingerprints(room)? };
         let facts: Vec<_> = entries.iter().filter_map(|e| read_entry(room, e, fps.get(&e.rel_path))).collect(); // no lock
         let present: HashSet<String> = entries.iter().filter(|e| e.class == PathClass::Artifact).map(|e| e.rel_path.clone()).collect();
+        self.apply_scan(room, &root, |index| index.apply(room, &facts, &present))
+    }
+
+    /// The rescan pipeline for some paths of a room only (each relative to its root): a path that
+    /// is an artifact now is upserted, any other path's row is removed. Same locking as
+    /// `try_rescan_room`; an unavailable root takes the full rescan, which flags it.
+    fn try_rescan_paths(&self, room: &RoomId, rels: &[PathBuf]) -> Result<(), CoreError> {
+        let lock = self.scan_lock(room);
+        let _serial = lock.lock().unwrap(); // lock order: room scan lock → Inner
+        let Some((root, kind)) = self.room_root(room) else { return Ok(()) };
+        if !root_available(&root) { self.flag_unavailable(room); return Ok(()); }
+        let (honor_gitignore, in_journal) = (kind == RoomKind::Linked, kind == RoomKind::Journal);
+        let mut facts = Vec::new();
+        let mut gone = Vec::new();
+        for rel in rels {
+            let rel_path = rel.to_string_lossy().replace('\\', "/");
+            match crate::walk::entry_at(&root, rel, honor_gitignore, in_journal) {
+                Some(e) if e.class == PathClass::Artifact => {
+                    let fp = { self.inner.lock().unwrap().index.fingerprint(room, &rel_path)? };
+                    facts.extend(read_entry(room, &e, fp.as_ref())); // no lock
+                }
+                _ => gone.push(rel_path),
+            }
+        }
+        self.apply_scan(room, &root, |index| index.apply_paths(room, &facts, &gone))
+    }
+
+    /// Phase 3 of a scan of `room` at `root`, under `Inner`: runs `apply` and emits its changes,
+    /// unless the room was removed or moved, or its root vanished, while the scan was reading.
+    fn apply_scan(&self, room: &RoomId, root: &Path, apply: impl FnOnce(&mut Index) -> Result<Vec<Change>, CoreError>) -> Result<(), CoreError> {
         #[cfg(test)]
         {
             // Clone out and release the hook mutex before calling, so the hook never serializes scans.
@@ -349,19 +377,27 @@ impl RoomsCore {
         // Removed while we were reading (Finder delete) → write nothing for it. Renamed while we were
         // reading (root moved) → our entries describe the old root; the rename's follow-up rescan
         // does the work.
-        if room != JOURNAL_ROOM_ID && inner.state.find(room).map(|r| &r.path) != Some(&root) { return Ok(()); }
+        if room != JOURNAL_ROOM_ID && inner.state.find(room).map(|r| r.path.as_path()) != Some(root) { return Ok(()); }
         // Root vanished mid-walk: the entries may be partial, so applying could wipe rows. Take the
         // unavailable path instead (flag + one room.updated). A stat under `Inner`, on purpose.
-        if !root_available(&root) {
+        if !root_available(root) {
             if inner.state.find(room).is_some() && inner.unavailable.insert(room.clone()) {
                 self.emit_room_updated(&mut inner, room);
             }
             return Ok(());
         }
-        let ch = inner.index.apply(room, &facts, &present)?;
+        let ch = apply(&mut inner.index)?;
         self.emit_changes(&mut inner, ch);
         if inner.unavailable.remove(room) { self.emit_room_updated(&mut inner, room); }
         Ok(())
+    }
+
+    /// Keeps the rows; only flags the room (spec §2: 방은 유지, status unavailable, 이벤트 발행).
+    fn flag_unavailable(&self, room: &RoomId) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.state.find(room).is_some() && inner.unavailable.insert(room.clone()) {
+            self.emit_room_updated(&mut inner, room);
+        }
     }
 
     fn emit_room_updated(&self, inner: &mut Inner, room: &RoomId) {
@@ -382,18 +418,46 @@ impl RoomsCore {
         if let Err(e) = self.try_rescan_room(room) { eprintln!("rooms-core: rescan of room {room} failed: {e}"); }
     }
 
-    /// Room owning `abs_path` (longest matching root wins: journal/inbox live under home).
-    pub fn room_for_path(&self, abs_path: &Path) -> Option<RoomId> {
-        self.room_and_root_for_path(abs_path).map(|(id, _)| id)
+    /// Rescans only `rels` (relative to the room's root) of `room`; see `try_rescan_paths`.
+    pub fn rescan_paths(&self, room: &RoomId, rels: &[PathBuf]) {
+        if let Err(e) = self.try_rescan_paths(room, rels) { eprintln!("rooms-core: rescan of {} paths in room {room} failed: {e}", rels.len()); }
     }
 
-    /// `room_for_path` plus that room's root.
-    pub fn room_and_root_for_path(&self, abs_path: &Path) -> Option<(RoomId, PathBuf)> {
-        let roots = { Self::all_roots(&self.inner.lock().unwrap()) };
-        roots.into_iter()
-            .filter(|(_, root, _)| abs_path.starts_with(root))
-            .max_by_key(|(_, root, _)| root.as_os_str().len())
-            .map(|(id, root, _)| (id, root))
+    /// (room, path relative to its root) of every artifact whose original is one of `targets`.
+    pub fn artifacts_with_targets<'a>(&self, targets: impl IntoIterator<Item = &'a Path>) -> Vec<(RoomId, PathBuf)> {
+        let inner = self.inner.lock().unwrap();
+        let mut out = Vec::new();
+        for t in targets {
+            match inner.index.rows_with_target(&t.to_string_lossy()) {
+                Ok(rows) => out.extend(rows.into_iter().map(|(room, rel)| (room, PathBuf::from(rel)))),
+                Err(e) => eprintln!("rooms-core: looking up artifacts of {} failed: {e}", t.display()),
+            }
+        }
+        out
+    }
+
+    /// The originals that live outside home and every linked root, so no room watch sees them.
+    pub fn outside_targets(&self) -> Vec<PathBuf> {
+        let (targets, linked) = {
+            let inner = self.inner.lock().unwrap();
+            let linked: Vec<PathBuf> = inner.state.rooms.iter().filter(|r| r.kind == RoomKind::Linked).map(|r| r.path.clone()).collect();
+            (inner.index.targets().unwrap_or_default(), linked)
+        };
+        let watched = |p: &Path| p.starts_with(&self.home) || linked.iter().any(|root| p.starts_with(root));
+        targets.into_iter().map(PathBuf::from).filter(|t| !watched(t)).collect()
+    }
+
+    /// Every room root (journal included), longest first, for mapping many paths to rooms with one
+    /// lock (see `owner_of`).
+    pub fn room_roots(&self) -> Vec<(RoomId, PathBuf)> {
+        let mut roots: Vec<_> = Self::all_roots(&self.inner.lock().unwrap()).into_iter().map(|(id, root, _)| (id, root)).collect();
+        roots.sort_by_key(|(_, root)| std::cmp::Reverse(root.as_os_str().len()));
+        roots
+    }
+
+    /// Room owning `abs_path` (longest matching root wins: journal/inbox live under home).
+    pub fn room_for_path(&self, abs_path: &Path) -> Option<RoomId> {
+        owner_of(&self.room_roots(), abs_path).map(|(id, _)| id.clone())
     }
 
     /// Re-reads the direct children of home (called by the watcher when a batch touches one):

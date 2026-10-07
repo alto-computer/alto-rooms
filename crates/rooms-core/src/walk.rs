@@ -1,5 +1,6 @@
 use crate::rules::{classify_path, PathClass, DEFAULT_IGNORED_DIRS};
-use ignore::WalkBuilder;
+use ignore::gitignore::GitignoreBuilder;
+use ignore::{Match, WalkBuilder};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -65,6 +66,51 @@ pub fn scan_room(root: &Path, honor_gitignore: bool, in_journal: bool) -> Vec<Sc
     out
 }
 
+/// The entry `scan_room(root, ..)` would list at `rel`, found without walking the room: `None`
+/// if nothing is there or the scan would skip it (ignored name or folder, ignore rules, a link
+/// that is not to an html file, or reached through a linked folder, which scans never follow).
+pub fn entry_at(root: &Path, rel: &Path, honor_gitignore: bool, in_journal: bool) -> Option<ScanEntry> {
+    let class = classify_path(rel, in_journal);
+    if class == PathClass::Ignored { return None; }
+    let abs = root.join(rel);
+    let ft = std::fs::symlink_metadata(&abs).ok()?.file_type();
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    let parent = rel.parent()?;
+    if std::fs::canonicalize(abs.parent()?).ok()? != canonical_root.join(parent) { return None; }
+    let target = if ft.is_file() {
+        canonical_root.join(rel)
+    } else if ft.is_symlink() && class == PathClass::Artifact {
+        symlink_html_target(&abs)?
+    } else {
+        return None;
+    };
+    if is_ignored(root, rel, honor_gitignore) { return None; }
+    Some(ScanEntry { rel_path: rel.to_string_lossy().replace('\\', "/"), abs_path: abs, target, class })
+}
+
+/// Whether the ignore files `scan_room` honors exclude `rel`: `.roomsignore` (and `.gitignore`
+/// when `honor_gitignore`) in each folder from `rel`'s parent up to `root`. The deepest file with
+/// a matching rule decides; within one folder `.roomsignore` comes first.
+fn is_ignored(root: &Path, rel: &Path, honor_gitignore: bool) -> bool {
+    let names: &[&str] = if honor_gitignore { &[".roomsignore", ".gitignore"] } else { &[".roomsignore"] };
+    let abs = root.join(rel);
+    for dir in rel.ancestors().skip(1).map(|a| root.join(a)) {
+        for name in names {
+            let file = dir.join(name);
+            if !file.is_file() { continue; }
+            let mut b = GitignoreBuilder::new(&dir);
+            if b.add(&file).is_some() { continue; }
+            let Ok(rules) = b.build() else { continue };
+            match rules.matched_path_or_any_parents(&abs, false) {
+                Match::Ignore(_) => return true,
+                Match::Whitelist(_) => return false,
+                Match::None => {}
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +159,60 @@ mod tests {
         let v = scan_room(&room, false, false);
         assert_eq!(rels(&v), vec!["spec.html"]);
         assert_eq!(v[0].target, fs::canonicalize(orig.join("spec.html")).unwrap());
+    }
+
+    /// Every path under `root`, files and links (not folders), relative.
+    fn all_paths(root: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for e in fs::read_dir(&dir).unwrap().flatten() {
+                let ft = e.file_type().unwrap();
+                if ft.is_dir() { stack.push(e.path()); } else { out.push(e.path().strip_prefix(root).unwrap().to_path_buf()); }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn entry_at_agrees_with_the_walk_for_every_path() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().join("room");
+        let orig = d.path().join("elsewhere");
+        for dir in ["sub/deep", "node_modules/x", ".git", "gen", "keep/gen", "linked"] { fs::create_dir_all(r.join(dir)).unwrap(); }
+        fs::create_dir_all(&orig).unwrap();
+        fs::write(orig.join("o.html"), "").unwrap();
+        fs::write(orig.join("o.txt"), "").unwrap();
+        fs::write(orig.join("in-linked-dir.html"), "").unwrap();
+        for f in ["a.html", "b.htm", "c.md", "x.png", "sub/s.html", "sub/deep/d.html", "sub/deep/drop.html",
+                  "node_modules/x/n.html", ".git/g.html", ".hidden.html", "gen/g.html", "keep/gen/k.html",
+                  "git.html", "sub/git2.html", "sub/back.html"] {
+            fs::write(r.join(f), "").unwrap();
+        }
+        fs::write(r.join(".roomsignore"), "gen/\n*.png\nsub/back.html\n").unwrap();
+        fs::write(r.join("sub/.roomsignore"), "deep/drop.html\n!back.html\n").unwrap();
+        fs::write(r.join(".gitignore"), "git.html\n").unwrap();
+        fs::write(r.join("sub/.gitignore"), "git2.html\n").unwrap();
+        symlink(orig.join("o.html"), r.join("link.html")).unwrap();
+        symlink(orig.join("o.txt"), r.join("bad.html")).unwrap();
+        symlink(orig.join("o.html"), r.join("gen/ign.html")).unwrap();
+        symlink(&orig, r.join("linked/dir")).unwrap();
+        let in_linked_dir = Path::new("linked/dir/in-linked-dir.html");
+        for honor in [false, true] {
+            let walked = scan_room(&r, honor, false);
+            let expected = ["a.html", "b.htm", "link.html", "sub/back.html", "sub/deep/d.html", "sub/s.html"];
+            let extra: &[&str] = if honor { &[] } else { &["git.html", "sub/git2.html"] };
+            let mut expected: Vec<&str> = expected.iter().chain(extra).copied().collect();
+            expected.sort();
+            assert_eq!(rels(&walked), expected, "gitignore: {honor}");
+            let mut paths = all_paths(&r);
+            paths.push(in_linked_dir.to_path_buf());
+            for rel in paths {
+                let want = walked.iter().find(|e| Path::new(&e.rel_path) == rel);
+                let got = entry_at(&r, &rel, honor, false);
+                assert_eq!(got.as_ref().map(|e| (&e.target, &e.class)), want.map(|e| (&e.target, &e.class)), "{rel:?} (gitignore: {honor})");
+            }
+        }
     }
 
     #[test]
