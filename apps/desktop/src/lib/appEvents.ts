@@ -15,7 +15,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { flushAllNoteSaversAndWait, keepUnsavedNoteDrafts } from "./noteSaver";
+import { flushAllNoteSaversAndWait, keepUnsavedNoteDrafts } from "./noteSaverRegistry";
 
 export const MENU_NEW_TAB = "menu://new-tab";
 export const MENU_CLOSE_TAB = "menu://close-tab";

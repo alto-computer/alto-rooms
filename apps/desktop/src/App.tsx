@@ -6,7 +6,7 @@ import { flushAllPlugins } from "@/plugins/host";
 import { CLOSE_CAP_MS as PLUGIN_CLOSE_CAP_MS } from "@/plugins/PluginFrame";
 import { resolveConnection, type Connection } from "@/lib/connection";
 import { runFlushProbe } from "@/lib/flushProbe";
-import { rebindNoteSavers } from "@/lib/noteSaver";
+import { rebindNoteSavers } from "@/lib/noteSaverRegistry";
 import { isTauri } from "@/lib/tauri";
 import { StoresProvider, type RoomsClient } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";

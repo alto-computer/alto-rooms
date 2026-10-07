@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onBeforeQuitFlush, onQuitFlushAsync, runQuitFlush } from "./appEvents";
 import { setDraftStoreForTests, tauriDraftStore, textHash } from "./drafts";
-import { attachNoteSaver, createNoteSaver, flushAllNoteSaversAndWait, noteSaverKey, resetNoteSavers, type NoteSaver } from "./noteSaver";
+import { createNoteSaver, type NoteSaver } from "./noteSaver";
+import { attachNoteSaver, flushAllNoteSaversAndWait, noteSaverKey, resetNoteSavers } from "./noteSaverRegistry";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => undefined) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));

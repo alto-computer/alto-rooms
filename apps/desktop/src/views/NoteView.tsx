@@ -3,23 +3,19 @@ import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
 import { useClient, useJournalDay, useReadOnly, useInfo, useRoomsStore, useViewerStore } from "@/data/hooks";
 import { GENERIC_ERROR, noteNameErrorCopy, SAVE_FAILED } from "@/lib/errors";
-import type { NoteDraft } from "@/lib/drafts";
+import { checkNoteDraft, clearNoteDraft, type NoteDraft } from "@/lib/drafts";
 import { useBriefError } from "./briefError";
 import { EditableTitle } from "./EditableTitle";
 import { openInEditor } from "@/lib/native";
+import { createNoteSaver, type NoteSaver, type NoteSaverState } from "@/lib/noteSaver";
 import {
   attachNoteSaver,
-  checkNoteDraft,
-  clearNoteDraft,
-  createNoteSaver,
   detachNoteSaver,
   flushNoteSaverAndWait,
   noteSaverKey,
   noteSaverLive,
   renameNoteSaver,
-  type NoteSaver,
-  type NoteSaverState,
-} from "@/lib/noteSaver";
+} from "@/lib/noteSaverRegistry";
 import { findNote, noteBase, noteFileName, takeNoteBodyFocus } from "@/lib/notes";
 
 const NOT_READY: NoteSaverState = {

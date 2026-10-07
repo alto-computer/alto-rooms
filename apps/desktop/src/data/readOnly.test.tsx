@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resetNoteSavers } from "@/lib/noteSaver";
+import { resetNoteSavers } from "@/lib/noteSaverRegistry";
 import { fakeClient, memoryStorage, room } from "@/test/fakes";
 import { JournalView } from "@/views/JournalView";
 import { NoteView } from "@/views/NoteView";

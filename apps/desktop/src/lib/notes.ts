@@ -14,8 +14,17 @@ export function noteFileName(name: string): string {
   return `${noteBase(name.trim()).normalize("NFC")}.md`;
 }
 
-/** How names compare (what roomsd would map to the same file, plus case-insensitivity): trimmed, no `.md`, NFC, lowercase. */
-const key = (name: string) => noteBase(name.trim()).normalize("NFC").toLowerCase();
+/** Folds a name the way macOS's case-insensitive disk compares it: NFC, then lowercase. */
+const fold = (name: string) => name.normalize("NFC").toLowerCase();
+
+/**
+ * The key for one note file: `${date}/${fileName}` with the on-disk file name
+ * (with `.md`) folded, so `Plan.md` and `plan.md`, one file on disk, share it.
+ */
+export const noteKey = (date: string, fileName: string) => `${date}/${fold(fileName)}`;
+
+/** How names compare (what roomsd would map to the same file, plus case-insensitivity): trimmed, no `.md`, folded. */
+const key = (name: string) => fold(noteBase(name.trim()));
 
 /** The note in `notes` that `name` refers to, if any. */
 export function findNote(notes: readonly Note[], name: string): Note | undefined {
@@ -41,7 +50,7 @@ export function firstNewNoteNames(notes: readonly Note[], count: number): string
  * for it, and its view takes it once the body has loaded.
  */
 const bodyFocusRequests = new Set<string>();
-const focusKey = (date: string, fileName: string) => `${date}/${noteFileName(fileName).toLowerCase()}`;
+const focusKey = (date: string, fileName: string) => noteKey(date, noteFileName(fileName));
 export function requestNoteBodyFocus(date: string, fileName: string): void {
   bodyFocusRequests.add(focusKey(date, fileName));
 }

@@ -10,6 +10,8 @@
  * (`baseHash`), never a token.
  */
 import { invoke } from "@tauri-apps/api/core";
+import type { NoteSaver } from "./noteSaver";
+import { noteKey } from "./notes";
 import { isTauri } from "./tauri";
 
 export type NoteDraft = { text: string; baseHash: string | null };
@@ -76,4 +78,92 @@ export function decodeDraft(raw: string): NoteDraft {
     // not JSON: an older plain-text draft
   }
   return { text: raw, baseHash: null };
+}
+
+/*
+ * Note drafts: a note that still could not be saved when the app quits keeps
+ * its text (and the hash of the disk body it was based on) in the draft store
+ * until a later save lands.
+ */
+const DRAFT_PREFIX = "alto-rooms.note-draft.v1:";
+/** `alto-rooms.note-draft.v1:${date}/${file}`, the file part folded like `noteKey`. */
+export const noteDraftKey = (date: string, fileName: string) => `${DRAFT_PREFIX}${noteKey(date, fileName)}`;
+
+/** Draft keys known to exist (kept this run, or read on open): only those are deleted when a save lands. */
+const knownDrafts = new Set<string>();
+
+export function hasKnownNoteDraft(date: string, fileName: string): boolean {
+  return knownDrafts.has(noteDraftKey(date, fileName));
+}
+
+/** Tests only: forgets which drafts are known to exist. */
+export function forgetKnownNoteDrafts(): void {
+  knownDrafts.clear();
+}
+
+export async function readNoteDraft(date: string, fileName: string): Promise<NoteDraft | null> {
+  const key = noteDraftKey(date, fileName);
+  try {
+    const raw = await draftStore().load(key);
+    if (raw === null) return null;
+    knownDrafts.add(key);
+    return decodeDraft(raw);
+  } catch (err) {
+    console.warn("note: could not read a draft", err);
+    return null;
+  }
+}
+
+/** Keeps `draft` for the note. Resolves `true` once written, `false` if that failed. Never rejects. */
+export function keepNoteDraft(date: string, fileName: string, draft: NoteDraft): Promise<boolean> {
+  const key = noteDraftKey(date, fileName);
+  return draftStore()
+    .save(key, encodeDraft(draft))
+    .then(
+      () => {
+        knownDrafts.add(key);
+        return true;
+      },
+      (err) => {
+        console.warn("note: could not keep a draft", err);
+        return false;
+      },
+    );
+}
+
+export async function clearNoteDraft(date: string, fileName: string): Promise<void> {
+  const key = noteDraftKey(date, fileName);
+  knownDrafts.delete(key);
+  try {
+    await draftStore().remove(key);
+  } catch (err) {
+    console.warn("note: could not delete a draft", err);
+  }
+}
+
+export type DraftCheck = { kind: "none" } | { kind: "restored" } | { kind: "conflict"; draft: NoteDraft };
+
+/**
+ * On opening a note (its saver loaded): looks for a draft kept at an earlier quit.
+ * - Same text as now: the draft is obsolete and deleted.
+ * - Local edits already pending: they win; the draft stays until a save lands.
+ * - Disk body unchanged since the draft was kept (`baseHash` matches): the draft
+ *   becomes unsaved local text, so autosave sends it ("restored").
+ * - Otherwise the disk changed meanwhile: nothing is touched ("conflict"), and
+ *   the caller offers to restore or discard it.
+ */
+export async function checkNoteDraft(saver: NoteSaver, date: string, fileName: string): Promise<DraftCheck> {
+  const draft = await readNoteDraft(date, fileName);
+  if (!draft) return { kind: "none" };
+  const s = saver.getState();
+  if (draft.text === s.text) {
+    await clearNoteDraft(date, fileName);
+    return { kind: "none" };
+  }
+  if (!s.ready || s.inFlight || s.text !== s.savedText) return { kind: "none" };
+  if (draft.baseHash !== null && draft.baseHash === textHash(s.savedText)) {
+    saver.edit(draft.text);
+    return { kind: "restored" };
+  }
+  return { kind: "conflict", draft };
 }
