@@ -26,6 +26,7 @@ case "$TRIPLE" in *windows*) EXT=".exe" ;; esac
 DEST_DIR="$DESKTOP_DIR/src-tauri/binaries"
 mkdir -p "$DEST_DIR"
 for BIN in roomsd rooms-mcp; do
-  cp "$REPO_ROOT/target/release/$BIN$EXT" "$DEST_DIR/$BIN-$TRIPLE$EXT"
+  # install, not cp: cp onto an existing file keeps its mode, and a non-executable sidecar never starts.
+  install -m 755 "$REPO_ROOT/target/release/$BIN$EXT" "$DEST_DIR/$BIN-$TRIPLE$EXT"
   echo "build-sidecar: $DEST_DIR/$BIN-$TRIPLE$EXT"
 done
