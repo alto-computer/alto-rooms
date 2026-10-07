@@ -5,6 +5,8 @@ import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { artifactDragSource, INBOX_ID } from "@/lib/drag";
 import { OnboardingCard } from "./OnboardingCard";
 import { wantsNewTab } from "@/lib/nav";
+import { useScrollMemory } from "@/lib/scrollMemory";
+import { useCurrentTabId } from "@/shell/currentTab";
 
 /**
  * The new tab: per room, how many docs arrived since the last visit.
@@ -75,6 +77,7 @@ export function NewTabView() {
   const inbox = useMemo(() => [...(artifacts[INBOX_ID] ?? [])].reverse(), [artifacts]);
 
   const shell = "flex flex-1 flex-col gap-8 overflow-y-auto bg-white px-12 pt-14 pb-10";
+  const shellRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:new`, settled);
   if (info === null) return <div className={shell} />;
 
   const waiting =
@@ -88,7 +91,7 @@ export function NewTabView() {
 
   if (rooms.every((r) => r.id === INBOX_ID)) {
     return (
-      <div className={shell}>
+      <div ref={shellRef} className={shell}>
         <OnboardingCard />
         {waiting ? <div className="mx-auto w-full max-w-[760px]">{waiting}</div> : null}
       </div>
@@ -96,7 +99,7 @@ export function NewTabView() {
   }
 
   return (
-    <div className={shell}>
+    <div ref={shellRef} className={shell}>
       <header className="flex flex-col gap-2">
         <h1 className="text-[32px] font-medium text-ink">Since your last visit</h1>
         {settled ? (

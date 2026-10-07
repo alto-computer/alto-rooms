@@ -7,6 +7,8 @@ import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { viewerInitial } from "@/lib/native";
 import { wantsNewTab } from "@/lib/nav";
+import { useScrollMemory } from "@/lib/scrollMemory";
+import { useCurrentTabId } from "@/shell/currentTab";
 import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from "@/lib/notes";
 import otterAvatar from "@/assets/otter-avatar.svg";
 import { ArtifactCard } from "./ArtifactCard";
@@ -152,6 +154,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const openDoc = useCallback((a: Artifact, newTab: boolean) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab), [viewer]);
   const day = useJournalDay(date);
   const loadError = useScopeError(`day:${date}`);
+  const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const initial = useViewerInitial();
   const readOnly = useReadOnly();
 
@@ -232,7 +235,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto bg-white px-12 pt-9 pb-6">
+    <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto bg-white px-12 pt-9 pb-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-baseline gap-3">
           <h1 className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>

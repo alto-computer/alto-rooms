@@ -27,6 +27,7 @@ import { RoomView } from "@/views/RoomView";
 import { EnableCard } from "@/plugins/EnableCard";
 import { PluginSlot } from "@/plugins/PluginSlot";
 import { allowedWithFocus, historyKey, isMenuHistoryKey, isMenuTabKey, isTextField, keyAction, tabKey, type ShortcutAction, type TabKey } from "./shortcuts";
+import { CurrentTabContext } from "./currentTab";
 import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
 
@@ -224,7 +225,11 @@ export function AppShell() {
             aria-labelledby={active ? tabDomId(active.id) : undefined}
             className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-[#ddd] bg-white"
           >
-            {active ? <TabView key={viewer.navKey(active.id)} tab={active} /> : null}
+            {active ? (
+              <CurrentTabContext.Provider value={active.id}>
+                <TabView key={viewer.navKey(active.id)} tab={active} />
+              </CurrentTabContext.Provider>
+            ) : null}
           </main>
         </div>
         {findLoaded ? (

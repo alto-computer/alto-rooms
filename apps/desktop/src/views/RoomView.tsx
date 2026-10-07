@@ -1,6 +1,8 @@
 import { useCallback, useRef, type ReactNode } from "react";
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { CircleAlert } from "lucide-react";
+import { useScrollMemory } from "@/lib/scrollMemory";
+import { useCurrentTabId } from "@/shell/currentTab";
 import { useArtifacts, useClient, useInfo, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { GENERIC_ERROR } from "@/lib/errors";
@@ -30,6 +32,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   const loadError = useScopeError(`room:${roomId}`);
   const room = rooms.find((r) => r.id === roomId);
   const readOnly = useReadOnly();
+  const gridRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:room:${roomId}`, !!artifacts?.length && !!info);
 
   // Frozen at activation: `lastVisit` is only written when leaving, and dots must not vanish while viewed.
   const baseline = useRef<string | null>(null);
@@ -54,6 +57,7 @@ export function RoomView({ roomId }: { roomId: string }) {
       // The grid scrolls inside the panel: -mx-12/px-12 put its scrollbar on the panel's
       // edge, and pt-2.5/-mt-2.5 leave room above the first row for the hover shadow.
       <div
+        ref={gridRef}
         data-grid
         data-scroll-root
         className="-mx-12 -mt-2.5 grid min-h-0 flex-1 grid-cols-[repeat(auto-fill,300px)] content-start gap-x-7 gap-y-9 overflow-y-auto px-12 pt-2.5 pb-6 [scrollbar-color:#dddddd_transparent] [scrollbar-width:thin]"
