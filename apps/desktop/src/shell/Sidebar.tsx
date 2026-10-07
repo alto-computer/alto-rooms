@@ -21,6 +21,7 @@ import { localDate } from "@/lib/dates";
 import { carriesArtifact, draggingFromRoom, endArtifactDrag, INBOX_ID, readArtifactPayload, type ArtifactDragPayload } from "@/lib/drag";
 import { moveErrorCopy } from "@/lib/errors";
 import { wantsNewTab } from "@/lib/nav";
+import { IconTip } from "@/components/IconTip";
 import { cn } from "@/lib/utils";
 import { useBriefError } from "@/views/briefError";
 import { EditableTitle } from "@/views/EditableTitle";
@@ -126,14 +127,16 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             <img src={logo} alt="" width={26} height={26} className="size-[26px] shrink-0" />
             <span className="text-[17px] font-medium text-ink">Rooms</span>
           </button>
-          <button
-            type="button"
-            aria-label="Hide sidebar (⌘B)"
-            onClick={() => viewer.setSidebarOpen(false)}
-            className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
-          >
-            <PanelLeft {...ICON} />
-          </button>
+          <IconTip label="Hide sidebar" shortcut="⌘B">
+            <button
+              type="button"
+              aria-label="Hide sidebar (⌘B)"
+              onClick={() => viewer.setSidebarOpen(false)}
+              className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+            >
+              <PanelLeft {...ICON} />
+            </button>
+          </IconTip>
         </div>
 
         <nav className="mt-4 flex flex-col gap-0.5">
@@ -155,14 +158,16 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
         <div className="mt-5 flex min-h-7 items-center justify-between pl-2.5">
           <span className="text-[12px] text-ink-3">Your rooms</span>
           {readOnly ? null : (
-            <button
-              type="button"
-              aria-label="New room"
-              onClick={() => setCreating(true)}
-              className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
-            >
-              <Plus size={16} strokeWidth={1.75} aria-hidden />
-            </button>
+            <IconTip label="New room">
+              <button
+                type="button"
+                aria-label="New room"
+                onClick={() => setCreating(true)}
+                className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+              >
+                <Plus size={16} strokeWidth={1.75} aria-hidden />
+              </button>
+            </IconTip>
           )}
         </div>
 

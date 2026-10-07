@@ -9,6 +9,7 @@ import { pluginIcon } from "@/plugins/icons";
 import type { Tab } from "@/data/viewerStore";
 import { noteBase } from "@/lib/notes";
 import { monthDay } from "@/lib/dates";
+import { IconTip } from "@/components/IconTip";
 import { cn } from "@/lib/utils";
 
 export const tabDomId = (id: string) => `tab-${id}`;
@@ -169,22 +170,28 @@ export function TabBar() {
   return (
     <div className="flex min-w-0 items-center gap-1 px-1 pb-2">
       {sidebarOpen ? null : (
-        <button type="button" aria-label="Show sidebar (⌘B)" onClick={() => viewer.setSidebarOpen(true)} className={ICON_BUTTON}>
-          <PanelLeft size={17} strokeWidth={1.75} aria-hidden />
-        </button>
+        <IconTip label="Show sidebar" shortcut="⌘B">
+          <button type="button" aria-label="Show sidebar (⌘B)" onClick={() => viewer.setSidebarOpen(true)} className={ICON_BUTTON}>
+            <PanelLeft size={17} strokeWidth={1.75} aria-hidden />
+          </button>
+        </IconTip>
       )}
-      <button type="button" aria-label="Back (⌘[)" disabled={!viewer.canGoBack()} onClick={() => viewer.back()} className={ICON_BUTTON}>
-        <ArrowLeft size={17} strokeWidth={1.75} aria-hidden />
-      </button>
-      <button
-        type="button"
-        aria-label="Forward (⌘])"
-        disabled={!viewer.canGoForward()}
-        onClick={() => viewer.forward()}
-        className={cn(ICON_BUTTON, "mr-1")}
-      >
-        <ArrowRight size={17} strokeWidth={1.75} aria-hidden />
-      </button>
+      <IconTip label="Back" shortcut="⌘[">
+        <button type="button" aria-label="Back (⌘[)" disabled={!viewer.canGoBack()} onClick={() => viewer.back()} className={ICON_BUTTON}>
+          <ArrowLeft size={17} strokeWidth={1.75} aria-hidden />
+        </button>
+      </IconTip>
+      <IconTip label="Forward" shortcut="⌘]">
+        <button
+          type="button"
+          aria-label="Forward (⌘])"
+          disabled={!viewer.canGoForward()}
+          onClick={() => viewer.forward()}
+          className={cn(ICON_BUTTON, "mr-1")}
+        >
+          <ArrowRight size={17} strokeWidth={1.75} aria-hidden />
+        </button>
+      </IconTip>
       <div
         ref={listRef}
         role="tablist"
@@ -222,9 +229,11 @@ export function TabBar() {
           </SortableContext>
         </DndContext>
       </div>
-      <button type="button" aria-label="New tab" onClick={() => viewer.open({ kind: "new" })} className={ICON_BUTTON}>
-        <Plus size={17} strokeWidth={1.75} aria-hidden />
-      </button>
+      <IconTip label="New tab" shortcut="⌘T">
+        <button type="button" aria-label="New tab" onClick={() => viewer.open({ kind: "new" })} className={ICON_BUTTON}>
+          <Plus size={17} strokeWidth={1.75} aria-hidden />
+        </button>
+      </IconTip>
     </div>
   );
 }
