@@ -240,6 +240,8 @@ mod tests {
 
     #[test]
     fn failed_index_step_puts_the_entry_back_and_changes_nothing() {
+        // Scans the inbox, which a hook test may be blocking (hooks match by room id).
+        let _g = lock(&HOOK_TESTS);
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
         let r = core.create_room("r").unwrap();
