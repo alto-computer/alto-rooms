@@ -29,7 +29,8 @@ import { PluginSlot } from "@/plugins/PluginSlot";
 import { allowedWithFocus, historyKey, isMenuHistoryKey, isMenuTabKey, isTextField, keyAction, tabKey, type ShortcutAction, type TabKey } from "./shortcuts";
 import { CurrentTabContext, TabVisibleContext } from "./currentTab";
 import { Sidebar } from "./Sidebar";
-import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
+import { TAB_PANEL_ID, tabDomId } from "./tabIds";
+import { TabBar } from "./TabBar";
 
 /** Runs a shell action (callers check the focus rule first). */
 function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => void, toggleAsk: () => void) {
