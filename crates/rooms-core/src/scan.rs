@@ -6,11 +6,11 @@
 //! against fingerprints taken under `Inner`), then apply under `Inner`. Scans of one room are
 //! serialized by its scan lock, so the last scan to apply is the latest.
 
-use crate::lock::lock;
 use crate::core::{Inner, RoomsCore};
 use crate::dangling::DanglingLinks;
 use crate::error::CoreError;
 use crate::index::{read_entry, Change, Index};
+use crate::lock::lock;
 use crate::rules::PathClass;
 use crate::walk::scan_room;
 use rooms_protocol::*;

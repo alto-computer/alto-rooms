@@ -4,11 +4,11 @@
 //! list), `home_sync` (folders changed in Finder), `scan` (keeping the index in step with disk),
 //! `artifacts`, `journal` and `plugins`.
 
-use crate::lock::lock;
 use crate::dangling::DanglingLinks;
 use crate::error::CoreError;
 use crate::home_sync::{list_home_dirs, reconcile_home_dirs, HomeChange};
 use crate::index::{Change, Index};
+use crate::lock::lock;
 use crate::state::{inode_of, RoomRecord, StateStore};
 use rooms_protocol::*;
 use std::collections::{HashMap, HashSet};

@@ -65,7 +65,7 @@ pub fn validate_note_name(name: &str) -> Result<String, CoreError> {
     let trimmed = name.trim();
     // Strip exactly ONE trailing ".md" (case-insensitively)
     // Use safe byte slicing that respects UTF-8 boundaries
-    let base = if trimmed.get(trimmed.len().saturating_sub(3)..).map_or(false, |s| s.eq_ignore_ascii_case(".md")) {
+    let base = if trimmed.get(trimmed.len().saturating_sub(3)..).is_some_and(|s| s.eq_ignore_ascii_case(".md")) {
         &trimmed[..trimmed.len()-3]
     } else {
         trimmed

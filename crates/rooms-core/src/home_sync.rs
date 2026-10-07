@@ -1,8 +1,8 @@
 //! Owned rooms follow their folders directly under home: a folder made in Finder becomes a room,
 //! a renamed one keeps its room (matched by inode), a deleted one takes its room with it.
 
-use crate::lock::lock;
 use crate::core::RoomsCore;
+use crate::lock::lock;
 use crate::state::{inode_of, RoomRecord, StateStore};
 use rooms_protocol::{EventKind, RoomId, RoomKind, INBOX_ROOM_ID};
 use std::collections::HashMap;

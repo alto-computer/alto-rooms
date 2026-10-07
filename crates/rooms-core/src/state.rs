@@ -181,7 +181,7 @@ mod tests {
             .collect();
 
         assert_eq!(corrupt_files.len(), 1);
-        let corrupt_content = std::fs::read(&dir.join(&corrupt_files[0])).unwrap();
+        let corrupt_content = std::fs::read(dir.join(&corrupt_files[0])).unwrap();
         assert_eq!(corrupt_content, garbage);
     }
 

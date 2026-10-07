@@ -39,9 +39,8 @@ pub(crate) fn clean_output(bytes: &[u8]) -> String {
     let mut it = s.chars().peekable();
     while let Some(c) = it.next() {
         if c != '\x1b' { out.push(c); continue; }
-        match it.next() {
-            Some('[') => { for d in it.by_ref() { if ('\x40'..='\x7e').contains(&d) { break; } } }
-            _ => {}
+        if let Some('[') = it.next() {
+            for d in it.by_ref() { if ('\x40'..='\x7e').contains(&d) { break; } }
         }
     }
     out.trim().to_string()

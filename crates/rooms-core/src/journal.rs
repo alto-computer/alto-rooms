@@ -3,9 +3,9 @@
 //! Note IO runs without `Inner`, under `notes_lock` (lock order: notes_lock → Inner); `Inner` is
 //! taken only to emit.
 
-use crate::lock::lock;
 use crate::core::RoomsCore;
 use crate::error::CoreError;
+use crate::lock::lock;
 use crate::rules::{classify_path, slug_key, validate_iso_date, validate_note_name, PathClass};
 use rooms_protocol::*;
 use std::collections::HashSet;

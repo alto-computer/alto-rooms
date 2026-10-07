@@ -1,9 +1,9 @@
 //! Artifacts: lookups, moving one between owned rooms, and resolving a room file to serve.
 
-use crate::lock::lock;
 use crate::core::{Inner, RoomsCore};
 use crate::error::CoreError;
 use crate::index::Change;
+use crate::lock::lock;
 use crate::rules::is_html;
 use rooms_protocol::*;
 use std::path::{Path, PathBuf};

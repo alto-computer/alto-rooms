@@ -1,9 +1,9 @@
 //! A plugin's own storage under `data/`, and the assets it serves from its folder. Pure file
 //! functions over a plugin folder; `RoomsCore` checks the plugin may use them first.
 
-use crate::lock::lock;
 use super::DATA;
 use crate::error::CoreError;
+use crate::lock::lock;
 use std::path::{Component, Path, PathBuf};
 
 /// Largest text a plugin may store in one data file (UTF-8 bytes).
@@ -90,7 +90,7 @@ pub fn list_data(dir: &Path, prefix: &str) -> Result<Vec<String>, CoreError> {
             let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
             match e.file_type() {
                 Ok(t) if t.is_dir() => stack.push((e.path(), r)),
-                Ok(t) if t.is_file() => { if r.starts_with(prefix) { out.push(r); } }
+                Ok(t) if t.is_file() && r.starts_with(prefix) => out.push(r),
                 _ => {}
             }
         }

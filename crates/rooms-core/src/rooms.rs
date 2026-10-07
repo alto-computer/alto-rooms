@@ -1,8 +1,8 @@
 //! The room list: lookups, and creating, linking, renaming and reordering rooms.
 
-use crate::lock::lock;
 use crate::core::{Inner, RoomsCore};
 use crate::error::CoreError;
+use crate::lock::lock;
 use crate::rules::{room_slug, slug_key, validate_room_name};
 use crate::state::{inode_of, RoomRecord};
 use rooms_protocol::*;

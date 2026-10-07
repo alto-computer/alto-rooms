@@ -24,14 +24,13 @@ impl Collector {
         let Some(c) = content else { return };
         let m = &mut self.meta;
         match name {
-            "rooms:title" => { if m.title.is_none() { m.title = Some(c); } }
-            "rooms:created" => {
-                if m.created.is_none() && chrono::DateTime::parse_from_rfc3339(&c).is_ok() { m.created = Some(c); }
-            }
-            "rooms:agent" => { if m.source.agent.is_none() { m.source.agent = Some(c); } }
-            "rooms:session" => { if m.source.session.is_none() { m.source.session = Some(c); } }
-            "rooms:cwd" => { if m.source.cwd.is_none() { m.source.cwd = Some(c); } }
-            "rooms:machine" => { if m.source.machine.is_none() { m.source.machine = Some(c); } }
+            // The first of each wins.
+            "rooms:title" if m.title.is_none() => m.title = Some(c),
+            "rooms:created" if m.created.is_none() && chrono::DateTime::parse_from_rfc3339(&c).is_ok() => m.created = Some(c),
+            "rooms:agent" if m.source.agent.is_none() => m.source.agent = Some(c),
+            "rooms:session" if m.source.session.is_none() => m.source.session = Some(c),
+            "rooms:cwd" if m.source.cwd.is_none() => m.source.cwd = Some(c),
+            "rooms:machine" if m.source.machine.is_none() => m.source.machine = Some(c),
             _ => {}
         }
     }
@@ -165,7 +164,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("blob.html");
         let mut bytes = vec![0xffu8, 0xfe, 0x00];
-        bytes.extend(std::iter::repeat(b'x').take(5 * 1024 * 1024));
+        bytes.extend(std::iter::repeat_n(b'x', 5 * 1024 * 1024));
         std::fs::write(&p, &bytes).unwrap();
         let m = read_meta(&p);
         assert_eq!(title_or_filename(&m, "sub/blob.html"), "blob");
