@@ -74,6 +74,7 @@ pub fn entry_at(root: &Path, rel: &Path, honor_gitignore: bool, in_journal: bool
     if class == PathClass::Ignored { return None; }
     let abs = root.join(rel);
     let ft = std::fs::symlink_metadata(&abs).ok()?.file_type();
+    if !named_exactly(&abs) { return None; }
     let canonical_root = std::fs::canonicalize(root).ok()?;
     let parent = rel.parent()?;
     if std::fs::canonicalize(abs.parent()?).ok()? != canonical_root.join(parent) { return None; }
@@ -86,6 +87,14 @@ pub fn entry_at(root: &Path, rel: &Path, honor_gitignore: bool, in_journal: bool
     };
     if is_ignored(root, rel, honor_gitignore) { return None; }
     Some(ScanEntry { rel_path: rel.to_string_lossy().replace('\\', "/"), abs_path: abs, target, class })
+}
+
+/// Whether the folder holds an entry named exactly like `abs`'s last component. APFS finds
+/// `x.html` when only `X.html` (or an NFD spelling of an NFC name) exists, so after a case- or
+/// normalization-only rename a stat alone would keep the old row next to the new one.
+fn named_exactly(abs: &Path) -> bool {
+    let (Some(dir), Some(name)) = (abs.parent(), abs.file_name()) else { return false };
+    std::fs::read_dir(dir).is_ok_and(|rd| rd.flatten().any(|e| e.file_name() == name))
 }
 
 /// Whether the ignore files `scan_room` honors exclude `rel`: `.roomsignore` (and `.gitignore`
@@ -213,6 +222,20 @@ mod tests {
                 assert_eq!(got.as_ref().map(|e| (&e.target, &e.class)), want.map(|e| (&e.target, &e.class)), "{rel:?} (gitignore: {honor})");
             }
         }
+    }
+
+    #[test]
+    fn entry_at_misses_a_name_that_only_matches_case_or_unicode_insensitively() {
+        use unicode_normalization::UnicodeNormalization;
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        let (nfc, nfd): (String, String) = ("회의.html".nfc().collect(), "회의.html".nfd().collect());
+        fs::write(r.join("X.html"), "").unwrap();
+        fs::write(r.join(&nfc), "").unwrap();
+        assert!(entry_at(r, Path::new("X.html"), false, false).is_some());
+        assert!(entry_at(r, Path::new("x.html"), false, false).is_none(), "after a case-only rename x.html is gone");
+        assert!(entry_at(r, Path::new(&nfc), false, false).is_some());
+        assert!(entry_at(r, Path::new(&nfd), false, false).is_none(), "after an NFD→NFC rename the NFD name is gone");
     }
 
     #[test]
