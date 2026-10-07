@@ -1,5 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
-import { globalTimers, type StoreTimers } from "./roomsStore";
+import { globalTimers, type Clock } from "@/lib/clock";
 
 export type Tab =
   | { id: string; kind: "room"; roomId: string }
@@ -189,10 +189,10 @@ export class ViewerStore {
   private closed: { tab: TabInput; index: number; history: TabHistory }[] = [];
   private readonly storage: StorageLike | undefined;
   private readonly now: () => Date;
-  private readonly timers: StoreTimers;
+  private readonly timers: Clock;
   private persistTimer: unknown = null;
 
-  constructor(storage?: StorageLike, now: () => Date = () => new Date(), timers: StoreTimers = globalTimers) {
+  constructor(storage?: StorageLike, now: () => Date = () => new Date(), timers: Clock = globalTimers) {
     this.storage = storage ?? defaultStorage();
     this.now = now;
     this.timers = timers;
