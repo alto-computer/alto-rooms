@@ -144,10 +144,24 @@ describe("AskBar", () => {
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q0" }));
   });
 
-  it("stop button cancels the running turn", async () => {
+  it("while running the send button is a Stop button that cancels; there is no Stop text link", async () => {
     const { client } = await setup({ k1: [turn({})] });
-    fireEvent.click(await screen.findByText("Stop"));
+    expect(await screen.findByText(/esc to interrupt/)).toBeTruthy();
+    expect(screen.queryByText("Stop")).toBeNull();
+    expect(screen.queryByLabelText("Send")).toBeNull();
+    const stop = screen.getByLabelText("Stop") as HTMLButtonElement;
+    expect(stop.disabled).toBe(false);
+    fireEvent.click(stop);
     expect(client.cancelAsk).toHaveBeenCalledWith("t1");
+  });
+
+  it("Escape while running cancels the turn and does not fold the sheet", async () => {
+    const { client } = await setup({ k1: [turn({ answer: "" })] });
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    expect(await screen.findByText("왜?")).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(client.cancelAsk).toHaveBeenCalledWith("t1");
+    expect(screen.getByText("왜?")).toBeTruthy();
   });
 
   it("shows the API error inline and keeps the draft", async () => {

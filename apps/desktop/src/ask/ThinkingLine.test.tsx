@@ -12,8 +12,8 @@ describe("ThinkingLine", () => {
     vi.useFakeTimers();
     const { container } = render(<ThinkingLine startedAt={new Date().toISOString()} />);
     expect(container.querySelector("img")).toBeNull();
-    expect(container.textContent).toBe("Thinking(0s)");
+    expect(container.textContent).toBe("Thinking(0s · esc to interrupt)");
     act(() => vi.advanceTimersByTime(2000));
-    expect(container.textContent).toBe("Thinking(2s)");
+    expect(container.textContent).toBe("Thinking(2s · esc to interrupt)");
   });
 });

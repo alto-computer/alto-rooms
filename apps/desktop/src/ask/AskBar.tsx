@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
@@ -17,7 +17,7 @@ function seconds(t: AskTurn): number | null {
   return Math.max(0, Math.round((Date.parse(t.endedAt) - Date.parse(t.startedAt)) / 1000));
 }
 
-function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop: () => void }) {
+function Turn({ t, onRetry }: { t: AskTurn; onRetry: () => void }) {
   const secs = seconds(t);
   return (
     <div className="space-y-2">
@@ -25,7 +25,6 @@ function Turn({ t, onRetry, onStop }: { t: AskTurn; onRetry: () => void; onStop:
       {t.status === "running" ? (
         <div className="flex items-center gap-2 text-[12.5px] text-ink-2">
           <ThinkingLine startedAt={t.startedAt} />
-          <button type="button" className="ml-auto underline" onClick={onStop}>Stop</button>
         </div>
       ) : (
         <>
@@ -138,7 +137,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      setSheet(false);
+      if (running) store.cancel(running.id);
+      else setSheet(false);
     } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void send(draft);
@@ -162,7 +162,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           ) : null}
           <div className="space-y-4">
             {turns.map((t) => (
-              <Turn key={t.id} t={t} onRetry={() => void send(t.question)} onStop={() => store.cancel(t.id)} />
+              <Turn key={t.id} t={t} onRetry={() => void send(t.question)} />
             ))}
           </div>
         </div>
@@ -183,12 +183,12 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
         <span className="rounded-full bg-[#f2f2f2] px-2 py-0.5 text-[11.5px] text-ink-2">{artifact.source.agent ?? "Default agent"}</span>
         <button
           type="button"
-          aria-label="Send"
-          disabled={!!running || !draft.trim()}
-          onClick={() => void send(draft)}
-          className={cn("flex size-[30px] items-center justify-center rounded-full bg-primary text-primary-foreground", (running || !draft.trim()) && "opacity-40")}
+          aria-label={running ? "Stop" : "Send"}
+          disabled={!running && !draft.trim()}
+          onClick={() => (running ? store.cancel(running.id) : void send(draft))}
+          className={cn("flex size-[30px] items-center justify-center rounded-full bg-primary text-primary-foreground", !running && !draft.trim() && "opacity-40")}
         >
-          <ArrowUp className="size-4" />
+          {running ? <Square className="size-3 fill-current" /> : <ArrowUp className="size-4" />}
         </button>
       </div>
     </div>
