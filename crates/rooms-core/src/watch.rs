@@ -31,13 +31,16 @@ fn watch_dir(deb: &Mutex<Deb>, path: &Path) -> Result<(), notify::Error> {
 /// A root that goes unavailable is dropped from the set (and unwatched) so its return re-watches.
 /// A root whose watch() fails is logged once per path (`failed` holds the already-logged paths);
 /// a later success clears the entry so a future failure logs again.
-fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<HashSet<PathBuf>>, failed: &Mutex<HashSet<PathBuf>>) {
+/// Returns whether a watch was added.
+fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<HashSet<PathBuf>>, failed: &Mutex<HashSet<PathBuf>>) -> bool {
+    let mut added = false;
     for p in core.linked_roots() {
         if watched.lock().unwrap().contains(&p) { continue; }
         match watch_dir(deb, &p) {
             Ok(()) => {
                 failed.lock().unwrap().remove(&p);
                 watched.lock().unwrap().insert(p);
+                added = true;
             }
             Err(e) => {
                 if failed.lock().unwrap().insert(p.clone()) {
@@ -46,6 +49,7 @@ fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<Has
             }
         }
     }
+    added
 }
 
 /// Minimum gap between watcher-triggered resyncs, so a persistent watcher error can't cause a
@@ -177,13 +181,20 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
             }
         }
     };
+    // Adding or removing a watch restarts the FSEvents stream, and events in that gap are lost:
+    // each change is followed by a coalesced rescan of everything (it emits only what changed).
+    let wrescan = core.downgrade();
+    let rescan = spawn_coalescer(RESYNC_MIN_GAP, move || match wrescan.upgrade() {
+        Some(core) => { core.rescan_all(); true }
+        None => false,
+    });
     let debouncer = new_debouncer_opt::<_, notify::RecommendedWatcher, _>(Duration::from_millis(300), None, on_events, NoCache, notify::Config::default())
         .map_err(|e| CoreError::WriteFailed(e.to_string()))?;
     let deb = Arc::new(Mutex::new(debouncer));
     watch_dir(&deb, core.home()).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
     let watched = Arc::new(Mutex::new(HashSet::new()));
     let failed = Arc::new(Mutex::new(HashSet::new()));
-    ensure_linked_watched(&core, &deb, &watched, &failed);
+    ensure_linked_watched(&core, &deb, &watched, &failed); // the startup backfill covers the gap
     // Helper threads hold only weak references, so dropping the handle and every RoomsCore ends them.
     // (The debouncer callback owns a strong core; the debouncer's own thread drops it shortly after
     // the Debouncer is dropped, since Drop only signals stop.)
@@ -191,6 +202,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     let mut rx = core.subscribe();
     let (w3, f3) = (watched.clone(), failed.clone());
     let (wcore3, wdeb3) = (wcore.clone(), wdeb.clone());
+    let rescan3 = rescan.clone();
     std::thread::spawn(move || loop {
         match rx.blocking_recv() {
             Ok(e) => {
@@ -202,9 +214,12 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                 if room.status == RoomStatus::Unavailable {
                     let p = PathBuf::from(&room.path);
                     f3.lock().unwrap().remove(&p);
-                    if w3.lock().unwrap().remove(&p) { let _ = deb.lock().unwrap().unwatch(&p); }
-                } else {
-                    ensure_linked_watched(&core, &deb, &w3, &f3);
+                    if w3.lock().unwrap().remove(&p) {
+                        let _ = deb.lock().unwrap().unwatch(&p);
+                        let _ = rescan3.send(());
+                    }
+                } else if ensure_linked_watched(&core, &deb, &w3, &f3) {
+                    let _ = rescan3.send(());
                 }
             }
             Err(RecvError::Lagged(_)) => continue,
@@ -216,7 +231,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         std::thread::sleep(RETRY_INTERVAL);
         let (Some(core), Some(deb)) = (wcore.upgrade(), wdeb.upgrade()) else { break };
         core.rescan_unavailable();
-        ensure_linked_watched(&core, &deb, &watched, &failed);
+        if ensure_linked_watched(&core, &deb, &watched, &failed) { let _ = rescan.send(()); }
     });
     Ok(WatchHandle { _debouncer: deb })
 }

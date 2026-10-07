@@ -216,11 +216,17 @@ impl RoomsCore {
     /// Full reconcile after the watcher lost events (overflow / error): rescan everything, then
     /// tell clients to refetch.
     pub fn resync_all(&self) {
-        self.sync_home_dirs(); // pick up folders created/renamed/deleted in Finder (takes Inner itself)
-        // Resync is emitted even if backfill_all errored, on purpose, so clients refetch.
-        if let Err(e) = self.backfill_all() { eprintln!("rooms-core: resync backfill failed: {e}"); }
+        self.rescan_all();
+        // Resync is emitted even if the rescan failed, on purpose, so clients refetch.
         let mut inner = self.inner.lock().unwrap();
         self.emit(&mut inner, EventKind::Resync { room_id: None });
+    }
+
+    /// Reconciles home folders and rescans every room, emitting what changed (no resync): for when
+    /// events may have been missed but clients' snapshots plus the change events stay valid.
+    pub fn rescan_all(&self) {
+        self.sync_home_dirs(); // pick up folders created/renamed/deleted in Finder (takes Inner itself)
+        if let Err(e) = self.backfill_all() { eprintln!("rooms-core: rescan of all rooms failed: {e}"); }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<RoomsEvent> { self.tx.subscribe() }
