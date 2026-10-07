@@ -7,7 +7,7 @@ use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, N
 use rooms_protocol::{EventKind, RoomId, RoomKind, RoomStatus};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -30,29 +30,46 @@ fn watch_dir(deb: &Mutex<Deb>, path: &Path) -> Result<(), notify::Error> {
 
 /// Linked roots live outside home, so each needs its own watch. Simple retry model:
 /// `watched` holds the roots with a live watch; any linked room that is `ok` but not in the set
-/// is (re)watched here. Callers: startup, room.added, room.updated→ok, and the retry tick.
+/// is (re)watched by `ensure`. Callers: startup, room.added, room.updated→ok, and the retry tick.
 /// A root that goes unavailable is dropped from the set (and unwatched) so its return re-watches.
 /// A root whose watch() fails is logged once per path (`failed` holds the already-logged paths);
 /// a later success clears the entry so a future failure logs again.
-/// Returns whether it touched the watcher at all: a failed watch() restarts the stream too.
-fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<HashSet<PathBuf>>, failed: &Mutex<HashSet<PathBuf>>) -> bool {
-    let mut touched = false;
-    for p in core.linked_roots() {
-        if lock(watched).contains(&p) { continue; }
-        touched = true;
-        match watch_dir(deb, &p) {
-            Ok(()) => {
-                lock(failed).remove(&p);
-                lock(watched).insert(p);
-            }
-            Err(e) => {
-                if lock(failed).insert(p.clone()) {
-                    eprintln!("rooms-core: failed to watch linked room {}: {e}", p.display());
+#[derive(Clone, Default)]
+struct LinkedWatch {
+    watched: Arc<Mutex<HashSet<PathBuf>>>,
+    failed: Arc<Mutex<HashSet<PathBuf>>>,
+}
+
+impl LinkedWatch {
+    /// Watches every available linked root not watched yet. Returns whether it touched the
+    /// watcher at all: a failed watch() restarts the stream too.
+    fn ensure(&self, core: &RoomsCore, deb: &Mutex<Deb>) -> bool {
+        let mut touched = false;
+        for p in core.linked_roots() {
+            if lock(&self.watched).contains(&p) { continue; }
+            touched = true;
+            match watch_dir(deb, &p) {
+                Ok(()) => {
+                    lock(&self.failed).remove(&p);
+                    lock(&self.watched).insert(p);
+                }
+                Err(e) => {
+                    if lock(&self.failed).insert(p.clone()) {
+                        eprintln!("rooms-core: failed to watch linked room {}: {e}", p.display());
+                    }
                 }
             }
         }
+        touched
     }
-    touched
+
+    /// Stops watching a root that went unavailable. Returns whether it was watched.
+    fn forget(&self, deb: &Mutex<Deb>, root: &Path) -> bool {
+        lock(&self.failed).remove(root);
+        let was_watched = lock(&self.watched).remove(root);
+        if was_watched { let _ = lock(deb).unwatch(root); }
+        was_watched
+    }
 }
 
 /// Minimum gap between watcher-triggered resyncs, so a persistent watcher error can't cause a
@@ -255,49 +272,53 @@ const DEBOUNCE_TICK: Duration = Duration::from_millis(20);
 /// Minimum gap between syncs of the original-file watch (each change restarts its stream).
 const TARGET_SYNC_MIN_GAP: Duration = Duration::from_millis(250);
 
-pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
+/// A coalescing worker (see `spawn_coalescer`) that runs `f` on the core; it holds only a weak
+/// core and ends once the core is gone.
+fn spawn_core_worker(core: &RoomsCore, min_gap: Duration, f: impl Fn(&RoomsCore) + Send + 'static) -> mpsc::Sender<()> {
+    let weak = core.downgrade();
+    spawn_coalescer(min_gap, move || match weak.upgrade() {
+        Some(core) => { f(&core); true }
+        None => false,
+    })
+}
+
+/// The rescan worker: takes everything `pending` has collected and runs it. Rescans run here, not
+/// on the watchers' threads: the callbacks only record what changed, and everything recorded
+/// while a rescan runs is served by the next one.
+fn spawn_rescan_worker(core: &RoomsCore, pending: Arc<Mutex<Pending>>) -> mpsc::Sender<()> {
+    spawn_core_worker(core, Duration::ZERO, move |core| {
+        let work = std::mem::take(&mut *lock(&pending)); // released before the rescans
+        run_pending(core, work);
+    })
+}
+
+/// What the home and linked-root watch does with a batch of events: record the changes in
+/// `pending` and wake the rescan worker, or ask for a full resync when events were lost.
+fn on_home_events(core: &RoomsCore, pending: Arc<Mutex<Pending>>, work: mpsc::Sender<()>, resync: mpsc::Sender<()>)
+    -> impl FnMut(DebounceEventResult) + Send + 'static {
     let rooms_dir = core.home().join(".rooms");
     let home = core.home().to_path_buf();
     let plugins_dir = crate::plugins::plugins_dir(core.home());
-    // Watcher-triggered full resyncs run coalesced on a worker that holds only a weak core; it ends
-    // when the debouncer (owner of `resync`) is dropped or the core is gone.
-    let wresync = core.downgrade();
-    let resync = spawn_coalescer(RESYNC_MIN_GAP, move || match wresync.upgrade() {
-        Some(core) => { core.resync_all(); true }
-        None => false,
-    });
-    // Rescans run on their own worker, not on the watchers' threads: the callbacks only record
-    // what changed, and everything recorded while a rescan runs is served by the next one.
-    let pending = Arc::new(Mutex::new(Pending::default()));
-    let (wwork, pending_w) = (core.downgrade(), pending.clone());
-    let work = spawn_coalescer(Duration::ZERO, move || match wwork.upgrade() {
-        Some(core) => {
-            let work = std::mem::take(&mut *lock(&pending_w)); // released before the rescans
-            run_pending(&core, work);
-            true
-        }
-        None => false,
-    });
-    let (wcore_cb, pending_cb, work_cb, resync_cb) = (core.downgrade(), pending.clone(), work.clone(), resync.clone());
-    let on_events = move |res: DebounceEventResult| {
-        let Some(c2) = wcore_cb.upgrade() else { return };
+    let weak = core.downgrade();
+    move |res: DebounceEventResult| {
+        let Some(core) = weak.upgrade() else { return };
         match res {
             // Overflow (events were dropped) or a watcher error: per-room rescans can't be trusted.
             Ok(events) if events.iter().any(|ev| ev.need_rescan()) => {
                 eprintln!("rooms-core: watch_overflow: the watcher dropped events; resyncing everything");
-                let _ = resync_cb.send(());
+                let _ = resync.send(());
             }
             Err(errs) => {
                 for e in errs { eprintln!("rooms-core: watcher error: {e}"); }
-                let _ = resync_cb.send(());
+                let _ = resync.send(());
             }
             Ok(events) => {
                 // A plugin's code or manifest changed (its own data/ writes don't count): clients list again.
                 if events.iter().flat_map(|ev| ev.paths.iter()).any(|p| is_plugin_code_path(&plugins_dir, p)) {
-                    c2.plugins_changed();
+                    core.plugins_changed();
                 }
-                let roots = c2.room_roots();
-                let mut pending = lock(&pending_cb);
+                let roots = core.room_roots();
+                let mut pending = lock(&pending);
                 for p in events.iter().flat_map(|ev| ev.paths.iter()) {
                     if !p.starts_with(&rooms_dir) {
                         note_change(&mut pending, &roots, &home, p);
@@ -305,37 +326,24 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                         pending.targets.insert(p.clone()); // `.rooms` holds no room, but may hold an original
                     }
                 }
-                let _ = work_cb.send(());
+                let _ = work.send(());
             }
         }
-    };
-    // Adding or removing a watch restarts the FSEvents stream, and events in that gap are lost:
-    // each change is followed by a coalesced rescan of everything (it emits only what changed).
-    // The long gap bounds the cost when a linked root flaps or keeps failing to be watched.
-    let wrescan = core.downgrade();
-    let rescan = spawn_coalescer(WATCH_GAP_RESCAN_MIN_GAP, move || match wrescan.upgrade() {
-        Some(core) => { core.rescan_all(); true }
-        None => false,
-    });
-    let debouncer = new_debouncer_opt::<_, RecommendedWatcher, _>(DEBOUNCE, Some(DEBOUNCE_TICK), on_events, NoCache, notify::Config::default())
-        .map_err(|e| CoreError::WriteFailed(e.to_string()))?;
-    let deb = Arc::new(Mutex::new(debouncer));
-    watch_dir(&deb, core.home()).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
-    let watched = Arc::new(Mutex::new(HashSet::new()));
-    let failed = Arc::new(Mutex::new(HashSet::new()));
-    ensure_linked_watched(&core, &deb, &watched, &failed); // the startup backfill covers the gap
+    }
+}
 
-    // An edit to an original (or an editor's tmp + rename over it) refreshes its artifacts.
-    // A folder event (created, removed, renamed) also re-syncs the watch, so the folders of
-    // dangling links' originals are followed as they come back.
-    let target_sync_cell: Arc<OnceLock<mpsc::Sender<()>>> = Arc::default();
-    let (pending_t, work_t, resync_t, sync_t) = (pending.clone(), work.clone(), resync.clone(), target_sync_cell.clone());
-    let target_watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
-        Ok(ev) if ev.need_rescan() => { let _ = resync_t.send(()); }
+/// What the original-file watch does with an event: an edit to an original (or an editor's tmp +
+/// rename over it) refreshes its artifacts. A folder event (created, removed, renamed) also
+/// re-syncs the watch (`sync`, once set), so the folders of dangling links' originals are followed
+/// as they come back.
+fn on_target_event(pending: Arc<Mutex<Pending>>, work: mpsc::Sender<()>, resync: mpsc::Sender<()>, sync: Arc<OnceLock<mpsc::Sender<()>>>)
+    -> impl FnMut(notify::Result<notify::Event>) + Send + 'static {
+    move |res: notify::Result<notify::Event>| match res {
+        Ok(ev) if ev.need_rescan() => { let _ = resync.send(()); }
         Ok(ev) => {
             let mut folder_changed = false;
             {
-                let mut pending = lock(&pending_t);
+                let mut pending = lock(&pending);
                 for p in ev.paths {
                     if has_doc_ext(&p) && !p.is_dir() {
                         pending.targets.insert(p);
@@ -345,35 +353,42 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                     }
                 }
             }
-            let _ = work_t.send(());
-            if let (true, Some(sync)) = (folder_changed, sync_t.get()) { let _ = sync.send(()); }
+            let _ = work.send(());
+            if let (true, Some(sync)) = (folder_changed, sync.get()) { let _ = sync.send(()); }
         }
         Err(e) => eprintln!("rooms-core: original-file watcher error: {e}"),
-    }).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
-    let targets = Arc::new(Mutex::new(TargetWatch { watcher: target_watcher, watched: HashSet::new(), failed: HashSet::new(), failed_at: None }));
-    let (wcore_ts, wtargets, pending_ts, work_ts) = (core.downgrade(), Arc::downgrade(&targets), pending.clone(), work.clone());
-    let target_sync = spawn_coalescer(TARGET_SYNC_MIN_GAP, move || {
-        let (Some(core), Some(tw)) = (wcore_ts.upgrade(), wtargets.upgrade()) else { return false };
+    }
+}
+
+/// Starts the original-file watch (see `TargetWatch`) and the coalesced worker that keeps its
+/// folders in line with the index, and asks for a first sync (the index may already hold
+/// artifacts from the last run). Returns the watch and that worker's sender.
+fn start_target_watch(core: &RoomsCore, pending: &Arc<Mutex<Pending>>, work: &mpsc::Sender<()>, resync: &mpsc::Sender<()>)
+    -> Result<(Arc<Mutex<TargetWatch>>, mpsc::Sender<()>), CoreError> {
+    let sync_cell: Arc<OnceLock<mpsc::Sender<()>>> = Arc::default();
+    let watcher = notify::recommended_watcher(on_target_event(pending.clone(), work.clone(), resync.clone(), sync_cell.clone()))
+        .map_err(|e| CoreError::WriteFailed(e.to_string()))?;
+    let targets = Arc::new(Mutex::new(TargetWatch { watcher, watched: HashSet::new(), failed: HashSet::new(), failed_at: None }));
+    let (wcore, wtargets, pending, work) = (core.downgrade(), Arc::downgrade(&targets), pending.clone(), work.clone());
+    let sync = spawn_coalescer(TARGET_SYNC_MIN_GAP, move || {
+        let (Some(core), Some(tw)) = (wcore.upgrade(), wtargets.upgrade()) else { return false };
         // Edits made while the stream restarted are lost: re-check every outside original.
         if sync_target_watch(&core, &tw) {
-            lock(&pending_ts).targets.extend(core.outside_targets());
-            let _ = work_ts.send(());
+            lock(&pending).targets.extend(core.outside_targets());
+            let _ = work.send(());
         }
         true
     });
-    let _ = target_sync_cell.set(target_sync.clone());
-    let _ = target_sync.send(()); // the index may already hold artifacts from the last run
-    drop((pending, work));
+    let _ = sync_cell.set(sync.clone());
+    let _ = sync.send(());
+    Ok((targets, sync))
+}
 
-    // Helper threads hold only weak references, so dropping the handle and every RoomsCore ends them.
-    // (The debouncer callback holds a weak core too; its thread ends shortly after the Debouncer
-    // is dropped, since Drop only signals stop.)
-    let (wcore, wdeb) = (core.downgrade(), Arc::downgrade(&deb));
+/// Follows the core's events: a linked room added, back or gone is (un)watched, and any change to
+/// artifacts or linked roots re-syncs the original-file watch (`target_sync`).
+fn spawn_event_follower(core: &RoomsCore, deb: Weak<Mutex<Deb>>, linked: LinkedWatch, rescan: mpsc::Sender<()>, target_sync: mpsc::Sender<()>) {
     let mut rx = core.subscribe();
-    let (w3, f3) = (watched.clone(), failed.clone());
-    let (wcore3, wdeb3) = (wcore.clone(), wdeb.clone());
-    let rescan3 = rescan.clone();
-    let (target_sync_tick, wtargets_tick) = (target_sync.clone(), Arc::downgrade(&targets));
+    let weak = core.downgrade();
     std::thread::spawn(move || loop {
         match rx.blocking_recv() {
             Ok(e) => {
@@ -384,17 +399,13 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                     | EventKind::Resync { .. } => { let _ = target_sync.send(()); continue }
                     _ => continue,
                 };
-                let (Some(core), Some(deb)) = (wcore3.upgrade(), wdeb3.upgrade()) else { break };
-                if room.status == RoomStatus::Unavailable {
-                    let p = PathBuf::from(&room.path);
-                    lock(&f3).remove(&p);
-                    if lock(&w3).remove(&p) {
-                        let _ = lock(&deb).unwatch(&p);
-                        let _ = rescan3.send(());
-                    }
-                } else if ensure_linked_watched(&core, &deb, &w3, &f3) {
-                    let _ = rescan3.send(());
-                }
+                let (Some(core), Some(deb)) = (weak.upgrade(), deb.upgrade()) else { break };
+                let watch_changed = if room.status == RoomStatus::Unavailable {
+                    linked.forget(&deb, Path::new(&room.path))
+                } else {
+                    linked.ensure(&core, &deb)
+                };
+                if watch_changed { let _ = rescan.send(()); }
                 // A linked root came or went: originals under it move in or out of the target watch.
                 let _ = target_sync.send(());
             }
@@ -402,15 +413,47 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
             Err(RecvError::Closed) => break,
         }
     });
-    // Retry tick: re-check unavailable rooms (a returning root emits room.updated→ok, which re-watches above).
+}
+
+/// Every `RETRY_INTERVAL`: re-checks unavailable rooms (a returning root emits room.updated→ok,
+/// which the event follower re-watches), retries linked roots and original folders that could not
+/// be watched (the target sync itself waits out its backoff).
+fn spawn_retry_tick(core: &RoomsCore, deb: Weak<Mutex<Deb>>, linked: LinkedWatch, rescan: mpsc::Sender<()>,
+                    target_sync: mpsc::Sender<()>, targets: Weak<Mutex<TargetWatch>>) {
+    let weak = core.downgrade();
     std::thread::spawn(move || loop {
         std::thread::sleep(RETRY_INTERVAL);
-        let (Some(core), Some(deb)) = (wcore.upgrade(), wdeb.upgrade()) else { break };
+        let (Some(core), Some(deb)) = (weak.upgrade(), deb.upgrade()) else { break };
         core.rescan_unavailable();
-        if ensure_linked_watched(&core, &deb, &watched, &failed) { let _ = rescan.send(()); }
-        // Retries original folders that could not be watched (the sync itself waits out the backoff).
-        if wtargets_tick.upgrade().is_some_and(|tw| !lock(&tw).failed.is_empty()) { let _ = target_sync_tick.send(()); }
+        if linked.ensure(&core, &deb) { let _ = rescan.send(()); }
+        if targets.upgrade().is_some_and(|tw| !lock(&tw).failed.is_empty()) { let _ = target_sync.send(()); }
     });
+}
+
+/// Watches home, the linked roots and the originals outside them, and keeps the index in step.
+/// Helper threads hold only weak references, so dropping the handle and every `RoomsCore` ends
+/// them (the debouncer's thread ends shortly after the `Debouncer` is dropped, since its Drop
+/// only signals stop).
+pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
+    // Each worker holds a weak core and ends when its senders (held by the watchers) are dropped.
+    let resync = spawn_core_worker(&core, RESYNC_MIN_GAP, RoomsCore::resync_all);
+    let pending = Arc::new(Mutex::new(Pending::default()));
+    let work = spawn_rescan_worker(&core, pending.clone());
+    // Adding or removing a watch restarts the FSEvents stream, and events in that gap are lost:
+    // each change is followed by a coalesced rescan of everything (it emits only what changed).
+    // The long gap bounds the cost when a linked root flaps or keeps failing to be watched.
+    let rescan = spawn_core_worker(&core, WATCH_GAP_RESCAN_MIN_GAP, RoomsCore::rescan_all);
+    let on_events = on_home_events(&core, pending.clone(), work.clone(), resync.clone());
+    let debouncer = new_debouncer_opt::<_, RecommendedWatcher, _>(DEBOUNCE, Some(DEBOUNCE_TICK), on_events, NoCache, notify::Config::default())
+        .map_err(|e| CoreError::WriteFailed(e.to_string()))?;
+    let deb = Arc::new(Mutex::new(debouncer));
+    watch_dir(&deb, core.home()).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
+    let linked = LinkedWatch::default();
+    linked.ensure(&core, &deb); // the startup backfill covers the gap
+    let (targets, target_sync) = start_target_watch(&core, &pending, &work, &resync)?;
+    drop((pending, work, resync));
+    spawn_event_follower(&core, Arc::downgrade(&deb), linked.clone(), rescan.clone(), target_sync.clone());
+    spawn_retry_tick(&core, Arc::downgrade(&deb), linked, rescan, target_sync, Arc::downgrade(&targets));
     Ok(WatchHandle { _debouncer: deb, _targets: targets })
 }
 
