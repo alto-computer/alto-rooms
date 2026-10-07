@@ -6,7 +6,7 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { Pencil, X } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { usePlugins, usePluginsStore, useRooms, useViewer, useViewerStore } from "@/data/hooks";
+import { usePlugins, usePluginsStore, useInfo, useViewer, useViewerStore } from "@/data/hooks";
 import { cn } from "@/lib/utils";
 import { CLOSE_CAP_MS, PluginFrame, type PluginFrameHandle } from "./PluginFrame";
 import type { HostPlugin, PluginsStore } from "./pluginsStore";
@@ -52,7 +52,7 @@ function useRetiring(store: PluginsStore, list: HostPlugin[], showing: HostPlugi
 function PluginTab({ pluginId }: { pluginId: string }) {
   const { list, loaded } = usePlugins();
   const store = usePluginsStore();
-  const { info } = useRooms();
+  const info = useInfo();
   const p = list.find((x) => x.id === pluginId && x.slots.tab);
   const usable = p && store.usable(p) ? p : undefined;
   const { retiring, done } = useRetiring(store, list, usable);
@@ -76,7 +76,7 @@ const MAX_WIDTH = 1200;
 function SidePanel({ artifact }: { artifact: Artifact }) {
   const { list } = usePlugins();
   const store = usePluginsStore();
-  const { info } = useRooms();
+  const info = useInfo();
   const { pluginPanel: panel } = useViewer();
   const viewer = useViewerStore();
   const frame = useRef<PluginFrameHandle>(null);

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { useArtifacts, useClient, useRooms, useScopeError } from "@/data/hooks";
+import { useArtifacts, useClient, useInfo, useRoomList, useScopeError } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { PluginSlot } from "@/plugins/PluginSlot";
@@ -15,7 +15,8 @@ function Centered({ children }: { children: ReactNode }) {
  * origin. Watches the artifact's room so a removal shows the "gone" copy.
  */
 export function DocView({ roomId, artifactId }: { roomId: string; artifactId: string }) {
-  const { info, rooms } = useRooms();
+  const info = useInfo();
+  const rooms = useRoomList();
   const client = useClient();
   const [loaded, setLoaded] = useState(false);
   const artifacts = useArtifacts(roomId);

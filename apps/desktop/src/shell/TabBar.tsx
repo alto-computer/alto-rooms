@@ -3,7 +3,7 @@ import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, us
 import { horizontalListSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowLeft, ArrowRight, Calendar, FileText, Folder, LayoutGrid, PanelLeft, Plus, Puzzle, X, type LucideIcon } from "lucide-react";
-import { useArtifacts, usePlugins, useRooms, useViewer, useViewerStore } from "@/data/hooks";
+import { useArtifacts, usePlugins, useInfo, useRoomList, useViewer, useViewerStore } from "@/data/hooks";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { pluginIcon } from "@/plugins/icons";
 import type { Tab } from "@/data/viewerStore";
@@ -30,13 +30,15 @@ const GONE_DOC = "Missing doc";
 
 /** Room names come from RoomsState by id on every render; tabs never cache them. */
 function RoomLabel({ roomId }: { roomId: string }) {
-  const { rooms, info } = useRooms();
+  const rooms = useRoomList();
+  const info = useInfo();
   const name = rooms.find((r) => r.id === roomId)?.name;
   return <>{name ?? (info ? GONE_ROOM : PENDING)}</>;
 }
 
 function DocLabel({ roomId, artifactId }: { roomId: string; artifactId: string }) {
-  const { rooms, info } = useRooms();
+  const rooms = useRoomList();
+  const info = useInfo();
   const artifacts = useArtifacts(roomId);
   const title = artifacts?.find((a) => a.id === artifactId)?.title;
   if (title !== undefined) return <>{title}</>;

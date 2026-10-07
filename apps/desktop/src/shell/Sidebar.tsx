@@ -15,7 +15,7 @@ import type { Room } from "@alto-rooms/protocol-ts";
 import { Calendar, CircleAlert, Folder, PanelLeft, Plus, Search } from "lucide-react";
 import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useClient, useReadOnly, useRooms, useViewer, useViewerStore } from "@/data/hooks";
+import { useClient, useReadOnly, useRoomList, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { localDate } from "@/lib/dates";
 import { carriesArtifact, draggingFromRoom, endArtifactDrag, INBOX_ID, readArtifactPayload, type ArtifactDragPayload } from "@/lib/drag";
@@ -46,7 +46,7 @@ export function openJournal(viewer: ViewerStore) {
 }
 
 export function Sidebar({ onFind }: { onFind: () => void }) {
-  const { rooms } = useRooms();
+  const rooms = useRoomList();
   const { tabs, activeId, sidebarOpen } = useViewer();
   const viewer = useViewerStore();
   const readOnly = useReadOnly();

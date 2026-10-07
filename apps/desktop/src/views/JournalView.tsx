@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { RoomsApiError, type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
-import { useClient, useJournalDay, useReadOnly, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
+import { useClient, useJournalDay, useInfo, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
@@ -146,8 +146,10 @@ function NoteCard({ note, onOpen, now }: { note: Note; onOpen: (newTab: boolean)
  * day, and the viewer's own notes. Changing the date rewrites this same tab.
  */
 export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
-  const { rooms, info } = useRooms();
+  const rooms = useRoomList();
+  const info = useInfo();
   const viewer = useViewerStore();
+  const openDoc = useCallback((a: Artifact, newTab: boolean) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab), [viewer]);
   const day = useJournalDay(date);
   const loadError = useScopeError(`day:${date}`);
   const initial = useViewerInitial();
@@ -202,7 +204,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
                     label={label}
                     isNew={isNewSince(artifact.createdAt, baselineFor(artifact.roomId))}
                     size="journal"
-                    onOpen={(newTab) => viewer.go({ kind: "doc", roomId: artifact.roomId, artifactId: artifact.id }, newTab)}
+                    onOpen={openDoc}
                   />
                 ))
               : null}

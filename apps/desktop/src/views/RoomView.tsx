@@ -1,6 +1,7 @@
-import { useRef, type ReactNode } from "react";
+import { useCallback, useRef, type ReactNode } from "react";
+import type { Artifact } from "@alto-rooms/protocol-ts";
 import { CircleAlert } from "lucide-react";
-import { useArtifacts, useClient, useReadOnly, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
+import { useArtifacts, useClient, useInfo, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { ArtifactCard } from "./ArtifactCard";
@@ -20,9 +21,11 @@ function Centered({ children }: { children: ReactNode }) {
  * the new-doc baseline captured at mount is "the moment the tab became active".
  */
 export function RoomView({ roomId }: { roomId: string }) {
-  const { rooms, info } = useRooms();
+  const rooms = useRoomList();
+  const info = useInfo();
   const client = useClient();
   const viewer = useViewerStore();
+  const openDoc = useCallback((a: Artifact, newTab: boolean) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab), [viewer]);
   const artifacts = useArtifacts(roomId);
   const loadError = useScopeError(`room:${roomId}`);
   const room = rooms.find((r) => r.id === roomId);
@@ -67,7 +70,7 @@ export function RoomView({ roomId }: { roomId: string }) {
                   isNew={isNewSince(a.createdAt, baseline.current!)}
                   size="strip"
                   draggable={roomId === INBOX_ID && !readOnly}
-                  onOpen={(newTab) => viewer.go({ kind: "doc", roomId, artifactId: a.id }, newTab)}
+                  onOpen={openDoc}
                 />
               ))
           : null}

@@ -232,7 +232,7 @@ describe("RoomView", () => {
 describe("ArtifactCard: lazy preview", () => {
   const info: Info = { version: "0", readOnly: false, home: "/h", journalRoomId: "journal", filesOrigin: "http://files.test" };
 
-  it("renders only the blank page box until the card is near the viewport", async () => {
+  it("renders only the blank page box until the card is near the viewport, and unloads 2 s after it leaves", async () => {
     let fire: (hit: boolean) => void = () => {};
     vi.stubGlobal(
       "IntersectionObserver",
@@ -252,9 +252,18 @@ describe("ArtifactCard: lazy preview", () => {
       expect(screen.queryByTitle("첫 문서")).toBeNull();
       act(() => fire(true));
       expect(screen.getByTitle("첫 문서")).toBeInTheDocument();
+      vi.useFakeTimers();
       act(() => fire(false));
+      // Scrolling back within the delay keeps the loaded preview.
+      act(() => vi.advanceTimersByTime(1500));
+      act(() => fire(true));
+      act(() => fire(false));
+      act(() => vi.advanceTimersByTime(1999));
+      expect(screen.getByTitle("첫 문서")).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1));
       expect(screen.queryByTitle("첫 문서")).toBeNull();
     } finally {
+      vi.useRealTimers();
       vi.unstubAllGlobals();
     }
   });

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
-import { useClient, useJournalDay, useReadOnly, useRooms, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { useClient, useJournalDay, useReadOnly, useInfo, useRoomsStore, useViewerStore } from "@/data/hooks";
 import { GENERIC_ERROR, noteNameErrorCopy, SAVE_FAILED } from "@/lib/errors";
 import type { NoteDraft } from "@/lib/drafts";
 import { useBriefError } from "./briefError";
@@ -60,7 +60,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const client = useClient();
   const viewer = useViewerStore();
   const store = useRoomsStore();
-  const { info } = useRooms();
+  const info = useInfo();
   const readOnly = useReadOnly();
   // Watching the day makes the store refetch it on note.saved/note.removed; no second event stream.
   const day = useJournalDay(date);

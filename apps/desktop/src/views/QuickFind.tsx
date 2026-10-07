@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Artifact, Room } from "@alto-rooms/protocol-ts";
 import { FileText, Folder } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -17,11 +17,20 @@ const norm = (s: string) => s.normalize("NFC").toLowerCase();
  * computed once per list, not per keystroke.
  */
 export function QuickFind({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <CommandDialog open={open} onOpenChange={(o) => !o && onClose()} title="Find" description="Find a room or doc">
+      {/* Mounted only while open: a closed Find neither watches rooms nor re-renders on their changes, and opens with an empty query. */}
+      {open ? <FindBody onClose={onClose} /> : null}
+    </CommandDialog>
+  );
+}
+
+function FindBody({ onClose }: { onClose: () => void }) {
   const viewer = useViewerStore();
   const { rooms, artifacts } = useRooms();
   const [query, setQuery] = useState("");
 
-  const roomIds = useMemo(() => (open ? rooms.map((r) => r.id) : []), [open, rooms]);
+  const roomIds = useMemo(() => rooms.map((r) => r.id), [rooms]);
   useWatchArtifacts(roomIds);
 
   const roomNames = useMemo(() => rooms.map((r) => ({ room: r, key: norm(r.name) })), [rooms]);
@@ -35,9 +44,6 @@ export function QuickFind({ open, onClose }: { open: boolean; onClose: () => voi
     return t;
   };
 
-  useEffect(() => {
-    if (!open) setQuery("");
-  }, [open]);
 
   const { roomHits, docHits } = useMemo(() => {
     const q = norm(query.trim());
@@ -62,48 +68,46 @@ export function QuickFind({ open, onClose }: { open: boolean; onClose: () => voi
   const done = () => onClose();
 
   return (
-    <CommandDialog open={open} onOpenChange={(o) => !o && onClose()} title="Find" description="Find a room or doc">
-      <Command shouldFilter={false}>
-        <CommandInput placeholder="Find a room or doc" value={query} onValueChange={setQuery} />
-        <CommandList>
-          <CommandEmpty>No results</CommandEmpty>
-          {roomHits.length > 0 ? (
-            <CommandGroup heading="Rooms">
-              {roomHits.map((r) => (
-                <CommandItem
-                  key={r.id}
-                  value={`room:${r.id}`}
-                  onSelect={() => {
-                    viewer.navigate({ kind: "room", roomId: r.id });
-                    done();
-                  }}
-                >
-                  <Folder size={16} strokeWidth={1.75} aria-hidden />
-                  {r.name}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          ) : null}
-          {docHits.length > 0 ? (
-            <CommandGroup heading="Docs">
-              {docHits.map((d) => (
-                <CommandItem
-                  key={`${d.roomId}/${d.id}`}
-                  value={`doc:${d.roomId}/${d.id}`}
-                  onSelect={() => {
-                    viewer.navigate({ kind: "doc", roomId: d.roomId, artifactId: d.id });
-                    done();
-                  }}
-                >
-                  <FileText size={16} strokeWidth={1.75} aria-hidden />
-                  <span className="min-w-0 flex-1 truncate">{d.title}</span>
-                  <span className="ml-auto shrink-0 font-mono text-[12px] text-[#929292]">{d.roomName}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          ) : null}
-        </CommandList>
-      </Command>
-    </CommandDialog>
+    <Command shouldFilter={false}>
+      <CommandInput placeholder="Find a room or doc" value={query} onValueChange={setQuery} />
+      <CommandList>
+        <CommandEmpty>No results</CommandEmpty>
+        {roomHits.length > 0 ? (
+          <CommandGroup heading="Rooms">
+            {roomHits.map((r) => (
+              <CommandItem
+                key={r.id}
+                value={`room:${r.id}`}
+                onSelect={() => {
+                  viewer.navigate({ kind: "room", roomId: r.id });
+                  done();
+                }}
+              >
+                <Folder size={16} strokeWidth={1.75} aria-hidden />
+                {r.name}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        ) : null}
+        {docHits.length > 0 ? (
+          <CommandGroup heading="Docs">
+            {docHits.map((d) => (
+              <CommandItem
+                key={`${d.roomId}/${d.id}`}
+                value={`doc:${d.roomId}/${d.id}`}
+                onSelect={() => {
+                  viewer.navigate({ kind: "doc", roomId: d.roomId, artifactId: d.id });
+                  done();
+                }}
+              >
+                <FileText size={16} strokeWidth={1.75} aria-hidden />
+                <span className="min-w-0 flex-1 truncate">{d.title}</span>
+                <span className="ml-auto shrink-0 font-mono text-[12px] text-[#929292]">{d.roomName}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        ) : null}
+      </CommandList>
+    </Command>
   );
 }

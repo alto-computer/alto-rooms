@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import type { Artifact, Info } from "@alto-rooms/protocol-ts";
 import { Maximize2 } from "lucide-react";
 import { useClient } from "@/data/hooks";
@@ -9,6 +9,8 @@ import { DocSkeleton } from "./DocSkeleton";
 
 /** Previews are laid out at this width, then scaled down to the page box. */
 const LAYOUT_WIDTH = 1280;
+/** A preview stays loaded this long after its card scrolls out of range, so scrolling back and forth doesn't reload it. */
+const UNLOAD_DELAY_MS = 2000;
 
 const SIZES = {
   // Room grid: 300 wide with a 420 page. Hover only raises the hovered card (shadow and
@@ -38,13 +40,13 @@ export type ArtifactCardProps = {
   label: string;
   isNew: boolean;
   size: "strip" | "journal";
-  /** Opens the document: here, or in a new tab (⌘/middle click, or the expand button). */
-  onOpen: (newTab: boolean) => void;
+  /** Opens the document: here, or in a new tab (⌘/middle click, or the expand button). Pass a stable function: cards are memoized. */
+  onOpen: (artifact: Artifact, newTab: boolean) => void;
   /** The whole card drags onto sidebar rooms (inbox cards, when writable). */
   draggable?: boolean;
 };
 
-/** True while `el` is within one viewport of its scroll root (the nearest `[data-scroll-root]`, else the viewport). */
+/** True while `el` is within half a viewport (above or below) of its scroll root (the nearest `[data-scroll-root]`, else the viewport). */
 function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
   const [near, setNear] = useState(false);
   useEffect(() => {
@@ -57,12 +59,26 @@ function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
     const root = el.closest<HTMLElement>("[data-scroll-root]");
     const io = new IntersectionObserver((entries) => setNear(entries[entries.length - 1]?.isIntersecting ?? false), {
       root,
-      rootMargin: "100%",
+      rootMargin: "50% 0px",
     });
     io.observe(el);
     return () => io.disconnect();
   }, [ref]);
   return near;
+}
+
+/** `value`, except that turning false waits `ms` (and is dropped if it turns true again meanwhile). */
+function useLingering(value: boolean, ms: number): boolean {
+  const [held, setHeld] = useState(value);
+  useEffect(() => {
+    if (value) {
+      setHeld(true);
+      return;
+    }
+    const t = setTimeout(() => setHeld(false), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return value || held;
 }
 
 /** The page box's inner size; `fallback` until measured. */
@@ -88,11 +104,11 @@ function useBoxSize(ref: RefObject<HTMLElement | null>, fallback: { w: number; h
  * (⌘ or a middle click: a new tab); the expand button, shown on hover or focus,
  * always opens a new tab.
  */
-export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, draggable = false }: ArtifactCardProps) {
+export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, isNew, size, onOpen: open, draggable = false }: ArtifactCardProps) {
   const client = useClient();
   const s = SIZES[size];
   const pageRef = useRef<HTMLDivElement>(null);
-  const near = useNearViewport(pageRef);
+  const near = useLingering(useNearViewport(pageRef), UNLOAD_DELAY_MS);
   // The preview unmounts when the card scrolls far away, so loading starts over then.
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
@@ -100,6 +116,7 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, dragg
   }, [near]);
   const box = useBoxSize(pageRef, s.fallback);
   const scale = box.w / LAYOUT_WIDTH;
+  const onOpen = (newTab: boolean) => open(artifact, newTab);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
@@ -135,7 +152,6 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, dragg
               sandbox="allow-scripts allow-popups"
               // A preview is clicked, never scrolled: no scrollbar inside the page.
               scrolling="no"
-              loading="lazy"
               className={cn("absolute top-0 left-0 border-0 bg-white transition-opacity duration-300 ease-out", loaded ? "opacity-100" : "opacity-0")}
               style={{
                 width: LAYOUT_WIDTH,
@@ -171,4 +187,4 @@ export function ArtifactCard({ artifact, info, label, isNew, size, onOpen, dragg
       </button>
     </div>
   );
-}
+});
