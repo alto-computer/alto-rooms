@@ -41,6 +41,33 @@ export function historyKey(e: KeyboardEvent): "back" | "forward" | null {
   return HISTORY_CODES[e.code] ?? null;
 }
 
+export type TabKey = { kind: "at"; index: number } | { kind: "cycle"; delta: 1 | -1 } | { kind: "reopen" };
+
+/**
+ * Switching tabs, browser style: ⌘1–⌘8 pick a tab and ⌘9 the last one; ⌘⇧] / ⌘⇧[ and
+ * ⌃Tab / ⌃⇧Tab go to the next / previous tab; ⌘⇧T reopens the last closed tab (Ctrl
+ * for ⌘ off macOS). Matched by physical key, so any layout and IME works.
+ */
+export function tabKey(e: KeyboardEvent): TabKey | null {
+  if (e.altKey || e.isComposing) return null;
+  if (e.code === "Tab" && e.ctrlKey && !e.metaKey) return { kind: "cycle", delta: e.shiftKey ? -1 : 1 };
+  const mod = e.metaKey || (!IS_MAC && e.ctrlKey);
+  if (!mod) return null;
+  if (e.shiftKey) {
+    if (e.code === "BracketRight") return { kind: "cycle", delta: 1 };
+    if (e.code === "BracketLeft") return { kind: "cycle", delta: -1 };
+    if (e.code === "KeyT") return { kind: "reopen" };
+    return null;
+  }
+  const digit = /^Digit([1-9])$/.exec(e.code)?.[1];
+  if (!digit) return null;
+  return { kind: "at", index: digit === "9" ? -1 : Number(digit) - 1 };
+}
+
+/** ⌘⇧[ / ⌘⇧] / ⌘⇧T: keys the native menu owns in Tauri (Window › Previous/Next Tab, File › Reopen Closed Tab). */
+export const isMenuTabKey = (e: KeyboardEvent) =>
+  e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight" || e.code === "KeyT");
+
 /** ⌘[ / ⌘]: the native menu's Back/Forward accelerators (a menu item takes only one, so ⌘←/⌘→ stay with the page). */
 export const isMenuHistoryKey = (e: KeyboardEvent) => e.code === "BracketLeft" || e.code === "BracketRight";
 

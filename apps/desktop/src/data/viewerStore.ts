@@ -16,6 +16,8 @@ export type TabHistory = { back: TabInput[]; forward: TabInput[] };
 
 /** Entries kept per direction, per tab. */
 const HISTORY_LIMIT = 50;
+/** Closed tabs ⌘⇧T can bring back (this session only). */
+const CLOSED_LIMIT = 20;
 const NO_HISTORY: TabHistory = { back: [], forward: [] };
 
 /** The artifact side panel: open or not, its width, and which plugin it shows. Per viewer, not per tab. */
@@ -179,6 +181,8 @@ export class ViewerStore {
   private counter = 0;
   /** Transient: bumped per tab on every in-tab navigation, so its view remounts. */
   private navCounts = new Map<string, number>();
+  /** Transient: recently closed tabs, oldest first. */
+  private closed: { tab: TabInput; index: number; history: TabHistory }[] = [];
   private readonly storage: StorageLike | undefined;
   private readonly now: () => Date;
 
@@ -233,15 +237,50 @@ export class ViewerStore {
   close(id: string): void {
     const i = this.state.tabs.findIndex((t) => t.id === id);
     if (i < 0) return;
-    const tabs = this.state.tabs.filter((t) => t.id !== id);
+    const closing = this.state.tabs[i];
+    this.closed = [...this.closed, { tab: toInput(closing), index: i, history: this.historyOf(id) }].slice(-CLOSED_LIMIT);
+    let tabs = this.state.tabs.filter((t) => t.id !== id);
     const { [id]: _dropped, ...history } = this.state.history;
     this.navCounts.delete(id);
     if (this.state.activeId !== id) {
       this.set({ tabs, history });
       return;
     }
-    const next = tabs[i] ?? tabs[i - 1] ?? null;
-    this.set({ ...this.leaving(), tabs, history, activeId: next?.id ?? null });
+    // The window always shows a tab: closing the last one leaves a New tab.
+    if (tabs.length === 0) tabs = [makeTab(this.newId(), { kind: "new" })];
+    const next = tabs[i] ?? tabs[i - 1];
+    this.set({ ...this.leaving(), tabs, history, activeId: next.id });
+  }
+
+  /** Brings back the most recently closed tab at its old position, with its history. */
+  reopen(): void {
+    const last = this.closed.at(-1);
+    if (!last) return;
+    this.closed = this.closed.slice(0, -1);
+    const existing = this.state.tabs.find((t) => sameTab(t, last.tab));
+    if (existing) {
+      this.activate(existing.id);
+      return;
+    }
+    const created = makeTab(this.newId(), last.tab);
+    const tabs = [...this.state.tabs];
+    tabs.splice(Math.min(last.index, tabs.length), 0, created);
+    this.set({ ...this.leaving(), tabs, history: { ...this.state.history, [created.id]: last.history }, activeId: created.id });
+  }
+
+  /** Activates the tab at `index`; -1 is the last tab. */
+  activateAt(index: number): void {
+    const tabs = this.state.tabs;
+    const tab = index < 0 ? tabs.at(index) : tabs[index];
+    if (tab) this.activate(tab.id);
+  }
+
+  /** Activates the tab `delta` places from the active one, wrapping around. */
+  cycle(delta: number): void {
+    const tabs = this.state.tabs;
+    const i = tabs.findIndex((t) => t.id === this.state.activeId);
+    if (i < 0 || tabs.length < 2) return;
+    this.activate(tabs[(((i + delta) % tabs.length) + tabs.length) % tabs.length].id);
   }
 
   /**

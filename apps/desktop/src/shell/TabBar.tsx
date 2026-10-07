@@ -4,6 +4,7 @@ import { horizontalListSortingStrategy, SortableContext, sortableKeyboardCoordin
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowLeft, ArrowRight, Calendar, FileText, Folder, LayoutGrid, PanelLeft, Plus, Puzzle, X, type LucideIcon } from "lucide-react";
 import { useArtifacts, usePlugins, useRooms, useViewer, useViewerStore } from "@/data/hooks";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { pluginIcon } from "@/plugins/icons";
 import type { Tab } from "@/data/viewerStore";
 import { noteBase } from "@/lib/notes";
@@ -163,7 +164,10 @@ export function TabBar() {
         aria-label="Tabs"
         className={cn("flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", fade)}
       >
-        <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[horizontalOnly]}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[horizontalOnly]}
           // Browser style: the tab you pick up is the one you're looking at.
           onDragStart={({ active }) => viewer.activate(String(active.id))}
           onDragEnd={onDragEnd}
@@ -211,34 +215,42 @@ function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boole
       role="presentation"
       className={cn("group relative flex min-w-[112px] flex-[0_1_220px]", sort.isDragging && "z-10")}
     >
-      <button
-        type="button"
-        id={tabDomId(tab.id)}
-        aria-selected={active}
-        aria-controls={active ? TAB_PANEL_ID : undefined}
-        onClick={onActivate}
-        onAuxClick={middle}
-        // Stop the middle-button autoscroll cursor.
-        onMouseDown={(e) => e.button === 1 && e.preventDefault()}
-        {...sort.attributes}
-        {...sort.listeners}
-        // dnd-kit's attributes would turn the tab into a "button"; it stays a tab.
-        role="tab"
-        className={cn(
-          // The active tab keeps room for its always-visible close button; the others never
-          // change padding on hover (their close button fades in over the label's end instead).
-          "flex min-h-[34px] w-full min-w-0 items-center gap-2 rounded-lg border pl-3 text-[14px]",
-          "focus-visible:outline-2 focus-visible:outline-ink",
-          active ? "pr-8" : "pr-3",
-          active ? "border-[#ddd] bg-white text-[#222]" : "border-transparent text-[#6a6a6a] hover:text-[#222]",
-          sort.isDragging && "cursor-grabbing border-[#ddd] bg-white shadow-float",
-        )}
-      >
-        <Icon size={15} strokeWidth={1.75} aria-hidden className="shrink-0" />
-        <span className="truncate">
+      <Tooltip delayDuration={600}>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            id={tabDomId(tab.id)}
+            aria-selected={active}
+            aria-controls={active ? TAB_PANEL_ID : undefined}
+            onClick={onActivate}
+            onAuxClick={middle}
+            // Stop the middle-button autoscroll cursor.
+            onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+            {...sort.attributes}
+            {...sort.listeners}
+            // dnd-kit's attributes would turn the tab into a "button"; it stays a tab.
+            role="tab"
+            className={cn(
+              // The active tab keeps room for its always-visible close button; the others never
+              // change padding on hover (their close button fades in over the label's end instead).
+              "flex min-h-[34px] w-full min-w-0 items-center gap-2 rounded-lg border pl-3 text-[14px]",
+              "focus-visible:outline-2 focus-visible:outline-ink",
+              active ? "pr-8" : "pr-3",
+              active ? "border-[#ddd] bg-white text-[#222]" : "border-transparent text-[#6a6a6a] group-focus-within:bg-[#efefef] hover:bg-[#efefef] hover:text-[#222]",
+              sort.isDragging && "cursor-grabbing border-[#ddd] bg-white shadow-float",
+            )}
+          >
+            <Icon size={15} strokeWidth={1.75} aria-hidden className="shrink-0" />
+            <span className="truncate">
+              <TabLabel tab={tab} />
+            </span>
+          </button>
+        </TooltipTrigger>
+        {/* The full title, for labels the tab cuts off. */}
+        <TooltipContent side="bottom" sideOffset={6} className="max-w-[360px]">
           <TabLabel tab={tab} />
-        </span>
-      </button>
+        </TooltipContent>
+      </Tooltip>
       <button
         type="button"
         aria-label="Close tab"
@@ -249,7 +261,7 @@ function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boole
           "transition-opacity duration-150",
           active
             ? "bg-white opacity-100"
-            : "bg-[linear-gradient(to_right,transparent,var(--surface)_12px)] pl-4 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
+            : "bg-[linear-gradient(to_right,transparent,#efefef_12px)] pl-4 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
         )}
       >
         <span className="grid size-5 place-items-center rounded hover:bg-[#f2f2f2]">

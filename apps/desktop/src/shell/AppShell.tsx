@@ -4,7 +4,19 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAsksStore, useReadOnly, useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab, ViewerStore } from "@/data/viewerStore";
-import { listenAll, MENU_BACK, MENU_CLOSE_TAB, MENU_FIND, MENU_FORWARD, MENU_NEW_TAB, MENU_TOGGLE_ASK, MENU_TOGGLE_SIDEBAR } from "@/lib/appEvents";
+import {
+  listenAll,
+  MENU_BACK,
+  MENU_CLOSE_TAB,
+  MENU_FIND,
+  MENU_FORWARD,
+  MENU_NEW_TAB,
+  MENU_NEXT_TAB,
+  MENU_PREV_TAB,
+  MENU_REOPEN_TAB,
+  MENU_TOGGLE_ASK,
+  MENU_TOGGLE_SIDEBAR,
+} from "@/lib/appEvents";
 import { isTauri } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { DocView } from "@/views/DocView";
@@ -15,7 +27,7 @@ import { QuickFind } from "@/views/QuickFind";
 import { RoomView } from "@/views/RoomView";
 import { EnableCard } from "@/plugins/EnableCard";
 import { PluginSlot } from "@/plugins/PluginSlot";
-import { allowedWithFocus, historyKey, isMenuHistoryKey, isTextField, keyAction, type ShortcutAction } from "./shortcuts";
+import { allowedWithFocus, historyKey, isMenuHistoryKey, isMenuTabKey, isTextField, keyAction, tabKey, type ShortcutAction, type TabKey } from "./shortcuts";
 import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
 
@@ -116,6 +128,41 @@ function useHistoryNav(viewer: ViewerStore) {
   }, [viewer]);
 }
 
+function runTabKey(k: TabKey, viewer: ViewerStore) {
+  if (k.kind === "at") viewer.activateAt(k.index);
+  else if (k.kind === "cycle") viewer.cycle(k.delta);
+  else viewer.reopen();
+}
+
+/**
+ * Tab switching (see `tabKey`); works from text fields too, as in a browser. In Tauri the
+ * native menu owns ⌘⇧[ / ⌘⇧] / ⌘⇧T; ⌘1–9 and ⌃Tab stay with the page.
+ */
+function useTabKeys(viewer: ViewerStore) {
+  useEffect(() => {
+    const menuOwned = isTauri();
+    const unlisten = menuOwned
+      ? listenAll({
+          [MENU_NEXT_TAB]: () => viewer.cycle(1),
+          [MENU_PREV_TAB]: () => viewer.cycle(-1),
+          [MENU_REOPEN_TAB]: () => viewer.reopen(),
+        })
+      : null;
+    const onKey = (e: KeyboardEvent) => {
+      if (menuOwned && isMenuTabKey(e)) return;
+      const k = tabKey(e);
+      if (!k) return;
+      e.preventDefault();
+      runTabKey(k, viewer);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      unlisten?.();
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [viewer]);
+}
+
 /** The active tab's view. Mounted per tab id and in-tab navigation, so mount = arriving. */
 function TabView({ tab }: { tab: Tab }) {
   switch (tab.kind) {
@@ -149,6 +196,7 @@ export function AppShell() {
   }, [activeKind, readOnly, asks]);
   useShortcuts(viewer, openFind, toggleAsk);
   useHistoryNav(viewer);
+  useTabKeys(viewer);
 
   const active = tabs.find((t) => t.id === activeId);
 

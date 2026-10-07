@@ -65,7 +65,7 @@ describe("ViewerStore", () => {
     expect(st.getState().tabs.map((t) => t.id)).toContain(id);
   });
 
-  it("close activates the right neighbour, else left, else null", () => {
+  it("close activates the right neighbour, else left, else a fresh New tab", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const n = st.getState().tabs[0].id;
     const a = st.open({ kind: "room", roomId: "a" });
@@ -76,8 +76,46 @@ describe("ViewerStore", () => {
     st.close(b);
     expect(st.getState().activeId).toBe(n);
     st.close(n);
-    expect(st.getState().activeId).toBeNull();
-    expect(st.getState().tabs).toEqual([]);
+    const [only] = st.getState().tabs;
+    expect(only.kind).toBe("new");
+    expect(only.id).not.toBe(n);
+    expect(st.getState().activeId).toBe(only.id);
+  });
+
+  it("reopen brings back closed tabs, newest first, at their old place with their history", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const n = st.getState().tabs[0].id;
+    const a = st.open({ kind: "room", roomId: "a" });
+    st.navigate({ kind: "room", roomId: "a2" });
+    st.open({ kind: "room", roomId: "b" });
+    st.close(a);
+    st.activate(n);
+    st.reopen();
+    const tabs = st.getState().tabs;
+    expect(tabs.map((t) => (t.kind === "room" ? t.roomId : t.kind))).toEqual(["new", "a2", "b"]);
+    expect(st.getState().activeId).toBe(tabs[1].id);
+    expect(st.canGoBack()).toBe(true);
+    st.reopen(); // nothing left
+    expect(st.getState().tabs).toHaveLength(3);
+  });
+
+  it("activateAt picks by index (-1 = last); cycle wraps around", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const n = st.getState().tabs[0].id;
+    const a = st.open({ kind: "room", roomId: "a" });
+    const b = st.open({ kind: "room", roomId: "b" });
+    st.activateAt(0);
+    expect(st.getState().activeId).toBe(n);
+    st.activateAt(-1);
+    expect(st.getState().activeId).toBe(b);
+    st.activateAt(7);
+    expect(st.getState().activeId).toBe(b);
+    st.cycle(1);
+    expect(st.getState().activeId).toBe(n);
+    st.cycle(-1);
+    expect(st.getState().activeId).toBe(b);
+    st.cycle(-1);
+    expect(st.getState().activeId).toBe(a);
   });
 
   it("replace swaps a tab's id fields in place, keeping its id and position", () => {

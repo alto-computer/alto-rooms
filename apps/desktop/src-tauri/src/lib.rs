@@ -17,6 +17,9 @@ const MENU_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 const MENU_TOGGLE_ASK: &str = "toggle-ask";
 const MENU_BACK: &str = "back";
 const MENU_FORWARD: &str = "forward";
+const MENU_REOPEN_TAB: &str = "reopen-tab";
+const MENU_NEXT_TAB: &str = "next-tab";
+const MENU_PREV_TAB: &str = "prev-tab";
 
 /// App menu (About, Hide, Quit ⌘Q), Edit (predefined, so text editing keys keep
 /// working), File (New Tab ⌘T, Close Tab ⌘W, Close Window ⇧⌘W) and View (Find ⌘K, Toggle Sidebar ⌘B, Back ⌘[, Forward ⌘]).
@@ -42,12 +45,16 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()?;
     let new_tab = MenuItemBuilder::with_id(MENU_NEW_TAB, "New Tab").accelerator("CmdOrCtrl+T").build(app)?;
     let close_tab = MenuItemBuilder::with_id(MENU_CLOSE_TAB, "Close Tab").accelerator("CmdOrCtrl+W").build(app)?;
+    let reopen_tab = MenuItemBuilder::with_id(MENU_REOPEN_TAB, "Reopen Closed Tab")
+        .accelerator("CmdOrCtrl+Shift+T")
+        .build(app)?;
     let close_window = MenuItemBuilder::with_id(MENU_CLOSE_WINDOW, "Close Window")
         .accelerator("CmdOrCtrl+Shift+W")
         .build(app)?;
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&new_tab)
         .item(&close_tab)
+        .item(&reopen_tab)
         .separator()
         .item(&close_window)
         .build()?;
@@ -64,7 +71,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&back)
         .item(&forward)
         .build()?;
-    MenuBuilder::new(app).items(&[&app_menu, &edit_menu, &file_menu, &view_menu]).build()
+    let next_tab = MenuItemBuilder::with_id(MENU_NEXT_TAB, "Show Next Tab").accelerator("CmdOrCtrl+Shift+]").build(app)?;
+    let prev_tab = MenuItemBuilder::with_id(MENU_PREV_TAB, "Show Previous Tab").accelerator("CmdOrCtrl+Shift+[").build(app)?;
+    let window_menu = SubmenuBuilder::new(app, "Window").item(&next_tab).item(&prev_tab).build()?;
+    MenuBuilder::new(app).items(&[&app_menu, &edit_menu, &file_menu, &view_menu, &window_menu]).build()
 }
 
 fn emit(app: &AppHandle, event: &str) {
@@ -119,6 +129,9 @@ pub fn run() {
             MENU_TOGGLE_ASK => emit(app, "menu://toggle-ask"),
             MENU_BACK => emit(app, "menu://back"),
             MENU_FORWARD => emit(app, "menu://forward"),
+            MENU_REOPEN_TAB => emit(app, "menu://reopen-tab"),
+            MENU_NEXT_TAB => emit(app, "menu://next-tab"),
+            MENU_PREV_TAB => emit(app, "menu://prev-tab"),
             MENU_CLOSE_WINDOW => flush::request(app, Intent::CloseWindow),
             MENU_QUIT => flush::request(app, Intent::Exit),
             _ => {}
