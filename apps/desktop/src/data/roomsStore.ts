@@ -28,14 +28,14 @@ export type StoreTimers = {
 export type RoomsStoreOptions = {
   /** Non-fatal problems (one scope failed to refetch). Defaults to console.warn. */
   warn?: (...args: unknown[]) => void;
-  /** Clock for the unwatch linger (tests). Defaults to the global timers, looked up at call time. */
+  /** Clock for every store timer (tests). Defaults to the global timers, looked up at call time. */
   timers?: StoreTimers;
 };
 
 /** How long a scope stays watched after its last watcher leaves (e.g. a tab switch and back). */
 export const UNWATCH_LINGER_MS = 45_000;
 
-const globalTimers: StoreTimers = {
+export const globalTimers: StoreTimers = {
   setTimeout: (fn, ms) => setTimeout(fn, ms),
   clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
 };
@@ -92,8 +92,8 @@ export class RoomsStore {
   private buffering = false;
   private queue: RoomsEvent[] = [];
   private retryAttempt = 0;
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  private fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryTimer: unknown = null;
+  private fallbackTimer: unknown = null;
 
   // Rooms scope.
   private roomsSeq = 0;
@@ -112,7 +112,7 @@ export class RoomsStore {
   private dayLinger = new Map<string, unknown>();
   private dayTokens = new Map<string, number>();
   private dayFetches = new Map<string, Promise<void>>();
-  private dayTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private dayTimers = new Map<string, unknown>();
 
   constructor(
     private readonly client: RoomsClientLike,
@@ -159,7 +159,7 @@ export class RoomsStore {
     this.queue = [];
     this.clearRetry();
     this.clearFallback();
-    for (const t of this.dayTimers.values()) clearTimeout(t);
+    for (const t of this.dayTimers.values()) this.timers.clearTimeout(t);
     this.dayTimers.clear();
     for (const roomId of this.roomFetches.keys()) this.bump(this.roomTokens, roomId);
     this.roomFetches.clear();
@@ -240,7 +240,7 @@ export class RoomsStore {
     if (this.dayRefs.get(date) !== 0) return;
     this.dayRefs.delete(date);
     const timer = this.dayTimers.get(date);
-    if (timer) clearTimeout(timer);
+    if (timer !== undefined) this.timers.clearTimeout(timer);
     this.dayTimers.delete(date);
     this.bump(this.dayTokens, date);
     this.dayFetches.delete(date);
@@ -344,7 +344,7 @@ export class RoomsStore {
     this.buffering = true;
     this.clearRetry();
     this.clearFallback();
-    this.fallbackTimer = setTimeout(() => {
+    this.fallbackTimer = this.timers.setTimeout(() => {
       this.fallbackTimer = null;
       this.beginSync();
     }, RESYNC_FALLBACK_MS);
@@ -491,10 +491,10 @@ export class RoomsStore {
   private dayChanged(date: string) {
     if (!this.isWatchedDay(date)) return;
     const prev = this.dayTimers.get(date);
-    if (prev) clearTimeout(prev);
+    if (prev !== undefined) this.timers.clearTimeout(prev);
     this.dayTimers.set(
       date,
-      setTimeout(() => {
+      this.timers.setTimeout(() => {
         this.dayTimers.delete(date);
         void this.fetchDay(date);
       }, DAY_DEBOUNCE_MS),
@@ -661,19 +661,19 @@ export class RoomsStore {
   private scheduleRetry() {
     const delay = Math.min(BACKOFF_BASE_MS * 2 ** this.retryAttempt, BACKOFF_MAX_MS);
     this.retryAttempt++;
-    this.retryTimer = setTimeout(() => {
+    this.retryTimer = this.timers.setTimeout(() => {
       this.retryTimer = null;
       this.beginSync();
     }, delay);
   }
 
   private clearFallback() {
-    if (this.fallbackTimer) clearTimeout(this.fallbackTimer);
+    if (this.fallbackTimer !== null) this.timers.clearTimeout(this.fallbackTimer);
     this.fallbackTimer = null;
   }
 
   private clearRetry() {
-    if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.retryTimer !== null) this.timers.clearTimeout(this.retryTimer);
     this.retryTimer = null;
   }
 }

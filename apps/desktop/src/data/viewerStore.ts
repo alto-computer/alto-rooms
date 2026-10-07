@@ -1,4 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
+import { globalTimers, type StoreTimers } from "./roomsStore";
 
 export type Tab =
   | { id: string; kind: "room"; roomId: string }
@@ -39,6 +40,9 @@ export type ViewerState = {
 export const VIEWER_STORAGE_KEY = "alto-rooms.viewer.v1";
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
+
+/** Writes coalesce for this long, so a burst of tab switches costs one write. */
+export const PERSIST_DELAY_MS = 300;
 
 function defaultStorage(): StorageLike | undefined {
   try {
@@ -185,10 +189,13 @@ export class ViewerStore {
   private closed: { tab: TabInput; index: number; history: TabHistory }[] = [];
   private readonly storage: StorageLike | undefined;
   private readonly now: () => Date;
+  private readonly timers: StoreTimers;
+  private persistTimer: unknown = null;
 
-  constructor(storage?: StorageLike, now: () => Date = () => new Date()) {
+  constructor(storage?: StorageLike, now: () => Date = () => new Date(), timers: StoreTimers = globalTimers) {
     this.storage = storage ?? defaultStorage();
     this.now = now;
+    this.timers = timers;
     let raw: string | null = null;
     try {
       raw = this.storage?.getItem(VIEWER_STORAGE_KEY) ?? null;
@@ -371,11 +378,11 @@ export class ViewerStore {
     if (open !== this.state.sidebarOpen) this.set({ sidebarOpen: open });
   }
 
-  /** Records leaving the active room tab now (the app is quitting or hiding) and persists. */
+  /** Records leaving the active room tab now (the app is quitting or hiding) and persists synchronously. */
   flush(): void {
     const p = this.leaving();
     if (p.lastVisit) this.set(p);
-    else this.persist();
+    this.persist();
   }
 
   isNew(a: Artifact): boolean {
@@ -409,11 +416,24 @@ export class ViewerStore {
 
   private set(p: Partial<ViewerState>) {
     this.state = { ...this.state, ...p };
-    this.persist();
+    this.schedulePersist();
     for (const l of [...this.listeners]) l();
   }
 
+  /** Writes the latest state once the delay passes; later changes ride along. */
+  private schedulePersist() {
+    if (this.persistTimer !== null) return;
+    this.persistTimer = this.timers.setTimeout(() => {
+      this.persistTimer = null;
+      this.persist();
+    }, PERSIST_DELAY_MS);
+  }
+
   private persist() {
+    if (this.persistTimer !== null) {
+      this.timers.clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
     try {
       this.storage?.setItem(VIEWER_STORAGE_KEY, JSON.stringify(this.state));
     } catch {

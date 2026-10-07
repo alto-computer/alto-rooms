@@ -201,6 +201,7 @@ describe("ViewerStore", () => {
     const st = new ViewerStore(storage, c.now);
     const r = st.open({ kind: "room", roomId: "r1" });
     st.setSidebarOpen(false);
+    st.flush();
     expect(storage.map.has(VIEWER_STORAGE_KEY)).toBe(true);
     expect(VIEWER_STORAGE_KEY).toBe("alto-rooms.viewer.v1");
 
@@ -209,6 +210,29 @@ describe("ViewerStore", () => {
     expect(st2.getState()).toEqual(st.getState());
     expect(st2.getState().activeId).toBe(r);
     expect(st2.getState().firstRunAt).toBe("2026-10-05T00:00:00.000Z");
+  });
+
+  it("coalesces writes until the delay passes; flush writes at once", () => {
+    const storage = memoryStorage();
+    const pending: (() => void)[] = [];
+    const timers = { setTimeout: (fn: () => void) => pending.push(fn), clearTimeout: () => void pending.splice(0) };
+    const writes = vi.spyOn(storage, "setItem");
+    const st = new ViewerStore(storage, clock().now, timers);
+    expect(writes).toHaveBeenCalledTimes(1); // the initial state
+    st.open({ kind: "room", roomId: "r1" });
+    st.open({ kind: "room", roomId: "r2" });
+    st.setSidebarOpen(false);
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(pending).toHaveLength(1);
+    pending.shift()!();
+    expect(writes).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!).sidebarOpen).toBe(false);
+
+    st.setSidebarOpen(true);
+    st.flush();
+    expect(writes).toHaveBeenCalledTimes(3);
+    expect(pending).toHaveLength(0);
+    expect(JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!).sidebarOpen).toBe(true);
   });
 
   it("starts fresh on corrupt storage without throwing", () => {
@@ -335,11 +359,13 @@ describe("ViewerStore: in-tab history", () => {
     const st = new ViewerStore(storage, clock().now);
     st.navigate(room("r1"));
     st.navigate(doc("x"));
+    st.flush();
     const again = new ViewerStore(storage, clock().now);
     expect(again.canGoBack()).toBe(true);
     again.back();
     expect(activeTab(again).kind).toBe("room");
     again.close(again.getState().activeId!);
+    again.flush();
     expect(JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!).history).toEqual({});
   });
 
@@ -373,6 +399,7 @@ describe("ViewerStore: plugins", () => {
     st.navigate({ kind: "room", roomId: "r1" });
     st.back();
     expect(st.getState().tabs[0]).toMatchObject({ kind: "plugin", pluginId: "goals" });
+    st.flush();
     const again = new ViewerStore(storage, clock().now);
     expect(again.getState().tabs[0]).toMatchObject({ kind: "plugin", pluginId: "goals" });
     expect(st.open({ kind: "plugin", pluginId: "goals" })).toBe(id);
@@ -384,6 +411,7 @@ describe("ViewerStore: plugins", () => {
     expect(st.getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });
     st.setPluginPanel({ open: true, pluginId: "excalidraw" });
     st.setPluginPanel({ width: 480 });
+    st.flush();
     expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: true, width: 480, pluginId: "excalidraw" });
     storage.map.set(VIEWER_STORAGE_KEY, JSON.stringify({ ...JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!), pluginPanel: { open: "yes", width: -5 } }));
     expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });

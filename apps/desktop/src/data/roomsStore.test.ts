@@ -833,14 +833,16 @@ describe("RoomsStore watch ref-counting", () => {
     s.unwatchDay("2026-10-05");
     // Lingering: still refetched on journal events.
     c.emit({ seq: 2, type: "journal.changed", date: "2026-10-05" });
-    await vi.advanceTimersByTimeAsync(500);
+    t.advance(500); // the day debounce
+    await vi.advanceTimersByTimeAsync(0);
     expect(c.calls.journalDay).toEqual(["2026-10-05"]);
     t.advance(LINGER);
     expect("2026-10-05" in s.getState().days).toBe(false);
     c.calls.journalDay = [];
     c.connect(0);
     c.emit({ seq: 3, type: "journal.changed", date: "2026-10-05" });
-    await vi.advanceTimersByTimeAsync(500);
+    t.advance(500);
+    await vi.advanceTimersByTimeAsync(0);
     expect(c.calls.journalDay).toEqual([]);
     s.stop();
   });
