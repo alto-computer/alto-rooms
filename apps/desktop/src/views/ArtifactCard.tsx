@@ -5,6 +5,7 @@ import { useClient } from "@/data/hooks";
 import { artifactDragSource } from "@/lib/drag";
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
+import { useLoadSlot } from "@/lib/loadSlots";
 import { useLingering } from "@/lib/useLingering";
 import { DocSkeleton } from "./DocSkeleton";
 
@@ -97,6 +98,7 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
   const s = SIZES[size];
   const pageRef = useRef<HTMLDivElement>(null);
   const near = useLingering(useNearViewport(pageRef), UNLOAD_DELAY_MS);
+  const slot = useLoadSlot(near);
   // The preview unmounts when the card scrolls far away, so loading starts over then.
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
@@ -130,9 +132,12 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
         className="flex cursor-pointer flex-col gap-3 rounded-xl outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
         <div ref={pageRef} className={cn("relative overflow-hidden rounded-xl border border-[#ddd] bg-white", s.page)}>
-          {near ? (
+          {slot.granted ? (
             <iframe
-              onLoad={() => setLoaded(true)}
+              onLoad={() => {
+                setLoaded(true);
+                slot.loaded();
+              }}
               title={artifact.title}
               aria-hidden
               tabIndex={-1}
