@@ -76,7 +76,7 @@ describe("AppShell in Tauri", () => {
     menu("menu://toggle-sidebar");
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     menu("menu://find");
-    expect(screen.getByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
   });
 
   it("from a text field the menu's ⌘K still finds, but its ⌘B does nothing", async () => {
@@ -88,7 +88,7 @@ describe("AppShell in Tauri", () => {
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     expect(screen.getByLabelText("New room name")).toBeInTheDocument();
     menu("menu://find");
-    expect(screen.getByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
   });
 
   it("menu://back and menu://forward walk the active tab's history; the page leaves ⌘[ to the menu", async () => {

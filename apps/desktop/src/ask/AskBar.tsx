@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUp, Square } from "lucide-react";
 import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
@@ -6,12 +6,19 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { AnswerMarkdown } from "./AnswerMarkdown";
 import { loadModel, modelLabel, saveModel } from "./askModel";
 import { CopyAnswerButton } from "./CopyAnswerButton";
 import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThinkingLine } from "./ThinkingLine";
 import { useStickToBottom } from "./useStickToBottom";
+
+/** The Markdown chain is heavy and only needed once an answer arrives. */
+const AnswerMarkdown = lazy(() => import("./AnswerMarkdown").then((m) => ({ default: m.AnswerMarkdown })));
+
+/** Plain answer text with the Markdown view's typography, so the swap doesn't jump. */
+function AnswerFallback({ text }: { text: string }) {
+  return <div className="text-[13.5px] leading-[1.55] whitespace-pre-wrap">{text}</div>;
+}
 
 const PLACEHOLDER = "Ask about this doc…";
 /** The input grows with its text up to this height (about 5 lines), then scrolls. */
@@ -62,7 +69,11 @@ function Turn({ t, onRetry }: { t: AskTurn; onRetry: () => void }) {
         </div>
       ) : (
         <>
-          {t.answer ? <AnswerMarkdown text={t.answer} /> : null}
+          {t.answer ? (
+            <Suspense fallback={<AnswerFallback text={t.answer} />}>
+              <AnswerMarkdown text={t.answer} />
+            </Suspense>
+          ) : null}
           {t.status === "cancelled" ? <div className="text-[12.5px] text-ink-2">Stopped</div> : null}
           {t.status === "failed" ? (
             <div className="text-[12.5px] whitespace-pre-wrap text-ink-2">

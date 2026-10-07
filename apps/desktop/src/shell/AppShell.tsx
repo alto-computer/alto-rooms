@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type CSSProperties } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -23,7 +23,6 @@ import { DocView } from "@/views/DocView";
 import { JournalView } from "@/views/JournalView";
 import { NoteView } from "@/views/NoteView";
 import { NewTabView } from "@/views/NewTabView";
-import { QuickFind } from "@/views/QuickFind";
 import { RoomView } from "@/views/RoomView";
 import { EnableCard } from "@/plugins/EnableCard";
 import { PluginSlot } from "@/plugins/PluginSlot";
@@ -181,13 +180,20 @@ function TabView({ tab }: { tab: Tab }) {
   }
 }
 
+/** cmdk + dialog load on the first ⌘K, then stay mounted. */
+const QuickFind = lazy(() => import("@/views/QuickFind").then((m) => ({ default: m.QuickFind })));
+
 const SIDEBAR_STYLE = { "--sidebar-width": "232px" } as CSSProperties;
 
 export function AppShell() {
   const { tabs, activeId, sidebarOpen } = useViewer();
   const viewer = useViewerStore();
   const [findOpen, setFindOpen] = useState(false);
-  const openFind = useCallback(() => setFindOpen(true), []);
+  const [findLoaded, setFindLoaded] = useState(false);
+  const openFind = useCallback(() => {
+    setFindLoaded(true);
+    setFindOpen(true);
+  }, []);
   const asks = useAsksStore();
   const readOnly = useReadOnly();
   const activeKind = tabs.find((t) => t.id === activeId)?.kind;
@@ -221,7 +227,11 @@ export function AppShell() {
             {active ? <TabView key={viewer.navKey(active.id)} tab={active} /> : null}
           </main>
         </div>
-        <QuickFind open={findOpen} onClose={() => setFindOpen(false)} />
+        {findLoaded ? (
+          <Suspense fallback={null}>
+            <QuickFind open={findOpen} onClose={() => setFindOpen(false)} />
+          </Suspense>
+        ) : null}
         <EnableCard />
         <Toaster />
       </SidebarProvider>
