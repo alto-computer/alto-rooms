@@ -11,13 +11,16 @@ import type { Clock } from "@/lib/clock";
  *
  * Tokens tell a fetch whether it is still the current one: `bump` before
  * starting it, `isCurrent` when it settles. `F` is whatever the owner tracks
- * per in-flight fetch.
+ * per in-flight fetch. Tokens come from one counter for all keys, so an expired
+ * key forgets its token (and fetch) without letting an old fetch look current
+ * once the key is watched again: keys never watched again cost nothing.
  */
 export class ScopeRefs<K, F = unknown> {
   private refs = new Map<K, number>(); // count 0 = lingering
   private lingers = new Map<K, unknown>();
   private tokens = new Map<K, number>();
   private fetches = new Map<K, F>();
+  private lastToken = 0;
 
   constructor(
     private readonly clock: Clock,
@@ -63,6 +66,9 @@ export class ScopeRefs<K, F = unknown> {
     if (this.refs.get(key) !== 0) return;
     this.refs.delete(key);
     this.onExpire(key);
+    // After onExpire, which may supersede the key's fetch: nothing about the key is kept.
+    this.tokens.delete(key);
+    this.fetches.delete(key);
   }
 
   private cancelLinger(key: K) {
@@ -75,7 +81,7 @@ export class ScopeRefs<K, F = unknown> {
 
   /** A new token for `key`; any fetch holding an older one is now stale. */
   bump(key: K): number {
-    const t = (this.tokens.get(key) ?? 0) + 1;
+    const t = ++this.lastToken;
     this.tokens.set(key, t);
     return t;
   }
