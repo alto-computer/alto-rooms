@@ -4,6 +4,7 @@ import type { Artifact, Room } from "@alto-rooms/protocol-ts";
 import { FileText, Folder } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
+import { INBOX_ID } from "@/lib/drag";
 
 const MAX_ROOMS = 8;
 const MAX_DOCS = 30;
@@ -45,7 +46,11 @@ function FindBody({ onClose }: { onClose: () => void }) {
   const roomIds = useMemo(() => rooms.map((r) => r.id), [rooms]);
   useWatchArtifacts(roomIds);
 
-  const roomNames = useMemo(() => rooms.map((r) => ({ room: r, key: norm(r.name) })), [rooms]);
+  // An empty inbox is no place to go (the sidebar hides it too).
+  const roomNames = useMemo(
+    () => rooms.filter((r) => r.id !== INBOX_ID || r.artifactCount > 0).map((r) => ({ room: r, key: norm(r.name) })),
+    [rooms],
+  );
   const titleCache = useRef(new WeakMap<readonly Artifact[], string[]>());
   const titlesOf = (list: readonly Artifact[]) => {
     let t = titleCache.current.get(list);
