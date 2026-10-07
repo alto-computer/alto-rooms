@@ -54,7 +54,8 @@ export function TabBar() {
   };
 
   return (
-    <div className="flex min-w-0 items-center gap-1 px-1 pb-2">
+    // App chrome: tab labels don't select on drag or double click.
+    <div className="flex min-w-0 items-center gap-1 px-1 pb-2 select-none">
       {sidebarOpen ? null : (
         <IconTip label="Show sidebar" shortcut="⌘B">
           <button type="button" aria-label="Show sidebar (⌘B)" onClick={() => viewer.setSidebarOpen(true)} className={ICON_BUTTON}>

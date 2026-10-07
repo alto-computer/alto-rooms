@@ -109,7 +109,8 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
       inert={!sidebarOpen}
       aria-hidden={sidebarOpen ? undefined : true}
     >
-      <div className="flex h-full min-h-0 flex-col px-[10px] py-4">
+      {/* App chrome: labels don't select on drag or double click (the rename field still does). */}
+      <div className="flex h-full min-h-0 flex-col px-[10px] py-4 select-none [&_input]:select-text">
         <div className="flex items-center gap-2.5 pl-2.5">
           <button
             type="button"
