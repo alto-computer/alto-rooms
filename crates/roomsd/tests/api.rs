@@ -167,6 +167,33 @@ async fn files_content_types_and_forbidden_csp() {
     assert_eq!(r.headers()["content-security-policy"], "sandbox allow-scripts allow-popups");
 }
 
+#[tokio::test]
+async fn files_revalidate_with_etag() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    let path = d.path().join("a/x.html");
+    std::fs::write(&path, "<p>hi</p>").unwrap();
+    let files = build_files_router(st);
+    let uri = format!("/{}/x.html", room.id);
+    let r = files.clone().oneshot(get(&uri, FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(r.headers()["cache-control"], "no-cache");
+    let etag = r.headers()["etag"].to_str().unwrap().to_string();
+
+    let with_tag = |tag: &str| Request::builder().uri(&uri).header("host", FILES_HOST).header("if-none-match", tag).body(Body::empty()).unwrap();
+    let r = files.clone().oneshot(with_tag(&etag)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(r.headers()["etag"].to_str().unwrap(), etag);
+    assert_eq!(r.headers()["content-security-policy"], "sandbox allow-scripts allow-popups");
+    assert!(r.into_body().collect().await.unwrap().to_bytes().is_empty());
+
+    // A changed file gets a new tag, so the old one no longer matches.
+    std::fs::write(&path, "<p>hello again</p>").unwrap();
+    let r = files.oneshot(with_tag(&etag)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_ne!(r.headers()["etag"].to_str().unwrap(), etag);
+}
+
 /// Next SSE frame carrying data, as (id, parsed data).
 async fn next_event(body: &mut Body) -> (String, serde_json::Value) {
     tokio::time::timeout(std::time::Duration::from_secs(2), async {

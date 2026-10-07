@@ -166,13 +166,30 @@ pub async fn get_note(State(st): State<AppState>, Path((date, name)): Path<(Stri
     Ok(([("content-type", "text/markdown; charset=utf-8"), ("x-content-type-options", "nosniff")], body).into_response())
 }
 
-pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>) -> Result<Response, ApiErr> {
+/// A weak validator from the file's length and mtime: cheap (no read) and changes on every rewrite.
+fn etag_of(meta: &std::fs::Metadata) -> Option<HeaderValue> {
+    let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    HeaderValue::from_str(&format!("W/\"{:x}-{:x}\"", meta.len(), mtime)).ok()
+}
+
+/// Serves a room file. Previews remount often (scrolling, tab switches), so responses carry an
+/// ETag with `no-cache`: the webview revalidates every time and gets a bodyless 304 while unchanged.
+pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ApiErr> {
     let path = blocking(&st, move |c| c.resolve_file(&room_id, &rel)).await?;
     // CoreError has no read/not-found variant besides RoomNotFound (misleading here); WriteFailed (500) is the closest fit.
-    let bytes = tokio::fs::read(&path).await.map_err(|e| ApiErr(CoreError::WriteFailed(e.to_string())))?;
+    let read_err = |e: std::io::Error| ApiErr(CoreError::WriteFailed(e.to_string()));
+    let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?);
+    if let Some(tag) = &etag {
+        let matches = headers.get_all("if-none-match").iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(',')).any(|t| t.trim() == tag);
+        if matches {
+            return Ok((StatusCode::NOT_MODIFIED, [("etag", tag.clone()), ("cache-control", HeaderValue::from_static("no-cache"))]).into_response());
+        }
+    }
+    let bytes = tokio::fs::read(&path).await.map_err(read_err)?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    let ct = content_type(&ext);
-    Ok(([("content-type", ct), ("x-content-type-options", "nosniff")], bytes).into_response())
+    let mut res = ([("content-type", content_type(&ext)), ("x-content-type-options", "nosniff"), ("cache-control", "no-cache")], bytes).into_response();
+    if let Some(tag) = etag { res.headers_mut().insert("etag", tag); }
+    Ok(res)
 }
 
 // ---- plugins ----
