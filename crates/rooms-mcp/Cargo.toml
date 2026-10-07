@@ -7,4 +7,3 @@ version.workspace = true
 rooms-protocol = { path = "../rooms-protocol" }
 serde_json.workspace = true
 ureq = { version = "2", default-features = false, features = ["json"] }
-dirs = "5"

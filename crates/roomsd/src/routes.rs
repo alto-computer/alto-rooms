@@ -103,7 +103,7 @@ where
     })
     .await?;
     let mut h = HeaderMap::new();
-    h.insert("x-rooms-seq", HeaderValue::from_str(&seq.to_string()).unwrap());
+    h.insert("x-rooms-seq", HeaderValue::from(seq));
     Ok((h, Json(v)).into_response())
 }
 

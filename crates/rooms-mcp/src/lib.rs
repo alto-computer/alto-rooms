@@ -1,4 +1,5 @@
 //! MCP stdio server core: turns roomsd's plugin tools into MCP tools. Knows no specific plugin.
+use rooms_protocol::layout::{self, parse_port, DEFAULT_API_PORT};
 use rooms_protocol::{ToolCall, ToolInfo};
 use serde_json::{json, Value};
 
@@ -69,15 +70,15 @@ fn call_tool(api: &dyn Api, params: &Value) -> Value {
 pub struct HttpApi { pub home: std::path::PathBuf, pub port: u16, pub timeout: std::time::Duration }
 
 impl HttpApi {
-    pub fn from_env() -> Self {
-        let home = std::env::var("ROOMS_HOME").map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| dirs::home_dir().expect("home dir").join("rooms"));
-        let port = std::env::var("ROOMS_API_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(4317);
-        HttpApi { home, port, timeout: std::time::Duration::from_secs(10) }
+    /// Reads `ROOMS_HOME` (default `~/rooms`) and `ROOMS_API_PORT` (default 4317); a bad port is an error.
+    pub fn from_env() -> Result<Self, String> {
+        let home = layout::home_from_env().ok_or_else(|| format!("no home directory; set {}", layout::HOME_ENV))?;
+        let port = parse_port("ROOMS_API_PORT", std::env::var("ROOMS_API_PORT").ok().as_deref(), DEFAULT_API_PORT)?;
+        Ok(HttpApi { home, port, timeout: std::time::Duration::from_secs(10) })
     }
 
     fn request(&self, method: &str, path: &str) -> Result<ureq::Request, String> {
-        let token = std::fs::read_to_string(self.home.join(".rooms/token")).map_err(|e| format!("cannot read roomsd token: {e}"))?;
+        let token = std::fs::read_to_string(layout::token_path(&self.home)).map_err(|e| format!("cannot read roomsd token: {e}"))?;
         let agent = ureq::AgentBuilder::new().timeout_connect(self.timeout).timeout_read(self.timeout).timeout_write(self.timeout).build();
         Ok(agent.request(method, &format!("http://127.0.0.1:{}{path}", self.port))
             .set("Host", &format!("127.0.0.1:{}", self.port))
