@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 import { vi } from "vitest";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { StoresProvider, type RoomsClient } from "@/data/hooks";
-import { RoomsStore, type StoreTimers } from "@/data/roomsStore";
+import { RoomsStore } from "@/data/roomsStore";
+import type { Clock } from "@/lib/clock";
 import { ViewerStore } from "@/data/viewerStore";
 
 /** roomsd's note file name: one trailing ".md" (any case) stripped, NFC, then ".md". */
@@ -177,6 +178,7 @@ export function fakeClient(
     }),
     askThread: vi.fn(async (fileKey: string) => state.asks[fileKey] ?? []),
     cancelAsk: vi.fn(async () => {}),
+    // Like the real client minus encoding, and unversioned so tests can match plain paths.
     fileUrl: (i: Info, a: Artifact) => `${i.filesOrigin}/${a.roomId}/${a.relPath}`,
     subscribe: (cb: (e: RoomsEvent) => void) => {
       onEvent = cb;
@@ -196,7 +198,7 @@ export function fakeClient(
 export function manualTimers() {
   const pending = new Map<number, () => void>();
   let next = 1;
-  const timers: StoreTimers = {
+  const timers: Clock = {
     setTimeout: (fn) => {
       const id = next++;
       pending.set(id, fn);
@@ -218,7 +220,7 @@ export function manualTimers() {
 /** Renders `ui` with real stores on a fake client, started and synced. */
 export async function renderWithStores(
   ui: ReactNode,
-  opts: Parameters<typeof fakeClient>[0] & { viewer?: ViewerStore; storeTimers?: StoreTimers } = {},
+  opts: Parameters<typeof fakeClient>[0] & { viewer?: ViewerStore; storeTimers?: Clock } = {},
 ) {
   const fake = fakeClient(opts);
   const rooms = new RoomsStore(fake.client, { warn: () => {}, timers: opts.storeTimers });

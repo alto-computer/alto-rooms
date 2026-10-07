@@ -1,4 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
+import { globalTimers, type Clock } from "@/lib/clock";
 
 export type Tab =
   | { id: string; kind: "room"; roomId: string }
@@ -16,6 +17,8 @@ export type TabHistory = { back: TabInput[]; forward: TabInput[] };
 
 /** Entries kept per direction, per tab. */
 const HISTORY_LIMIT = 50;
+/** Closed tabs ⌘⇧T can bring back (this session only). */
+const CLOSED_LIMIT = 20;
 const NO_HISTORY: TabHistory = { back: [], forward: [] };
 
 /** The artifact side panel: open or not, its width, and which plugin it shows. Per viewer, not per tab. */
@@ -37,6 +40,9 @@ export type ViewerState = {
 export const VIEWER_STORAGE_KEY = "alto-rooms.viewer.v1";
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
+
+/** Writes coalesce for this long, so a burst of tab switches costs one write. */
+export const PERSIST_DELAY_MS = 300;
 
 function defaultStorage(): StorageLike | undefined {
   try {
@@ -179,12 +185,19 @@ export class ViewerStore {
   private counter = 0;
   /** Transient: bumped per tab on every in-tab navigation, so its view remounts. */
   private navCounts = new Map<string, number>();
+  /** Transient: the tab last opened next to its opener, so the next one lines up after it. */
+  private lastChild: { opener: string; id: string } | null = null;
+  /** Transient: recently closed tabs, oldest first. */
+  private closed: { tab: TabInput; index: number; history: TabHistory }[] = [];
   private readonly storage: StorageLike | undefined;
   private readonly now: () => Date;
+  private readonly timers: Clock;
+  private persistTimer: unknown = null;
 
-  constructor(storage?: StorageLike, now: () => Date = () => new Date()) {
+  constructor(storage?: StorageLike, now: () => Date = () => new Date(), timers: Clock = globalTimers) {
     this.storage = storage ?? defaultStorage();
     this.now = now;
+    this.timers = timers;
     let raw: string | null = null;
     try {
       raw = this.storage?.getItem(VIEWER_STORAGE_KEY) ?? null;
@@ -216,7 +229,11 @@ export class ViewerStore {
     };
   };
 
-  open(tab: TabInput, opts: { activate?: boolean } = {}): string {
+  /**
+   * Opens `tab` (or activates an equal one). New tabs go at the end, or with `nextToActive`
+   * right after the active tab and the tabs already opened from it, in order (Chrome).
+   */
+  open(tab: TabInput, opts: { activate?: boolean; nextToActive?: boolean } = {}): string {
     const activate = opts.activate ?? true;
     const existing = this.state.tabs.find((t) => sameTab(t, tab));
     if (existing) {
@@ -224,7 +241,9 @@ export class ViewerStore {
       return existing.id;
     }
     const created = makeTab(this.newId(), tab);
-    const tabs = [...this.state.tabs, created];
+    const tabs = [...this.state.tabs];
+    tabs.splice(opts.nextToActive ? this.childSlot() : tabs.length, 0, created);
+    if (opts.nextToActive && this.state.activeId) this.lastChild = { opener: this.state.activeId, id: created.id };
     if (activate) this.set({ ...this.leaving(), tabs, activeId: created.id });
     else this.set({ tabs });
     return created.id;
@@ -233,15 +252,53 @@ export class ViewerStore {
   close(id: string): void {
     const i = this.state.tabs.findIndex((t) => t.id === id);
     if (i < 0) return;
-    const tabs = this.state.tabs.filter((t) => t.id !== id);
+    const closing = this.state.tabs[i];
+    // A New tab is nothing to bring back (and the last tab's close leaves one anyway).
+    if (closing.kind !== "new") {
+      this.closed = [...this.closed, { tab: toInput(closing), index: i, history: this.historyOf(id) }].slice(-CLOSED_LIMIT);
+    }
+    let tabs = this.state.tabs.filter((t) => t.id !== id);
     const { [id]: _dropped, ...history } = this.state.history;
     this.navCounts.delete(id);
     if (this.state.activeId !== id) {
       this.set({ tabs, history });
       return;
     }
-    const next = tabs[i] ?? tabs[i - 1] ?? null;
-    this.set({ ...this.leaving(), tabs, history, activeId: next?.id ?? null });
+    // The window always shows a tab: closing the last one leaves a New tab.
+    if (tabs.length === 0) tabs = [makeTab(this.newId(), { kind: "new" })];
+    const next = tabs[i] ?? tabs[i - 1];
+    this.set({ ...this.leaving(), tabs, history, activeId: next.id });
+  }
+
+  /** Brings back the most recently closed tab at its old position, with its history. */
+  reopen(): void {
+    const last = this.closed.at(-1);
+    if (!last) return;
+    this.closed = this.closed.slice(0, -1);
+    const existing = this.state.tabs.find((t) => sameTab(t, last.tab));
+    if (existing) {
+      this.activate(existing.id);
+      return;
+    }
+    const created = makeTab(this.newId(), last.tab);
+    const tabs = [...this.state.tabs];
+    tabs.splice(Math.min(last.index, tabs.length), 0, created);
+    this.set({ ...this.leaving(), tabs, history: { ...this.state.history, [created.id]: last.history }, activeId: created.id });
+  }
+
+  /** Activates the tab at `index`; -1 is the last tab. */
+  activateAt(index: number): void {
+    const tabs = this.state.tabs;
+    const tab = index < 0 ? tabs.at(index) : tabs[index];
+    if (tab) this.activate(tab.id);
+  }
+
+  /** Activates the tab `delta` places from the active one, wrapping around. */
+  cycle(delta: number): void {
+    const tabs = this.state.tabs;
+    const i = tabs.findIndex((t) => t.id === this.state.activeId);
+    if (i < 0 || tabs.length < 2) return;
+    this.activate(tabs[(((i + delta) % tabs.length) + tabs.length) % tabs.length].id);
   }
 
   /**
@@ -261,7 +318,7 @@ export class ViewerStore {
 
   /** A click's destination: a new tab (⌘/Ctrl or middle click) or this one. */
   go(tab: TabInput, newTab = false): void {
-    if (newTab) this.open(tab);
+    if (newTab) this.open(tab, { nextToActive: true });
     else this.navigate(tab);
   }
 
@@ -305,6 +362,19 @@ export class ViewerStore {
     this.set({ tabs });
   }
 
+  /** Moves tab `id` to position `to` (clamped), keeping the others in order. */
+  move(id: string, to: number): void {
+    const from = this.state.tabs.findIndex((t) => t.id === id);
+    if (from < 0) return;
+    const at = Math.min(Math.max(0, to), this.state.tabs.length - 1);
+    if (at === from) return;
+    const tabs = [...this.state.tabs];
+    const [tab] = tabs.splice(from, 1);
+    this.lastChild = null; // a hand-placed order starts a new run
+    tabs.splice(at, 0, tab);
+    this.set({ tabs });
+  }
+
   activate(id: string): void {
     if (id === this.state.activeId || !this.state.tabs.some((t) => t.id === id)) return;
     this.set({ ...this.leaving(), activeId: id });
@@ -320,11 +390,11 @@ export class ViewerStore {
     if (open !== this.state.sidebarOpen) this.set({ sidebarOpen: open });
   }
 
-  /** Records leaving the active room tab now (the app is quitting or hiding) and persists. */
+  /** Records leaving the active room tab now (the app is quitting or hiding) and persists synchronously. */
   flush(): void {
     const p = this.leaving();
     if (p.lastVisit) this.set(p);
-    else this.persist();
+    this.persist();
   }
 
   isNew(a: Artifact): boolean {
@@ -332,6 +402,15 @@ export class ViewerStore {
     const since = Date.parse(this.state.lastVisit[a.roomId] ?? this.state.firstRunAt);
     if (Number.isNaN(created) || Number.isNaN(since)) return false;
     return created > since;
+  }
+
+  /** Where a tab opened from the active one goes: after it, and after its last such child. */
+  private childSlot(): number {
+    const tabs = this.state.tabs;
+    const active = tabs.findIndex((t) => t.id === this.state.activeId);
+    if (active < 0) return tabs.length;
+    const child = this.lastChild?.opener === this.state.activeId ? tabs.findIndex((t) => t.id === this.lastChild!.id) : -1;
+    return Math.max(active, child) + 1;
   }
 
   private activeTab(): Tab | undefined {
@@ -358,11 +437,24 @@ export class ViewerStore {
 
   private set(p: Partial<ViewerState>) {
     this.state = { ...this.state, ...p };
-    this.persist();
+    this.schedulePersist();
     for (const l of [...this.listeners]) l();
   }
 
+  /** Writes the latest state once the delay passes; later changes ride along. */
+  private schedulePersist() {
+    if (this.persistTimer !== null) return;
+    this.persistTimer = this.timers.setTimeout(() => {
+      this.persistTimer = null;
+      this.persist();
+    }, PERSIST_DELAY_MS);
+  }
+
   private persist() {
+    if (this.persistTimer !== null) {
+      this.timers.clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
     try {
       this.storage?.setItem(VIEWER_STORAGE_KEY, JSON.stringify(this.state));
     } catch {

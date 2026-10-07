@@ -1,7 +1,13 @@
 use std::io::{BufRead, Write};
 
 fn main() {
-    let api = rooms_mcp::HttpApi::from_env();
+    let api = match rooms_mcp::HttpApi::from_env() {
+        Ok(api) => api,
+        Err(e) => {
+            eprintln!("rooms-mcp: {e}");
+            std::process::exit(2);
+        }
+    };
     let stdout = std::io::stdout();
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };

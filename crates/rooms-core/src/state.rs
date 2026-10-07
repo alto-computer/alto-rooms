@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use rooms_protocol::{RoomId, RoomKind};
+use rooms_protocol::{RoomId, RoomKind, INBOX_ROOM_ID};
 use serde::{Deserialize, Serialize};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -103,10 +103,10 @@ impl StateStore {
         self.rooms.iter_mut().find(|r| r.id == id)
     }
 
-    pub fn find_by_inode(&self, dev: u64, ino: u64) -> Option<&RoomRecord> {
-        self.rooms
-            .iter()
-            .find(|r| r.dev == Some(dev) && r.ino == Some(ino))
+    /// The room whose folder has this (dev, ino), to follow a folder renamed in Finder. Never the
+    /// inbox: its record keeps `<home>/inbox`, and a renamed inbox folder becomes a new room.
+    pub fn find_by_inode_mut(&mut self, dev: u64, ino: u64) -> Option<&mut RoomRecord> {
+        self.rooms.iter_mut().find(|r| r.id != INBOX_ROOM_ID && r.dev == Some(dev) && r.ino == Some(ino))
     }
 }
 
@@ -132,7 +132,8 @@ mod tests {
         let s2 = StateStore::load(&dir).unwrap();
         assert_eq!(s2.rooms.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["b", "a"]);
         assert_eq!(s2.find("a").unwrap().name, "연구 도구");
-        assert_eq!(s2.find_by_inode(1, 2).unwrap().id, "b");
+        let mut s2 = s2;
+        assert_eq!(s2.find_by_inode_mut(1, 2).unwrap().id, "b");
     }
 
     #[test]
@@ -180,7 +181,7 @@ mod tests {
             .collect();
 
         assert_eq!(corrupt_files.len(), 1);
-        let corrupt_content = std::fs::read(&dir.join(&corrupt_files[0])).unwrap();
+        let corrupt_content = std::fs::read(dir.join(&corrupt_files[0])).unwrap();
         assert_eq!(corrupt_content, garbage);
     }
 

@@ -24,14 +24,13 @@ impl Collector {
         let Some(c) = content else { return };
         let m = &mut self.meta;
         match name {
-            "rooms:title" => { if m.title.is_none() { m.title = Some(c); } }
-            "rooms:created" => {
-                if m.created.is_none() && chrono::DateTime::parse_from_rfc3339(&c).is_ok() { m.created = Some(c); }
-            }
-            "rooms:agent" => { if m.source.agent.is_none() { m.source.agent = Some(c); } }
-            "rooms:session" => { if m.source.session.is_none() { m.source.session = Some(c); } }
-            "rooms:cwd" => { if m.source.cwd.is_none() { m.source.cwd = Some(c); } }
-            "rooms:machine" => { if m.source.machine.is_none() { m.source.machine = Some(c); } }
+            // The first of each wins.
+            "rooms:title" if m.title.is_none() => m.title = Some(c),
+            "rooms:created" if m.created.is_none() && chrono::DateTime::parse_from_rfc3339(&c).is_ok() => m.created = Some(c),
+            "rooms:agent" if m.source.agent.is_none() => m.source.agent = Some(c),
+            "rooms:session" if m.source.session.is_none() => m.source.session = Some(c),
+            "rooms:cwd" if m.source.cwd.is_none() => m.source.cwd = Some(c),
+            "rooms:machine" if m.source.machine.is_none() => m.source.machine = Some(c),
             _ => {}
         }
     }
@@ -98,18 +97,28 @@ pub fn read_meta(path: &Path) -> Meta {
 
 fn to_rfc(t: std::time::SystemTime) -> String { chrono::DateTime::<chrono::Local>::from(t).to_rfc3339() }
 
-/// mtime in the same format `file_times` reports as `updated` (None if it cannot be read).
-pub fn file_mtime(path: &Path) -> Option<String> {
-    std::fs::metadata(path).ok()?.modified().ok().map(to_rfc)
+/// What the unchanged-check compares: modification time (ns since the epoch) and size. Unlike
+/// the local-time `updated` string it does not change with the time zone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Stamp { pub mtime_ns: i64, pub size: i64 }
+
+impl Stamp {
+    pub fn of(m: &std::fs::Metadata) -> Stamp {
+        use std::os::unix::fs::MetadataExt;
+        Stamp { mtime_ns: m.mtime().saturating_mul(1_000_000_000).saturating_add(m.mtime_nsec()), size: m.size() as i64 }
+    }
+}
+
+/// (created, modified) as RFC 3339 in local time; now for times that cannot be read.
+pub fn times_of(m: &std::fs::Metadata) -> (String, String) {
+    let modified = m.modified().map(to_rfc).unwrap_or_else(|_| chrono::Local::now().to_rfc3339());
+    let created = m.created().map(to_rfc).unwrap_or_else(|_| modified.clone());
+    (created, modified)
 }
 
 pub fn file_times(path: &Path) -> (String, String) {
     match std::fs::metadata(path) {
-        Ok(m) => {
-            let modified = m.modified().map(to_rfc).unwrap_or_else(|_| chrono::Local::now().to_rfc3339());
-            let created = m.created().map(to_rfc).unwrap_or_else(|_| modified.clone());
-            (created, modified)
-        }
+        Ok(m) => times_of(&m),
         Err(_) => { let now = chrono::Local::now().to_rfc3339(); (now.clone(), now) }
     }
 }
@@ -155,7 +164,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("blob.html");
         let mut bytes = vec![0xffu8, 0xfe, 0x00];
-        bytes.extend(std::iter::repeat(b'x').take(5 * 1024 * 1024));
+        bytes.extend(std::iter::repeat_n(b'x', 5 * 1024 * 1024));
         std::fs::write(&p, &bytes).unwrap();
         let m = read_meta(&p);
         assert_eq!(title_or_filename(&m, "sub/blob.html"), "blob");

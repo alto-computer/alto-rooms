@@ -126,6 +126,9 @@ test("Notes resize follows across both frames, persists once per drag and cancel
     expect(Math.abs(during - (before - delta))).toBeLessThanOrEqual(2);
     expect(await page.evaluate(() => (window as any).resizeWrites)).toBe(writes);
     await page.mouse.up();
+    // Viewer state writes are coalesced (300 ms): one write lands after the drop, never more.
+    await expect.poll(() => page.evaluate(() => (window as any).resizeWrites)).toBe(writes + 1);
+    await page.waitForTimeout(400);
     expect(await page.evaluate(() => (window as any).resizeWrites)).toBe(writes + 1);
     measurements.push({ delta, before, during, error: during - (before - delta), writes: 1 });
   }

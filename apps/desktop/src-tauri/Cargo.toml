@@ -34,3 +34,11 @@ ureq = { version = "3", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
+
+# Release bundle: whole-program optimisation for the shell. opt-level 3 (speed); panic stays
+# unwind (terminate.rs catches panics so AppKit always gets its reply).
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true

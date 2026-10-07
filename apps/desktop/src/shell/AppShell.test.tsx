@@ -195,6 +195,72 @@ describe("AppShell: tabs", () => {
     expect(h.viewer.getState().tabs).toHaveLength(1);
   });
 
+  it("the logo takes the current tab home; ⌘-click opens home in a new tab", async () => {
+    await renderWithStores(<AppShell />, { rooms: twoRooms });
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
+    expect(tabNames()).toEqual(["벤치마크"]);
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    expect(tabNames()).toEqual(["New tab"]);
+    expect(screen.getByRole("button", { name: "Back (⌘[)" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
+    fireEvent.click(screen.getByRole("button", { name: "Home" }), { metaKey: true });
+    expect(tabNames()).toEqual(["벤치마크", "New tab"]);
+    expect(activeTab()).toHaveTextContent("New tab");
+  });
+
+  it("Space picks a tab up, arrows move it, Space drops it", async () => {
+    await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(tabNames()).toEqual(["New tab", "벤치마크", "디자인"]);
+    const tab = screen.getByRole("tab", { name: "디자인" });
+    tab.focus();
+    // jsdom has no layout; give each tab a box so the keyboard sensor can find neighbours.
+    screen.getAllByRole("tab").forEach((t, i) => {
+      t.parentElement!.getBoundingClientRect = () => ({ x: i * 120, y: 0, left: i * 120, top: 0, right: i * 120 + 112, bottom: 34, width: 112, height: 34, toJSON: () => ({}) });
+    });
+    await act(async () => void fireEvent.keyDown(tab, { code: "Space" }));
+    await act(async () => void fireEvent.keyDown(tab, { code: "ArrowLeft" }));
+    await act(async () => void fireEvent.keyDown(tab, { code: "Space" }));
+    await waitFor(() => expect(tabNames()).toEqual(["New tab", "디자인", "벤치마크"]));
+  });
+
+  it("tabs are one Tab stop: arrows, Home and End switch tabs, Delete closes the focused one", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(screen.getAllByRole("tab").map((t) => t.tabIndex)).toEqual([-1, -1, 0]);
+    expect(screen.getAllByRole("button", { name: "Close tab" }).every((b) => b.tabIndex === -1)).toBe(true);
+
+    const press = (key: string) => fireEvent.keyDown(document.activeElement!, { key });
+    screen.getByRole("tab", { name: "디자인" }).focus();
+    press("ArrowLeft");
+    expect(activeTab()).toHaveTextContent("벤치마크");
+    expect(document.activeElement).toBe(activeTab());
+    press("Home");
+    expect(activeTab()).toHaveTextContent("New tab");
+    press("ArrowLeft"); // wraps
+    expect(activeTab()).toHaveTextContent("디자인");
+    press("Delete");
+    expect(tabNames()).toEqual(["New tab", "벤치마크"]);
+    expect(h.viewer.getState().tabs).toHaveLength(2);
+  });
+
+  it("after a close click, tabs keep their width until the pointer leaves the strip", async () => {
+    await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
+    const wrapper = (name: string) => screen.getByRole("tab", { name }).parentElement!;
+    wrapper("벤치마크").getBoundingClientRect = () => ({ width: 140 }) as DOMRect;
+    fireEvent.click(within(wrapper("벤치마크")).getByRole("button", { name: "Close tab" }), { detail: 1 });
+    expect(wrapper("디자인").style.flex).toBe("0 0 140px");
+    fireEvent.mouseLeave(screen.getByRole("tablist"));
+    expect(wrapper("디자인").style.flex).toBe("");
+  });
+
   it("middle-click closes a tab", async () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
@@ -347,6 +413,67 @@ describe("AppShell: shortcuts while typing", () => {
     expect(activeTab()).toHaveTextContent("계획");
     expect(keyOn(body, "w").defaultPrevented).toBe(true);
     expect(h.viewer.getState().tabs.some((t) => t.kind === "note")).toBe(false);
+  });
+});
+
+describe("AppShell: kept doc tabs", () => {
+  const doc = (id: string, title: string) => ({
+    id,
+    roomId: "r1",
+    relPath: `${id}.html`,
+    title,
+    createdAt: "2026-06-02T03:00:00Z",
+    updatedAt: "2026-06-02T03:00:00Z",
+    author: "agent" as const,
+    source: { agent: null, session: null, cwd: null, machine: null },
+    fileKey: `fk-${id}`,
+  });
+
+  it("a doc tab you leave stays loaded (hidden) and comes back with the same frame", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    const d1 = viewer.open({ kind: "doc", roomId: "r1", artifactId: "a" });
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [doc("a", "첫 문서"), doc("b", "둘째")] }, viewer });
+    const frame = await screen.findByTitle("첫 문서");
+    act(() => {
+      viewer.open({ kind: "room", roomId: "r2" });
+    });
+    // Still in the DOM, just not shown.
+    expect(screen.getByTitle("첫 문서")).toBe(frame);
+    expect(frame).not.toBeVisible();
+    act(() => viewer.activate(d1));
+    expect(screen.getByTitle("첫 문서")).toBe(frame);
+    expect(frame).toBeVisible();
+  });
+
+  it("reordering tabs never moves a kept frame (a moved iframe reloads)", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    const a = viewer.open({ kind: "doc", roomId: "r1", artifactId: "a" });
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [doc("a", "첫 문서"), doc("b", "둘째")] }, viewer });
+    await screen.findByTitle("첫 문서");
+    act(() => {
+      viewer.open({ kind: "doc", roomId: "r1", artifactId: "b" });
+    });
+    await screen.findByTitle("둘째");
+    act(() => viewer.activate(a));
+    const panel = screen.getByRole("tabpanel");
+    const order = () => [...panel.querySelectorAll("iframe")].map((f) => f.title);
+    const before = order();
+    act(() => viewer.move(a, 99));
+    expect(order()).toEqual(before);
+  });
+
+  it("keeps at most three doc tabs besides the active one", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    const ids = ["a", "b", "c", "d", "e"];
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: ids.map((id) => doc(id, `doc ${id}`)) }, viewer });
+    for (const id of ids) {
+      act(() => {
+        viewer.open({ kind: "doc", roomId: "r1", artifactId: id });
+      });
+      await screen.findByTitle(`doc ${id}`);
+    }
+    const frames = ids.filter((id) => screen.queryByTitle(`doc ${id}`) !== null);
+    expect(frames).toEqual(["b", "c", "d", "e"]);
   });
 });
 

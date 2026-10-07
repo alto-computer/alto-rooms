@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connection } from "@/lib/connection";
-import { attachNoteSaver, createNoteSaver, noteSaverKey, resetNoteSavers } from "@/lib/noteSaver";
+import { createNoteSaver } from "@/lib/noteSaver";
+import { attachNoteSaver, noteSaverKey, resetNoteSavers } from "@/lib/noteSaverRegistry";
 import { fakeClient } from "@/test/fakes";
 import App from "./App";
 
@@ -40,7 +41,7 @@ vi.mock("@alto-rooms/protocol-ts", async (importOriginal) => {
 });
 
 const conn = (token = "t1"): Connection => ({ baseUrl: "http://127.0.0.1:4317", token, home: "/h" });
-const CORE_ERROR = "Couldn't start the Rooms core";
+const CORE_ERROR = "Couldn't connect to Rooms";
 
 beforeEach(() => {
   vi.useFakeTimers();

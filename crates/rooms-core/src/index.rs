@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use crate::meta::{file_mtime, file_times, read_meta, title_or_filename, Meta};
+use crate::meta::{read_meta, times_of, title_or_filename, Meta, Stamp};
 use crate::rules::{artifact_id, file_key, local_day, PathClass};
 use crate::walk::ScanEntry;
 use rooms_protocol::{Artifact, Author, Source};
@@ -11,15 +11,6 @@ pub struct Index {
     conn: Connection,
     /// Journal days whose contents changed since the last `take_touched_days` (old and new day on a move).
     touched_days: BTreeSet<String>,
-    /// While a batch is applied: every row's target → fileKey and the keys in use, loaded on the
-    /// first new file so each further new file costs map lookups, not queries, inside the lock.
-    keys: Option<KeyCache>,
-}
-
-#[derive(Default)]
-struct KeyCache {
-    by_target: HashMap<String, String>,
-    taken: HashSet<String>,
 }
 
 /// Journal day of an artifact. Files under `journal/YYYY-MM-DD/` belong to that folder's day
@@ -31,7 +22,7 @@ pub fn journal_folder_day(room_id: &str, rel_path: &str) -> Option<String> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Fingerprint { pub target: String, pub updated_at: String, pub created_day: String }
+pub struct Fingerprint { pub target: String, pub stamp: Stamp, pub created_day: String }
 
 #[derive(Debug, Clone)]
 pub struct FileFacts {
@@ -40,23 +31,29 @@ pub struct FileFacts {
     pub meta: Meta,
     pub file_created: String,
     pub updated: String,
+    pub stamp: Stamp,
     /// `file_key(target)`, hashed here, outside the write lock (cheap in release, not in debug builds).
     pub path_key: String,
 }
 
 /// Phase 2 of a rescan, run WITHOUT the core lock: reads the file head only when its fingerprint
-/// (target + mtime, plus the journal folder day) changed. `None` = not an artifact or unchanged.
+/// (target + mtime + size, plus the journal folder day) changed. `None` = not an artifact or unchanged.
 pub fn read_entry(room_id: &str, e: &ScanEntry, fp: Option<&Fingerprint>) -> Option<FileFacts> {
     if e.class != PathClass::Artifact { return None; }
     let target = e.target.to_string_lossy().to_string();
+    let stat = std::fs::metadata(&e.target).ok();
+    let stamp = stat.as_ref().map(Stamp::of).unwrap_or_default();
     if let Some(fp) = fp {
         let day_ok = journal_folder_day(room_id, &e.rel_path).map(|d| d == fp.created_day).unwrap_or(true);
-        if day_ok && fp.target == target && file_mtime(&e.target).as_deref() == Some(fp.updated_at.as_str()) { return None; }
+        if day_ok && fp.target == target && stat.is_some() && fp.stamp == stamp { return None; }
     }
     let meta = read_meta(&e.target);
-    let (file_created, updated) = file_times(&e.target);
+    let (file_created, updated) = match &stat {
+        Some(m) => times_of(m),
+        None => { let now = chrono::Local::now().to_rfc3339(); (now.clone(), now) }
+    };
     let path_key = file_key(&target);
-    Some(FileFacts { rel_path: e.rel_path.clone(), target, meta, file_created, updated, path_key })
+    Some(FileFacts { rel_path: e.rel_path.clone(), target, meta, file_created, updated, stamp, path_key })
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +63,18 @@ pub enum Change {
     Removed { room_id: String, artifact_id: String },
 }
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
+
+/// Version 2 lacked the stamp columns; rows keep everything else (first-seen times, file keys)
+/// and a zero stamp, which never matches, so each file is read once more.
+/// One transaction with the version bump, so a crash midway cannot leave the columns half added.
+const MIGRATE_2_TO_3: &str = "
+BEGIN;
+ALTER TABLE artifacts ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE artifacts ADD COLUMN size INTEGER NOT NULL DEFAULT 0;
+PRAGMA user_version = 3;
+COMMIT;
+";
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -80,30 +88,37 @@ CREATE TABLE IF NOT EXISTS artifacts (
   created_ts INTEGER NOT NULL,
   updated_at TEXT NOT NULL,
   source TEXT NOT NULL,
-  file_key TEXT NOT NULL
+  file_key TEXT NOT NULL,
+  mtime_ns INTEGER NOT NULL DEFAULT 0,
+  size INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_room ON artifacts(room_id, created_ts);
 CREATE INDEX IF NOT EXISTS idx_artifacts_day ON artifacts(created_day, created_ts);
 CREATE INDEX IF NOT EXISTS idx_artifacts_file_key ON artifacts(file_key);
+CREATE INDEX IF NOT EXISTS idx_artifacts_room_updated ON artifacts(room_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_target ON artifacts(target);
 ";
 
-fn err(e: rusqlite::Error) -> CoreError { CoreError::WriteFailed(e.to_string()) }
 
 impl Index {
     pub fn open(path: &Path) -> Result<Index, CoreError> {
         let try_open = || -> rusqlite::Result<Connection> {
             let c = Connection::open(path)?;
             c.pragma_update(None, "journal_mode", "WAL")?;
+            // Safe with WAL (a crash can lose the last commits, never corrupt); the index is rebuildable.
+            c.pragma_update(None, "synchronous", "NORMAL")?;
             let v: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-            if v != SCHEMA_VERSION {
-                c.execute_batch("DROP TABLE IF EXISTS artifacts;")?;
+            match v {
+                SCHEMA_VERSION => {}
+                2 => c.execute_batch(MIGRATE_2_TO_3)?,
+                _ => c.execute_batch("DROP TABLE IF EXISTS artifacts;")?,
             }
             c.execute_batch(SCHEMA)?;
             c.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             Ok(c)
         };
         match try_open() {
-            Ok(conn) => Ok(Index { conn, touched_days: BTreeSet::new(), keys: None }),
+            Ok(conn) => Ok(Index { conn, touched_days: BTreeSet::new() }),
             Err(_) => {
                 let _ = std::fs::remove_file(path);
                 for suffix in ["-wal", "-shm"] {
@@ -111,7 +126,7 @@ impl Index {
                     p.push(suffix);
                     let _ = std::fs::remove_file(p);
                 }
-                Ok(Index { conn: try_open().map_err(err)?, touched_days: BTreeSet::new(), keys: None })
+                Ok(Index { conn: try_open()?, touched_days: BTreeSet::new() })
             }
         }
     }
@@ -131,51 +146,119 @@ impl Index {
         })
     }
 
-    pub fn remove_one(&mut self, room_id: &str, rel_path: &str) -> Result<Option<Change>, CoreError> {
+    /// A fingerprint from columns `target, mtime_ns, size, created_day` starting at `first`.
+    fn row_to_fingerprint(r: &rusqlite::Row, first: usize) -> rusqlite::Result<Fingerprint> {
+        Ok(Fingerprint {
+            target: r.get(first)?,
+            stamp: Stamp { mtime_ns: r.get(first + 1)?, size: r.get(first + 2)? },
+            created_day: r.get(first + 3)?,
+        })
+    }
+
+    fn remove_one(&mut self, room_id: &str, rel_path: &str) -> Result<Option<Change>, CoreError> {
         let id = artifact_id(room_id, rel_path);
         let day: Option<String> = self.conn.query_row("SELECT created_day FROM artifacts WHERE id = ?1", params![id], |r| r.get(0))
-            .optional().map_err(err)?;
+            .optional()?;
         if let Some(d) = &day { self.touch(d); }
-        let n = self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id]).map_err(err)?;
+        let n = self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id])?;
         Ok((n > 0).then(|| Change::Removed { room_id: room_id.into(), artifact_id: id }))
     }
 
     pub fn fingerprints(&self, room_id: &str) -> Result<HashMap<String, Fingerprint>, CoreError> {
-        let mut st = self.conn.prepare("SELECT rel_path, target, updated_at, created_day FROM artifacts WHERE room_id = ?1").map_err(err)?;
-        let rows = st.query_map(params![room_id], |r| Ok((r.get::<_, String>(0)?, Fingerprint { target: r.get(1)?, updated_at: r.get(2)?, created_day: r.get(3)? }))).map_err(err)?;
-        rows.collect::<rusqlite::Result<HashMap<_, _>>>().map_err(err)
+        let mut st = self.conn.prepare("SELECT rel_path, target, mtime_ns, size, created_day FROM artifacts WHERE room_id = ?1")?;
+        let rows = st.query_map(params![room_id], |r| Ok((r.get::<_, String>(0)?, Self::row_to_fingerprint(r, 1)?)))?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>().map_err(CoreError::from)
     }
 
     pub fn room_summary(&self, room_id: &str) -> Result<(u32, Option<String>), CoreError> {
         self.conn.query_row("SELECT COUNT(*), MAX(updated_at) FROM artifacts WHERE room_id = ?1", params![room_id],
-            |r| Ok((r.get::<_, i64>(0)? as u32, r.get(1)?))).map_err(err)
+            |r| Ok((r.get::<_, i64>(0)? as u32, r.get(1)?))).map_err(CoreError::from)
     }
 
     /// Phase 3, run under the core lock: one transaction. Upserts `facts`, removes rows not in `present`.
     pub fn apply(&mut self, room_id: &str, facts: &[FileFacts], present: &HashSet<String>) -> Result<Vec<Change>, CoreError> {
-        let mut changes = Vec::new();
-        self.keys = None;
-        self.conn.execute_batch("BEGIN").map_err(err)?;
-        let r = (|| -> Result<(), CoreError> {
-            for f in facts { if let Some(c) = self.upsert_facts(room_id, f)? { changes.push(c); } }
+        self.in_transaction(|ix, changes| {
+            for f in facts { changes.extend(ix.upsert_facts(room_id, f)?); }
             let existing: Vec<String> = {
-                let mut st = self.conn.prepare("SELECT rel_path FROM artifacts WHERE room_id = ?1").map_err(err)?;
-                let rows = st.query_map(params![room_id], |r| r.get(0)).map_err(err)?;
-                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?
+                let mut st = ix.conn.prepare("SELECT rel_path FROM artifacts WHERE room_id = ?1")?;
+                let rows = st.query_map(params![room_id], |r| r.get(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
             };
-            for rel in existing.into_iter().filter(|r| !present.contains(r)) {
-                if let Some(c) = self.remove_one(room_id, &rel)? { changes.push(c); }
-            }
+            for rel in existing.into_iter().filter(|r| !present.contains(r)) { changes.extend(ix.remove_one(room_id, &rel)?); }
             Ok(())
-        })();
-        self.keys = None;
-        match r {
-            Ok(()) => { self.conn.execute_batch("COMMIT").map_err(err)?; Ok(changes) }
+        })
+    }
+
+    /// `apply` for some paths only: upserts `facts` and removes the rows at `gone`, in one transaction.
+    pub fn apply_paths(&mut self, room_id: &str, facts: &[FileFacts], gone: &[String]) -> Result<Vec<Change>, CoreError> {
+        self.in_transaction(|ix, changes| {
+            for f in facts { changes.extend(ix.upsert_facts(room_id, f)?); }
+            for rel in gone { changes.extend(ix.remove_one(room_id, rel)?); }
+            Ok(())
+        })
+    }
+
+    /// Starts a transaction. One left open by a panic (the lock is recovered after poisoning,
+    /// see `lock.rs`) is rolled back first, so it can't wedge every later write.
+    fn begin(&self) -> Result<(), CoreError> {
+        if !self.conn.is_autocommit() {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+        self.conn.execute_batch("BEGIN")?;
+        Ok(())
+    }
+
+    /// Runs `f` in one transaction, collecting its changes; on error rolls back and forgets the
+    /// days it touched.
+    fn in_transaction(&mut self, f: impl FnOnce(&mut Self, &mut Vec<Change>) -> Result<(), CoreError>) -> Result<Vec<Change>, CoreError> {
+        let mut changes = Vec::new();
+        self.begin()?;
+        match f(self, &mut changes).and_then(|()| self.conn.execute_batch("COMMIT").map_err(CoreError::from)) {
+            Ok(()) => Ok(changes),
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
         }
     }
 
-    /// Kept for callers and tests: the three phases in one call (used where no lock split matters).
+    /// The fingerprint of the row at `room_id/rel_path`, if any.
+    pub fn fingerprint(&self, room_id: &str, rel_path: &str) -> Result<Option<Fingerprint>, CoreError> {
+        self.conn.prepare_cached("SELECT target, mtime_ns, size, created_day FROM artifacts WHERE id = ?1")?
+            .query_row(params![artifact_id(room_id, rel_path)], |r| Self::row_to_fingerprint(r, 0))
+            .optional().map_err(CoreError::from)
+    }
+
+    /// (room, rel_path) of every row whose original is `target`.
+    pub fn rows_with_target(&self, target: &str) -> Result<Vec<(String, String)>, CoreError> {
+        let mut st = self.conn.prepare_cached("SELECT room_id, rel_path FROM artifacts WHERE target = ?1")?;
+        let rows = st.query_map(params![target], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(CoreError::from)
+    }
+
+    /// `room_id`'s rel paths equal to `rel` or under the folder `rel`.
+    pub fn rel_paths_under(&self, room_id: &str, rel: &str) -> Result<Vec<String>, CoreError> {
+        // `rel/` ≤ path < `rel0`: '0' is the character after '/'.
+        let mut st = self.conn.prepare_cached(
+            "SELECT rel_path FROM artifacts WHERE room_id = ?1 AND (rel_path = ?2 OR (rel_path >= ?2 || '/' AND rel_path < ?2 || '0'))")?;
+        let rows = st.query_map(params![room_id, rel], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(CoreError::from)
+    }
+
+    /// (room, rel_path) of every row whose original lies under the folder `dir`.
+    pub fn rows_with_target_under(&self, dir: &str) -> Result<Vec<(String, String)>, CoreError> {
+        let mut st = self.conn.prepare_cached(
+            "SELECT room_id, rel_path FROM artifacts WHERE target >= ?1 || '/' AND target < ?1 || '0'")?;
+        let rows = st.query_map(params![dir], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(CoreError::from)
+    }
+
+    /// Every distinct original path in the index.
+    pub fn targets(&self) -> Result<Vec<String>, CoreError> {
+        let mut st = self.conn.prepare("SELECT DISTINCT target FROM artifacts")?;
+        let rows = st.query_map([], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(CoreError::from)
+    }
+
+    /// The three scan phases in one call, for tests (the core splits them around its lock).
+    #[cfg(test)]
     pub fn backfill(&mut self, room_id: &str, entries: &[ScanEntry]) -> Result<Vec<Change>, CoreError> {
         let fps = self.fingerprints(room_id)?;
         let facts: Vec<FileFacts> = entries.iter().filter_map(|e| read_entry(room_id, e, fps.get(&e.rel_path))).collect();
@@ -187,8 +270,8 @@ impl Index {
         let id = artifact_id(room_id, &f.rel_path);
         // Cached statements: this runs once per file inside the room's write lock (big backfills).
         let existing: Option<(String, String, String, String, String)> = self.conn
-            .prepare_cached("SELECT created_at, title, updated_at, created_day, file_key FROM artifacts WHERE id = ?1").map_err(err)?
-            .query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional().map_err(err)?;
+            .prepare_cached("SELECT created_at, title, updated_at, created_day, file_key FROM artifacts WHERE id = ?1")?
+            .query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?;
         // Set once when first seen; a Rooms move carries the row (reassign).
         let key = match existing.as_ref() {
             Some(x) => x.4.clone(),
@@ -208,12 +291,13 @@ impl Index {
         let ts = chrono::DateTime::parse_from_rfc3339(&created).map(|d| d.timestamp_millis()).unwrap_or(0);
         let source = serde_json::to_string(&meta.source).unwrap_or_else(|_| "{}".into());
         self.conn.prepare_cached(
-            "INSERT INTO artifacts (id, room_id, rel_path, target, title, created_at, created_day, created_ts, updated_at, source, file_key)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+            "INSERT INTO artifacts (id, room_id, rel_path, target, title, created_at, created_day, created_ts, updated_at, source, file_key, mtime_ns, size)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
              ON CONFLICT(id) DO UPDATE SET target=excluded.target, title=excluded.title, created_at=excluded.created_at,
-               created_day=excluded.created_day, created_ts=excluded.created_ts, updated_at=excluded.updated_at, source=excluded.source",
-        ).map_err(err)?
-        .execute(params![id, room_id, f.rel_path, f.target, title, created, day, ts, updated, source, key]).map_err(err)?;
+               created_day=excluded.created_day, created_ts=excluded.created_ts, updated_at=excluded.updated_at, source=excluded.source,
+               mtime_ns=excluded.mtime_ns, size=excluded.size",
+        )?
+        .execute(params![id, room_id, f.rel_path, f.target, title, created, day, ts, updated, source, key, f.stamp.mtime_ns, f.stamp.size])?;
         let a = Artifact { id, room_id: room_id.into(), rel_path: f.rel_path.clone(), title: title.clone(),
             created_at: created, updated_at: updated.clone(), author: Author::Agent, source: meta.source, file_key: key };
         let change = match existing {
@@ -226,15 +310,15 @@ impl Index {
     }
 
     pub fn list(&self, room_id: &str) -> Result<Vec<Artifact>, CoreError> {
-        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE room_id = ?1 ORDER BY created_ts ASC, id ASC").map_err(err)?;
-        let rows = st.query_map(params![room_id], Self::row_to_artifact).map_err(err)?;
+        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE room_id = ?1 ORDER BY created_ts ASC, id ASC")?;
+        let rows = st.query_map(params![room_id], Self::row_to_artifact)?;
         Ok(rows.filter_map(Result::ok).collect())
     }
 
     /// The row with `id` in `room_id`, if any.
     pub fn get(&self, room_id: &str, id: &str) -> Result<Option<Artifact>, CoreError> {
         self.conn.query_row("SELECT * FROM artifacts WHERE id = ?1 AND room_id = ?2", params![id, room_id], Self::row_to_artifact)
-            .optional().map_err(err)
+            .optional().map_err(CoreError::from)
     }
 
     /// Moves the row of `from_room/from_rel` to `to_room/to_rel` in one transaction: a new id and
@@ -246,24 +330,24 @@ impl Index {
     /// source row.
     pub fn reassign(&mut self, from_room: &str, from_rel: &str, to_room: &str, to_rel: &str, new_target: Option<&str>) -> Result<(Change, Change), CoreError> {
         let (old_id, new_id) = (artifact_id(from_room, from_rel), artifact_id(to_room, to_rel));
-        self.conn.execute_batch("BEGIN").map_err(err)?;
+        self.begin()?;
         let r = (|| -> Result<(Change, Change), CoreError> {
             let row: Option<(Artifact, String, String)> = self.conn.query_row(
                 "SELECT * FROM artifacts WHERE id = ?1 AND room_id = ?2", params![old_id, from_room],
-                |r| Ok((Self::row_to_artifact(r)?, r.get("target")?, r.get("created_day")?))).optional().map_err(err)?;
+                |r| Ok((Self::row_to_artifact(r)?, r.get("target")?, r.get("created_day")?))).optional()?;
             let (old, target, day) = row.ok_or(CoreError::NotFound)?;
             if let Some(stale_day) = self.conn.query_row("SELECT created_day FROM artifacts WHERE id = ?1", params![new_id], |r| r.get::<_, String>(0))
-                .optional().map_err(err)? { self.touch(&stale_day); }
-            self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![new_id]).map_err(err)?;
+                .optional()? { self.touch(&stale_day); }
+            self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![new_id])?;
             let n = self.conn.execute(
                 "UPDATE artifacts SET id = ?1, room_id = ?2, rel_path = ?3, target = ?4 WHERE id = ?5",
-                params![new_id, to_room, to_rel, new_target.unwrap_or(&target), old_id]).map_err(err)?;
+                params![new_id, to_room, to_rel, new_target.unwrap_or(&target), old_id])?;
             if n != 1 { return Err(CoreError::NotFound); }
             self.touch(&day);
             let new = Artifact { id: new_id.clone(), room_id: to_room.into(), rel_path: to_rel.into(), ..old };
             Ok((Change::Removed { room_id: from_room.into(), artifact_id: old_id.clone() }, Change::Added(new)))
         })();
-        match r.and_then(|c| self.conn.execute_batch("COMMIT").map(|()| c).map_err(err)) {
+        match r.and_then(|c| self.conn.execute_batch("COMMIT").map(|()| c).map_err(CoreError::from)) {
             Ok(c) => Ok(c),
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
         }
@@ -272,40 +356,29 @@ impl Index {
     /// The key for an original seen for the first time: the key of a row already holding the same
     /// original (a link to a file Rooms moved), else one derived from its path that no row uses yet
     /// (a moved file keeps the key of its old path, so a new file there must not reuse it).
-    fn new_file_key(&mut self, target: &str, path_key: &str) -> Result<String, CoreError> {
-        if self.keys.is_none() {
-            let mut cache = KeyCache::default();
-            let mut st = self.conn.prepare("SELECT target, file_key FROM artifacts").map_err(err)?;
-            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(err)?;
-            for row in rows {
-                let (t, k) = row.map_err(err)?;
-                cache.taken.insert(k.clone());
-                cache.by_target.entry(t).or_insert(k);
-            }
-            drop(st);
-            self.keys = Some(cache);
+    fn new_file_key(&self, target: &str, path_key: &str) -> Result<String, CoreError> {
+        let held: Option<String> = self.conn
+            .prepare_cached("SELECT file_key FROM artifacts WHERE target = ?1 LIMIT 1")?
+            .query_row(params![target], |r| r.get(0)).optional()?;
+        if let Some(k) = held { return Ok(k); }
+        let mut taken = self.conn.prepare_cached("SELECT 1 FROM artifacts WHERE file_key = ?1 LIMIT 1")?;
+        for n in 0u32.. {
+            let k = if n == 0 { path_key.to_string() } else { file_key(&format!("{target}#{n}")) };
+            if !taken.exists(params![k])? { return Ok(k); }
         }
-        let cache = self.keys.as_mut().expect("loaded above");
-        if let Some(k) = cache.by_target.get(target) { return Ok(k.clone()); }
-        let k = (0u32..)
-            .map(|n| if n == 0 { path_key.to_string() } else { file_key(&format!("{target}#{n}")) })
-            .find(|k| !cache.taken.contains(k))
-            .expect("some suffix is free");
-        cache.taken.insert(k.clone());
-        cache.by_target.insert(target.to_string(), k.clone());
-        Ok(k)
+        unreachable!("some suffix is free")
     }
 
     /// Every row with `file_key` (one per room that holds the original).
     pub fn by_file_key(&self, file_key: &str) -> Result<Vec<Artifact>, CoreError> {
-        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE file_key = ?1").map_err(err)?;
-        let rows = st.query_map(params![file_key], Self::row_to_artifact).map_err(err)?;
+        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE file_key = ?1")?;
+        let rows = st.query_map(params![file_key], Self::row_to_artifact)?;
         Ok(rows.filter_map(Result::ok).collect())
     }
 
     pub fn by_day(&self, day: &str) -> Result<Vec<(Artifact, String)>, CoreError> {
-        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE created_day = ?1 ORDER BY created_ts ASC, id ASC").map_err(err)?;
-        let rows = st.query_map(params![day], |r| Ok((Self::row_to_artifact(r)?, r.get::<_, String>("target")?))).map_err(err)?;
+        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE created_day = ?1 ORDER BY created_ts ASC, id ASC")?;
+        let rows = st.query_map(params![day], |r| Ok((Self::row_to_artifact(r)?, r.get::<_, String>("target")?)))?;
         Ok(rows.filter_map(Result::ok).collect())
     }
 
@@ -320,13 +393,13 @@ impl Index {
 
     pub fn drop_room(&mut self, room_id: &str) -> Result<Vec<Change>, CoreError> {
         let rows: Vec<(String, String)> = {
-            let mut st = self.conn.prepare("SELECT id, created_day FROM artifacts WHERE room_id = ?1").map_err(err)?;
-            let rows = st.query_map(params![room_id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+            let mut st = self.conn.prepare("SELECT id, created_day FROM artifacts WHERE room_id = ?1")?;
+            let rows = st.query_map(params![room_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.filter_map(Result::ok).collect()
         };
         let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
         for (_, d) in &rows { self.touch(d); }
-        self.conn.execute("DELETE FROM artifacts WHERE room_id = ?1", params![room_id]).map_err(err)?;
+        self.conn.execute("DELETE FROM artifacts WHERE room_id = ?1", params![room_id])?;
         Ok(ids.into_iter().map(|id| Change::Removed { room_id: room_id.into(), artifact_id: id }).collect())
     }
 }
@@ -427,6 +500,32 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_check_ignores_how_updated_at_is_written() {
+        let (d, room) = setup();
+        let mut ix = Index::open(&d.path().join("index.sqlite")).unwrap();
+        fs::write(room.join("a.html"), "<title>A</title>").unwrap();
+        let entries = scan_room(&room, false, false);
+        ix.backfill("r1", &entries).unwrap();
+        // Same instant, another offset: what a time zone change makes of the stored string.
+        ix.conn.execute("UPDATE artifacts SET updated_at = '1999-01-01T00:00:00+00:00'", []).unwrap();
+        let fps = ix.fingerprints("r1").unwrap();
+        assert!(read_entry("r1", &entries[0], fps.get("a.html")).is_none(), "re-read an unchanged file");
+    }
+
+    #[test]
+    fn a_rewrite_of_the_same_size_within_the_same_second_is_seen() {
+        let (d, room) = setup();
+        let mut ix = Index::open(&d.path().join("index.sqlite")).unwrap();
+        fs::write(room.join("a.html"), "<title>A</title>").unwrap();
+        let entries = scan_room(&room, false, false);
+        ix.backfill("r1", &entries).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(room.join("a.html"), "<title>B</title>").unwrap();
+        let ch = ix.backfill("r1", &entries).unwrap();
+        assert!(matches!(&ch[..], [Change::Updated(a)] if a.title == "B"), "{ch:?}");
+    }
+
+    #[test]
     fn unchanged_journal_file_still_gets_folder_day() {
         let (d, _room) = setup();
         let j = d.path().join("journal");
@@ -450,6 +549,29 @@ mod tests {
         let mut ix = Index::open(&db).unwrap();
         ix.backfill("r1", &scan_room(&room, false, false)).unwrap();
         assert_eq!(ix.list("r1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_version_2_index_keeps_its_rows_and_rereads_each_file_once() {
+        let (d, room) = setup();
+        let db = d.path().join("index.sqlite");
+        fs::write(room.join("a.html"), "<title>A</title>").unwrap();
+        {
+            let c = Connection::open(&db).unwrap();
+            c.execute_batch(&SCHEMA.replace(",\n  mtime_ns INTEGER NOT NULL DEFAULT 0,\n  size INTEGER NOT NULL DEFAULT 0", "")).unwrap();
+            c.execute("INSERT INTO artifacts VALUES ('x', 'r1', 'a.html', ?1, 'A', '2001-02-03T04:05:06+00:00', '2001-02-03', 0, 'old', '{}', 'kept-key')",
+                params![fs::canonicalize(room.join("a.html")).unwrap().to_string_lossy()]).unwrap();
+            c.pragma_update(None, "user_version", 2).unwrap();
+        }
+        let mut ix = Index::open(&db).unwrap();
+        let row = |ix: &Index| ix.list("r1").unwrap().remove(0);
+        assert_eq!((row(&ix).created_at, row(&ix).file_key), ("2001-02-03T04:05:06+00:00".to_string(), "kept-key".to_string()));
+        let entries = scan_room(&room, false, false);
+        let fps = ix.fingerprints("r1").unwrap();
+        assert!(read_entry("r1", &entries[0], fps.get("a.html")).is_some(), "a zero stamp is re-read");
+        ix.backfill("r1", &entries).unwrap();
+        let fps = ix.fingerprints("r1").unwrap();
+        assert!(read_entry("r1", &entries[0], fps.get("a.html")).is_none(), "then unchanged");
     }
 
     #[test]
@@ -487,7 +609,7 @@ mod tests {
         let _ = ix.take_touched_days();
         ix.conn.execute_batch("DROP TABLE artifacts").unwrap(); // force the next apply to fail
         let fact = FileFacts { rel_path: "x.html".into(), target: "/x".into(), meta: Default::default(),
-            file_created: "2026-10-05T00:00:00+09:00".into(), updated: "2026-10-05T00:00:00+09:00".into(), path_key: file_key("/x") };
+            file_created: "2026-10-05T00:00:00+09:00".into(), updated: "2026-10-05T00:00:00+09:00".into(), stamp: Stamp::default(), path_key: file_key("/x") };
         assert!(ix.apply("r1", &[fact], &["x.html".to_string()].into()).is_err());
         assert!(ix.take_touched_days().is_empty());
     }

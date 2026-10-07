@@ -29,7 +29,7 @@ describe("App smoke", () => {
 
   it("shows the error panel and retries", async () => {
     render(<App />);
-    expect(await screen.findByText("Couldn't start the Rooms core")).toBeTruthy();
+    expect(await screen.findByText("Couldn't connect to Rooms")).toBeTruthy();
     window.__ROOMS_DEV__ = { baseUrl: "http://127.0.0.1:4317", token: "t", home: "/h" };
     fireEvent.click(screen.getByText("Try again"));
     expect(await screen.findByText("Rooms")).toBeTruthy();

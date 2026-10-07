@@ -11,7 +11,9 @@
  * bundle check of "quit → flush → exit" needs to observe without typing.
  */
 import { invoke } from "@tauri-apps/api/core";
-import { attachNoteSaver, checkNoteDraft, createNoteSaver, noteSaverKey, type SaveNoteFn } from "./noteSaver";
+import { checkNoteDraft } from "./drafts";
+import { createNoteSaver } from "./noteSaver";
+import { attachNoteSaver, noteSaverKey, type SaveNoteFn } from "./noteSaverRegistry";
 
 const never = { setTimeout: () => 0, clearTimeout: () => {} };
 

@@ -1,10 +1,14 @@
 import { useMemo, useRef } from "react";
 import type { Artifact } from "@alto-rooms/protocol-ts";
-import { useReadOnly, useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
+import { useOpenDoc, useReadOnly, useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
 import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { artifactDragSource, INBOX_ID } from "@/lib/drag";
 import { OnboardingCard } from "./OnboardingCard";
 import { wantsNewTab } from "@/lib/nav";
+import { cn } from "@/lib/utils";
+import { useScrollMemory } from "@/lib/scrollMemory";
+import { useCurrentTabId } from "@/shell/currentTab";
+import { useVisitsAtArrival } from "./useVisitsAtArrival";
 
 /**
  * The new tab: per room, how many docs arrived since the last visit.
@@ -27,14 +31,9 @@ export function NewTabView() {
   const viewer = useViewerStore();
   const { rooms, artifacts, errors, info } = useRooms();
   const readOnly = useReadOnly();
-
-  const baselines = useRef<{ lastVisit: Record<string, string>; firstRunAt: string } | null>(null);
-  if (baselines.current === null) {
-    const v = viewer.getState();
-    baselines.current = { lastVisit: v.lastVisit, firstRunAt: v.firstRunAt };
-  }
-
-  const since = (roomId: string) => baselines.current!.lastVisit[roomId] ?? baselines.current!.firstRunAt;
+  const openDoc = useOpenDoc();
+  const visits = useVisitsAtArrival();
+  const { since } = visits;
   const changed = useMemo(
     () => rooms.filter((r) => r.updatedAt !== null && isNewSince(r.updatedAt, since(r.id))).map((r) => r.id),
     // `since` reads the baselines frozen at mount.
@@ -62,6 +61,8 @@ export function NewTabView() {
       return n;
     };
     return rooms
+      // An empty inbox has nothing to show (the sidebar hides it too).
+      .filter((room) => room.id !== INBOX_ID || room.artifactCount > 0)
       .map((room) => ({ room, newCount: newCount(room.id) }))
       .sort((x, y) => y.newCount - x.newCount || x.room.name.localeCompare(y.room.name, "ko"));
   }, [rooms, artifacts]);
@@ -70,25 +71,26 @@ export function NewTabView() {
   const settled = info !== null && changed.every((id) => artifacts[id] !== undefined || errors[`room:${id}`] !== undefined);
   const roomsWithNew = cards.filter((c) => c.newCount > 0).length;
   // Rooms an agent organized since: never visited (no lastVisit entry), inbox aside.
-  const neverVisited = rooms.filter((r) => r.id !== INBOX_ID && baselines.current!.lastVisit[r.id] === undefined).length;
+  const neverVisited = rooms.filter((r) => r.id !== INBOX_ID && visits.lastVisit[r.id] === undefined).length;
 
   const inbox = useMemo(() => [...(artifacts[INBOX_ID] ?? [])].reverse(), [artifacts]);
 
-  const shell = "flex flex-1 flex-col gap-8 overflow-y-auto bg-white px-12 pt-14 pb-10";
-  if (info === null) return <div className={shell} />;
+  const shell = "flex flex-1 flex-col gap-8 overflow-y-auto bg-white px-12 pb-10";
+  const shellRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:new`, settled);
+  if (info === null) return <div className={cn(shell, "pt-10")} />;
 
   const waiting =
     inbox.length > 0 ? (
       <InboxList
         artifacts={inbox}
         draggable={!readOnly}
-        onOpen={(a, newTab) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab)}
+        onOpen={openDoc}
       />
     ) : null;
 
   if (rooms.every((r) => r.id === INBOX_ID)) {
     return (
-      <div className={shell}>
+      <div ref={shellRef} className={cn(shell, "pt-14")}>
         <OnboardingCard />
         {waiting ? <div className="mx-auto w-full max-w-[760px]">{waiting}</div> : null}
       </div>
@@ -96,11 +98,12 @@ export function NewTabView() {
   }
 
   return (
-    <div className={shell}>
-      <header className="flex flex-col gap-2">
-        <h1 className="text-[32px] font-medium text-ink">Since your last visit</h1>
+    // Header at the same place and size as a room's or a note's, so switching tabs doesn't jump.
+    <div ref={shellRef} className={cn(shell, "pt-10")}>
+      <header className="flex flex-col gap-1">
+        <h1 className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">Since your last visit</h1>
         {settled ? (
-          <p className="text-[17px] text-ink-2">
+          <p className="text-[16px] text-ink-2">
             {roomsWithNew > 0
               ? `New docs in ${count(roomsWithNew, "room")}.`
               : neverVisited > 0
@@ -116,7 +119,7 @@ export function NewTabView() {
               type="button"
               data-testid="new-room-card"
               onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))}
-              onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "room", roomId: room.id })}
+              onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "room", roomId: room.id }, true)}
               className="flex flex-col gap-1 rounded-[14px] border border-[#ddd] bg-white px-5 py-[18px] text-left hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink"
             >
               <span data-testid="new-room-name" className="text-[18px] font-medium text-ink">

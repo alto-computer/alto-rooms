@@ -167,7 +167,7 @@ describe("RoomView", () => {
 
   it("an empty room shows the empty state with the path chip", async () => {
     await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [] } });
-    expect(screen.getByText("No artifacts yet")).toBeInTheDocument();
+    expect(screen.getByText("No docs yet")).toBeInTheDocument();
     expect(screen.getByAltText("Clew the otter, peeking out of the water")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\/h\/rooms\/r1/ })).toBeInTheDocument();
   });
@@ -210,7 +210,7 @@ describe("RoomView", () => {
       artifactErrors: { r1: new Error("boom") },
     });
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
-    expect(screen.queryByText("No artifacts yet")).toBeNull();
+    expect(screen.queryByText("No docs yet")).toBeNull();
   });
 
   it("an unavailable linked room says so under the subtitle and keeps its cards", async () => {
@@ -232,7 +232,7 @@ describe("RoomView", () => {
 describe("ArtifactCard: lazy preview", () => {
   const info: Info = { version: "0", readOnly: false, home: "/h", journalRoomId: "journal", filesOrigin: "http://files.test" };
 
-  it("renders only the blank page box until the card is near the viewport", async () => {
+  it("renders only the blank page box until the card is near the viewport, and unloads 2 s after it leaves", async () => {
     let fire: (hit: boolean) => void = () => {};
     vi.stubGlobal(
       "IntersectionObserver",
@@ -252,8 +252,42 @@ describe("ArtifactCard: lazy preview", () => {
       expect(screen.queryByTitle("첫 문서")).toBeNull();
       act(() => fire(true));
       expect(screen.getByTitle("첫 문서")).toBeInTheDocument();
+      vi.useFakeTimers();
       act(() => fire(false));
+      // Scrolling back within the delay keeps the loaded preview.
+      act(() => vi.advanceTimersByTime(1500));
+      act(() => fire(true));
+      act(() => fire(false));
+      act(() => vi.advanceTimersByTime(1999));
+      expect(screen.getByTitle("첫 문서")).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1));
       expect(screen.queryByTitle("첫 문서")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("preloads sideways too, so cards past the edge of the horizontal Journal row load", async () => {
+    let margin: string | undefined;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(_cb: IntersectionObserverCallback, opts?: IntersectionObserverInit) {
+          margin = opts?.rootMargin;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    try {
+      await renderWithStores(
+        <ArtifactCard artifact={artifact("a", "첫 문서", longAgo)} info={info} label="Today" isNew={false} size="journal" onOpen={() => {}} />,
+      );
+      const parts = (margin ?? "").trim().split(/\s+/);
+      const horizontal = parts.length === 1 ? parts[0] : parts[1];
+      expect(horizontal).not.toMatch(/^0(px|%)?$/);
     } finally {
       vi.unstubAllGlobals();
     }

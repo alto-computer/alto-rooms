@@ -115,8 +115,9 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     },
     pluginEntryUrl: (info: Info, p: PluginInfo) =>
       `${info.filesOrigin}/_plugins/${encodeURIComponent(p.id)}/${p.entry.split("/").map(encodeURIComponent).join("/")}`,
+    /** Versioned by `updatedAt`: when the file changes, frames showing it get a new URL and reload. */
     fileUrl: (info: Info, a: Artifact) =>
-      `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}`,
+      `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}?v=${encodeURIComponent(a.updatedAt)}`,
     /** Every (re)connection first delivers `resync {roomId: null}`; `onOpen` fires on each (re)open. */
     subscribe: (onEvent: (e: RoomsEvent) => void, onOpen?: () => void) => {
       const es = new EventSource(baseUrl + "/v1/events");

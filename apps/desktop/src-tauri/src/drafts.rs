@@ -87,31 +87,43 @@ fn log_err(what: &str) -> impl Fn(io::Error) -> String + '_ {
     }
 }
 
+/// Runs blocking file IO off the main thread and off the async workers.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| format!("draft task failed: {e}"))?
+}
+
 #[tauri::command]
-pub fn save_note_draft(app: AppHandle, key: String, value: String) -> Result<(), String> {
+pub async fn save_note_draft(app: AppHandle, key: String, value: String) -> Result<(), String> {
     if value.len() as u64 > MAX_DRAFT_BYTES {
         return Err("draft too large".into());
     }
     let dir = drafts_dir(&app)?;
-    save_draft(&dir, &key, &value).map_err(log_err("save"))?;
-    eprintln!("note draft: saved {}", key_file_name(&key));
-    Ok(())
+    blocking(move || {
+        save_draft(&dir, &key, &value).map_err(log_err("save"))?;
+        eprintln!("note draft: saved {}", key_file_name(&key));
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn load_note_draft(app: AppHandle, key: String) -> Result<Option<String>, String> {
-    load_draft(&drafts_dir(&app)?, &key).map_err(log_err("load"))
-}
-
-#[tauri::command]
-pub fn delete_note_draft(app: AppHandle, key: String) -> Result<(), String> {
+pub async fn load_note_draft(app: AppHandle, key: String) -> Result<Option<String>, String> {
     let dir = drafts_dir(&app)?;
-    let existed = dir.join(key_file_name(&key)).exists();
-    delete_draft(&dir, &key).map_err(log_err("delete"))?;
-    if existed {
-        eprintln!("note draft: deleted {}", key_file_name(&key));
-    }
-    Ok(())
+    blocking(move || load_draft(&dir, &key).map_err(log_err("load"))).await
+}
+
+#[tauri::command]
+pub async fn delete_note_draft(app: AppHandle, key: String) -> Result<(), String> {
+    let dir = drafts_dir(&app)?;
+    blocking(move || {
+        let existed = dir.join(key_file_name(&key)).exists();
+        delete_draft(&dir, &key).map_err(log_err("delete"))?;
+        if existed {
+            eprintln!("note draft: deleted {}", key_file_name(&key));
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

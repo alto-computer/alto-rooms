@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { addDays, dayOfMonth, monthDay, weekOf, WEEKDAY_LETTERS } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 
@@ -9,7 +10,7 @@ export function WeekStrip({ date, onChange }: { date: string; onChange: (date: s
   return (
     <div className="flex items-center gap-1">
       <button type="button" aria-label="Previous week" className={NAV} onClick={() => onChange(addDays(date, -7))}>
-        <span aria-hidden className="text-[20px] leading-none">‹</span>
+        <ChevronLeft size={18} strokeWidth={1.75} aria-hidden />
       </button>
       {weekOf(date).map((d, i) => {
         const selected = d === date;
@@ -36,7 +37,7 @@ export function WeekStrip({ date, onChange }: { date: string; onChange: (date: s
         );
       })}
       <button type="button" aria-label="Next week" className={NAV} onClick={() => onChange(addDays(date, 7))}>
-        <span aria-hidden className="text-[20px] leading-none">›</span>
+        <ChevronRight size={18} strokeWidth={1.75} aria-hidden />
       </button>
     </div>
   );

@@ -1,7 +1,7 @@
-import { createContext, createElement, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { AsksStore, type AsksState } from "@/ask/asksStore";
 import { PluginsStore, type PluginsState } from "@/plugins/pluginsStore";
-import type { Artifact, JournalDay, createRoomsClient } from "@alto-rooms/protocol-ts";
+import type { Artifact, Info, JournalDay, Room, createRoomsClient } from "@alto-rooms/protocol-ts";
 import type { RoomsState, RoomsStore } from "./roomsStore";
 import type { ViewerState, ViewerStore } from "./viewerStore";
 
@@ -58,9 +58,26 @@ export function useClient(): RoomsClient {
   return client;
 }
 
+/**
+ * The whole rooms state: re-renders on every change, including artifact and day
+ * loads anywhere. Prefer the slices below (`useRoomList`, `useInfo`), which only
+ * re-render when their own part changes.
+ */
 export function useRooms(): RoomsState {
   const store = useRoomsStore();
   return useSyncExternalStore(store.subscribe, store.getState);
+}
+
+/** The room list (listRooms order). */
+export function useRoomList(): Room[] {
+  const store = useRoomsStore();
+  return useSyncExternalStore(store.subscribe, () => store.getState().rooms);
+}
+
+/** The core's info; `null` before the first sync. */
+export function useInfo(): Info | null {
+  const store = useRoomsStore();
+  return useSyncExternalStore(store.subscribe, () => store.getState().info);
 }
 
 /**
@@ -147,4 +164,10 @@ export function useReadOnly(): boolean {
 export function useViewer(): ViewerState {
   const store = useViewerStore();
   return useSyncExternalStore(store.subscribe, store.getState);
+}
+
+/** Opens a doc in this tab, or in a new one when `newTab` (see `wantsNewTab`). */
+export function useOpenDoc(): (a: Artifact, newTab: boolean) => void {
+  const viewer = useViewerStore();
+  return useCallback((a: Artifact, newTab: boolean) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab), [viewer]);
 }

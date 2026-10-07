@@ -51,6 +51,9 @@ function Grab() {
   return null;
 }
 
+const activeKind = (h: { viewer: { getState: () => { tabs: { id: string; kind: string }[]; activeId: string | null } } }) =>
+  h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId)?.kind;
+
 describe("AppShell in Tauri", () => {
   it("the page leaves ⌘W/⌘T/⌘B/⌘K to the menu, so they never fire twice", async () => {
     const h = await renderWithStores(<AppShell />, { rooms });
@@ -73,7 +76,7 @@ describe("AppShell in Tauri", () => {
     menu("menu://toggle-sidebar");
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     menu("menu://find");
-    expect(screen.getByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
   });
 
   it("from a text field the menu's ⌘K still finds, but its ⌘B does nothing", async () => {
@@ -85,7 +88,7 @@ describe("AppShell in Tauri", () => {
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     expect(screen.getByLabelText("New room name")).toBeInTheDocument();
     menu("menu://find");
-    expect(screen.getByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
   });
 
   it("menu://back and menu://forward walk the active tab's history; the page leaves ⌘[ to the menu", async () => {
@@ -111,18 +114,22 @@ describe("AppShell in Tauri", () => {
     expect(active()).toMatchObject({ kind: "room", roomId: "r1" });
   });
 
-  it("menu://close-tab and menu://new-tab run the tab actions", async () => {
+  it("menu://close-tab, menu://new-tab and menu://reopen-tab run the tab actions", async () => {
     const h = await renderWithStores(<AppShell />, { rooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
     await act(async () => {}); // listeners register asynchronously
     menu("menu://close-tab");
-    expect(h.viewer.getState().tabs.some((t) => t.kind === "room")).toBe(false);
-    act(() => {
-      h.viewer.close(h.viewer.getState().activeId!);
-    });
-    expect(h.viewer.getState().tabs).toHaveLength(0);
+    // Closing the last tab leaves a New tab.
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["new"]);
     menu("menu://new-tab");
     expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["new"]);
+    menu("menu://reopen-tab");
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["room", "new"]);
+    expect(activeKind(h)).toBe("room");
+    menu("menu://next-tab");
+    expect(activeKind(h)).toBe("new");
+    menu("menu://prev-tab");
+    expect(activeKind(h)).toBe("room");
   });
 
   it("the menu's ⌘W follows the text-field rule", async () => {

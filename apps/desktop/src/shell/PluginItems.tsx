@@ -8,9 +8,7 @@ import { usePlugins, usePluginsStore, useReadOnly, useViewer, useViewerStore } f
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { pluginIcon } from "@/plugins/icons";
-
-const ITEM = "flex min-h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[15px] text-ink";
-const ITEM_INTERACTIVE = "hover:bg-[#f2f2f2] focus-visible:outline-2 focus-visible:outline-ink";
+import { ITEM, ITEM_INTERACTIVE } from "./sidebarItem";
 
 export function PluginItems() {
   const { list } = usePlugins();
@@ -57,7 +55,7 @@ export function PluginItems() {
                   type="button"
                   aria-current={current ? "page" : undefined}
                   onClick={(e) => viewer.go({ kind: "plugin", pluginId: p.id }, wantsNewTab(e))}
-                  onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "plugin", pluginId: p.id })}
+                  onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "plugin", pluginId: p.id }, true)}
                   onContextMenu={onContextMenu}
                   className={cn(ITEM, ITEM_INTERACTIVE, current && "bg-[#ebebeb] hover:bg-[#ebebeb]")}
                 >

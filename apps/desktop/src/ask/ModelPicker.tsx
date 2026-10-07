@@ -22,9 +22,12 @@ export function ModelPicker({ target, model, onChange }: { target: AskTarget; mo
   const label = `${target.agent} · ${modelLabel(model)}`;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger aria-label={`Model: ${label}`} className={`${CHIP} flex items-center gap-1 outline-none hover:bg-[#e9e9e9] focus-visible:ring-2 focus-visible:ring-primary/30`}>
-        {label}
-        <ChevronDown className="size-3" />
+      {/* The trigger is a 28px hit area; the chip inside keeps its small look. */}
+      <DropdownMenuTrigger aria-label={`Model: ${label}`} className="group flex min-h-7 shrink-0 items-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-ink">
+        <span className={`${CHIP} flex items-center gap-1 group-hover:bg-[#e9e9e9] group-data-[state=open]:bg-[#e9e9e9]`}>
+          {label}
+          <ChevronDown className="size-3" />
+        </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="end" className="w-auto min-w-36">
         <DropdownMenuRadioGroup value={model ?? ""} onValueChange={(v) => onChange(v || null)}>

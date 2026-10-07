@@ -284,7 +284,8 @@ fn with_models(home: &std::path::Path) {
 #[tokio::test]
 async fn target_matches_what_start_picks() {
     // (doc meta, sidecar (agent, session), models offered) → the same agent, mode and models from target and start
-    let cases: [(&str, Option<(&str, &str)>, &[&str]); 5] = [
+    type Case<'a> = (&'a str, Option<(&'a str, &'a str)>, &'a [&'a str]);
+    let cases: [Case; 5] = [
         (r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#, None, &[]),
         ("", Some(("claude-code", "S-9")), &[]),
         (r#"<meta name="rooms:agent" content="codex">"#, Some(("claude-code", "S-9")), &[]),

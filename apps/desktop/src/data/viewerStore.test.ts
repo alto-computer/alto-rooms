@@ -65,7 +65,7 @@ describe("ViewerStore", () => {
     expect(st.getState().tabs.map((t) => t.id)).toContain(id);
   });
 
-  it("close activates the right neighbour, else left, else null", () => {
+  it("close activates the right neighbour, else left, else a fresh New tab", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const n = st.getState().tabs[0].id;
     const a = st.open({ kind: "room", roomId: "a" });
@@ -76,8 +76,70 @@ describe("ViewerStore", () => {
     st.close(b);
     expect(st.getState().activeId).toBe(n);
     st.close(n);
-    expect(st.getState().activeId).toBeNull();
-    expect(st.getState().tabs).toEqual([]);
+    const [only] = st.getState().tabs;
+    expect(only.kind).toBe("new");
+    expect(only.id).not.toBe(n);
+    expect(st.getState().activeId).toBe(only.id);
+  });
+
+  it("reopen brings back closed tabs, newest first, at their old place with their history", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const n = st.getState().tabs[0].id;
+    const a = st.open({ kind: "room", roomId: "a" });
+    st.navigate({ kind: "room", roomId: "a2" });
+    st.open({ kind: "room", roomId: "b" });
+    st.close(a);
+    st.activate(n);
+    st.reopen();
+    const tabs = st.getState().tabs;
+    expect(tabs.map((t) => (t.kind === "room" ? t.roomId : t.kind))).toEqual(["new", "a2", "b"]);
+    expect(st.getState().activeId).toBe(tabs[1].id);
+    expect(st.canGoBack()).toBe(true);
+    st.reopen(); // nothing left
+    expect(st.getState().tabs).toHaveLength(3);
+  });
+
+  it("go(…, newTab) opens next to the active tab, after the ones already opened from it", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const home = st.getState().tabs[0].id;
+    st.open({ kind: "room", roomId: "end" });
+    st.activate(home);
+    st.go({ kind: "doc", roomId: "r", artifactId: "a" }, true);
+    st.activate(home);
+    st.go({ kind: "doc", roomId: "r", artifactId: "b" }, true);
+    const order = () => st.getState().tabs.map((t) => (t.kind === "doc" ? t.artifactId : t.kind === "room" ? t.roomId : t.kind));
+    expect(order()).toEqual(["new", "a", "b", "end"]);
+    st.open({ kind: "journal", date: "2026-10-07" }); // ⌘T-style opens still go last
+    expect(order()).toEqual(["new", "a", "b", "end", "journal"]);
+  });
+
+  it("closing a New tab leaves nothing to reopen", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const r = st.open({ kind: "room", roomId: "a" });
+    st.close(r);
+    st.close(st.getState().tabs[0].id); // the New tab: replaced by another New tab
+    st.close(st.getState().tabs[0].id);
+    st.reopen(); // the room, not one of the New tabs
+    expect(st.getState().tabs.map((t) => t.kind)).toEqual(["new", "room"]);
+  });
+
+  it("activateAt picks by index (-1 = last); cycle wraps around", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const n = st.getState().tabs[0].id;
+    const a = st.open({ kind: "room", roomId: "a" });
+    const b = st.open({ kind: "room", roomId: "b" });
+    st.activateAt(0);
+    expect(st.getState().activeId).toBe(n);
+    st.activateAt(-1);
+    expect(st.getState().activeId).toBe(b);
+    st.activateAt(7);
+    expect(st.getState().activeId).toBe(b);
+    st.cycle(1);
+    expect(st.getState().activeId).toBe(n);
+    st.cycle(-1);
+    expect(st.getState().activeId).toBe(b);
+    st.cycle(-1);
+    expect(st.getState().activeId).toBe(a);
   });
 
   it("replace swaps a tab's id fields in place, keeping its id and position", () => {
@@ -90,6 +152,18 @@ describe("ViewerStore", () => {
     v.replace(j, { kind: "journal", date: "2026-10-05" });
     v.replace("missing", { kind: "new" });
     expect(v.getState()).toBe(before);
+  });
+
+  it("move reorders a tab, clamping the index and keeping the active tab", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const a = st.getState().tabs[0].id;
+    const b = st.open({ kind: "room", roomId: "r1" });
+    const c = st.open({ kind: "room", roomId: "r2" });
+    st.move(c, 0);
+    expect(st.getState().tabs.map((t) => t.id)).toEqual([c, a, b]);
+    st.move(c, 99);
+    expect(st.getState().tabs.map((t) => t.id)).toEqual([a, b, c]);
+    expect(st.getState().activeId).toBe(c);
   });
 
   it("closing an inactive tab keeps the active one", () => {
@@ -151,6 +225,7 @@ describe("ViewerStore", () => {
     const st = new ViewerStore(storage, c.now);
     const r = st.open({ kind: "room", roomId: "r1" });
     st.setSidebarOpen(false);
+    st.flush();
     expect(storage.map.has(VIEWER_STORAGE_KEY)).toBe(true);
     expect(VIEWER_STORAGE_KEY).toBe("alto-rooms.viewer.v1");
 
@@ -159,6 +234,29 @@ describe("ViewerStore", () => {
     expect(st2.getState()).toEqual(st.getState());
     expect(st2.getState().activeId).toBe(r);
     expect(st2.getState().firstRunAt).toBe("2026-10-05T00:00:00.000Z");
+  });
+
+  it("coalesces writes until the delay passes; flush writes at once", () => {
+    const storage = memoryStorage();
+    const pending: (() => void)[] = [];
+    const timers = { setTimeout: (fn: () => void) => pending.push(fn), clearTimeout: () => void pending.splice(0) };
+    const writes = vi.spyOn(storage, "setItem");
+    const st = new ViewerStore(storage, clock().now, timers);
+    expect(writes).toHaveBeenCalledTimes(1); // the initial state
+    st.open({ kind: "room", roomId: "r1" });
+    st.open({ kind: "room", roomId: "r2" });
+    st.setSidebarOpen(false);
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(pending).toHaveLength(1);
+    pending.shift()!();
+    expect(writes).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!).sidebarOpen).toBe(false);
+
+    st.setSidebarOpen(true);
+    st.flush();
+    expect(writes).toHaveBeenCalledTimes(3);
+    expect(pending).toHaveLength(0);
+    expect(JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!).sidebarOpen).toBe(true);
   });
 
   it("starts fresh on corrupt storage without throwing", () => {
@@ -285,11 +383,13 @@ describe("ViewerStore: in-tab history", () => {
     const st = new ViewerStore(storage, clock().now);
     st.navigate(room("r1"));
     st.navigate(doc("x"));
+    st.flush();
     const again = new ViewerStore(storage, clock().now);
     expect(again.canGoBack()).toBe(true);
     again.back();
     expect(activeTab(again).kind).toBe("room");
     again.close(again.getState().activeId!);
+    again.flush();
     expect(JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!).history).toEqual({});
   });
 
@@ -323,6 +423,7 @@ describe("ViewerStore: plugins", () => {
     st.navigate({ kind: "room", roomId: "r1" });
     st.back();
     expect(st.getState().tabs[0]).toMatchObject({ kind: "plugin", pluginId: "goals" });
+    st.flush();
     const again = new ViewerStore(storage, clock().now);
     expect(again.getState().tabs[0]).toMatchObject({ kind: "plugin", pluginId: "goals" });
     expect(st.open({ kind: "plugin", pluginId: "goals" })).toBe(id);
@@ -334,6 +435,7 @@ describe("ViewerStore: plugins", () => {
     expect(st.getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });
     st.setPluginPanel({ open: true, pluginId: "excalidraw" });
     st.setPluginPanel({ width: 480 });
+    st.flush();
     expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: true, width: 480, pluginId: "excalidraw" });
     storage.map.set(VIEWER_STORAGE_KEY, JSON.stringify({ ...JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!), pluginPanel: { open: "yes", width: -5 } }));
     expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });

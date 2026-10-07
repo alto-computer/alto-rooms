@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { RoomsApiError, type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
-import { useClient, useJournalDay, useReadOnly, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
+import { useClient, useJournalDay, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { viewerInitial } from "@/lib/native";
 import { wantsNewTab } from "@/lib/nav";
+import { useScrollMemory } from "@/lib/scrollMemory";
+import { useCurrentTabId } from "@/shell/currentTab";
 import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from "@/lib/notes";
 import otterAvatar from "@/assets/otter-avatar.svg";
 import { ArtifactCard } from "./ArtifactCard";
+import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { WeekStrip } from "./WeekStrip";
 
 /** The viewer's initial comes from the OS account name; it never changes during a run, so it is fetched once. */
@@ -146,21 +149,18 @@ function NoteCard({ note, onOpen, now }: { note: Note; onOpen: (newTab: boolean)
  * day, and the viewer's own notes. Changing the date rewrites this same tab.
  */
 export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
-  const { rooms, info } = useRooms();
+  const rooms = useRoomList();
+  const info = useInfo();
   const viewer = useViewerStore();
+  const openDoc = useOpenDoc();
   const day = useJournalDay(date);
   const loadError = useScopeError(`day:${date}`);
+  const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const initial = useViewerInitial();
   const readOnly = useReadOnly();
 
-  // New-doc dots: frozen at activation (AppShell mounts this per activation),
-  // per artifact, against its own room's last visit — as in RoomView.
-  const visits = useRef<{ lastVisit: Record<string, string>; firstRunAt: string } | null>(null);
-  if (visits.current === null) {
-    const v = viewer.getState();
-    visits.current = { lastVisit: v.lastVisit, firstRunAt: v.firstRunAt };
-  }
-  const baselineFor = (roomId: string) => visits.current!.lastVisit[roomId] ?? visits.current!.firstRunAt;
+  // New-doc dots: per artifact, against its own room's last visit — as in RoomView.
+  const visits = useVisitsAtArrival();
 
   const setDate = (next: string) => {
     const id = tabId ?? viewer.getState().tabs.find((t) => t.kind === "journal")?.id;
@@ -192,7 +192,11 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
             name="Agents"
             count={cards.length}
           />
-          <div data-scroll-root className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto overflow-y-hidden px-12 pt-2.5 pb-1">
+          <div
+            data-scroll-root
+            // The fade sits in the side padding, so it only touches cards cut off at the edge.
+            className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto overflow-y-hidden px-12 pt-2.5 pb-1 [mask-image:linear-gradient(to_right,transparent,#000_40px,#000_calc(100%-40px),transparent)]"
+          >
             {info
               ? cards.map(({ artifact, label }) => (
                   <ArtifactCard
@@ -200,9 +204,9 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
                     artifact={artifact}
                     info={info}
                     label={label}
-                    isNew={isNewSince(artifact.createdAt, baselineFor(artifact.roomId))}
+                    isNew={isNewSince(artifact.createdAt, visits.since(artifact.roomId))}
                     size="journal"
-                    onOpen={(newTab) => viewer.go({ kind: "doc", roomId: artifact.roomId, artifactId: artifact.id }, newTab)}
+                    onOpen={openDoc}
                   />
                 ))
               : null}
@@ -218,7 +222,8 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
             name="Me"
             count={notes.length}
           />
-          <div className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto px-12 pt-2.5 pb-1">
+          {/* pb-6/-mb-5: room below the cards for the hover shadow, which the scroller would clip. */}
+          <div className="-mx-12 -mt-2.5 -mb-5 flex items-start gap-5 overflow-x-auto px-12 pt-2.5 pb-6">
             {readOnly ? null : <NewNoteCard date={date} notes={notes} viewer={viewer} />}
             {notes.map((n) => (
               <NoteCard key={n.name} note={n} now={now} onOpen={(newTab) => viewer.go({ kind: "note", date, name: n.name }, newTab)} />
@@ -230,7 +235,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto bg-white px-12 pt-9 pb-6">
+    <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto bg-white px-12 pt-9 pb-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-baseline gap-3">
           <h1 className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>

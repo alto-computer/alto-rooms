@@ -9,7 +9,8 @@ pub const RESERVED_NAMES: [&str; 2] = ["journal", "inbox"];
 #[derive(Debug, PartialEq, Eq)]
 pub enum PathClass { Artifact, Note { date: String }, Ignored }
 
-fn is_html(p: &Path) -> bool {
+/// `.html` or `.htm`, any case.
+pub(crate) fn is_html(p: &Path) -> bool {
     matches!(p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(), Some("html" | "htm"))
 }
 
@@ -64,7 +65,7 @@ pub fn validate_note_name(name: &str) -> Result<String, CoreError> {
     let trimmed = name.trim();
     // Strip exactly ONE trailing ".md" (case-insensitively)
     // Use safe byte slicing that respects UTF-8 boundaries
-    let base = if trimmed.get(trimmed.len().saturating_sub(3)..).map_or(false, |s| s.eq_ignore_ascii_case(".md")) {
+    let base = if trimmed.get(trimmed.len().saturating_sub(3)..).is_some_and(|s| s.eq_ignore_ascii_case(".md")) {
         &trimmed[..trimmed.len()-3]
     } else {
         trimmed

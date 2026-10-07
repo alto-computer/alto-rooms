@@ -16,8 +16,8 @@ fn create_room_makes_slug_folder_and_keeps_display_name() {
     let r = core.create_room("연구 도구").unwrap();
     assert_eq!(r.name, "연구 도구");
     assert!(d.path().join("연구-도구").is_dir());
-    assert_eq!(core.create_room("연구-도구").unwrap_err(), CoreError::RoomExists);
-    assert_eq!(core.create_room("journal").unwrap_err(), CoreError::InvalidRoomName);
+    assert!(matches!(core.create_room("연구-도구"), Err(CoreError::RoomExists)));
+    assert!(matches!(core.create_room("journal"), Err(CoreError::InvalidRoomName)));
     let reopened = RoomsCore::open(d.path()).unwrap();
     assert_eq!(reopened.list_rooms().iter().find(|x| x.id == r.id).unwrap().name, "연구 도구");
 }
@@ -54,8 +54,8 @@ fn link_folder_rules_and_rename_is_display_only() {
     fs::create_dir_all(team.path().join("research/sub")).unwrap();
     let r = core.link_folder(&team.path().join("research"), Some("팀 리서치")).unwrap();
     assert_eq!(r.kind, RoomKind::Linked);
-    assert_eq!(core.link_folder(&team.path().join("research/sub"), None).unwrap_err(), CoreError::OverlappingRoom);
-    assert_eq!(core.link_folder(team.path(), None).unwrap_err(), CoreError::OverlappingRoom);
+    assert!(matches!(core.link_folder(&team.path().join("research/sub"), None), Err(CoreError::OverlappingRoom)));
+    assert!(matches!(core.link_folder(team.path(), None), Err(CoreError::OverlappingRoom)));
     assert!(matches!(core.link_folder(d.path(), None).unwrap_err(), CoreError::InvalidLinkPath(_)));
     core.rename_room(&r.id, "리서치").unwrap();
     assert!(team.path().join("research").is_dir(), "linked folder name untouched");
@@ -102,9 +102,9 @@ fn resolve_file_blocks_escape_but_allows_html_file_links() {
     fs::write(d.path().join("a/in.html"), "").unwrap();
     assert!(core.resolve_file(&r.id, "in.html").is_ok());
     assert_eq!(core.resolve_file(&r.id, "o.html").unwrap(), fs::canonicalize(outside.path().join("o.html")).unwrap());
-    assert_eq!(core.resolve_file(&r.id, "../journal").unwrap_err(), CoreError::PathEscape);
+    assert!(matches!(core.resolve_file(&r.id, "../journal"), Err(CoreError::PathEscape)));
     symlink(outside.path(), d.path().join("a/dir")).unwrap();
-    assert_eq!(core.resolve_file(&r.id, "dir/o.html").unwrap_err(), CoreError::PathEscape);
+    assert!(matches!(core.resolve_file(&r.id, "dir/o.html"), Err(CoreError::PathEscape)));
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn rename_refuses_slug_collision_with_existing_folder() {
     let (d, core) = home();
     core.create_room("a b").unwrap();
     let x = core.create_room("x").unwrap();
-    assert_eq!(core.rename_room(&x.id, "a-b").unwrap_err(), CoreError::RoomExists);
+    assert!(matches!(core.rename_room(&x.id, "a-b"), Err(CoreError::RoomExists)));
     assert!(d.path().join("a-b").is_dir());
     assert!(d.path().join("x").is_dir());
 }
@@ -145,8 +145,8 @@ fn resolve_file_rejects_dotfiles_and_directories() {
     fs::write(root.join(".env"), "s").unwrap();
     fs::write(root.join(".git/config"), "s").unwrap();
     let r = core.link_folder(&root, Some("r")).unwrap();
-    assert_eq!(core.resolve_file(&r.id, ".env").unwrap_err(), CoreError::PathEscape);
-    assert_eq!(core.resolve_file(&r.id, ".git/config").unwrap_err(), CoreError::PathEscape);
+    assert!(matches!(core.resolve_file(&r.id, ".env"), Err(CoreError::PathEscape)));
+    assert!(matches!(core.resolve_file(&r.id, ".git/config"), Err(CoreError::PathEscape)));
     assert!(core.resolve_file(&r.id, "sub").is_err());
 }
 
@@ -432,14 +432,14 @@ fn finder_delete_removes_owned_room() {
     fs::remove_dir(d.path().join("gone")).unwrap();
     wait_for(&mut rx, |k| matches!(k, EventKind::RoomRemoved { room_id } if *room_id == r.id), Duration::from_secs(3));
     assert!(!core.list_rooms().iter().any(|x| x.id == r.id));
-    assert_eq!(core.list_artifacts(&r.id).unwrap_err(), CoreError::RoomNotFound);
+    assert!(matches!(core.list_artifacts(&r.id), Err(CoreError::RoomNotFound)));
 }
 
 #[test]
 fn create_room_on_existing_plain_folder_is_room_exists() {
     let (d, core) = home();
     fs::create_dir(d.path().join("plain")).unwrap();
-    assert_eq!(core.create_room("plain").unwrap_err(), CoreError::RoomExists);
+    assert!(matches!(core.create_room("plain"), Err(CoreError::RoomExists)));
 }
 
 #[test]
@@ -453,7 +453,7 @@ fn scan_of_removed_room_writes_nothing() {
     core.sync_home_dirs();
     t.join().unwrap();
     assert!(core.list_rooms().iter().all(|x| x.id != r.id));
-    assert_eq!(core.list_artifacts(&r.id).unwrap_err(), CoreError::RoomNotFound);
+    assert!(matches!(core.list_artifacts(&r.id), Err(CoreError::RoomNotFound)));
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     assert!(core.journal_day(&today).unwrap().artifacts.iter().all(|a| a.room_id != r.id));
 }
@@ -481,7 +481,7 @@ fn concurrent_save_note_on_one_name_never_fails_or_corrupts() {
         let (c, body) = (core.clone(), bodies[t].clone());
         std::thread::spawn(move || (0..25).map(|_| c.save_note(&"2026-10-05".to_string(), "same.md", &body).map(|_| ())).collect::<Vec<_>>())
     }).collect();
-    for t in threads { for r in t.join().unwrap() { assert_eq!(r, Ok(())); } }
+    for t in threads { for r in t.join().unwrap() { assert!(r.is_ok(), "{r:?}"); } }
     let got = fs::read_to_string(d.path().join("journal/2026-10-05/same.md")).unwrap();
     assert!(bodies.contains(&got), "final file is not one of the bodies (len {})", got.len());
 }
@@ -552,7 +552,7 @@ fn read_note_roundtrip_and_not_found() {
     let (_d, core) = home();
     core.save_note(&"2026-10-05".to_string(), "회고", "오늘 배운 것").unwrap();
     assert_eq!(core.read_note(&"2026-10-05".to_string(), "회고").unwrap(), "오늘 배운 것");
-    assert_eq!(core.read_note(&"2026-10-05".to_string(), "없음").unwrap_err(), CoreError::NotFound);
+    assert!(matches!(core.read_note(&"2026-10-05".to_string(), "없음"), Err(CoreError::NotFound)));
     assert!(core.read_note(&"2026-10-05".to_string(), "../x").is_err());
 }
 
@@ -583,7 +583,7 @@ fn rename_note_moves_file_keeps_body_and_emits_removed_then_saved() {
 #[test]
 fn rename_note_missing_source_is_not_found() {
     let (_d, core) = home();
-    assert_eq!(core.rename_note(&day(), "없음", "x").unwrap_err(), CoreError::NotFound);
+    assert!(matches!(core.rename_note(&day(), "없음", "x"), Err(CoreError::NotFound)));
 }
 
 #[test]
@@ -591,9 +591,9 @@ fn rename_note_never_overwrites_an_existing_target() {
     let (d, core) = home();
     core.save_note(&day(), "a", "A").unwrap();
     core.save_note(&day(), "b", "B").unwrap();
-    assert_eq!(core.rename_note(&day(), "a", "b").unwrap_err(), CoreError::NoteExists);
-    assert_eq!(core.rename_note(&day(), "a", "B").unwrap_err(), CoreError::NoteExists);
-    assert_eq!(core.rename_note(&day(), "a", "b.md").unwrap_err(), CoreError::NoteExists);
+    assert!(matches!(core.rename_note(&day(), "a", "b"), Err(CoreError::NoteExists)));
+    assert!(matches!(core.rename_note(&day(), "a", "B"), Err(CoreError::NoteExists)));
+    assert!(matches!(core.rename_note(&day(), "a", "b.md"), Err(CoreError::NoteExists)));
     assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/a.md")).unwrap(), "A");
     assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/b.md")).unwrap(), "B");
     assert_eq!(CoreError::NoteExists.code(), "note_exists");
@@ -737,8 +737,8 @@ fn move_artifact_refuses_journal_inbox_and_same_room_targets() {
     assert!(matches!(core.move_artifact(&r.id, &moved.id, &inbox), Err(CoreError::InvalidInput(_))));
     assert!(matches!(core.move_artifact(&r.id, &moved.id, &r.id), Err(CoreError::InvalidInput(_))));
     assert!(matches!(core.move_artifact(&JOURNAL_ROOM_ID.to_string(), &moved.id, &r.id), Err(CoreError::InvalidInput(_))));
-    assert_eq!(core.move_artifact(&"nope".to_string(), &moved.id, &r.id).unwrap_err(), CoreError::RoomNotFound);
-    assert_eq!(core.move_artifact(&r.id, &moved.id, &"nope".to_string()).unwrap_err(), CoreError::RoomNotFound);
+    assert!(matches!(core.move_artifact(&"nope".to_string(), &moved.id, &r.id), Err(CoreError::RoomNotFound)));
+    assert!(matches!(core.move_artifact(&r.id, &moved.id, &"nope".to_string()), Err(CoreError::RoomNotFound)));
 }
 
 #[test]
@@ -756,7 +756,7 @@ fn move_artifact_refuses_a_broken_symlink() {
 fn move_artifact_missing_id_is_not_found() {
     let (_d, core) = home();
     let r = core.create_room("a").unwrap();
-    assert_eq!(core.move_artifact(&"inbox".to_string(), "0123456789abcdef", &r.id).unwrap_err(), CoreError::NotFound);
+    assert!(matches!(core.move_artifact(&"inbox".to_string(), "0123456789abcdef", &r.id), Err(CoreError::NotFound)));
 }
 
 #[test]
@@ -871,7 +871,7 @@ fn move_room_refuses_the_inbox_and_unknown_rooms() {
     let (_d, core) = home();
     core.create_room("a").unwrap();
     assert!(matches!(core.move_room(&"inbox".to_string(), 1).unwrap_err(), CoreError::InvalidInput(_)));
-    assert_eq!(core.move_room(&"nope".to_string(), 0).unwrap_err(), CoreError::RoomNotFound);
+    assert!(matches!(core.move_room(&"nope".to_string(), 0), Err(CoreError::RoomNotFound)));
 }
 
 // ---- fileKey ----
@@ -960,7 +960,7 @@ fn plugin_enable_and_grants_persist() {
     let p = core.plugins().into_iter().find(|p| p.id == "echo").unwrap();
     assert_eq!(p.status, PluginStatus::Ok);
     assert!(!p.enabled && p.needs_approval);
-    assert_eq!(core.read_plugin_data("echo", "x.txt").unwrap_err(), CoreError::NotFound);
+    assert!(matches!(core.read_plugin_data("echo", "x.txt"), Err(CoreError::NotFound)));
 
     let p = core.set_plugin_enabled("echo", true, None).unwrap();
     assert!(p.enabled && !p.needs_approval);
@@ -980,7 +980,7 @@ fn plugin_enable_and_grants_persist() {
 
     let p = reopened.set_plugin_enabled("echo", false, None).unwrap();
     assert!(!p.enabled);
-    assert_eq!(reopened.set_plugin_enabled("nope", true, None).unwrap_err(), CoreError::NotFound);
+    assert!(matches!(reopened.set_plugin_enabled("nope", true, None), Err(CoreError::NotFound)));
 }
 
 #[test]
@@ -1007,7 +1007,7 @@ fn plugin_assets_resolve_and_data_stays_private() {
     install(d.path(), ECHO);
     core.set_plugin_enabled("echo", true, None).unwrap();
     core.write_plugin_data("echo", "x.txt", "hi").unwrap();
-    assert!(core.resolve_plugin_file("echo", "index.html").unwrap().ends_with("index.html"));
+    assert!(core.resolve_plugin_file("echo", "index.html").unwrap().path.ends_with("index.html"));
     assert!(core.resolve_plugin_file("echo", "data/x.txt").is_err());
     assert!(core.resolve_plugin_file("nope", "index.html").is_err());
 }
@@ -1145,4 +1145,233 @@ fn bundled_plugins_never_replace_a_users_own_plugin_or_install_invalid_ones() {
     bundle(bad.path(), "{", "x");
     assert!(core2.install_bundled_plugins(bad.path()).unwrap().is_empty());
     assert!(core2.plugins().is_empty());
+}
+
+#[test]
+fn a_big_batch_is_one_room_resync_and_a_small_one_is_per_file() {
+    let (d, core) = home();
+    let r = core.create_room("big").unwrap();
+    for i in 0..300 { fs::write(d.path().join(format!("big/{i}.html")), "").unwrap(); }
+    let mut rx = core.subscribe();
+    core.rescan_room(&r.id);
+    let evs = drain(&mut rx);
+    assert!(!evs.iter().any(|e| matches!(e.kind, EventKind::ArtifactAdded { .. })), "{} events", evs.len());
+    assert!(evs.iter().any(|e| matches!(&e.kind, EventKind::Resync { room_id: Some(id) } if id == &r.id)));
+    assert!(evs.iter().any(|e| matches!(&e.kind, EventKind::RoomUpdated { room } if room.id == r.id && room.artifact_count == 300)));
+    assert!(evs.iter().any(|e| matches!(e.kind, EventKind::JournalChanged { .. })), "touched days are still signalled");
+    for i in 0..3 { fs::write(d.path().join(format!("big/new{i}.html")), "").unwrap(); }
+    core.rescan_room(&r.id);
+    let adds = drain(&mut rx).iter().filter(|e| matches!(e.kind, EventKind::ArtifactAdded { .. })).count();
+    assert_eq!(adds, 3);
+}
+
+fn title_updated(k: &EventKind, title: &str) -> bool {
+    matches!(k, EventKind::ArtifactUpdated { artifact } if artifact.title == title)
+}
+
+#[test]
+fn editing_a_symlinks_original_outside_every_room_updates_the_artifact() {
+    let d = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let orig = fs::canonicalize(outside.path()).unwrap().join("orig.html");
+    fs::write(&orig, "<title>v1</title>").unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let mut rx = core.subscribe();
+    symlink(&orig, d.path().join("inbox/link.html")).unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.title == "v1"), slow(Duration::from_secs(2)));
+    std::thread::sleep(Duration::from_millis(500)); // the original's folder gets watched
+    fs::write(&orig, "<title>v2</title>").unwrap();
+    wait_for(&mut rx, |k| title_updated(k, "v2"), slow(Duration::from_secs(2)));
+    // An editor's save: write a temp file, rename it over the original.
+    let tmp = orig.with_file_name(".orig.html.swp");
+    fs::write(&tmp, "<title>v3</title>").unwrap();
+    fs::rename(&tmp, &orig).unwrap();
+    wait_for(&mut rx, |k| title_updated(k, "v3"), slow(Duration::from_secs(2)));
+}
+
+#[test]
+fn editing_an_original_in_another_room_updates_the_link_too() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let a = core.create_room("a").unwrap();
+    core.create_room("b").unwrap();
+    let orig = core.home().join("b/orig.html");
+    fs::write(&orig, "<title>v1</title>").unwrap();
+    symlink(&orig, core.home().join("a/link.html")).unwrap();
+    core.rescan_room(&a.id);
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::write(&orig, "<title>v2</title>").unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactUpdated { artifact } if artifact.room_id == a.id && artifact.title == "v2"), slow(Duration::from_secs(2)));
+}
+
+#[test]
+fn a_folder_moved_into_a_room_adds_its_files() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    let staging = d.path().join("journal/.staging"); // same volume, not scanned
+    fs::create_dir_all(staging.join("sub")).unwrap();
+    fs::write(staging.join("sub/x.html"), "<title>x</title>").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::rename(&staging, d.path().join("a/moved")).unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactAdded { artifact } if artifact.room_id == r.id && artifact.rel_path == "moved/sub/x.html"), slow(Duration::from_secs(2)));
+}
+
+#[test]
+fn deleting_a_file_under_the_watcher_removes_only_it() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    fs::write(d.path().join("a/keep.html"), "").unwrap();
+    fs::write(d.path().join("a/drop.html"), "").unwrap();
+    core.rescan_room(&r.id);
+    std::thread::sleep(Duration::from_millis(400));
+    let mut rx = core.subscribe();
+    fs::remove_file(d.path().join("a/drop.html")).unwrap();
+    wait_for(&mut rx, |k| matches!(k, EventKind::ArtifactRemoved { .. }), slow(Duration::from_secs(2)));
+    let rels: Vec<String> = core.list_artifacts(&r.id).unwrap().into_iter().map(|a| a.rel_path).collect();
+    assert_eq!(rels, ["keep.html"]);
+}
+
+#[test]
+fn rescan_paths_touches_only_the_given_paths() {
+    let (d, core) = home();
+    let r = core.create_room("a").unwrap();
+    fs::write(d.path().join("a/old.html"), "").unwrap();
+    fs::write(d.path().join("a/gone.html"), "").unwrap();
+    core.rescan_room(&r.id);
+    fs::remove_file(d.path().join("a/gone.html")).unwrap();
+    fs::write(d.path().join("a/new.html"), "").unwrap();
+    fs::write(d.path().join("a/unasked.html"), "").unwrap();
+    fs::write(d.path().join("a/.roomsignore"), "ign.html\n").unwrap();
+    fs::write(d.path().join("a/ign.html"), "").unwrap();
+    let mut rx = core.subscribe();
+    let rels = ["gone.html", "new.html", "ign.html", "old.html"].map(std::path::PathBuf::from);
+    core.rescan_paths(&r.id, &rels);
+    let mut got: Vec<String> = core.list_artifacts(&r.id).unwrap().into_iter().map(|a| a.rel_path).collect();
+    got.sort();
+    assert_eq!(got, ["new.html", "old.html"]);
+    let kinds: Vec<&str> = drain(&mut rx).iter().filter_map(|e| match e.kind {
+        EventKind::ArtifactAdded { .. } => Some("added"),
+        EventKind::ArtifactRemoved { .. } => Some("removed"),
+        EventKind::ArtifactUpdated { .. } => Some("updated"),
+        _ => None,
+    }).collect();
+    assert_eq!(kinds, ["added", "removed"], "old.html is unchanged");
+}
+
+/// Polls until `cond` holds (or fails after `max`), returning the last value it saw.
+fn eventually<T: std::fmt::Debug>(max: Duration, mut get: impl FnMut() -> T, cond: impl Fn(&T) -> bool) -> T {
+    let start = Instant::now();
+    loop {
+        let v = get();
+        if cond(&v) { return v; }
+        assert!(start.elapsed() < max, "never happened; last: {v:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn rels_of(core: &RoomsCore, room: &RoomId) -> Vec<String> {
+    let mut v: Vec<String> = core.list_artifacts(room).unwrap().into_iter().map(|a| a.rel_path).collect();
+    v.sort();
+    v
+}
+
+fn titles_of(core: &RoomsCore, room: &RoomId) -> Vec<String> {
+    core.list_artifacts(room).unwrap().into_iter().map(|a| a.title).collect()
+}
+
+#[test]
+fn case_and_normalization_only_renames_leave_one_row() {
+    use unicode_normalization::UnicodeNormalization;
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    let a = core.home().join("a");
+    fs::write(a.join("x.html"), "<title>X</title>").unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v == &["x.html"]);
+    fs::rename(a.join("x.html"), a.join("X.html")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v == &["X.html"]);
+    let (nfc, nfd): (String, String) = ("회의.html".nfc().collect(), "회의.html".nfd().collect());
+    fs::write(a.join(&nfd), "").unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v.len() == 2);
+    fs::rename(a.join(&nfd), a.join(&nfc)).unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v == &["X.html".to_string(), nfc.clone()]);
+}
+
+#[test]
+fn a_dotted_folder_moved_out_or_hidden_drops_its_rows() {
+    let d = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    let a = core.home().join("a");
+    for dir in ["v1.2", "v2.0"] {
+        fs::create_dir_all(a.join(dir)).unwrap();
+        fs::write(a.join(dir).join("x.html"), "").unwrap();
+    }
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v.len() == 2);
+    fs::rename(a.join("v1.2"), out.path().join("v1.2")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v == &["v2.0/x.html"]);
+    fs::rename(a.join("v2.0"), a.join(".old")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v.is_empty());
+}
+
+#[test]
+fn an_original_inside_an_ignored_folder_still_refreshes_its_link() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let a = core.create_room("a").unwrap();
+    core.create_room("b").unwrap();
+    let orig = core.home().join("b/dist/o.html");
+    fs::create_dir_all(orig.parent().unwrap()).unwrap();
+    fs::write(&orig, "<title>One</title>").unwrap();
+    symlink(&orig, core.home().join("a/s.html")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v == &["One"]);
+    std::thread::sleep(Duration::from_millis(500)); // the original's folder gets watched
+    fs::write(&orig, "<title>Two</title>").unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v == &["Two"]);
+}
+
+#[test]
+fn an_original_deleted_and_recreated_comes_back() {
+    let d = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let a = core.create_room("a").unwrap();
+    let dir = fs::canonicalize(out.path()).unwrap().join("o");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("o.html"), "<title>One</title>").unwrap();
+    symlink(dir.join("o.html"), core.home().join("a/s.html")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v == &["One"]);
+    std::thread::sleep(Duration::from_millis(500));
+    // The file alone, then its whole folder.
+    fs::remove_file(dir.join("o.html")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v.is_empty());
+    fs::write(dir.join("o.html"), "<title>Back</title>").unwrap();
+    eventually(slow(Duration::from_secs(3)), || titles_of(&core, &a.id), |v| v == &["Back"]);
+    std::thread::sleep(Duration::from_millis(500));
+    fs::remove_dir_all(&dir).unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v.is_empty());
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("o.html"), "<title>Again</title>").unwrap();
+    eventually(slow(Duration::from_secs(3)), || titles_of(&core, &a.id), |v| v == &["Again"]);
+}
+
+#[test]
+fn a_link_dangling_at_startup_is_added_once_its_original_appears() {
+    let d = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let orig = fs::canonicalize(out.path()).unwrap().join("later/o.html"); // its folder is missing too
+    fs::create_dir_all(d.path().join("inbox")).unwrap();
+    symlink(&orig, d.path().join("inbox/s.html")).unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let inbox: RoomId = "inbox".into();
+    std::thread::sleep(Duration::from_millis(500)); // startup scan + the original-file watch
+    assert!(titles_of(&core, &inbox).is_empty());
+    fs::create_dir_all(orig.parent().unwrap()).unwrap();
+    fs::write(&orig, "<title>Here</title>").unwrap();
+    eventually(slow(Duration::from_secs(3)), || titles_of(&core, &inbox), |v| v == &["Here"]);
 }

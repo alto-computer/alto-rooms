@@ -6,7 +6,7 @@ import { flushAllPlugins } from "@/plugins/host";
 import { CLOSE_CAP_MS as PLUGIN_CLOSE_CAP_MS } from "@/plugins/PluginFrame";
 import { resolveConnection, type Connection } from "@/lib/connection";
 import { runFlushProbe } from "@/lib/flushProbe";
-import { rebindNoteSavers } from "@/lib/noteSaver";
+import { rebindNoteSavers } from "@/lib/noteSaverRegistry";
 import { isTauri } from "@/lib/tauri";
 import { StoresProvider, type RoomsClient } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
@@ -134,12 +134,12 @@ export default function App() {
       <main className="flex h-screen flex-col items-center justify-center gap-4 bg-surface text-ink">
         <div className="flex items-center gap-2 text-[#c13515]">
           <AlertCircle size={20} aria-hidden />
-          <p className="text-[17px] font-medium">Couldn't start the Rooms core</p>
+          <p className="text-[17px] font-medium">Couldn't connect to Rooms</p>
         </div>
         <button
           type="button"
           onClick={connect}
-          className="rounded-lg bg-[#ff385c] px-4 py-2 text-[14px] font-medium text-white focus-visible:outline-2 focus-visible:outline-ink"
+          className="rounded-lg bg-primary px-4 py-2 text-[14px] font-medium text-primary-foreground hover:bg-[var(--thread-deeper)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
         >
           Try again
         </button>

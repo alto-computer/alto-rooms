@@ -60,21 +60,22 @@ describe("AskBar", () => {
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?", model: null }));
     expect(await screen.findByText("Thinking")).toBeTruthy();
     expect((input as HTMLTextAreaElement).value).toBe("");
-    // readOnly, not disabled: Esc still folds the sheet and focus stays in the bar
+    // Writable while it runs: typing ahead is fine, sending waits.
     expect((input as HTMLTextAreaElement).disabled).toBe(false);
-    expect((input as HTMLTextAreaElement).readOnly).toBe(true);
+    expect((input as HTMLTextAreaElement).readOnly).toBe(false);
     input.blur();
     act(() => emit({ type: "ask.done", turn: turn({ id: "ask-왜?", status: "done", answer: "**굵게** 답", endedAt: "2026-10-06T10:00:12+09:00" }) }));
     expect((await screen.findByText("굵게")).tagName).toBe("STRONG");
-    expect((input as HTMLTextAreaElement).readOnly).toBe(false);
     expect(document.activeElement).toBe(input);
-    expect(screen.getByText(/12s/)).toBeTruthy();
+    // No timers in the ask UI.
+    expect(screen.queryByText(/\d+s$/)).toBeNull();
     expect(screen.getByText("claude-code · continuing the thread that made it")).toBeTruthy();
   });
 
   it("says so when a new conversation was started because the thread couldn't be found", async () => {
     await setup({ k1: [turn({ mode: "new", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
-    expect(await screen.findByText("claude-code · new conversation — couldn't find the thread that made this doc")).toBeTruthy();
+    const head = await screen.findByText("claude-code · New conversation");
+    expect(head.getAttribute("title")).toBe("Couldn't find the thread that made this doc");
   });
 
   it("puts a copy button under each finished answer", async () => {
@@ -121,6 +122,73 @@ describe("AskBar", () => {
     }
   });
 
+  it("puts a finished turn's question at the top of the sheet instead of the end of its answer", async () => {
+    const scrollTo = vi.fn();
+    const scrollIntoView = vi.fn();
+    vi.spyOn(Element.prototype, "scrollTo").mockImplementation(scrollTo);
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(scrollIntoView);
+    try {
+      const { emit } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+      await screen.findByText("a");
+      act(() => emit({ type: "ask.started", turn: turn({ id: "t2", question: "q2" }) }));
+      await screen.findByText("Thinking");
+      // Thinking still sticks to the bottom.
+      expect(scrollTo).toHaveBeenCalled();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      scrollTo.mockClear();
+      act(() => emit({ type: "ask.done", turn: turn({ id: "t2", question: "q2", status: "done", answer: "long answer", endedAt: "2026-10-06T10:00:02+09:00" }) }));
+      await screen.findByText("long answer");
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "start" }));
+      expect(scrollIntoView.mock.contexts[0]).toBe(document.querySelector('[data-turn-id="t2"]'));
+      expect(scrollTo).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("the input grows with its text up to about five lines, rounds less when taller, and shrinks after send", async () => {
+    let height = 20;
+    vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(() => height);
+    try {
+      await setup();
+      const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+      const pill = input.parentElement!;
+      expect(input.style.height).toBe("20px");
+      expect(pill).toHaveClass("rounded-full");
+      // Focus is ink, not the thread red the send button uses.
+      expect(pill).toHaveClass("focus-within:border-ink/60");
+      expect(pill.className).not.toMatch(/focus-within:[\w-]+-primary/);
+      height = 60;
+      fireEvent.change(input, { target: { value: "one\ntwo\nthree" } });
+      expect(input.style.height).toBe("60px");
+      expect(pill).toHaveClass("rounded-[20px]");
+      expect(pill).not.toHaveClass("rounded-full");
+      height = 400;
+      fireEvent.change(input, { target: { value: "lots\n".repeat(20) } });
+      expect(input.style.height).toBe("128px");
+      height = 20;
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(input.value).toBe(""));
+      expect(input.style.height).toBe("20px");
+      expect(pill).toHaveClass("rounded-full");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("while an answer runs you can type ahead, but Enter doesn't send", async () => {
+    const { client } = await setup({ k1: [turn({})] });
+    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    await screen.findByText("Thinking");
+    expect(input.readOnly).toBe(false);
+    fireEvent.change(input, { target: { value: "다음 질문" } });
+    expect(input.value).toBe("다음 질문");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(client.startAsk).not.toHaveBeenCalled();
+    expect(input.value).toBe("다음 질문");
+  });
+
   it("a fast double Enter sends once", async () => {
     const { client } = await setup();
     const input = await screen.findByPlaceholderText("Ask about this doc…");
@@ -144,19 +212,26 @@ describe("AskBar", () => {
       turn({ id: "t0", question: "q0", status: "failed", error: "claude-code exited with an error (code 1)", endedAt: "2026-10-06T10:00:01+09:00" }),
       turn({ id: "t1", question: "q1", status: "cancelled", answer: "부분", endedAt: "2026-10-06T10:00:02+09:00" }),
     ] });
-    expect(await screen.findByText("claude-code exited with an error (code 1)")).toBeTruthy();
+    const error = await screen.findByText("claude-code exited with an error (code 1)");
+    expect(error.closest("p")).toHaveClass("text-[#c13515]");
+    expect(error.closest("p")!.querySelector("svg")).not.toBeNull();
     expect(screen.getByText("Stopped")).toBeTruthy();
-    fireEvent.click(screen.getByText("Retry"));
+    const retry = screen.getByRole("button", { name: "Retry" });
+    expect(retry).toHaveClass("min-h-7", "focus-visible:outline-ink");
+    fireEvent.click(retry);
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q0", model: null }));
   });
 
   it("while running the send button is a Stop button that cancels; there is no Stop text link", async () => {
     const { client } = await setup({ k1: [turn({})] });
-    expect(await screen.findByText(/esc to interrupt/)).toBeTruthy();
+    expect(await screen.findByText("Thinking")).toBeTruthy();
     expect(screen.queryByText("Stop")).toBeNull();
     expect(screen.queryByLabelText("Send")).toBeNull();
     const stop = screen.getByLabelText("Stop") as HTMLButtonElement;
     expect(stop.disabled).toBe(false);
+    expect(stop).toHaveClass("focus-visible:outline-2", "focus-visible:outline-ink");
+    fireEvent.focus(stop);
+    expect((await screen.findByRole("tooltip")).textContent).toBe("Stop (Esc)");
     fireEvent.click(stop);
     expect(client.cancelAsk).toHaveBeenCalledWith("t1");
   });
@@ -236,6 +311,7 @@ describe("AskBar", () => {
     const { client } = await setup({}, false, claude);
     const trigger = await screen.findByLabelText("Model: claude-code · Default");
     expect(trigger.textContent).toBe("claude-code · Default");
+    expect(trigger).toHaveClass("min-h-7", "focus-visible:outline-ink");
     fireEvent.keyDown(trigger, { key: "Enter" });
     const items = await screen.findAllByRole("menuitemradio");
     expect(items.map((i) => i.textContent)).toEqual(["Default", "Opus", "Sonnet", "Haiku", "claude-x-1"]);

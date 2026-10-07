@@ -34,7 +34,7 @@ fn call(core: &RoomsCore, plugin: &str, tool: &str, input: Value) -> Result<Tool
 }
 
 fn bad(e: CoreError) -> String {
-    match e { CoreError::InvalidInput(s) => s, other => panic!("expected InvalidInput, got {other:?}") }
+    match e { CoreError::BadRequest(s) => s, other => panic!("expected BadRequest, got {other:?}") }
 }
 
 #[test]
@@ -86,22 +86,22 @@ fn call_with_absolute_path_of_symlinked_doc_uses_original_file_key() {
 #[test]
 fn not_found_cases() {
     let (_d, core, key) = setup();
-    assert_eq!(call(&core, "nope", "draw", json!({"doc": key})).unwrap_err(), CoreError::NotFound);
-    assert_eq!(call(&core, "pen", "nope", json!({"doc": key})).unwrap_err(), CoreError::NotFound);
-    assert_eq!(call(&core, "pen", "draw", json!({"doc": "0000000000000000"})).unwrap_err(), CoreError::NotFound);
-    assert_eq!(call(&core, "pen", "draw", json!({"doc": "/no/such/file.html"})).unwrap_err(), CoreError::NotFound);
+    assert!(matches!(call(&core, "nope", "draw", json!({"doc": key})), Err(CoreError::NotFound)));
+    assert!(matches!(call(&core, "pen", "nope", json!({"doc": key})), Err(CoreError::NotFound)));
+    assert!(matches!(call(&core, "pen", "draw", json!({"doc": "0000000000000000"})), Err(CoreError::NotFound)));
+    assert!(matches!(call(&core, "pen", "draw", json!({"doc": "/no/such/file.html"})), Err(CoreError::NotFound)));
     core.set_plugin_enabled("pen", false, None).unwrap();
-    assert_eq!(call(&core, "pen", "draw", json!({"doc": key})).unwrap_err(), CoreError::NotFound);
+    assert!(matches!(call(&core, "pen", "draw", json!({"doc": key})), Err(CoreError::NotFound)));
 }
 
 #[test]
 fn bad_requests() {
     let (_d, core, key) = setup();
     for input in [json!([1]), json!("s"), json!(null), json!({}), json!({"doc": 5}), json!({"doc": "relative/x.html"}), json!({"doc": ""})] {
-        assert!(bad(call(&core, "pen", "draw", input.clone()).unwrap_err()).starts_with("bad_request:"), "{input}");
+        assert!(!bad(call(&core, "pen", "draw", input.clone()).unwrap_err()).is_empty(), "{input}");
     }
     let big = json!({"doc": key, "pad": "x".repeat(64 * 1024)});
-    assert!(bad(call(&core, "pen", "draw", big).unwrap_err()).starts_with("bad_request:"));
+    assert_eq!(bad(call(&core, "pen", "draw", big).unwrap_err()), "input too large");
     // nothing was written by the rejected calls
     assert!(core.list_plugin_data("pen", "").unwrap().is_empty());
 }
@@ -112,7 +112,7 @@ fn append_past_ten_mib_is_too_large_and_leaves_file_intact() {
     let path = format!("notes/{key}.jsonl");
     let filler = "a".repeat(10 * 1024 * 1024 - 100);
     core.write_plugin_data("pen", &path, &filler).unwrap();
-    assert_eq!(bad(call(&core, "pen", "draw", json!({"doc": key, "pad": "y".repeat(500)})).unwrap_err()), "too_large");
+    assert!(matches!(call(&core, "pen", "draw", json!({"doc": key, "pad": "y".repeat(500)})), Err(CoreError::TooLarge)));
     assert_eq!(core.read_plugin_data("pen", &path).unwrap().unwrap(), filler);
 }
 

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Calendar, FileText, Folder, Inbox, Lightbulb, RefreshCw, type LucideIcon } from "lucide-react";
 import clewPeek from "@/assets/clew-peek.svg";
-import { useRooms } from "@/data/hooks";
+import { useInfo } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { CopyStatus, useCopy } from "./CopyChip";
@@ -34,7 +34,7 @@ export const EXAMPLE_PROMPTS: readonly { icon: LucideIcon; text: string }[] = [
  * before the first sync.
  */
 export function OnboardingCard() {
-  const { info } = useRooms();
+  const info = useInfo();
   if (!info) return null;
   return <Welcome home={info.home} />;
 }

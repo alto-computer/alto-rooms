@@ -8,6 +8,7 @@ rooms-protocol = { path = "../rooms-protocol" }
 rooms-core = { path = "../rooms-core" }
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 axum = "0.8"
 tower-http = { version = "0.6", features = ["set-header", "cors"] }

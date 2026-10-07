@@ -8,6 +8,7 @@ pub(crate) mod sources;
 
 pub use run::Limits;
 
+use crate::lock::lock;
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
@@ -24,18 +25,37 @@ pub const MAX_RUNNING: usize = 4;
 const MAX_QUESTION_CHARS: usize = 8_000;
 const RESTARTED: &str = "Stopped because Rooms restarted";
 
-#[derive(Debug)]
-pub enum AskError { BadRequest(String), NotFound, Busy, Capacity, AgentConfig(String), Io(String) }
+/// Why an ask call failed, with the wire `code()` and HTTP `status()` roomsd answers with (the
+/// message is the `Display` text, shown to the user as is).
+#[derive(Debug, thiserror::Error)]
+pub enum AskError {
+    #[error("{0}")] BadRequest(String),
+    #[error("Can't find this doc")] NotFound,
+    #[error("Waiting for an answer")] Busy,
+    #[error("Too many questions running — try again when one finishes")] Capacity,
+    #[error("Couldn't read agent settings: {0}")] AgentConfig(String),
+    #[error("Couldn't save the conversation: {0}")] Io(String),
+}
 
-impl std::fmt::Display for AskError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl AskError {
+    pub fn code(&self) -> &'static str {
         match self {
-            AskError::BadRequest(m) => write!(f, "{m}"),
-            AskError::NotFound => write!(f, "Can't find this doc"),
-            AskError::Busy => write!(f, "Waiting for an answer"),
-            AskError::Capacity => write!(f, "Too many questions running — try again when one finishes"),
-            AskError::AgentConfig(m) => write!(f, "Couldn't read agent settings: {m}"),
-            AskError::Io(m) => write!(f, "Couldn't save the conversation: {m}"),
+            AskError::BadRequest(_) => "bad_request",
+            AskError::NotFound => "not_found",
+            AskError::Busy => "ask_busy",
+            AskError::Capacity => "ask_capacity",
+            AskError::AgentConfig(_) => "agent_config",
+            AskError::Io(_) => "io",
+        }
+    }
+
+    pub fn status(&self) -> u16 {
+        match self {
+            AskError::BadRequest(_) => 400,
+            AskError::NotFound => 404,
+            AskError::Busy | AskError::Capacity => 409,
+            AskError::AgentConfig(_) => 422,
+            AskError::Io(_) => 500,
         }
     }
 }
@@ -83,6 +103,28 @@ pub async fn login_path() -> Option<String> {
     parse_login_path(&out.stdout)
 }
 
+/// How a finished run of `agent` ends its turn: (status, answer, error shown to the user). The
+/// answer is the cleaned stdout, kept even when the run failed or was stopped.
+fn turn_end(agent: &str, outcome: Outcome) -> (AskStatus, String, Option<String>) {
+    match outcome {
+        Outcome::Exited { code: 0, stdout, .. } => (AskStatus::Done, run::clean_output(stdout.as_bytes()), None),
+        Outcome::Exited { code, stdout, stderr_tail } => {
+            let last = run::clean_output(stderr_tail.as_bytes()).lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string);
+            let mut m = format!("{agent} exited with an error (code {code})");
+            if let Some(l) = last { m.push('\n'); m.push_str(&l); }
+            (AskStatus::Failed, run::clean_output(stdout.as_bytes()), Some(m))
+        }
+        Outcome::Killed { reason, stdout } => {
+            let a = run::clean_output(stdout.as_bytes());
+            match reason {
+                Reason::Cancelled | Reason::Shutdown => (AskStatus::Cancelled, a, None),
+                Reason::Timeout => (AskStatus::Failed, a, Some("Stopped: took too long".into())),
+                Reason::TooLong => (AskStatus::Failed, a, Some("Stopped: the answer was too long".into())),
+            }
+        }
+    }
+}
+
 /// The first line after the LAST sentinel: whatever `.zprofile` prints before it, or `.zlogout`
 /// after it, is ignored.
 fn parse_login_path(stdout: &[u8]) -> Option<String> {
@@ -117,8 +159,7 @@ impl Asks {
     /// Which doc, agent, template, session and cwd an ask from `artifact_id` would use.
     fn resolve(&self, room: &str, artifact_id: &str) -> Result<Resolved, AskError> {
         let core = &self.0.core;
-        let artifact = core.list_artifacts(&room.to_string()).map_err(|_| AskError::NotFound)?
-            .into_iter().find(|a| a.id == artifact_id).ok_or(AskError::NotFound)?;
+        let artifact = core.artifact(&room.to_string(), artifact_id).ok().flatten().ok_or(AskError::NotFound)?;
         if !valid_file_key(&artifact.file_key) { return Err(AskError::BadRequest("bad file key".into())); }
         let file_abs = core.resolve_file(&room.to_string(), &artifact.rel_path).map_err(|_| AskError::NotFound)?;
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
@@ -160,7 +201,7 @@ impl Asks {
         }
         let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
 
-        let mut running = self.0.running.lock().unwrap();
+        let mut running = lock(&self.0.running);
         if self.0.shutting_down.load(Ordering::SeqCst) { return Err(AskError::Capacity); }
         if running.values().any(|e| e.file_key == artifact.file_key) { return Err(AskError::Busy); }
         if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
@@ -194,21 +235,7 @@ impl Asks {
                 let t = turn.clone();
                 tokio::spawn(async move {
                     let (status, answer, error) = match done.await {
-                        Ok(Outcome::Exited { code: 0, stdout, .. }) => (AskStatus::Done, run::clean_output(stdout.as_bytes()), None),
-                        Ok(Outcome::Exited { code, stdout, stderr_tail }) => {
-                            let last = run::clean_output(stderr_tail.as_bytes()).lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string);
-                            let mut m = format!("{} exited with an error (code {code})", t.agent);
-                            if let Some(l) = last { m.push('\n'); m.push_str(&l); }
-                            (AskStatus::Failed, run::clean_output(stdout.as_bytes()), Some(m))
-                        }
-                        Ok(Outcome::Killed { reason, stdout }) => {
-                            let a = run::clean_output(stdout.as_bytes());
-                            match reason {
-                                Reason::Cancelled | Reason::Shutdown => (AskStatus::Cancelled, a, None),
-                                Reason::Timeout => (AskStatus::Failed, a, Some("Stopped: took too long".into())),
-                                Reason::TooLong => (AskStatus::Failed, a, Some("Stopped: the answer was too long".into())),
-                            }
-                        }
+                        Ok(outcome) => turn_end(&t.agent, outcome),
                         Err(_) => (AskStatus::Failed, String::new(), Some("Internal error".into())),
                     };
                     me.finish(t, status, answer, error);
@@ -225,7 +252,7 @@ impl Asks {
         turn.error = error;
         turn.ended_at = Some(now());
         if let Err(e) = self.0.log.append(&turn) { eprintln!("roomsd: ask {}: could not record: {e}", turn.id); }
-        self.0.running.lock().unwrap().remove(&turn.id);
+        lock(&self.0.running).remove(&turn.id);
         self.0.core.emit_ask(EventKind::AskDone { turn });
     }
 
@@ -242,12 +269,12 @@ impl Asks {
 
     pub fn thread(&self, file_key: &str) -> Result<Vec<AskTurn>, AskError> {
         if !valid_file_key(file_key) { return Err(AskError::BadRequest("bad file key".into())); }
-        let running = self.0.running.lock().unwrap();
+        let running = lock(&self.0.running);
         self.read_thread(&running, file_key)
     }
 
     pub fn cancel(&self, ask_id: &str) {
-        if let Some(e) = self.0.running.lock().unwrap().get(ask_id) { e.killer.kill(Reason::Cancelled); }
+        if let Some(e) = lock(&self.0.running).get(ask_id) { e.killer.kill(Reason::Cancelled); }
     }
 
     /// Kill everything still running (roomsd is stopping; the app gives it 1 s). Waits ≤ 700 ms
@@ -255,12 +282,12 @@ impl Asks {
     /// New asks are refused from here on, so nothing is spawned that nobody would kill.
     pub async fn shutdown(&self) {
         {
-            let running = self.0.running.lock().unwrap();
+            let running = lock(&self.0.running);
             self.0.shutting_down.store(true, Ordering::SeqCst);
             for e in running.values() { e.killer.kill(Reason::Shutdown); }
         }
         let deadline = tokio::time::Instant::now() + Duration::from_millis(700);
-        while !self.0.running.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
+        while !lock(&self.0.running).is_empty() && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
@@ -269,6 +296,35 @@ impl Asks {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ask_errors_wire_codes_and_statuses() {
+        let wire = |e: AskError| (e.status(), e.code(), e.to_string());
+        assert_eq!(wire(AskError::BadRequest("why".into())), (400, "bad_request", "why".into()));
+        assert_eq!(wire(AskError::NotFound), (404, "not_found", "Can't find this doc".into()));
+        assert_eq!(wire(AskError::Busy), (409, "ask_busy", "Waiting for an answer".into()));
+        assert_eq!(wire(AskError::Capacity), (409, "ask_capacity", "Too many questions running — try again when one finishes".into()));
+        assert_eq!(wire(AskError::AgentConfig("x".into())), (422, "agent_config", "Couldn't read agent settings: x".into()));
+        assert_eq!(wire(AskError::Io("x".into())), (500, "io", "Couldn't save the conversation: x".into()));
+    }
+
+    fn exited(code: i32, stdout: &str, stderr_tail: &str) -> Outcome {
+        Outcome::Exited { code, stdout: stdout.into(), stderr_tail: stderr_tail.into() }
+    }
+
+    fn killed(reason: Reason, stdout: &str) -> Outcome { Outcome::Killed { reason, stdout: stdout.into() } }
+
+    #[test]
+    fn turn_end_maps_every_outcome() {
+        assert_eq!(turn_end("codex", exited(0, "\x1b[1mhi\x1b[0m\n", "noise")), (AskStatus::Done, "hi".into(), None));
+        assert_eq!(turn_end("codex", exited(2, "partial", "warn\nboom: bad flag\n\n")),
+            (AskStatus::Failed, "partial".into(), Some("codex exited with an error (code 2)\nboom: bad flag".into())));
+        assert_eq!(turn_end("codex", exited(1, "", "  \n")), (AskStatus::Failed, String::new(), Some("codex exited with an error (code 1)".into())));
+        assert_eq!(turn_end("codex", killed(Reason::Cancelled, "so far")), (AskStatus::Cancelled, "so far".into(), None));
+        assert_eq!(turn_end("codex", killed(Reason::Shutdown, "")), (AskStatus::Cancelled, String::new(), None));
+        assert_eq!(turn_end("codex", killed(Reason::Timeout, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: took too long".into())));
+        assert_eq!(turn_end("codex", killed(Reason::TooLong, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: the answer was too long".into())));
+    }
 
     #[test]
     fn login_path_is_the_text_after_the_last_sentinel() {

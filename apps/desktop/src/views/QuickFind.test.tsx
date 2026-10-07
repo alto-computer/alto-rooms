@@ -60,6 +60,16 @@ describe("QuickFind", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("leaves out the empty inbox, as the sidebar does", async () => {
+    await renderWithStores(<QuickFind open onClose={vi.fn()} />, {
+      rooms: [room("inbox", "inbox"), room("r1", "벤치마크")],
+      artifacts: { inbox: [], r1: [] },
+    });
+    const rooms = await screen.findByRole("group", { name: "Rooms" });
+    expect(within(rooms).queryByText("inbox")).toBeNull();
+    expect(within(rooms).getByText("벤치마크")).toBeInTheDocument();
+  });
+
   it("loads every room's artifacts on first open", async () => {
     const h = await setup();
     await waitFor(() => expect(h.rooms.getState().artifacts.r2).toBeDefined());

@@ -3,8 +3,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use ts_rs::TS;
 
+pub mod layout;
+
 pub const PROTOCOL_VERSION: &str = "1";
 pub const JOURNAL_ROOM_ID: &str = "journal";
+/// The id of the inbox, the owned room every home has (its folder is `<home>/inbox`).
+pub const INBOX_ROOM_ID: &str = "inbox";
 
 pub type RoomId = String;
 pub type ArtifactId = String;

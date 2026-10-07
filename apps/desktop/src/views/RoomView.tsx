@@ -1,11 +1,14 @@
-import { useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { CircleAlert } from "lucide-react";
-import { useArtifacts, useClient, useReadOnly, useRooms, useScopeError, useViewerStore } from "@/data/hooks";
+import { useScrollMemory } from "@/lib/scrollMemory";
+import { useCurrentTabId } from "@/shell/currentTab";
+import { useArtifacts, useClient, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
 import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { ArtifactCard } from "./ArtifactCard";
 import { EditableTitle } from "./EditableTitle";
 import { EmptyRoom } from "./EmptyRoom";
+import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { INBOX_ID } from "@/lib/drag";
 
 function Centered({ children }: { children: ReactNode }) {
@@ -20,20 +23,17 @@ function Centered({ children }: { children: ReactNode }) {
  * the new-doc baseline captured at mount is "the moment the tab became active".
  */
 export function RoomView({ roomId }: { roomId: string }) {
-  const { rooms, info } = useRooms();
+  const rooms = useRoomList();
+  const info = useInfo();
   const client = useClient();
-  const viewer = useViewerStore();
+  const openDoc = useOpenDoc();
   const artifacts = useArtifacts(roomId);
   const loadError = useScopeError(`room:${roomId}`);
   const room = rooms.find((r) => r.id === roomId);
   const readOnly = useReadOnly();
+  const gridRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:room:${roomId}`, !!artifacts?.length && !!info);
 
-  // Frozen at activation: `lastVisit` is only written when leaving, and dots must not vanish while viewed.
-  const baseline = useRef<string | null>(null);
-  if (baseline.current === null) {
-    const v = viewer.getState();
-    baseline.current = v.lastVisit[roomId] ?? v.firstRunAt;
-  }
+  const baseline = useVisitsAtArrival().since(roomId);
 
   if (!room) {
     // Before the first sync we can't tell; afterwards the room is gone.
@@ -51,6 +51,7 @@ export function RoomView({ roomId }: { roomId: string }) {
       // The grid scrolls inside the panel: -mx-12/px-12 put its scrollbar on the panel's
       // edge, and pt-2.5/-mt-2.5 leave room above the first row for the hover shadow.
       <div
+        ref={gridRef}
         data-grid
         data-scroll-root
         className="-mx-12 -mt-2.5 grid min-h-0 flex-1 grid-cols-[repeat(auto-fill,300px)] content-start gap-x-7 gap-y-9 overflow-y-auto px-12 pt-2.5 pb-6 [scrollbar-color:#dddddd_transparent] [scrollbar-width:thin]"
@@ -64,10 +65,10 @@ export function RoomView({ roomId }: { roomId: string }) {
                   artifact={a}
                   info={info}
                   label={dateLabel(a.createdAt, now)}
-                  isNew={isNewSince(a.createdAt, baseline.current!)}
+                  isNew={isNewSince(a.createdAt, baseline)}
                   size="strip"
                   draggable={roomId === INBOX_ID && !readOnly}
-                  onOpen={(newTab) => viewer.go({ kind: "doc", roomId, artifactId: a.id }, newTab)}
+                  onOpen={openDoc}
                 />
               ))
           : null}

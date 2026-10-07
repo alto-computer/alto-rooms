@@ -1,11 +1,18 @@
+mod artifacts;
 pub mod asks;
 pub mod core;
+mod dangling;
 pub mod error;
+mod home_sync;
 pub mod index;
+mod journal;
+mod lock;
 pub mod meta;
 pub mod onboarding;
 pub mod plugins;
+mod rooms;
 pub mod rules;
+mod scan;
 pub mod state;
 pub mod tools;
 pub mod walk;

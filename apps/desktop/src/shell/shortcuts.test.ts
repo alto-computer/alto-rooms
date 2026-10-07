@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowedWithFocus, isNoteEditor, isTextField, keyAction } from "./shortcuts";
+import { allowedWithFocus, isNoteEditor, isTextField, keyAction, tabKey } from "./shortcuts";
 
 const kd = (key: string, init: KeyboardEventInit = {}) => new KeyboardEvent("keydown", { key, code: `Key${key.toUpperCase()}`, metaKey: true, ...init });
 
@@ -13,6 +13,22 @@ describe("shortcuts", () => {
     expect(keyAction(kd("w", { shiftKey: true }))).toBeNull();
     expect(keyAction(kd("w", { metaKey: false }))).toBeNull();
     expect(keyAction(kd("x"))).toBeNull();
+  });
+
+  it("maps tab switching keys by physical key", () => {
+    const code = (c: string, init: KeyboardEventInit = {}) => new KeyboardEvent("keydown", { key: "x", code: c, metaKey: true, ...init });
+    expect(tabKey(code("Digit1"))).toEqual({ kind: "at", index: 0 });
+    expect(tabKey(code("Digit8"))).toEqual({ kind: "at", index: 7 });
+    expect(tabKey(code("Digit9"))).toEqual({ kind: "at", index: -1 });
+    expect(tabKey(code("Digit0"))).toBeNull();
+    expect(tabKey(code("BracketRight", { shiftKey: true }))).toEqual({ kind: "cycle", delta: 1 });
+    expect(tabKey(code("BracketLeft", { shiftKey: true }))).toEqual({ kind: "cycle", delta: -1 });
+    expect(tabKey(code("BracketLeft"))).toBeNull(); // ⌘[ is Back
+    expect(tabKey(code("KeyT", { shiftKey: true }))).toEqual({ kind: "reopen" });
+    expect(tabKey(code("Tab", { metaKey: false, ctrlKey: true }))).toEqual({ kind: "cycle", delta: 1 });
+    expect(tabKey(code("Tab", { metaKey: false, ctrlKey: true, shiftKey: true }))).toEqual({ kind: "cycle", delta: -1 });
+    expect(tabKey(code("Digit1", { metaKey: false }))).toBeNull();
+    expect(tabKey(code("Digit1", { altKey: true }))).toBeNull();
   });
 
   it("classifies text fields", () => {

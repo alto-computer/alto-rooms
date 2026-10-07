@@ -5,33 +5,27 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use rooms_core::asks::AskError;
+use rooms_core::plugins::PluginAsset;
 use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
 use serde::Deserialize;
 
+/// A JSON error response: `{error: code, message}` with the error's own status.
+fn error_response(status: u16, code: &str, message: String) -> Response {
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, Json(ApiError { error: code.into(), message })).into_response()
+}
+
 pub struct ApiErr(pub CoreError);
 impl IntoResponse for ApiErr {
-    fn into_response(self) -> Response {
-        let status = StatusCode::from_u16(self.0.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        (status, Json(ApiError { error: self.0.code().into(), message: self.0.to_string() })).into_response()
-    }
+    fn into_response(self) -> Response { error_response(self.0.status(), self.0.code(), self.0.to_string()) }
 }
 impl From<CoreError> for ApiErr { fn from(e: CoreError) -> Self { ApiErr(e) } }
 
 pub struct AskErr(AskError);
 impl From<AskError> for AskErr { fn from(e: AskError) -> Self { AskErr(e) } }
 impl IntoResponse for AskErr {
-    fn into_response(self) -> Response {
-        let (status, code) = match &self.0 {
-            AskError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
-            AskError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            AskError::Busy => (StatusCode::CONFLICT, "ask_busy"),
-            AskError::Capacity => (StatusCode::CONFLICT, "ask_capacity"),
-            AskError::AgentConfig(_) => (StatusCode::UNPROCESSABLE_ENTITY, "agent_config"),
-            AskError::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "io"),
-        };
-        (status, Json(ApiError { error: code.into(), message: self.0.to_string() })).into_response()
-    }
+    fn into_response(self) -> Response { error_response(self.0.status(), self.0.code(), self.0.to_string()) }
 }
 
 pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
@@ -103,7 +97,7 @@ where
     })
     .await?;
     let mut h = HeaderMap::new();
-    h.insert("x-rooms-seq", HeaderValue::from_str(&seq.to_string()).unwrap());
+    h.insert("x-rooms-seq", HeaderValue::from(seq));
     Ok((h, Json(v)).into_response())
 }
 
@@ -166,51 +160,50 @@ pub async fn get_note(State(st): State<AppState>, Path((date, name)): Path<(Stri
     Ok(([("content-type", "text/markdown; charset=utf-8"), ("x-content-type-options", "nosniff")], body).into_response())
 }
 
-pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>) -> Result<Response, ApiErr> {
+/// A weak validator from the file's identity (device, inode), length and mtime: cheap (no read),
+/// changes on every rewrite, and differs between two files of equal size and mtime (a link
+/// retargeted to another original).
+fn etag_of(meta: &std::fs::Metadata) -> Option<HeaderValue> {
+    use std::os::unix::fs::MetadataExt;
+    let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    HeaderValue::from_str(&format!("W/\"{:x}-{:x}-{:x}-{:x}\"", meta.dev(), meta.ino(), meta.len(), mtime)).ok()
+}
+
+/// Whether `If-None-Match` (all its header lines) matches `tag`: `*`, or any listed tag equal
+/// to it by weak comparison (opaque tags equal, `W/` ignored; RFC 9110 §13.1.2).
+fn none_match_hits<'a>(if_none_match: impl Iterator<Item = &'a str>, tag: &str) -> bool {
+    fn opaque(t: &str) -> &str { t.trim().trim_start_matches("W/") }
+    if_none_match.flat_map(|v| v.split(',')).any(|t| t.trim() == "*" || opaque(t) == opaque(tag))
+}
+
+/// Serves a room file. Previews remount often (scrolling, tab switches), so responses carry an
+/// ETag with `no-cache`: the webview revalidates every time and gets a bodyless 304 while unchanged.
+pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ApiErr> {
     let path = blocking(&st, move |c| c.resolve_file(&room_id, &rel)).await?;
-    // CoreError has no read/not-found variant besides RoomNotFound (misleading here); WriteFailed (500) is the closest fit.
-    let bytes = tokio::fs::read(&path).await.map_err(|e| ApiErr(CoreError::WriteFailed(e.to_string())))?;
+    let read_err = |e: std::io::Error| ApiErr(CoreError::Io(e));
+    let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?);
+    if let Some(tag) = &etag {
+        let tag_str = tag.to_str().unwrap_or_default();
+        if none_match_hits(headers.get_all("if-none-match").iter().filter_map(|v| v.to_str().ok()), tag_str) {
+            return Ok((StatusCode::NOT_MODIFIED, [("etag", tag.clone()), ("cache-control", HeaderValue::from_static("no-cache"))]).into_response());
+        }
+    }
+    let bytes = tokio::fs::read(&path).await.map_err(read_err)?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    let ct = content_type(&ext);
-    Ok(([("content-type", ct), ("x-content-type-options", "nosniff")], bytes).into_response())
+    let mut res = ([("content-type", content_type(&ext)), ("x-content-type-options", "nosniff"), ("cache-control", "no-cache")], bytes).into_response();
+    if let Some(tag) = etag { res.headers_mut().insert("etag", tag); }
+    Ok(res)
 }
 
 // ---- plugins ----
-
-/// Plugin data errors carry their own codes: `invalid_path` 400, `too_large` 413.
-fn plugin_err(e: CoreError) -> Response {
-    match &e {
-        CoreError::InvalidInput(c) if c == "invalid_path" || c == "too_large" => {
-            let status = if c == "too_large" { StatusCode::PAYLOAD_TOO_LARGE } else { StatusCode::BAD_REQUEST };
-            (status, Json(ApiError { error: c.clone(), message: c.replace('_', " ") })).into_response()
-        }
-        _ => ApiErr(e).into_response(),
-    }
-}
-
-/// Tool errors: `bad_request:<why>` 400, `too_large` 413, anything else as `ApiErr` (NotFound 404).
-fn tool_err(e: CoreError) -> Response {
-    match &e {
-        CoreError::InvalidInput(c) if c.starts_with("bad_request:") => bad_request(c["bad_request:".len()..].to_string()),
-        CoreError::InvalidInput(c) if c == "too_large" => plugin_err(e),
-        _ => ApiErr(e).into_response(),
-    }
-}
-
-fn bad_request(message: String) -> Response {
-    (StatusCode::BAD_REQUEST, Json(ApiError { error: "bad_request".into(), message })).into_response()
-}
 
 pub async fn list_tools(State(st): State<AppState>) -> Result<Json<Vec<ToolInfo>>, ApiErr> {
     Ok(Json(blocking(&st, |c| Ok(c.list_tools())).await?))
 }
 
-pub async fn call_tool(State(st): State<AppState>, b: Result<Json<ToolCall>, JsonRejection>) -> Response {
-    let Json(call) = match b { Ok(j) => j, Err(e) => return bad_request(e.body_text()) };
-    match blocking(&st, move |c| c.call_tool(&call)).await {
-        Ok(r) => Json(r).into_response(),
-        Err(ApiErr(e)) => tool_err(e),
-    }
+pub async fn call_tool(State(st): State<AppState>, b: Result<Json<ToolCall>, JsonRejection>) -> Result<Json<ToolResult>, ApiErr> {
+    let Json(call) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
+    Ok(Json(blocking(&st, move |c| c.call_tool(&call)).await?))
 }
 
 pub async fn list_plugins(State(st): State<AppState>) -> Result<Json<Vec<PluginInfo>>, ApiErr> {
@@ -224,33 +217,23 @@ pub async fn set_plugin_enabled(State(st): State<AppState>, Path(id): Path<Strin
 }
 
 #[derive(Deserialize)] pub struct PrefixQuery { #[serde(default)] prefix: String }
-pub async fn list_plugin_data(State(st): State<AppState>, Path(id): Path<String>, axum::extract::Query(q): axum::extract::Query<PrefixQuery>) -> Response {
-    match blocking(&st, move |c| c.list_plugin_data(&id, &q.prefix)).await {
-        Ok(v) => Json(v).into_response(),
-        Err(ApiErr(e)) => plugin_err(e),
-    }
+pub async fn list_plugin_data(State(st): State<AppState>, Path(id): Path<String>, axum::extract::Query(q): axum::extract::Query<PrefixQuery>) -> Result<Json<Vec<String>>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.list_plugin_data(&id, &q.prefix)).await?))
 }
 
-pub async fn get_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Response {
-    match blocking(&st, move |c| c.read_plugin_data(&id, &path)).await {
-        Ok(Some(t)) => ([("content-type", "text/plain; charset=utf-8")], t).into_response(),
-        Ok(None) => ApiErr(CoreError::NotFound).into_response(),
-        Err(ApiErr(e)) => plugin_err(e),
-    }
+pub async fn get_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Result<Response, ApiErr> {
+    let text = blocking(&st, move |c| c.read_plugin_data(&id, &path)?.ok_or(CoreError::NotFound)).await?;
+    Ok(([("content-type", "text/plain; charset=utf-8")], text).into_response())
 }
 
-pub async fn put_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>, body: String) -> Response {
-    match blocking(&st, move |c| c.write_plugin_data(&id, &path, &body)).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(ApiErr(e)) => plugin_err(e),
-    }
+pub async fn put_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>, body: String) -> Result<StatusCode, ApiErr> {
+    blocking(&st, move |c| c.write_plugin_data(&id, &path, &body)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn delete_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Response {
-    match blocking(&st, move |c| c.delete_plugin_data(&id, &path)).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(ApiErr(e)) => plugin_err(e),
-    }
+pub async fn delete_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Result<StatusCode, ApiErr> {
+    blocking(&st, move |c| c.delete_plugin_data(&id, &path)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn artifact_by_file_key(State(st): State<AppState>, Path(key): Path<String>) -> Result<Json<Artifact>, ApiErr> {
@@ -260,15 +243,9 @@ pub async fn artifact_by_file_key(State(st): State<AppState>, Path(key): Path<St
 /// A plugin asset with the plugin's own CSP: sources limited to `/_plugins/<id>/`, no network, no
 /// frames, and sandbox tokens from its declared permissions (never popups or same-origin).
 pub async fn plugin_file(State(st): State<AppState>, Path((id, rel)): Path<(String, String)>) -> Response {
-    let (id2, rel2) = (id.clone(), rel.clone());
-    let found = blocking(&st, move |c| {
-        let p = c.plugins().into_iter().find(|p| p.id == id2).ok_or(CoreError::NotFound)?;
-        Ok((c.resolve_plugin_file(&id2, &rel2)?, p.permissions))
-    })
-    .await;
-    let (path, perms) = match found {
-        Ok(v) => v,
-        Err(_) => return ApiErr(CoreError::NotFound).into_response(),
+    let id2 = id.clone();
+    let Ok(PluginAsset { path, permissions: perms }) = blocking(&st, move |c| c.resolve_plugin_file(&id2, &rel)).await else {
+        return ApiErr(CoreError::NotFound).into_response();
     };
     let Ok(bytes) = tokio::fs::read(&path).await else { return ApiErr(CoreError::NotFound).into_response() };
     let src = format!("{}/_plugins/{}/", st.files_origin, id);
@@ -338,5 +315,17 @@ mod tests {
         let Err(e) = blocking(&st, |_core: &RoomsCore| -> Result<(), CoreError> { panic!("boom") }).await else { panic!("must fail") };
         assert_eq!(e.0.code(), "internal");
         assert_eq!(e.0.status(), 500);
+    }
+
+    #[test]
+    fn if_none_match_uses_weak_comparison_and_star() {
+        let tag = "W/\"1-2\"";
+        assert!(none_match_hits(["W/\"1-2\""].into_iter(), tag));
+        assert!(none_match_hits(["\"1-2\""].into_iter(), tag), "a strong spelling of the same tag");
+        assert!(none_match_hits(["\"x\", W/\"1-2\""].into_iter(), tag));
+        assert!(none_match_hits(["\"x\"", "W/\"1-2\""].into_iter(), tag), "a second header line");
+        assert!(none_match_hits(["*"].into_iter(), tag));
+        assert!(!none_match_hits(["W/\"1-3\""].into_iter(), tag));
+        assert!(!none_match_hits(std::iter::empty(), tag));
     }
 }
