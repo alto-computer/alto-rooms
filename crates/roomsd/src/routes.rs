@@ -5,6 +5,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use rooms_core::asks::AskError;
+use rooms_core::plugins::PluginAsset;
 use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
 use serde::Deserialize;
@@ -242,15 +243,9 @@ pub async fn artifact_by_file_key(State(st): State<AppState>, Path(key): Path<St
 /// A plugin asset with the plugin's own CSP: sources limited to `/_plugins/<id>/`, no network, no
 /// frames, and sandbox tokens from its declared permissions (never popups or same-origin).
 pub async fn plugin_file(State(st): State<AppState>, Path((id, rel)): Path<(String, String)>) -> Response {
-    let (id2, rel2) = (id.clone(), rel.clone());
-    let found = blocking(&st, move |c| {
-        let p = c.plugins().into_iter().find(|p| p.id == id2).ok_or(CoreError::NotFound)?;
-        Ok((c.resolve_plugin_file(&id2, &rel2)?, p.permissions))
-    })
-    .await;
-    let (path, perms) = match found {
-        Ok(v) => v,
-        Err(_) => return ApiErr(CoreError::NotFound).into_response(),
+    let id2 = id.clone();
+    let Ok(PluginAsset { path, permissions: perms }) = blocking(&st, move |c| c.resolve_plugin_file(&id2, &rel)).await else {
+        return ApiErr(CoreError::NotFound).into_response();
     };
     let Ok(bytes) = tokio::fs::read(&path).await else { return ApiErr(CoreError::NotFound).into_response() };
     let src = format!("{}/_plugins/{}/", st.files_origin, id);

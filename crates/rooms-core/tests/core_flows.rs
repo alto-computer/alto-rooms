@@ -1007,7 +1007,7 @@ fn plugin_assets_resolve_and_data_stays_private() {
     install(d.path(), ECHO);
     core.set_plugin_enabled("echo", true, None).unwrap();
     core.write_plugin_data("echo", "x.txt", "hi").unwrap();
-    assert!(core.resolve_plugin_file("echo", "index.html").unwrap().ends_with("index.html"));
+    assert!(core.resolve_plugin_file("echo", "index.html").unwrap().path.ends_with("index.html"));
     assert!(core.resolve_plugin_file("echo", "data/x.txt").is_err());
     assert!(core.resolve_plugin_file("nope", "index.html").is_err());
 }
