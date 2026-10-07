@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AskTurn, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type { AskTarget, AskTurn, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { AsksStore, upsert } from "./asksStore";
 
 type EventInput = RoomsEvent extends infer T ? (T extends RoomsEvent ? Omit<T, "seq"> : never) : never;
 
 const turn = (id: string, status: AskTurn["status"], extra: Partial<AskTurn> = {}): AskTurn => ({
-  id, fileKey: "k1", question: "q", answer: "", agent: "claude-code", mode: "resume", status,
+  id, fileKey: "k1", question: "q", answer: "", agent: "claude-code", model: null, mode: "resume", status,
   error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, ...extra,
 });
 
@@ -14,6 +14,7 @@ function setup(thread: AskTurn[] = []) {
   const client = {
     startAsk: vi.fn(async () => turn("t1", "running")),
     askThread: vi.fn(async () => thread),
+    askTarget: vi.fn(async (): Promise<AskTarget> => ({ agent: "codex", mode: "new", models: ["gpt-6-sol"] })),
     cancelAsk: vi.fn(async () => {}),
   };
   const store = new AsksStore(client, { onSignal: (fn) => ((signal = fn), () => {}) });
@@ -59,7 +60,7 @@ describe("AsksStore", () => {
     resolve(turn("t1", "running"));
     await p;
     expect(store.getState().threads.k1.turns[0].status).toBe("failed");
-    expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r", artifactId: "a", question: "q" });
+    expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r", artifactId: "a", question: "q", model: null });
   });
 
   it("a load that races an event keeps the newer state", async () => {
@@ -87,6 +88,16 @@ describe("AsksStore", () => {
     const { store, client } = setup();
     client.startAsk.mockRejectedValueOnce(new Error("busy"));
     await expect(store.ask({ roomId: "r", artifactId: "a" }, "q")).rejects.toThrow("busy");
+  });
+
+  it("ask() sends the picked model; target() asks roomsd and swallows errors", async () => {
+    const { store, client } = setup();
+    await store.ask({ roomId: "r", artifactId: "a" }, "q", "gpt-6-sol");
+    expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r", artifactId: "a", question: "q", model: "gpt-6-sol" });
+    expect(await store.target({ roomId: "r", artifactId: "a" })).toEqual({ agent: "codex", mode: "new", models: ["gpt-6-sol"] });
+    expect(client.askTarget).toHaveBeenCalledWith("r", "a");
+    client.askTarget.mockRejectedValueOnce(new Error("x"));
+    expect(await store.target({ roomId: "r", artifactId: "a" })).toBeNull();
   });
 
   it("cancel calls the client and swallows errors", () => {

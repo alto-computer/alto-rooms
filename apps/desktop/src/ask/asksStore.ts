@@ -2,13 +2,14 @@
  * Ask threads by file key, kept in step with roomsd by `ask.started` / `ask.done`
  * events, plus whether the ask bar is open (global, starts open, not saved).
  */
-import type { AskTurn, RoomsEvent, StartAsk } from "@alto-rooms/protocol-ts";
+import type { AskTarget, AskTurn, RoomsEvent, StartAsk } from "@alto-rooms/protocol-ts";
 
 export type Thread = { turns: AskTurn[]; loaded: boolean; error: boolean };
 export type AsksState = { open: boolean; threads: Record<string, Thread> };
 
 type Client = {
   startAsk(req: StartAsk): Promise<AskTurn>;
+  askTarget(roomId: string, artifactId: string): Promise<AskTarget>;
   askThread(fileKey: string): Promise<AskTurn[]>;
   cancelAsk(askId: string): Promise<void>;
 };
@@ -81,10 +82,21 @@ export class AsksStore {
     }
   }
 
-  /** Throws the API error (e.g. ask_busy) for the bar to show. */
-  async ask(a: { roomId: string; artifactId: string }, question: string): Promise<void> {
+  /** Which agent an ask from this doc goes to, and its models; null when roomsd can't say. */
+  async target(a: { roomId: string; artifactId: string }): Promise<AskTarget | null> {
+    if (!this.client) return null;
+    try {
+      return await this.client.askTarget(a.roomId, a.artifactId);
+    } catch (e) {
+      console.warn("rooms: could not load the ask target", e);
+      return null;
+    }
+  }
+
+  /** Throws the API error (e.g. ask_busy) for the bar to show. `model` null = the agent's default. */
+  async ask(a: { roomId: string; artifactId: string }, question: string, model: string | null = null): Promise<void> {
     if (!this.client) return;
-    const t = await this.client.startAsk({ roomId: a.roomId, artifactId: a.artifactId, question });
+    const t = await this.client.startAsk({ roomId: a.roomId, artifactId: a.artifactId, question, model });
     this.apply(t);
   }
 

@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
@@ -12,25 +12,31 @@ const doc: Artifact = {
   source: { agent: "claude-code", session: "S1", cwd: null, machine: null },
 };
 const turn = (extra: Partial<AskTurn>): AskTurn => ({
-  id: "t1", fileKey: "k1", question: "왜?", answer: "", agent: "claude-code", mode: "resume", status: "running",
+  id: "t1", fileKey: "k1", question: "왜?", answer: "", agent: "claude-code", model: null, mode: "resume", status: "running",
   error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, ...extra,
 });
 
 let store: ReturnType<typeof useAsksStore>;
 function Grab() { store = useAsksStore(); return null; }
 
-async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false) {
-  return renderWithStores(<><Grab /><AskBar artifact={doc} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly });
+async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false, target?: AskTarget) {
+  const askTargets = target ? { a1: target } : undefined;
+  return renderWithStores(<><Grab /><AskBar artifact={doc} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
 }
 
+const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"] };
+
 describe("AskBar", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
 
   it("is open on mount without taking focus; toggling off hides it, toggling on focuses it", async () => {
     await setup();
     const first = await screen.findByPlaceholderText("Ask about this doc…");
     expect(document.activeElement).not.toBe(first);
-    expect(screen.getByText("claude-code")).toBeTruthy();
+    expect(await screen.findByText("claude-code")).toBeTruthy();
     act(() => store.toggle());
     expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
     act(() => store.toggle());
@@ -51,7 +57,7 @@ describe("AskBar", () => {
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     expect(client.startAsk).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?" }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?", model: null }));
     expect(await screen.findByText("Thinking")).toBeTruthy();
     expect((input as HTMLTextAreaElement).value).toBe("");
     // readOnly, not disabled: Esc still folds the sheet and focus stays in the bar
@@ -141,7 +147,7 @@ describe("AskBar", () => {
     expect(await screen.findByText("claude-code exited with an error (code 1)")).toBeTruthy();
     expect(screen.getByText("Stopped")).toBeTruthy();
     fireEvent.click(screen.getByText("Retry"));
-    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q0" }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q0", model: null }));
   });
 
   it("while running the send button is a Stop button that cancels; there is no Stop text link", async () => {
@@ -204,5 +210,50 @@ describe("AskBar", () => {
     } finally {
       frame.remove();
     }
+  });
+
+  it("with no models shows just the agent the ask goes to, from roomsd, with no menu", async () => {
+    const { client } = await setup({}, false, { agent: "codex", mode: "new", models: [] });
+    expect(await screen.findByText("codex")).toBeTruthy();
+    expect(client.askTarget).toHaveBeenCalledWith("r1", "a1");
+    expect(screen.queryByLabelText("Model")).toBeNull();
+  });
+
+  it("a model menu lists Default and the models, checks the current one, and sends the pick", async () => {
+    const { client } = await setup({}, false, claude);
+    const trigger = await screen.findByLabelText("Model");
+    expect(trigger.textContent).toBe("claude-code · Default");
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((i) => i.textContent)).toEqual(["Default", "Opus", "Sonnet", "Haiku", "claude-x-1"]);
+    expect(items[0].querySelector("[aria-label=Current]")).toBeTruthy();
+    expect(items[2].querySelector("[aria-label=Current]")).toBeNull();
+    fireEvent.click(items[2]);
+    await waitFor(() => expect(screen.getByLabelText("Model").textContent).toBe("claude-code · Sonnet"));
+    const input = screen.getByPlaceholderText("Ask about this doc…");
+    fireEvent.change(input, { target: { value: "왜?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?", model: "sonnet" }));
+  });
+
+  it("remembers the pick per agent and ignores a remembered model that is no longer offered", async () => {
+    localStorage.setItem("alto-rooms.askModel.claude-code", "haiku");
+    localStorage.setItem("alto-rooms.askModel.codex", "gpt-6-sol");
+    await setup({}, false, claude);
+    const trigger = await screen.findByLabelText("Model");
+    expect(trigger.textContent).toBe("claude-code · Haiku");
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    fireEvent.click((await screen.findAllByRole("menuitem"))[1]);
+    expect(localStorage.getItem("alto-rooms.askModel.claude-code")).toBe("opus");
+    expect(localStorage.getItem("alto-rooms.askModel.codex")).toBe("gpt-6-sol");
+    cleanup();
+    localStorage.setItem("alto-rooms.askModel.claude-code", "retired-model");
+    await setup({}, false, claude);
+    expect((await screen.findByLabelText("Model")).textContent).toBe("claude-code · Default");
+  });
+
+  it("shows the turn's model in the sheet header", async () => {
+    await setup({ k1: [turn({ model: "sonnet", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+    expect(await screen.findByText("claude-code · Sonnet · continuing the thread that made it")).toBeTruthy();
   });
 });

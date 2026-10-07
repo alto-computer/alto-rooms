@@ -1,4 +1,4 @@
-import type { Artifact, AskTurn, Info, JournalDay, PluginInfo, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskTarget, AskTurn, Info, JournalDay, PluginInfo, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
@@ -52,6 +52,8 @@ export function fakeClient(
     home?: string;
     /** Ask threads by file key. */
     asks?: Record<string, AskTurn[]>;
+    /** What `askTarget` answers, by artifact id; default: the doc's own agent with no models. */
+    askTargets?: Record<string, AskTarget>;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -157,13 +159,19 @@ export function fakeClient(
       if (!a) throw new RoomsApiError(404, "not found", "not_found");
       return { ...a, roomId: toRoomId };
     }),
-    startAsk: vi.fn(async (req: { roomId: string; artifactId: string; question: string }): Promise<AskTurn> => {
+    startAsk: vi.fn(async (req: { roomId: string; artifactId: string; question: string; model: string | null }): Promise<AskTurn> => {
       const a = state.artifacts[req.roomId]?.find((x) => x.id === req.artifactId);
       if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
       return {
         id: `ask-${req.question}`, fileKey: a.fileKey, question: req.question, answer: "", agent: a.source.agent ?? "claude-code",
-        mode: a.source.session ? "resume" : "new", status: "running", error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null,
+        model: req.model, mode: a.source.session ? "resume" : "new", status: "running", error: null,
+        startedAt: "2026-10-06T10:00:00+09:00", endedAt: null,
       };
+    }),
+    askTarget: vi.fn(async (roomId: string, artifactId: string): Promise<AskTarget> => {
+      const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);
+      if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
+      return opts.askTargets?.[artifactId] ?? { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new", models: [] };
     }),
     askThread: vi.fn(async (fileKey: string) => state.asks[fileKey] ?? []),
     cancelAsk: vi.fn(async () => {}),

@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUp, Square } from "lucide-react";
-import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { AnswerMarkdown } from "./AnswerMarkdown";
+import { loadModel, modelLabel, saveModel } from "./askModel";
 import { CopyAnswerButton } from "./CopyAnswerButton";
+import { ModelPicker } from "./ModelPicker";
 import { ThinkingLine } from "./ThinkingLine";
 import { useStickToBottom } from "./useStickToBottom";
 
@@ -15,6 +17,38 @@ const PLACEHOLDER = "Ask about this doc…";
 function seconds(t: AskTurn): number | null {
   if (!t.endedAt) return null;
   return Math.max(0, Math.round((Date.parse(t.endedAt) - Date.parse(t.startedAt)) / 1000));
+}
+
+function header(t: AskTurn): string {
+  const how = t.mode === "resume" ? "continuing the thread that made it" : "new conversation — couldn't find the thread that made this doc";
+  return [t.agent, t.model ? modelLabel(t.model) : null, how].filter(Boolean).join(" · ");
+}
+
+/** Where an ask from this doc goes (null until roomsd answers), and the model picked for that agent. */
+function useAskTarget(artifact: Artifact, shown: boolean) {
+  const store = useAsksStore();
+  const { roomId, id } = artifact;
+  const key = `${roomId}/${id}`;
+  // Keyed by doc, so a newly shown doc never sends the previous doc's model.
+  const [state, setState] = useState<{ key: string; target: AskTarget | null; model: string | null } | null>(null);
+  useEffect(() => {
+    if (!shown) return;
+    let live = true;
+    void store.target({ roomId, artifactId: id }).then((target) => {
+      if (live) setState({ key: `${roomId}/${id}`, target, model: target ? loadModel(target.agent, target.models) : null });
+    });
+    return () => {
+      live = false;
+    };
+  }, [shown, store, roomId, id]);
+  const current = state?.key === key ? state : null;
+  const target = current?.target ?? null;
+  const pick = (model: string | null) => {
+    if (!target) return;
+    saveModel(target.agent, model);
+    setState({ key, target, model });
+  };
+  return { target, model: current?.model ?? null, pick };
 }
 
 function Turn({ t, onRetry }: { t: AskTurn; onRetry: () => void }) {
@@ -63,6 +97,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const loading = useRef<string | null>(null);
   const shown = open && !readOnly;
   const loaded = thread?.loaded ?? false;
+  const { target, model, pick } = useAskTarget(artifact, shown);
 
   // An ask event from another client creates the thread unloaded: its older turns still need loading.
   useEffect(() => {
@@ -103,7 +138,9 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   useEffect(() => {
     if (!shown) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (container.current && e.target instanceof Node && !container.current.contains(e.target)) setSheet(false);
+      if (!(e.target instanceof Element) || container.current?.contains(e.target)) return;
+      // The model menu is portaled out of the bar but still belongs to it.
+      if (!e.target.closest("[data-slot=dropdown-menu-content]")) setSheet(false);
     };
     const onBlur = () => {
       if (document.activeElement?.tagName === "IFRAME") setSheet(false);
@@ -125,7 +162,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
     sending.current = true;
     setSendError(null);
     try {
-      await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, q);
+      await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, q, model);
       if (q === draft.trim()) setDraft("");
       setSheet(true);
     } catch (e) {
@@ -150,9 +187,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       {showSheet ? (
         <div ref={sheetRef} className="pointer-events-auto max-h-[50vh] w-full max-w-[560px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
           {last ? (
-            <div className="mb-2 text-[11.5px] text-ink-2">
-              {last.agent} · {last.mode === "resume" ? "continuing the thread that made it" : "new conversation — couldn't find the thread that made this doc"}
-            </div>
+            <div className="mb-2 text-[11.5px] text-ink-2">{header(last)}</div>
           ) : null}
           {thread?.error ? (
             <div className="text-[12.5px] text-ink-2">
@@ -180,7 +215,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           onFocus={() => setSheet(true)}
           className="max-h-32 flex-1 resize-none overflow-y-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-[13.5px] outline-none placeholder:text-[#9a9a9a]"
         />
-        <span className="rounded-full bg-[#f2f2f2] px-2 py-0.5 text-[11.5px] text-ink-2">{artifact.source.agent ?? "Default agent"}</span>
+        {target ? <ModelPicker target={target} model={model} onChange={pick} /> : null}
         <button
           type="button"
           aria-label={running ? "Stop" : "Send"}
