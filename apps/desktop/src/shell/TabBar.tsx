@@ -277,7 +277,15 @@ function TabItem({
       ref={sort.setNodeRef}
       style={style}
       role="presentation"
-      className={cn("group relative flex min-w-[112px] flex-[0_1_220px]", sort.isDragging && "z-10")}
+      data-active={active || undefined}
+      className={cn(
+        "group relative flex min-w-[112px] flex-[0_1_220px]",
+        // Chrome's divider between resting tabs: it marks where a tab with a short label ends,
+        // and gives way next to the active and the hovered tab, whose own box shows the edge.
+        "before:absolute before:top-1/2 before:-left-[2.5px] before:h-4 before:w-px before:-translate-y-1/2 before:bg-[#dcdcdc]",
+        "first:before:hidden hover:before:hidden data-active:before:hidden [[data-active]+&]:before:hidden [:hover+&]:before:hidden",
+        sort.isDragging && "z-10 before:hidden",
+      )}
     >
       <Tooltip delayDuration={600}>
         <TooltipTrigger asChild>
@@ -329,7 +337,7 @@ function TabItem({
           "transition-opacity duration-150",
           active
             ? "bg-white opacity-100"
-            : "bg-[linear-gradient(to_right,transparent,#efefef_12px)] pl-4 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
+            : "bg-[linear-gradient(to_right,transparent,#efefef_20px)] pl-6 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
         )}
       >
         <span className="grid size-5 place-items-center rounded hover:bg-[#f2f2f2]">

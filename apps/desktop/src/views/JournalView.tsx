@@ -197,7 +197,11 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
             name="Agents"
             count={cards.length}
           />
-          <div data-scroll-root className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto overflow-y-hidden px-12 pt-2.5 pb-1">
+          <div
+            data-scroll-root
+            // The fade sits in the side padding, so it only touches cards cut off at the edge.
+            className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto overflow-y-hidden px-12 pt-2.5 pb-1 [mask-image:linear-gradient(to_right,transparent,#000_40px,#000_calc(100%-40px),transparent)]"
+          >
             {info
               ? cards.map(({ artifact, label }) => (
                   <ArtifactCard

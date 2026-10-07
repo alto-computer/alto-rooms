@@ -64,6 +64,8 @@ export function NewTabView() {
       return n;
     };
     return rooms
+      // An empty inbox has nothing to show (the sidebar hides it too).
+      .filter((room) => room.id !== INBOX_ID || room.artifactCount > 0)
       .map((room) => ({ room, newCount: newCount(room.id) }))
       .sort((x, y) => y.newCount - x.newCount || x.room.name.localeCompare(y.room.name, "ko"));
   }, [rooms, artifacts]);
