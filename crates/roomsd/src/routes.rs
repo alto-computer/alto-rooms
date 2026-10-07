@@ -166,10 +166,20 @@ pub async fn get_note(State(st): State<AppState>, Path((date, name)): Path<(Stri
     Ok(([("content-type", "text/markdown; charset=utf-8"), ("x-content-type-options", "nosniff")], body).into_response())
 }
 
-/// A weak validator from the file's length and mtime: cheap (no read) and changes on every rewrite.
+/// A weak validator from the file's identity (device, inode), length and mtime: cheap (no read),
+/// changes on every rewrite, and differs between two files of equal size and mtime (a link
+/// retargeted to another original).
 fn etag_of(meta: &std::fs::Metadata) -> Option<HeaderValue> {
+    use std::os::unix::fs::MetadataExt;
     let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
-    HeaderValue::from_str(&format!("W/\"{:x}-{:x}\"", meta.len(), mtime)).ok()
+    HeaderValue::from_str(&format!("W/\"{:x}-{:x}-{:x}-{:x}\"", meta.dev(), meta.ino(), meta.len(), mtime)).ok()
+}
+
+/// Whether `If-None-Match` (all its header lines) matches `tag`: `*`, or any listed tag equal
+/// to it by weak comparison (opaque tags equal, `W/` ignored; RFC 9110 §13.1.2).
+fn none_match_hits<'a>(if_none_match: impl Iterator<Item = &'a str>, tag: &str) -> bool {
+    fn opaque(t: &str) -> &str { t.trim().trim_start_matches("W/") }
+    if_none_match.flat_map(|v| v.split(',')).any(|t| t.trim() == "*" || opaque(t) == opaque(tag))
 }
 
 /// Serves a room file. Previews remount often (scrolling, tab switches), so responses carry an
@@ -180,8 +190,8 @@ pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String
     let read_err = |e: std::io::Error| ApiErr(CoreError::WriteFailed(e.to_string()));
     let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?);
     if let Some(tag) = &etag {
-        let matches = headers.get_all("if-none-match").iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(',')).any(|t| t.trim() == tag);
-        if matches {
+        let tag_str = tag.to_str().unwrap_or_default();
+        if none_match_hits(headers.get_all("if-none-match").iter().filter_map(|v| v.to_str().ok()), tag_str) {
             return Ok((StatusCode::NOT_MODIFIED, [("etag", tag.clone()), ("cache-control", HeaderValue::from_static("no-cache"))]).into_response());
         }
     }
@@ -355,5 +365,17 @@ mod tests {
         let Err(e) = blocking(&st, |_core: &RoomsCore| -> Result<(), CoreError> { panic!("boom") }).await else { panic!("must fail") };
         assert_eq!(e.0.code(), "internal");
         assert_eq!(e.0.status(), 500);
+    }
+
+    #[test]
+    fn if_none_match_uses_weak_comparison_and_star() {
+        let tag = "W/\"1-2\"";
+        assert!(none_match_hits(["W/\"1-2\""].into_iter(), tag));
+        assert!(none_match_hits(["\"1-2\""].into_iter(), tag), "a strong spelling of the same tag");
+        assert!(none_match_hits(["\"x\", W/\"1-2\""].into_iter(), tag));
+        assert!(none_match_hits(["\"x\"", "W/\"1-2\""].into_iter(), tag), "a second header line");
+        assert!(none_match_hits(["*"].into_iter(), tag));
+        assert!(!none_match_hits(["W/\"1-3\""].into_iter(), tag));
+        assert!(!none_match_hits(std::iter::empty(), tag));
     }
 }
