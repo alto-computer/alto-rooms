@@ -108,7 +108,10 @@ export function RoomRow({
       )}
     >
       <Folder {...ICON} className={cn("shrink-0", active ? "fill-[#fff0f3]" : "fill-none")} />
-      <span className={cn("truncate", unavailable && "opacity-50")}>{room.name}</span>
+      {/* The native title shows a name the 232px sidebar cuts off (unavailable rows have their own tooltip). */}
+      <span title={unavailable ? undefined : room.name} className={cn("truncate", unavailable && "opacity-50")}>
+        {room.name}
+      </span>
     </button>
   );
 
