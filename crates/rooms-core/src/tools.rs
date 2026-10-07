@@ -9,7 +9,7 @@ use std::path::Path;
 /// Largest serialized tool input.
 pub const MAX_INPUT_BYTES: usize = 64 * 1024;
 
-fn bad(why: &str) -> CoreError { CoreError::InvalidInput(format!("bad_request:{why}")) }
+fn bad(why: &str) -> CoreError { CoreError::BadRequest(why.into()) }
 
 /// The `doc` of a call's input: the input must be a JSON object of at most 64 KiB with a string `doc`.
 pub(crate) fn doc_of(input: &Value) -> Result<&str, CoreError> {

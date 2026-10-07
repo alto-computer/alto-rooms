@@ -99,7 +99,6 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_room_updated ON artifacts(room_id, upda
 CREATE INDEX IF NOT EXISTS idx_artifacts_target ON artifacts(target);
 ";
 
-fn err(e: rusqlite::Error) -> CoreError { CoreError::WriteFailed(e.to_string()) }
 
 impl Index {
     pub fn open(path: &Path) -> Result<Index, CoreError> {
@@ -127,7 +126,7 @@ impl Index {
                     p.push(suffix);
                     let _ = std::fs::remove_file(p);
                 }
-                Ok(Index { conn: try_open().map_err(err)?, touched_days: BTreeSet::new() })
+                Ok(Index { conn: try_open()?, touched_days: BTreeSet::new() })
             }
         }
     }
@@ -159,21 +158,21 @@ impl Index {
     pub fn remove_one(&mut self, room_id: &str, rel_path: &str) -> Result<Option<Change>, CoreError> {
         let id = artifact_id(room_id, rel_path);
         let day: Option<String> = self.conn.query_row("SELECT created_day FROM artifacts WHERE id = ?1", params![id], |r| r.get(0))
-            .optional().map_err(err)?;
+            .optional()?;
         if let Some(d) = &day { self.touch(d); }
-        let n = self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id]).map_err(err)?;
+        let n = self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id])?;
         Ok((n > 0).then(|| Change::Removed { room_id: room_id.into(), artifact_id: id }))
     }
 
     pub fn fingerprints(&self, room_id: &str) -> Result<HashMap<String, Fingerprint>, CoreError> {
-        let mut st = self.conn.prepare("SELECT rel_path, target, mtime_ns, size, created_day FROM artifacts WHERE room_id = ?1").map_err(err)?;
-        let rows = st.query_map(params![room_id], |r| Ok((r.get::<_, String>(0)?, Self::row_to_fingerprint(r, 1)?))).map_err(err)?;
-        rows.collect::<rusqlite::Result<HashMap<_, _>>>().map_err(err)
+        let mut st = self.conn.prepare("SELECT rel_path, target, mtime_ns, size, created_day FROM artifacts WHERE room_id = ?1")?;
+        let rows = st.query_map(params![room_id], |r| Ok((r.get::<_, String>(0)?, Self::row_to_fingerprint(r, 1)?)))?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>().map_err(CoreError::from)
     }
 
     pub fn room_summary(&self, room_id: &str) -> Result<(u32, Option<String>), CoreError> {
         self.conn.query_row("SELECT COUNT(*), MAX(updated_at) FROM artifacts WHERE room_id = ?1", params![room_id],
-            |r| Ok((r.get::<_, i64>(0)? as u32, r.get(1)?))).map_err(err)
+            |r| Ok((r.get::<_, i64>(0)? as u32, r.get(1)?))).map_err(CoreError::from)
     }
 
     /// Phase 3, run under the core lock: one transaction. Upserts `facts`, removes rows not in `present`.
@@ -181,9 +180,9 @@ impl Index {
         self.in_transaction(|ix, changes| {
             for f in facts { changes.extend(ix.upsert_facts(room_id, f)?); }
             let existing: Vec<String> = {
-                let mut st = ix.conn.prepare("SELECT rel_path FROM artifacts WHERE room_id = ?1").map_err(err)?;
-                let rows = st.query_map(params![room_id], |r| r.get(0)).map_err(err)?;
-                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?
+                let mut st = ix.conn.prepare("SELECT rel_path FROM artifacts WHERE room_id = ?1")?;
+                let rows = st.query_map(params![room_id], |r| r.get(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
             };
             for rel in existing.into_iter().filter(|r| !present.contains(r)) { changes.extend(ix.remove_one(room_id, &rel)?); }
             Ok(())
@@ -203,8 +202,8 @@ impl Index {
     /// days it touched.
     fn in_transaction(&mut self, f: impl FnOnce(&mut Self, &mut Vec<Change>) -> Result<(), CoreError>) -> Result<Vec<Change>, CoreError> {
         let mut changes = Vec::new();
-        self.conn.execute_batch("BEGIN").map_err(err)?;
-        match f(self, &mut changes).and_then(|()| self.conn.execute_batch("COMMIT").map_err(err)) {
+        self.conn.execute_batch("BEGIN")?;
+        match f(self, &mut changes).and_then(|()| self.conn.execute_batch("COMMIT").map_err(CoreError::from)) {
             Ok(()) => Ok(changes),
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
         }
@@ -212,40 +211,40 @@ impl Index {
 
     /// The fingerprint of the row at `room_id/rel_path`, if any.
     pub fn fingerprint(&self, room_id: &str, rel_path: &str) -> Result<Option<Fingerprint>, CoreError> {
-        self.conn.prepare_cached("SELECT target, mtime_ns, size, created_day FROM artifacts WHERE id = ?1").map_err(err)?
+        self.conn.prepare_cached("SELECT target, mtime_ns, size, created_day FROM artifacts WHERE id = ?1")?
             .query_row(params![artifact_id(room_id, rel_path)], |r| Self::row_to_fingerprint(r, 0))
-            .optional().map_err(err)
+            .optional().map_err(CoreError::from)
     }
 
     /// (room, rel_path) of every row whose original is `target`.
     pub fn rows_with_target(&self, target: &str) -> Result<Vec<(String, String)>, CoreError> {
-        let mut st = self.conn.prepare_cached("SELECT room_id, rel_path FROM artifacts WHERE target = ?1").map_err(err)?;
-        let rows = st.query_map(params![target], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
+        let mut st = self.conn.prepare_cached("SELECT room_id, rel_path FROM artifacts WHERE target = ?1")?;
+        let rows = st.query_map(params![target], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(CoreError::from)
     }
 
     /// `room_id`'s rel paths equal to `rel` or under the folder `rel`.
     pub fn rel_paths_under(&self, room_id: &str, rel: &str) -> Result<Vec<String>, CoreError> {
         // `rel/` ≤ path < `rel0`: '0' is the character after '/'.
         let mut st = self.conn.prepare_cached(
-            "SELECT rel_path FROM artifacts WHERE room_id = ?1 AND (rel_path = ?2 OR (rel_path >= ?2 || '/' AND rel_path < ?2 || '0'))").map_err(err)?;
-        let rows = st.query_map(params![room_id, rel], |r| r.get(0)).map_err(err)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
+            "SELECT rel_path FROM artifacts WHERE room_id = ?1 AND (rel_path = ?2 OR (rel_path >= ?2 || '/' AND rel_path < ?2 || '0'))")?;
+        let rows = st.query_map(params![room_id, rel], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(CoreError::from)
     }
 
     /// (room, rel_path) of every row whose original lies under the folder `dir`.
     pub fn rows_with_target_under(&self, dir: &str) -> Result<Vec<(String, String)>, CoreError> {
         let mut st = self.conn.prepare_cached(
-            "SELECT room_id, rel_path FROM artifacts WHERE target >= ?1 || '/' AND target < ?1 || '0'").map_err(err)?;
-        let rows = st.query_map(params![dir], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
+            "SELECT room_id, rel_path FROM artifacts WHERE target >= ?1 || '/' AND target < ?1 || '0'")?;
+        let rows = st.query_map(params![dir], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(CoreError::from)
     }
 
     /// Every distinct original path in the index.
     pub fn targets(&self) -> Result<Vec<String>, CoreError> {
-        let mut st = self.conn.prepare("SELECT DISTINCT target FROM artifacts").map_err(err)?;
-        let rows = st.query_map([], |r| r.get(0)).map_err(err)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
+        let mut st = self.conn.prepare("SELECT DISTINCT target FROM artifacts")?;
+        let rows = st.query_map([], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(CoreError::from)
     }
 
     /// Kept for callers and tests: the three phases in one call (used where no lock split matters).
@@ -260,8 +259,8 @@ impl Index {
         let id = artifact_id(room_id, &f.rel_path);
         // Cached statements: this runs once per file inside the room's write lock (big backfills).
         let existing: Option<(String, String, String, String, String)> = self.conn
-            .prepare_cached("SELECT created_at, title, updated_at, created_day, file_key FROM artifacts WHERE id = ?1").map_err(err)?
-            .query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional().map_err(err)?;
+            .prepare_cached("SELECT created_at, title, updated_at, created_day, file_key FROM artifacts WHERE id = ?1")?
+            .query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?;
         // Set once when first seen; a Rooms move carries the row (reassign).
         let key = match existing.as_ref() {
             Some(x) => x.4.clone(),
@@ -286,8 +285,8 @@ impl Index {
              ON CONFLICT(id) DO UPDATE SET target=excluded.target, title=excluded.title, created_at=excluded.created_at,
                created_day=excluded.created_day, created_ts=excluded.created_ts, updated_at=excluded.updated_at, source=excluded.source,
                mtime_ns=excluded.mtime_ns, size=excluded.size",
-        ).map_err(err)?
-        .execute(params![id, room_id, f.rel_path, f.target, title, created, day, ts, updated, source, key, f.stamp.mtime_ns, f.stamp.size]).map_err(err)?;
+        )?
+        .execute(params![id, room_id, f.rel_path, f.target, title, created, day, ts, updated, source, key, f.stamp.mtime_ns, f.stamp.size])?;
         let a = Artifact { id, room_id: room_id.into(), rel_path: f.rel_path.clone(), title: title.clone(),
             created_at: created, updated_at: updated.clone(), author: Author::Agent, source: meta.source, file_key: key };
         let change = match existing {
@@ -300,15 +299,15 @@ impl Index {
     }
 
     pub fn list(&self, room_id: &str) -> Result<Vec<Artifact>, CoreError> {
-        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE room_id = ?1 ORDER BY created_ts ASC, id ASC").map_err(err)?;
-        let rows = st.query_map(params![room_id], Self::row_to_artifact).map_err(err)?;
+        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE room_id = ?1 ORDER BY created_ts ASC, id ASC")?;
+        let rows = st.query_map(params![room_id], Self::row_to_artifact)?;
         Ok(rows.filter_map(Result::ok).collect())
     }
 
     /// The row with `id` in `room_id`, if any.
     pub fn get(&self, room_id: &str, id: &str) -> Result<Option<Artifact>, CoreError> {
         self.conn.query_row("SELECT * FROM artifacts WHERE id = ?1 AND room_id = ?2", params![id, room_id], Self::row_to_artifact)
-            .optional().map_err(err)
+            .optional().map_err(CoreError::from)
     }
 
     /// Moves the row of `from_room/from_rel` to `to_room/to_rel` in one transaction: a new id and
@@ -320,24 +319,24 @@ impl Index {
     /// source row.
     pub fn reassign(&mut self, from_room: &str, from_rel: &str, to_room: &str, to_rel: &str, new_target: Option<&str>) -> Result<(Change, Change), CoreError> {
         let (old_id, new_id) = (artifact_id(from_room, from_rel), artifact_id(to_room, to_rel));
-        self.conn.execute_batch("BEGIN").map_err(err)?;
+        self.conn.execute_batch("BEGIN")?;
         let r = (|| -> Result<(Change, Change), CoreError> {
             let row: Option<(Artifact, String, String)> = self.conn.query_row(
                 "SELECT * FROM artifacts WHERE id = ?1 AND room_id = ?2", params![old_id, from_room],
-                |r| Ok((Self::row_to_artifact(r)?, r.get("target")?, r.get("created_day")?))).optional().map_err(err)?;
+                |r| Ok((Self::row_to_artifact(r)?, r.get("target")?, r.get("created_day")?))).optional()?;
             let (old, target, day) = row.ok_or(CoreError::NotFound)?;
             if let Some(stale_day) = self.conn.query_row("SELECT created_day FROM artifacts WHERE id = ?1", params![new_id], |r| r.get::<_, String>(0))
-                .optional().map_err(err)? { self.touch(&stale_day); }
-            self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![new_id]).map_err(err)?;
+                .optional()? { self.touch(&stale_day); }
+            self.conn.execute("DELETE FROM artifacts WHERE id = ?1", params![new_id])?;
             let n = self.conn.execute(
                 "UPDATE artifacts SET id = ?1, room_id = ?2, rel_path = ?3, target = ?4 WHERE id = ?5",
-                params![new_id, to_room, to_rel, new_target.unwrap_or(&target), old_id]).map_err(err)?;
+                params![new_id, to_room, to_rel, new_target.unwrap_or(&target), old_id])?;
             if n != 1 { return Err(CoreError::NotFound); }
             self.touch(&day);
             let new = Artifact { id: new_id.clone(), room_id: to_room.into(), rel_path: to_rel.into(), ..old };
             Ok((Change::Removed { room_id: from_room.into(), artifact_id: old_id.clone() }, Change::Added(new)))
         })();
-        match r.and_then(|c| self.conn.execute_batch("COMMIT").map(|()| c).map_err(err)) {
+        match r.and_then(|c| self.conn.execute_batch("COMMIT").map(|()| c).map_err(CoreError::from)) {
             Ok(c) => Ok(c),
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
         }
@@ -348,27 +347,27 @@ impl Index {
     /// (a moved file keeps the key of its old path, so a new file there must not reuse it).
     fn new_file_key(&self, target: &str, path_key: &str) -> Result<String, CoreError> {
         let held: Option<String> = self.conn
-            .prepare_cached("SELECT file_key FROM artifacts WHERE target = ?1 LIMIT 1").map_err(err)?
-            .query_row(params![target], |r| r.get(0)).optional().map_err(err)?;
+            .prepare_cached("SELECT file_key FROM artifacts WHERE target = ?1 LIMIT 1")?
+            .query_row(params![target], |r| r.get(0)).optional()?;
         if let Some(k) = held { return Ok(k); }
-        let mut taken = self.conn.prepare_cached("SELECT 1 FROM artifacts WHERE file_key = ?1 LIMIT 1").map_err(err)?;
+        let mut taken = self.conn.prepare_cached("SELECT 1 FROM artifacts WHERE file_key = ?1 LIMIT 1")?;
         for n in 0u32.. {
             let k = if n == 0 { path_key.to_string() } else { file_key(&format!("{target}#{n}")) };
-            if !taken.exists(params![k]).map_err(err)? { return Ok(k); }
+            if !taken.exists(params![k])? { return Ok(k); }
         }
         unreachable!("some suffix is free")
     }
 
     /// Every row with `file_key` (one per room that holds the original).
     pub fn by_file_key(&self, file_key: &str) -> Result<Vec<Artifact>, CoreError> {
-        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE file_key = ?1").map_err(err)?;
-        let rows = st.query_map(params![file_key], Self::row_to_artifact).map_err(err)?;
+        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE file_key = ?1")?;
+        let rows = st.query_map(params![file_key], Self::row_to_artifact)?;
         Ok(rows.filter_map(Result::ok).collect())
     }
 
     pub fn by_day(&self, day: &str) -> Result<Vec<(Artifact, String)>, CoreError> {
-        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE created_day = ?1 ORDER BY created_ts ASC, id ASC").map_err(err)?;
-        let rows = st.query_map(params![day], |r| Ok((Self::row_to_artifact(r)?, r.get::<_, String>("target")?))).map_err(err)?;
+        let mut st = self.conn.prepare("SELECT * FROM artifacts WHERE created_day = ?1 ORDER BY created_ts ASC, id ASC")?;
+        let rows = st.query_map(params![day], |r| Ok((Self::row_to_artifact(r)?, r.get::<_, String>("target")?)))?;
         Ok(rows.filter_map(Result::ok).collect())
     }
 
@@ -383,13 +382,13 @@ impl Index {
 
     pub fn drop_room(&mut self, room_id: &str) -> Result<Vec<Change>, CoreError> {
         let rows: Vec<(String, String)> = {
-            let mut st = self.conn.prepare("SELECT id, created_day FROM artifacts WHERE room_id = ?1").map_err(err)?;
-            let rows = st.query_map(params![room_id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+            let mut st = self.conn.prepare("SELECT id, created_day FROM artifacts WHERE room_id = ?1")?;
+            let rows = st.query_map(params![room_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.filter_map(Result::ok).collect()
         };
         let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
         for (_, d) in &rows { self.touch(d); }
-        self.conn.execute("DELETE FROM artifacts WHERE room_id = ?1", params![room_id]).map_err(err)?;
+        self.conn.execute("DELETE FROM artifacts WHERE room_id = ?1", params![room_id])?;
         Ok(ids.into_iter().map(|id| Change::Removed { room_id: room_id.into(), artifact_id: id }).collect())
     }
 }

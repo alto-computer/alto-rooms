@@ -16,8 +16,8 @@ fn create_room_makes_slug_folder_and_keeps_display_name() {
     let r = core.create_room("연구 도구").unwrap();
     assert_eq!(r.name, "연구 도구");
     assert!(d.path().join("연구-도구").is_dir());
-    assert_eq!(core.create_room("연구-도구").unwrap_err(), CoreError::RoomExists);
-    assert_eq!(core.create_room("journal").unwrap_err(), CoreError::InvalidRoomName);
+    assert!(matches!(core.create_room("연구-도구"), Err(CoreError::RoomExists)));
+    assert!(matches!(core.create_room("journal"), Err(CoreError::InvalidRoomName)));
     let reopened = RoomsCore::open(d.path()).unwrap();
     assert_eq!(reopened.list_rooms().iter().find(|x| x.id == r.id).unwrap().name, "연구 도구");
 }
@@ -54,8 +54,8 @@ fn link_folder_rules_and_rename_is_display_only() {
     fs::create_dir_all(team.path().join("research/sub")).unwrap();
     let r = core.link_folder(&team.path().join("research"), Some("팀 리서치")).unwrap();
     assert_eq!(r.kind, RoomKind::Linked);
-    assert_eq!(core.link_folder(&team.path().join("research/sub"), None).unwrap_err(), CoreError::OverlappingRoom);
-    assert_eq!(core.link_folder(team.path(), None).unwrap_err(), CoreError::OverlappingRoom);
+    assert!(matches!(core.link_folder(&team.path().join("research/sub"), None), Err(CoreError::OverlappingRoom)));
+    assert!(matches!(core.link_folder(team.path(), None), Err(CoreError::OverlappingRoom)));
     assert!(matches!(core.link_folder(d.path(), None).unwrap_err(), CoreError::InvalidLinkPath(_)));
     core.rename_room(&r.id, "리서치").unwrap();
     assert!(team.path().join("research").is_dir(), "linked folder name untouched");
@@ -102,9 +102,9 @@ fn resolve_file_blocks_escape_but_allows_html_file_links() {
     fs::write(d.path().join("a/in.html"), "").unwrap();
     assert!(core.resolve_file(&r.id, "in.html").is_ok());
     assert_eq!(core.resolve_file(&r.id, "o.html").unwrap(), fs::canonicalize(outside.path().join("o.html")).unwrap());
-    assert_eq!(core.resolve_file(&r.id, "../journal").unwrap_err(), CoreError::PathEscape);
+    assert!(matches!(core.resolve_file(&r.id, "../journal"), Err(CoreError::PathEscape)));
     symlink(outside.path(), d.path().join("a/dir")).unwrap();
-    assert_eq!(core.resolve_file(&r.id, "dir/o.html").unwrap_err(), CoreError::PathEscape);
+    assert!(matches!(core.resolve_file(&r.id, "dir/o.html"), Err(CoreError::PathEscape)));
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn rename_refuses_slug_collision_with_existing_folder() {
     let (d, core) = home();
     core.create_room("a b").unwrap();
     let x = core.create_room("x").unwrap();
-    assert_eq!(core.rename_room(&x.id, "a-b").unwrap_err(), CoreError::RoomExists);
+    assert!(matches!(core.rename_room(&x.id, "a-b"), Err(CoreError::RoomExists)));
     assert!(d.path().join("a-b").is_dir());
     assert!(d.path().join("x").is_dir());
 }
@@ -145,8 +145,8 @@ fn resolve_file_rejects_dotfiles_and_directories() {
     fs::write(root.join(".env"), "s").unwrap();
     fs::write(root.join(".git/config"), "s").unwrap();
     let r = core.link_folder(&root, Some("r")).unwrap();
-    assert_eq!(core.resolve_file(&r.id, ".env").unwrap_err(), CoreError::PathEscape);
-    assert_eq!(core.resolve_file(&r.id, ".git/config").unwrap_err(), CoreError::PathEscape);
+    assert!(matches!(core.resolve_file(&r.id, ".env"), Err(CoreError::PathEscape)));
+    assert!(matches!(core.resolve_file(&r.id, ".git/config"), Err(CoreError::PathEscape)));
     assert!(core.resolve_file(&r.id, "sub").is_err());
 }
 
@@ -432,14 +432,14 @@ fn finder_delete_removes_owned_room() {
     fs::remove_dir(d.path().join("gone")).unwrap();
     wait_for(&mut rx, |k| matches!(k, EventKind::RoomRemoved { room_id } if *room_id == r.id), Duration::from_secs(3));
     assert!(!core.list_rooms().iter().any(|x| x.id == r.id));
-    assert_eq!(core.list_artifacts(&r.id).unwrap_err(), CoreError::RoomNotFound);
+    assert!(matches!(core.list_artifacts(&r.id), Err(CoreError::RoomNotFound)));
 }
 
 #[test]
 fn create_room_on_existing_plain_folder_is_room_exists() {
     let (d, core) = home();
     fs::create_dir(d.path().join("plain")).unwrap();
-    assert_eq!(core.create_room("plain").unwrap_err(), CoreError::RoomExists);
+    assert!(matches!(core.create_room("plain"), Err(CoreError::RoomExists)));
 }
 
 #[test]
@@ -453,7 +453,7 @@ fn scan_of_removed_room_writes_nothing() {
     core.sync_home_dirs();
     t.join().unwrap();
     assert!(core.list_rooms().iter().all(|x| x.id != r.id));
-    assert_eq!(core.list_artifacts(&r.id).unwrap_err(), CoreError::RoomNotFound);
+    assert!(matches!(core.list_artifacts(&r.id), Err(CoreError::RoomNotFound)));
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     assert!(core.journal_day(&today).unwrap().artifacts.iter().all(|a| a.room_id != r.id));
 }
@@ -481,7 +481,7 @@ fn concurrent_save_note_on_one_name_never_fails_or_corrupts() {
         let (c, body) = (core.clone(), bodies[t].clone());
         std::thread::spawn(move || (0..25).map(|_| c.save_note(&"2026-10-05".to_string(), "same.md", &body).map(|_| ())).collect::<Vec<_>>())
     }).collect();
-    for t in threads { for r in t.join().unwrap() { assert_eq!(r, Ok(())); } }
+    for t in threads { for r in t.join().unwrap() { assert!(r.is_ok(), "{r:?}"); } }
     let got = fs::read_to_string(d.path().join("journal/2026-10-05/same.md")).unwrap();
     assert!(bodies.contains(&got), "final file is not one of the bodies (len {})", got.len());
 }
@@ -552,7 +552,7 @@ fn read_note_roundtrip_and_not_found() {
     let (_d, core) = home();
     core.save_note(&"2026-10-05".to_string(), "회고", "오늘 배운 것").unwrap();
     assert_eq!(core.read_note(&"2026-10-05".to_string(), "회고").unwrap(), "오늘 배운 것");
-    assert_eq!(core.read_note(&"2026-10-05".to_string(), "없음").unwrap_err(), CoreError::NotFound);
+    assert!(matches!(core.read_note(&"2026-10-05".to_string(), "없음"), Err(CoreError::NotFound)));
     assert!(core.read_note(&"2026-10-05".to_string(), "../x").is_err());
 }
 
@@ -583,7 +583,7 @@ fn rename_note_moves_file_keeps_body_and_emits_removed_then_saved() {
 #[test]
 fn rename_note_missing_source_is_not_found() {
     let (_d, core) = home();
-    assert_eq!(core.rename_note(&day(), "없음", "x").unwrap_err(), CoreError::NotFound);
+    assert!(matches!(core.rename_note(&day(), "없음", "x"), Err(CoreError::NotFound)));
 }
 
 #[test]
@@ -591,9 +591,9 @@ fn rename_note_never_overwrites_an_existing_target() {
     let (d, core) = home();
     core.save_note(&day(), "a", "A").unwrap();
     core.save_note(&day(), "b", "B").unwrap();
-    assert_eq!(core.rename_note(&day(), "a", "b").unwrap_err(), CoreError::NoteExists);
-    assert_eq!(core.rename_note(&day(), "a", "B").unwrap_err(), CoreError::NoteExists);
-    assert_eq!(core.rename_note(&day(), "a", "b.md").unwrap_err(), CoreError::NoteExists);
+    assert!(matches!(core.rename_note(&day(), "a", "b"), Err(CoreError::NoteExists)));
+    assert!(matches!(core.rename_note(&day(), "a", "B"), Err(CoreError::NoteExists)));
+    assert!(matches!(core.rename_note(&day(), "a", "b.md"), Err(CoreError::NoteExists)));
     assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/a.md")).unwrap(), "A");
     assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/b.md")).unwrap(), "B");
     assert_eq!(CoreError::NoteExists.code(), "note_exists");
@@ -737,8 +737,8 @@ fn move_artifact_refuses_journal_inbox_and_same_room_targets() {
     assert!(matches!(core.move_artifact(&r.id, &moved.id, &inbox), Err(CoreError::InvalidInput(_))));
     assert!(matches!(core.move_artifact(&r.id, &moved.id, &r.id), Err(CoreError::InvalidInput(_))));
     assert!(matches!(core.move_artifact(&JOURNAL_ROOM_ID.to_string(), &moved.id, &r.id), Err(CoreError::InvalidInput(_))));
-    assert_eq!(core.move_artifact(&"nope".to_string(), &moved.id, &r.id).unwrap_err(), CoreError::RoomNotFound);
-    assert_eq!(core.move_artifact(&r.id, &moved.id, &"nope".to_string()).unwrap_err(), CoreError::RoomNotFound);
+    assert!(matches!(core.move_artifact(&"nope".to_string(), &moved.id, &r.id), Err(CoreError::RoomNotFound)));
+    assert!(matches!(core.move_artifact(&r.id, &moved.id, &"nope".to_string()), Err(CoreError::RoomNotFound)));
 }
 
 #[test]
@@ -756,7 +756,7 @@ fn move_artifact_refuses_a_broken_symlink() {
 fn move_artifact_missing_id_is_not_found() {
     let (_d, core) = home();
     let r = core.create_room("a").unwrap();
-    assert_eq!(core.move_artifact(&"inbox".to_string(), "0123456789abcdef", &r.id).unwrap_err(), CoreError::NotFound);
+    assert!(matches!(core.move_artifact(&"inbox".to_string(), "0123456789abcdef", &r.id), Err(CoreError::NotFound)));
 }
 
 #[test]
@@ -871,7 +871,7 @@ fn move_room_refuses_the_inbox_and_unknown_rooms() {
     let (_d, core) = home();
     core.create_room("a").unwrap();
     assert!(matches!(core.move_room(&"inbox".to_string(), 1).unwrap_err(), CoreError::InvalidInput(_)));
-    assert_eq!(core.move_room(&"nope".to_string(), 0).unwrap_err(), CoreError::RoomNotFound);
+    assert!(matches!(core.move_room(&"nope".to_string(), 0), Err(CoreError::RoomNotFound)));
 }
 
 // ---- fileKey ----
@@ -960,7 +960,7 @@ fn plugin_enable_and_grants_persist() {
     let p = core.plugins().into_iter().find(|p| p.id == "echo").unwrap();
     assert_eq!(p.status, PluginStatus::Ok);
     assert!(!p.enabled && p.needs_approval);
-    assert_eq!(core.read_plugin_data("echo", "x.txt").unwrap_err(), CoreError::NotFound);
+    assert!(matches!(core.read_plugin_data("echo", "x.txt"), Err(CoreError::NotFound)));
 
     let p = core.set_plugin_enabled("echo", true, None).unwrap();
     assert!(p.enabled && !p.needs_approval);
@@ -980,7 +980,7 @@ fn plugin_enable_and_grants_persist() {
 
     let p = reopened.set_plugin_enabled("echo", false, None).unwrap();
     assert!(!p.enabled);
-    assert_eq!(reopened.set_plugin_enabled("nope", true, None).unwrap_err(), CoreError::NotFound);
+    assert!(matches!(reopened.set_plugin_enabled("nope", true, None), Err(CoreError::NotFound)));
 }
 
 #[test]

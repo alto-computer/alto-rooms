@@ -24,18 +24,37 @@ pub const MAX_RUNNING: usize = 4;
 const MAX_QUESTION_CHARS: usize = 8_000;
 const RESTARTED: &str = "Stopped because Rooms restarted";
 
-#[derive(Debug)]
-pub enum AskError { BadRequest(String), NotFound, Busy, Capacity, AgentConfig(String), Io(String) }
+/// Why an ask call failed, with the wire `code()` and HTTP `status()` roomsd answers with (the
+/// message is the `Display` text, shown to the user as is).
+#[derive(Debug, thiserror::Error)]
+pub enum AskError {
+    #[error("{0}")] BadRequest(String),
+    #[error("Can't find this doc")] NotFound,
+    #[error("Waiting for an answer")] Busy,
+    #[error("Too many questions running — try again when one finishes")] Capacity,
+    #[error("Couldn't read agent settings: {0}")] AgentConfig(String),
+    #[error("Couldn't save the conversation: {0}")] Io(String),
+}
 
-impl std::fmt::Display for AskError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl AskError {
+    pub fn code(&self) -> &'static str {
         match self {
-            AskError::BadRequest(m) => write!(f, "{m}"),
-            AskError::NotFound => write!(f, "Can't find this doc"),
-            AskError::Busy => write!(f, "Waiting for an answer"),
-            AskError::Capacity => write!(f, "Too many questions running — try again when one finishes"),
-            AskError::AgentConfig(m) => write!(f, "Couldn't read agent settings: {m}"),
-            AskError::Io(m) => write!(f, "Couldn't save the conversation: {m}"),
+            AskError::BadRequest(_) => "bad_request",
+            AskError::NotFound => "not_found",
+            AskError::Busy => "ask_busy",
+            AskError::Capacity => "ask_capacity",
+            AskError::AgentConfig(_) => "agent_config",
+            AskError::Io(_) => "io",
+        }
+    }
+
+    pub fn status(&self) -> u16 {
+        match self {
+            AskError::BadRequest(_) => 400,
+            AskError::NotFound => 404,
+            AskError::Busy | AskError::Capacity => 409,
+            AskError::AgentConfig(_) => 422,
+            AskError::Io(_) => 500,
         }
     }
 }
@@ -269,6 +288,17 @@ impl Asks {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ask_errors_wire_codes_and_statuses() {
+        let wire = |e: AskError| (e.status(), e.code(), e.to_string());
+        assert_eq!(wire(AskError::BadRequest("why".into())), (400, "bad_request", "why".into()));
+        assert_eq!(wire(AskError::NotFound), (404, "not_found", "Can't find this doc".into()));
+        assert_eq!(wire(AskError::Busy), (409, "ask_busy", "Waiting for an answer".into()));
+        assert_eq!(wire(AskError::Capacity), (409, "ask_capacity", "Too many questions running — try again when one finishes".into()));
+        assert_eq!(wire(AskError::AgentConfig("x".into())), (422, "agent_config", "Couldn't read agent settings: x".into()));
+        assert_eq!(wire(AskError::Io("x".into())), (500, "io", "Couldn't save the conversation: x".into()));
+    }
 
     #[test]
     fn login_path_is_the_text_after_the_last_sentinel() {

@@ -9,29 +9,22 @@ use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
 use serde::Deserialize;
 
+/// A JSON error response: `{error: code, message}` with the error's own status.
+fn error_response(status: u16, code: &str, message: String) -> Response {
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, Json(ApiError { error: code.into(), message })).into_response()
+}
+
 pub struct ApiErr(pub CoreError);
 impl IntoResponse for ApiErr {
-    fn into_response(self) -> Response {
-        let status = StatusCode::from_u16(self.0.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        (status, Json(ApiError { error: self.0.code().into(), message: self.0.to_string() })).into_response()
-    }
+    fn into_response(self) -> Response { error_response(self.0.status(), self.0.code(), self.0.to_string()) }
 }
 impl From<CoreError> for ApiErr { fn from(e: CoreError) -> Self { ApiErr(e) } }
 
 pub struct AskErr(AskError);
 impl From<AskError> for AskErr { fn from(e: AskError) -> Self { AskErr(e) } }
 impl IntoResponse for AskErr {
-    fn into_response(self) -> Response {
-        let (status, code) = match &self.0 {
-            AskError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
-            AskError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            AskError::Busy => (StatusCode::CONFLICT, "ask_busy"),
-            AskError::Capacity => (StatusCode::CONFLICT, "ask_capacity"),
-            AskError::AgentConfig(_) => (StatusCode::UNPROCESSABLE_ENTITY, "agent_config"),
-            AskError::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "io"),
-        };
-        (status, Json(ApiError { error: code.into(), message: self.0.to_string() })).into_response()
-    }
+    fn into_response(self) -> Response { error_response(self.0.status(), self.0.code(), self.0.to_string()) }
 }
 
 pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
@@ -186,8 +179,7 @@ fn none_match_hits<'a>(if_none_match: impl Iterator<Item = &'a str>, tag: &str) 
 /// ETag with `no-cache`: the webview revalidates every time and gets a bodyless 304 while unchanged.
 pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ApiErr> {
     let path = blocking(&st, move |c| c.resolve_file(&room_id, &rel)).await?;
-    // CoreError has no read/not-found variant besides RoomNotFound (misleading here); WriteFailed (500) is the closest fit.
-    let read_err = |e: std::io::Error| ApiErr(CoreError::WriteFailed(e.to_string()));
+    let read_err = |e: std::io::Error| ApiErr(CoreError::Io(e));
     let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?);
     if let Some(tag) = &etag {
         let tag_str = tag.to_str().unwrap_or_default();
@@ -204,40 +196,13 @@ pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String
 
 // ---- plugins ----
 
-/// Plugin data errors carry their own codes: `invalid_path` 400, `too_large` 413.
-fn plugin_err(e: CoreError) -> Response {
-    match &e {
-        CoreError::InvalidInput(c) if c == "invalid_path" || c == "too_large" => {
-            let status = if c == "too_large" { StatusCode::PAYLOAD_TOO_LARGE } else { StatusCode::BAD_REQUEST };
-            (status, Json(ApiError { error: c.clone(), message: c.replace('_', " ") })).into_response()
-        }
-        _ => ApiErr(e).into_response(),
-    }
-}
-
-/// Tool errors: `bad_request:<why>` 400, `too_large` 413, anything else as `ApiErr` (NotFound 404).
-fn tool_err(e: CoreError) -> Response {
-    match &e {
-        CoreError::InvalidInput(c) if c.starts_with("bad_request:") => bad_request(c["bad_request:".len()..].to_string()),
-        CoreError::InvalidInput(c) if c == "too_large" => plugin_err(e),
-        _ => ApiErr(e).into_response(),
-    }
-}
-
-fn bad_request(message: String) -> Response {
-    (StatusCode::BAD_REQUEST, Json(ApiError { error: "bad_request".into(), message })).into_response()
-}
-
 pub async fn list_tools(State(st): State<AppState>) -> Result<Json<Vec<ToolInfo>>, ApiErr> {
     Ok(Json(blocking(&st, |c| Ok(c.list_tools())).await?))
 }
 
-pub async fn call_tool(State(st): State<AppState>, b: Result<Json<ToolCall>, JsonRejection>) -> Response {
-    let Json(call) = match b { Ok(j) => j, Err(e) => return bad_request(e.body_text()) };
-    match blocking(&st, move |c| c.call_tool(&call)).await {
-        Ok(r) => Json(r).into_response(),
-        Err(ApiErr(e)) => tool_err(e),
-    }
+pub async fn call_tool(State(st): State<AppState>, b: Result<Json<ToolCall>, JsonRejection>) -> Result<Json<ToolResult>, ApiErr> {
+    let Json(call) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
+    Ok(Json(blocking(&st, move |c| c.call_tool(&call)).await?))
 }
 
 pub async fn list_plugins(State(st): State<AppState>) -> Result<Json<Vec<PluginInfo>>, ApiErr> {
@@ -251,33 +216,23 @@ pub async fn set_plugin_enabled(State(st): State<AppState>, Path(id): Path<Strin
 }
 
 #[derive(Deserialize)] pub struct PrefixQuery { #[serde(default)] prefix: String }
-pub async fn list_plugin_data(State(st): State<AppState>, Path(id): Path<String>, axum::extract::Query(q): axum::extract::Query<PrefixQuery>) -> Response {
-    match blocking(&st, move |c| c.list_plugin_data(&id, &q.prefix)).await {
-        Ok(v) => Json(v).into_response(),
-        Err(ApiErr(e)) => plugin_err(e),
-    }
+pub async fn list_plugin_data(State(st): State<AppState>, Path(id): Path<String>, axum::extract::Query(q): axum::extract::Query<PrefixQuery>) -> Result<Json<Vec<String>>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.list_plugin_data(&id, &q.prefix)).await?))
 }
 
-pub async fn get_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Response {
-    match blocking(&st, move |c| c.read_plugin_data(&id, &path)).await {
-        Ok(Some(t)) => ([("content-type", "text/plain; charset=utf-8")], t).into_response(),
-        Ok(None) => ApiErr(CoreError::NotFound).into_response(),
-        Err(ApiErr(e)) => plugin_err(e),
-    }
+pub async fn get_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Result<Response, ApiErr> {
+    let text = blocking(&st, move |c| c.read_plugin_data(&id, &path)?.ok_or(CoreError::NotFound)).await?;
+    Ok(([("content-type", "text/plain; charset=utf-8")], text).into_response())
 }
 
-pub async fn put_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>, body: String) -> Response {
-    match blocking(&st, move |c| c.write_plugin_data(&id, &path, &body)).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(ApiErr(e)) => plugin_err(e),
-    }
+pub async fn put_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>, body: String) -> Result<StatusCode, ApiErr> {
+    blocking(&st, move |c| c.write_plugin_data(&id, &path, &body)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn delete_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Response {
-    match blocking(&st, move |c| c.delete_plugin_data(&id, &path)).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(ApiErr(e)) => plugin_err(e),
-    }
+pub async fn delete_plugin_data(State(st): State<AppState>, Path((id, path)): Path<(String, String)>) -> Result<StatusCode, ApiErr> {
+    blocking(&st, move |c| c.delete_plugin_data(&id, &path)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn artifact_by_file_key(State(st): State<AppState>, Path(key): Path<String>) -> Result<Json<Artifact>, ApiErr> {

@@ -45,8 +45,6 @@ pub fn plugins_dir(home: &Path) -> PathBuf {
     home.join(".rooms").join("plugins")
 }
 
-fn invalid_path() -> CoreError { CoreError::InvalidInput("invalid_path".into()) }
-
 fn valid_id(id: &str) -> bool {
     let b = id.as_bytes();
     (2..=40).contains(&b.len())
@@ -170,13 +168,13 @@ pub fn scan(home: &Path) -> Vec<(String, Result<(Manifest, String), String>)> {
 
 /// `<dir>/data/<rel>` after the path rule, refusing any symlink on the way (no escape from data/).
 fn data_file(dir: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    if !valid_path(rel) { return Err(invalid_path()); }
+    if !valid_path(rel) { return Err(CoreError::InvalidPath); }
     let root = dir.join(DATA);
     let mut p = root.clone();
-    if std::fs::symlink_metadata(&root).is_ok_and(|m| m.file_type().is_symlink()) { return Err(invalid_path()); }
+    if std::fs::symlink_metadata(&root).is_ok_and(|m| m.file_type().is_symlink()) { return Err(CoreError::InvalidPath); }
     for seg in rel.split('/') {
         p.push(seg);
-        if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) { return Err(invalid_path()); }
+        if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) { return Err(CoreError::InvalidPath); }
     }
     Ok(p)
 }
@@ -194,10 +192,10 @@ pub fn read_data(dir: &Path, rel: &str) -> Result<Option<String>, CoreError> {
 /// Writes atomically (a hidden temp file in the same folder, then rename).
 pub fn write_data(dir: &Path, rel: &str, text: &str) -> Result<(), CoreError> {
     let p = data_file(dir, rel)?;
-    if text.len() > MAX_DATA_BYTES { return Err(CoreError::InvalidInput("too_large".into())); }
-    let parent = p.parent().ok_or_else(invalid_path)?;
+    if text.len() > MAX_DATA_BYTES { return Err(CoreError::TooLarge); }
+    let parent = p.parent().ok_or(CoreError::InvalidPath)?;
     std::fs::create_dir_all(parent)?;
-    let name = p.file_name().ok_or_else(invalid_path)?.to_string_lossy().to_string();
+    let name = p.file_name().ok_or(CoreError::InvalidPath)?.to_string_lossy().to_string();
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let tmp = parent.join(format!(".{name}.{}-{nanos}.part", std::process::id()));
     std::fs::write(&tmp, text)?;
@@ -219,8 +217,8 @@ pub fn append_data(dir: &Path, rel: &str, line: &str) -> Result<(), CoreError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
         Err(e) => return Err(e.into()),
     };
-    if have.saturating_add(line.len()) > MAX_DATA_BYTES { return Err(CoreError::InvalidInput("too_large".into())); }
-    std::fs::create_dir_all(p.parent().ok_or_else(invalid_path)?)?;
+    if have.saturating_add(line.len()) > MAX_DATA_BYTES { return Err(CoreError::TooLarge); }
+    std::fs::create_dir_all(p.parent().ok_or(CoreError::InvalidPath)?)?;
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&p)?;
     f.write_all(line.as_bytes())?;
     Ok(())
@@ -260,7 +258,7 @@ pub fn delete_data(dir: &Path, rel: &str) -> Result<(), CoreError> {
 
 /// An asset of the plugin to serve: a file inside `<dir>` (after resolving symlinks), never under data/.
 pub fn resolve_asset(dir: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    if !valid_path(rel) || rel.split('/').next() == Some(DATA) { return Err(invalid_path()); }
+    if !valid_path(rel) || rel.split('/').next() == Some(DATA) { return Err(CoreError::InvalidPath); }
     let root = std::fs::canonicalize(dir).map_err(|_| CoreError::NotFound)?;
     let p = std::fs::canonicalize(dir.join(rel)).map_err(|_| CoreError::NotFound)?;
     let inside = p.strip_prefix(&root).ok().filter(|r| r.components().next() != Some(Component::Normal(DATA.as_ref())));
@@ -416,15 +414,15 @@ mod tests {
     fn data_rejects_bad_paths_size_and_symlink_escape() {
         let d = tempfile::tempdir().unwrap();
         let dir = plugin(d.path(), "echo", OK);
-        assert_eq!(write_data(&dir, "../token", "x").unwrap_err(), CoreError::InvalidInput("invalid_path".into()));
+        assert!(matches!(write_data(&dir, "../token", "x").unwrap_err(), CoreError::InvalidPath));
         let big = "x".repeat(MAX_DATA_BYTES + 1);
-        assert_eq!(write_data(&dir, "big.txt", &big).unwrap_err(), CoreError::InvalidInput("too_large".into()));
+        assert!(matches!(write_data(&dir, "big.txt", &big).unwrap_err(), CoreError::TooLarge));
         fs::create_dir_all(dir.join("data")).unwrap();
         fs::write(d.path().join("secret.txt"), "s").unwrap();
         symlink(d.path().join("secret.txt"), dir.join("data/leak.txt")).unwrap();
         symlink(d.path(), dir.join("data/out")).unwrap();
-        assert_eq!(read_data(&dir, "leak.txt").unwrap_err(), CoreError::InvalidInput("invalid_path".into()));
-        assert_eq!(write_data(&dir, "out/new.txt", "x").unwrap_err(), CoreError::InvalidInput("invalid_path".into()));
+        assert!(matches!(read_data(&dir, "leak.txt").unwrap_err(), CoreError::InvalidPath));
+        assert!(matches!(write_data(&dir, "out/new.txt", "x").unwrap_err(), CoreError::InvalidPath));
         assert!(!d.path().join("new.txt").exists());
     }
 
@@ -605,7 +603,8 @@ impl crate::core::RoomsCore {
         let file_key = crate::tools::resolve_doc(self, doc)?;
         let path = tool.append_to.replace("{doc}", &file_key);
         let line = crate::tools::envelope_line(&chrono::Local::now().to_rfc3339(), &call.name, &call.input);
-        append_data(&dir, &path, &line)?;
+        // On this route a refused data path has always answered `invalid_input`, not `invalid_path`.
+        append_data(&dir, &path, &line).map_err(|e| match e { CoreError::InvalidPath => CoreError::InvalidInput("invalid_path".into()), e => e })?;
         let mut inner = self.inner.lock().unwrap();
         self.emit(&mut inner, EventKind::PluginDataChanged { plugin_id: call.plugin_id.clone(), path: path.clone() });
         Ok(ToolResult { path })
