@@ -13,7 +13,6 @@ Branch `polish/perf-ux-quality`, a 6-hour goal loop on 2026-10-07 against four g
 ## Deferred
 - Streaming ask answers: needs a per-agent stream parser (`claude --output-format stream-json`, `codex exec --json`) and an `ask.delta` event. Not asked for; the waiting line is just "Thinking".
 - Static preview thumbnails rendered by roomsd, to replace live preview iframes in big rooms.
-- Links whose original vanished are remembered in memory only; after a restart they come back on the room's next rescan.
 - Read failures still use the `write_failed` wire code ("Couldn't save"); the error type is split, so it is a one-line change, but a protocol change.
 - A hidden (kept) doc tab keeps running its page, including audio/video, like a background browser tab.
 - A live reload (file rewritten while its preview is near) reloads the frame without taking a load slot, so a mass rewrite reloads all near previews at once. Re-acquiring per version would blank the preview while it waits.
