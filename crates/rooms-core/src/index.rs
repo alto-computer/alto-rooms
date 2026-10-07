@@ -224,6 +224,15 @@ impl Index {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
     }
 
+    /// `room_id`'s rel paths equal to `rel` or under the folder `rel`.
+    pub fn rel_paths_under(&self, room_id: &str, rel: &str) -> Result<Vec<String>, CoreError> {
+        // `rel/` ≤ path < `rel0`: '0' is the character after '/'.
+        let mut st = self.conn.prepare_cached(
+            "SELECT rel_path FROM artifacts WHERE room_id = ?1 AND (rel_path = ?2 OR (rel_path >= ?2 || '/' AND rel_path < ?2 || '0'))").map_err(err)?;
+        let rows = st.query_map(params![room_id, rel], |r| r.get(0)).map_err(err)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
+    }
+
     /// Every distinct original path in the index.
     pub fn targets(&self) -> Result<Vec<String>, CoreError> {
         let mut st = self.conn.prepare("SELECT DISTINCT target FROM artifacts").map_err(err)?;

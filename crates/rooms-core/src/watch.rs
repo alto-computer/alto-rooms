@@ -77,42 +77,53 @@ fn spawn_coalescer(min_gap: Duration, mut run: impl FnMut() -> bool + Send + 'st
     tx
 }
 
-/// Whether a change at `abs` (`rel` to its room root) can change what a rescan finds: an
-/// artifact, a journal note, an ignore file, or a folder (created, renamed or deleted). Anything
-/// inside a dot-folder or a default-ignored folder (`node_modules`, `dist`, …) and every other
-/// file is noise, so a build writing thousands of files never rescans the room.
-fn can_affect_index(rel: &Path, abs: &Path) -> bool {
+/// What a change at `abs` (`rel` to its room root) asks of the index.
+#[derive(Debug, PartialEq, Eq)]
+enum Effect {
+    /// Nothing a scan would see: inside a dot-folder or a default-ignored folder (`node_modules`,
+    /// `dist`, …), or a file that is not a document, so a build writing thousands of files never
+    /// rescans the room.
+    None,
+    /// A document (artifact or note), there or gone: rescan just that path.
+    Path,
+    /// A folder, an ignore file or the root itself: rescan the room.
+    Room,
+    /// Something gone that is not a document (a folder moved out, trashed, or renamed to an
+    /// ignored name, whatever its name looks like): rescan the rows indexed under it.
+    Gone,
+}
+
+fn effect_of(rel: &Path, abs: &Path) -> Effect {
     let names: Vec<_> = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect();
-    let Some((name, dirs)) = names.split_last() else { return true }; // the root itself
+    let Some((name, dirs)) = names.split_last() else { return Effect::Room };
     let ignored = |n: &str| n.starts_with('.') || DEFAULT_IGNORED_DIRS.contains(&n);
-    if dirs.iter().any(|d| ignored(d)) { return false; }
-    if name == ".gitignore" || name == ".roomsignore" { return true; }
-    if ignored(name) { return false; }
-    let ext = Path::new(name.as_ref()).extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
-    match ext.as_deref() {
-        Some("html" | "htm" | "md") => true,
-        Some(_) => abs.is_dir(),
-        // Gone without a trace: it may have been a folder.
-        None => abs.is_dir() || std::fs::symlink_metadata(abs).is_err(),
+    if dirs.iter().any(|d| ignored(d)) { return Effect::None; }
+    if name == ".gitignore" || name == ".roomsignore" { return Effect::Room; }
+    if ignored(name) { return Effect::None; }
+    match std::fs::symlink_metadata(abs) {
+        Ok(m) if m.is_dir() => Effect::Room,
+        _ if has_doc_ext(abs) => Effect::Path,
+        Ok(_) => Effect::None,
+        Err(_) => Effect::Gone,
     }
 }
 
 #[cfg(test)]
 #[test]
-fn only_paths_that_can_change_a_scan_are_relevant() {
+fn effects_of_changed_paths() {
     let d = tempfile::tempdir().unwrap();
-    let at = |rel: &str| can_affect_index(Path::new(rel), &d.path().join(rel));
+    let at = |rel: &str| effect_of(Path::new(rel), &d.path().join(rel));
     std::fs::create_dir_all(d.path().join("v1.2")).unwrap();
+    std::fs::create_dir_all(d.path().join("folder.html")).unwrap();
     std::fs::write(d.path().join("Makefile"), "").unwrap();
-    assert!(at(""));
-    assert!(at("a.html") && at("sub/b.HTM") && at("2026-10-05/n.md"));
-    assert!(at(".gitignore") && at("sub/.roomsignore"));
-    assert!(at("v1.2"), "an existing folder");
-    assert!(at("gone"), "a missing path without extension may have been a folder");
-    assert!(!at("Makefile"), "an existing file without extension");
-    assert!(!at("x.png") && !at("src/main.rs"));
-    assert!(!at("node_modules/x/a.html") && !at(".git/a.html") && !at("a/.cache/b.html"));
-    assert!(!at(".a.html.tmp") && !at("node_modules") && !at("dist"));
+    std::fs::write(d.path().join("x.png"), "").unwrap();
+    assert_eq!(at(""), Effect::Room);
+    for p in ["a.html", "sub/b.HTM", "2026-10-05/n.md"] { assert_eq!(at(p), Effect::Path, "{p}"); }
+    for p in [".gitignore", "sub/.roomsignore", "v1.2", "folder.html"] { assert_eq!(at(p), Effect::Room, "{p}"); }
+    for p in ["gone", "v9.9", "gone.png"] { assert_eq!(at(p), Effect::Gone, "{p}"); }
+    for p in ["Makefile", "x.png", "node_modules/x/a.html", ".git/a.html", "a/.cache/b.html", ".a.html.tmp", "node_modules", "dist", ".old"] {
+        assert_eq!(at(p), Effect::None, "{p}");
+    }
 }
 
 /// A path under `<plugins>/<id>/` that is not inside that plugin's `data/` (or `<plugins>/<id>` itself).
@@ -144,6 +155,8 @@ struct Pending {
     rooms: HashSet<RoomId>,
     /// Paths (relative to their room's root) to rescan one by one.
     paths: HashMap<RoomId, HashSet<PathBuf>>,
+    /// Vanished paths (relative to their room's root) whose indexed rows must be rechecked.
+    gone: HashMap<RoomId, HashSet<PathBuf>>,
     /// Changed files that may be the original of linked artifacts, in any room.
     targets: HashSet<PathBuf>,
 }
@@ -155,27 +168,33 @@ fn has_doc_ext(p: &Path) -> bool {
 /// Records what a change at `p` (seen by the home or a linked-root watch) asks for. `roots` are
 /// `RoomsCore::room_roots`.
 fn note_change(pending: &mut Pending, roots: &[(RoomId, PathBuf)], home: &Path, p: &Path) {
+    // Any document may be the original of a link somewhere, even in a folder scans ignore.
+    if has_doc_ext(p) { pending.targets.insert(p.to_path_buf()); }
     let owner = owner_of(roots, p);
     let Ok(rel) = p.strip_prefix(owner.map_or(home, |(_, root)| root.as_path())) else { return };
     // Any direct child of home may be a room folder, whatever its name.
     let top_level = p.parent() == Some(home);
-    if !top_level && !can_affect_index(rel, p) { return; }
-    let is_doc = has_doc_ext(p) && !p.is_dir();
-    if is_doc { pending.targets.insert(p.to_path_buf()); }
-    pending.sync_home |= top_level || owner.is_none();
+    let effect = effect_of(rel, p);
+    pending.sync_home |= top_level || (owner.is_none() && effect != Effect::None);
     let Some((room, _)) = owner else { return };
-    if is_doc {
-        pending.paths.entry(room.clone()).or_default().insert(rel.to_path_buf());
-    } else {
-        pending.rooms.insert(room.clone());
+    let room = room.clone();
+    match effect {
+        Effect::None => {}
+        Effect::Path => { pending.paths.entry(room).or_default().insert(rel.to_path_buf()); }
+        Effect::Room => { pending.rooms.insert(room); }
+        Effect::Gone => { pending.gone.entry(room).or_default().insert(rel.to_path_buf()); }
     }
 }
 
 /// Does the work in `pending`: home folders first (new or renamed rooms are rescanned whole),
 /// then whole rooms, then single paths, including every artifact whose original changed.
 fn run_pending(core: &RoomsCore, pending: Pending) {
-    let Pending { sync_home, mut rooms, mut paths, targets } = pending;
+    let Pending { sync_home, mut rooms, mut paths, gone, targets } = pending;
     if sync_home { rooms.extend(core.sync_home_dirs()); }
+    for (room, rels) in gone {
+        let under = core.artifacts_under(&room, &rels);
+        paths.entry(room).or_default().extend(under);
+    }
     for (room, rel) in core.artifacts_with_targets(targets.iter().map(PathBuf::as_path)) {
         paths.entry(room).or_default().insert(rel);
     }
@@ -263,8 +282,12 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                 }
                 let roots = c2.room_roots();
                 let mut pending = pending_cb.lock().unwrap();
-                for p in events.iter().flat_map(|ev| ev.paths.iter()).filter(|p| !p.starts_with(&rooms_dir)) {
-                    note_change(&mut pending, &roots, &home, p);
+                for p in events.iter().flat_map(|ev| ev.paths.iter()) {
+                    if !p.starts_with(&rooms_dir) {
+                        note_change(&mut pending, &roots, &home, p);
+                    } else if has_doc_ext(p) {
+                        pending.targets.insert(p.clone()); // `.rooms` holds no room, but may hold an original
+                    }
                 }
                 let _ = work_cb.send(());
             }

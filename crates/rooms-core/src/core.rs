@@ -436,6 +436,19 @@ impl RoomsCore {
         out
     }
 
+    /// Paths (relative to the root) of `room`'s artifacts at or under any of `rels`.
+    pub fn artifacts_under(&self, room: &RoomId, rels: &HashSet<PathBuf>) -> Vec<PathBuf> {
+        let inner = self.inner.lock().unwrap();
+        let mut out = Vec::new();
+        for rel in rels {
+            match inner.index.rel_paths_under(room, &rel.to_string_lossy()) {
+                Ok(v) => out.extend(v.into_iter().map(PathBuf::from)),
+                Err(e) => eprintln!("rooms-core: looking up artifacts under {} failed: {e}", rel.display()),
+            }
+        }
+        out
+    }
+
     /// The originals that live outside home and every linked root, so no room watch sees them.
     pub fn outside_targets(&self) -> Vec<PathBuf> {
         let (targets, linked) = {
