@@ -1,3 +1,4 @@
+use crate::rules::DEFAULT_IGNORED_DIRS;
 use crate::{CoreError, RoomsCore};
 use notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, NoCache};
@@ -31,8 +32,7 @@ fn watch_dir(deb: &Mutex<Deb>, path: &Path) -> Result<(), notify::Error> {
 /// A root whose watch() fails is logged once per path (`failed` holds the already-logged paths);
 /// a later success clears the entry so a future failure logs again.
 fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<HashSet<PathBuf>>, failed: &Mutex<HashSet<PathBuf>>) {
-    for r in core.list_rooms().into_iter().filter(|r| r.kind == RoomKind::Linked && r.status == RoomStatus::Ok) {
-        let p = PathBuf::from(&r.path);
+    for p in core.linked_roots() {
         if watched.lock().unwrap().contains(&p) { continue; }
         match watch_dir(deb, &p) {
             Ok(()) => {
@@ -40,8 +40,8 @@ fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<Has
                 watched.lock().unwrap().insert(p);
             }
             Err(e) => {
-                if failed.lock().unwrap().insert(p) {
-                    eprintln!("rooms-core: failed to watch linked room {}: {e}", r.path);
+                if failed.lock().unwrap().insert(p.clone()) {
+                    eprintln!("rooms-core: failed to watch linked room {}: {e}", p.display());
                 }
             }
         }
@@ -69,6 +69,44 @@ fn spawn_coalescer(min_gap: Duration, mut run: impl FnMut() -> bool + Send + 'st
         }
     });
     tx
+}
+
+/// Whether a change at `abs` (`rel` to its room root) can change what a rescan finds: an
+/// artifact, a journal note, an ignore file, or a folder (created, renamed or deleted). Anything
+/// inside a dot-folder or a default-ignored folder (`node_modules`, `dist`, …) and every other
+/// file is noise, so a build writing thousands of files never rescans the room.
+fn can_affect_index(rel: &Path, abs: &Path) -> bool {
+    let names: Vec<_> = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect();
+    let Some((name, dirs)) = names.split_last() else { return true }; // the root itself
+    let ignored = |n: &str| n.starts_with('.') || DEFAULT_IGNORED_DIRS.contains(&n);
+    if dirs.iter().any(|d| ignored(d)) { return false; }
+    if name == ".gitignore" || name == ".roomsignore" { return true; }
+    if ignored(name) { return false; }
+    let ext = Path::new(name.as_ref()).extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("html" | "htm" | "md") => true,
+        Some(_) => abs.is_dir(),
+        // Gone without a trace: it may have been a folder.
+        None => abs.is_dir() || std::fs::symlink_metadata(abs).is_err(),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn only_paths_that_can_change_a_scan_are_relevant() {
+    let d = tempfile::tempdir().unwrap();
+    let at = |rel: &str| can_affect_index(Path::new(rel), &d.path().join(rel));
+    std::fs::create_dir_all(d.path().join("v1.2")).unwrap();
+    std::fs::write(d.path().join("Makefile"), "").unwrap();
+    assert!(at(""));
+    assert!(at("a.html") && at("sub/b.HTM") && at("2026-10-05/n.md"));
+    assert!(at(".gitignore") && at("sub/.roomsignore"));
+    assert!(at("v1.2"), "an existing folder");
+    assert!(at("gone"), "a missing path without extension may have been a folder");
+    assert!(!at("Makefile"), "an existing file without extension");
+    assert!(!at("x.png") && !at("src/main.rs"));
+    assert!(!at("node_modules/x/a.html") && !at(".git/a.html") && !at("a/.cache/b.html"));
+    assert!(!at(".a.html.tmp") && !at("node_modules") && !at("dist"));
 }
 
 /// A path under `<plugins>/<id>/` that is not inside that plugin's `data/` (or `<plugins>/<id>` itself).
@@ -119,17 +157,22 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                 if events.iter().flat_map(|ev| ev.paths.iter()).any(|p| is_plugin_code_path(&plugins_dir, p)) {
                     c2.plugins_changed();
                 }
-                let paths: Vec<PathBuf> = events.iter().flat_map(|ev| ev.paths.iter())
-                    .filter(|p| !p.starts_with(&rooms_dir)).cloned().collect();
+                let paths = events.iter().flat_map(|ev| ev.paths.iter()).filter(|p| !p.starts_with(&rooms_dir));
                 // A direct child of home (or a path no room owns yet) may be a folder created,
                 // renamed or deleted in Finder: reconcile owned rooms first (emits room.* events).
                 let mut rooms = HashSet::new();
-                if paths.iter().any(|p| p.parent() == Some(home.as_path()) || c2.room_for_path(p).is_none()) {
-                    rooms.extend(c2.sync_home_dirs());
+                let mut sync_home = false;
+                for p in paths {
+                    let owner = c2.room_and_root_for_path(p);
+                    let root = owner.as_ref().map_or(home.as_path(), |(_, root)| root.as_path());
+                    let Ok(rel) = p.strip_prefix(root) else { continue };
+                    // Any direct child of home may be a room folder, whatever its name.
+                    let top_level = p.parent() == Some(home.as_path());
+                    if !top_level && !can_affect_index(rel, p) { continue; }
+                    sync_home |= top_level || owner.is_none();
+                    if let Some((id, _)) = owner { rooms.insert(id); }
                 }
-                for p in &paths {
-                    if let Some(id) = c2.room_for_path(p) { rooms.insert(id); }
-                }
+                if sync_home { rooms.extend(c2.sync_home_dirs()); }
                 for id in rooms { c2.rescan_room(&id); }
             }
         }

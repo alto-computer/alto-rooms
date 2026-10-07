@@ -349,11 +349,16 @@ impl RoomsCore {
 
     /// Room owning `abs_path` (longest matching root wins: journal/inbox live under home).
     pub fn room_for_path(&self, abs_path: &Path) -> Option<RoomId> {
+        self.room_and_root_for_path(abs_path).map(|(id, _)| id)
+    }
+
+    /// `room_for_path` plus that room's root.
+    pub fn room_and_root_for_path(&self, abs_path: &Path) -> Option<(RoomId, PathBuf)> {
         let roots = { Self::all_roots(&self.inner.lock().unwrap()) };
         roots.into_iter()
             .filter(|(_, root, _)| abs_path.starts_with(root))
             .max_by_key(|(_, root, _)| root.as_os_str().len())
-            .map(|(id, _, _)| id)
+            .map(|(id, root, _)| (id, root))
     }
 
     /// Re-reads the direct children of home (called by the watcher when a batch touches one):
@@ -424,6 +429,15 @@ impl RoomsCore {
 
     pub fn apply_fs_change(&self, abs_path: &Path) {
         if let Some(id) = self.room_for_path(abs_path) { self.rescan_room(&id); }
+    }
+
+    /// Roots of the linked rooms not flagged unavailable. Unlike `list_rooms` it computes no
+    /// per-room counts, so the watcher's periodic checks barely hold the lock.
+    pub fn linked_roots(&self) -> Vec<PathBuf> {
+        let inner = self.inner.lock().unwrap();
+        inner.state.rooms.iter()
+            .filter(|r| r.kind == RoomKind::Linked && !inner.unavailable.contains(&r.id))
+            .map(|r| r.path.clone()).collect()
     }
 
     pub fn list_rooms(&self) -> Vec<Room> {

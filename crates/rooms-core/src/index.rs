@@ -11,15 +11,6 @@ pub struct Index {
     conn: Connection,
     /// Journal days whose contents changed since the last `take_touched_days` (old and new day on a move).
     touched_days: BTreeSet<String>,
-    /// While a batch is applied: every row's target → fileKey and the keys in use, loaded on the
-    /// first new file so each further new file costs map lookups, not queries, inside the lock.
-    keys: Option<KeyCache>,
-}
-
-#[derive(Default)]
-struct KeyCache {
-    by_target: HashMap<String, String>,
-    taken: HashSet<String>,
 }
 
 /// Journal day of an artifact. Files under `journal/YYYY-MM-DD/` belong to that folder's day
@@ -85,6 +76,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE INDEX IF NOT EXISTS idx_artifacts_room ON artifacts(room_id, created_ts);
 CREATE INDEX IF NOT EXISTS idx_artifacts_day ON artifacts(created_day, created_ts);
 CREATE INDEX IF NOT EXISTS idx_artifacts_file_key ON artifacts(file_key);
+CREATE INDEX IF NOT EXISTS idx_artifacts_room_updated ON artifacts(room_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_target ON artifacts(target);
 ";
 
 fn err(e: rusqlite::Error) -> CoreError { CoreError::WriteFailed(e.to_string()) }
@@ -94,6 +87,8 @@ impl Index {
         let try_open = || -> rusqlite::Result<Connection> {
             let c = Connection::open(path)?;
             c.pragma_update(None, "journal_mode", "WAL")?;
+            // Safe with WAL (a crash can lose the last commits, never corrupt); the index is rebuildable.
+            c.pragma_update(None, "synchronous", "NORMAL")?;
             let v: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             if v != SCHEMA_VERSION {
                 c.execute_batch("DROP TABLE IF EXISTS artifacts;")?;
@@ -103,7 +98,7 @@ impl Index {
             Ok(c)
         };
         match try_open() {
-            Ok(conn) => Ok(Index { conn, touched_days: BTreeSet::new(), keys: None }),
+            Ok(conn) => Ok(Index { conn, touched_days: BTreeSet::new() }),
             Err(_) => {
                 let _ = std::fs::remove_file(path);
                 for suffix in ["-wal", "-shm"] {
@@ -111,7 +106,7 @@ impl Index {
                     p.push(suffix);
                     let _ = std::fs::remove_file(p);
                 }
-                Ok(Index { conn: try_open().map_err(err)?, touched_days: BTreeSet::new(), keys: None })
+                Ok(Index { conn: try_open().map_err(err)?, touched_days: BTreeSet::new() })
             }
         }
     }
@@ -154,7 +149,6 @@ impl Index {
     /// Phase 3, run under the core lock: one transaction. Upserts `facts`, removes rows not in `present`.
     pub fn apply(&mut self, room_id: &str, facts: &[FileFacts], present: &HashSet<String>) -> Result<Vec<Change>, CoreError> {
         let mut changes = Vec::new();
-        self.keys = None;
         self.conn.execute_batch("BEGIN").map_err(err)?;
         let r = (|| -> Result<(), CoreError> {
             for f in facts { if let Some(c) = self.upsert_facts(room_id, f)? { changes.push(c); } }
@@ -168,7 +162,6 @@ impl Index {
             }
             Ok(())
         })();
-        self.keys = None;
         match r {
             Ok(()) => { self.conn.execute_batch("COMMIT").map_err(err)?; Ok(changes) }
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
@@ -272,28 +265,17 @@ impl Index {
     /// The key for an original seen for the first time: the key of a row already holding the same
     /// original (a link to a file Rooms moved), else one derived from its path that no row uses yet
     /// (a moved file keeps the key of its old path, so a new file there must not reuse it).
-    fn new_file_key(&mut self, target: &str, path_key: &str) -> Result<String, CoreError> {
-        if self.keys.is_none() {
-            let mut cache = KeyCache::default();
-            let mut st = self.conn.prepare("SELECT target, file_key FROM artifacts").map_err(err)?;
-            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(err)?;
-            for row in rows {
-                let (t, k) = row.map_err(err)?;
-                cache.taken.insert(k.clone());
-                cache.by_target.entry(t).or_insert(k);
-            }
-            drop(st);
-            self.keys = Some(cache);
+    fn new_file_key(&self, target: &str, path_key: &str) -> Result<String, CoreError> {
+        let held: Option<String> = self.conn
+            .prepare_cached("SELECT file_key FROM artifacts WHERE target = ?1 LIMIT 1").map_err(err)?
+            .query_row(params![target], |r| r.get(0)).optional().map_err(err)?;
+        if let Some(k) = held { return Ok(k); }
+        let mut taken = self.conn.prepare_cached("SELECT 1 FROM artifacts WHERE file_key = ?1 LIMIT 1").map_err(err)?;
+        for n in 0u32.. {
+            let k = if n == 0 { path_key.to_string() } else { file_key(&format!("{target}#{n}")) };
+            if !taken.exists(params![k]).map_err(err)? { return Ok(k); }
         }
-        let cache = self.keys.as_mut().expect("loaded above");
-        if let Some(k) = cache.by_target.get(target) { return Ok(k.clone()); }
-        let k = (0u32..)
-            .map(|n| if n == 0 { path_key.to_string() } else { file_key(&format!("{target}#{n}")) })
-            .find(|k| !cache.taken.contains(k))
-            .expect("some suffix is free");
-        cache.taken.insert(k.clone());
-        cache.by_target.insert(target.to_string(), k.clone());
-        Ok(k)
+        unreachable!("some suffix is free")
     }
 
     /// Every row with `file_key` (one per room that holds the original).
