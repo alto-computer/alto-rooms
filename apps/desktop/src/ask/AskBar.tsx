@@ -83,7 +83,7 @@ function Turn({ t, onRetry }: { t: AskTurn; onRetry: () => void }) {
             </div>
           ) : null}
           {t.answer ? (
-            <div className="flex items-center gap-2 text-[11.5px] text-ink-2">
+            <div className="-my-1.5 flex items-center gap-2 text-[11.5px] text-ink-2">
               <CopyAnswerButton text={t.answer} />
             </div>
           ) : null}
@@ -241,7 +241,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       {sendError ? <div className="pointer-events-auto text-[12.5px] text-ink-2">{sendError}</div> : null}
       <div
         className={cn(
-          "pointer-events-auto flex w-full max-w-[560px] gap-2.5 border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-primary/70 focus-within:ring-4 focus-within:ring-primary/10",
+          "pointer-events-auto flex w-full max-w-[560px] gap-2.5 border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
           // A full pill only suits one line; taller, round the corners less and keep the buttons at the bottom.
           multiline ? "items-end rounded-[20px]" : "items-center rounded-full",
         )}

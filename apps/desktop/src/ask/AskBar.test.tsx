@@ -156,6 +156,9 @@ describe("AskBar", () => {
       const pill = input.parentElement!;
       expect(input.style.height).toBe("20px");
       expect(pill).toHaveClass("rounded-full");
+      // Focus is ink, not the thread red the send button uses.
+      expect(pill).toHaveClass("focus-within:border-ink/60");
+      expect(pill.className).not.toMatch(/focus-within:[\w-]+-primary/);
       height = 60;
       fireEvent.change(input, { target: { value: "one\ntwo\nthree" } });
       expect(input.style.height).toBe("60px");
@@ -304,6 +307,7 @@ describe("AskBar", () => {
     const { client } = await setup({}, false, claude);
     const trigger = await screen.findByLabelText("Model: claude-code · Default");
     expect(trigger.textContent).toBe("claude-code · Default");
+    expect(trigger).toHaveClass("min-h-7", "focus-visible:outline-ink");
     fireEvent.keyDown(trigger, { key: "Enter" });
     const items = await screen.findAllByRole("menuitemradio");
     expect(items.map((i) => i.textContent)).toEqual(["Default", "Opus", "Sonnet", "Haiku", "claude-x-1"]);

@@ -37,6 +37,10 @@ describe("CopyAnswerButton", () => {
     expect(btn).toHaveClass("focus-visible:outline-2", "focus-visible:outline-ink");
   });
 
+  it("has a 28px hit area around the small icon", () => {
+    expect(setup()).toHaveClass("size-7");
+  });
+
   it("toasts when the clipboard refuses", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     mockClipboard(() => Promise.reject(new Error("no")));
