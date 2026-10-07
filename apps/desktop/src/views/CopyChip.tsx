@@ -9,9 +9,9 @@ export const COPIED_MS = 1500;
 
 /**
  * Copies to the clipboard: `copied` is true for COPIED_MS after a success;
- * `failed.shown` briefly after the clipboard refuses.
+ * `failed.shown` briefly after the clipboard refuses. `copy` resolves to whether it worked.
  */
-export function useCopy(): { copied: boolean; failed: ReturnType<typeof useBriefError>; copy: (text: string) => Promise<void> } {
+export function useCopy(): { copied: boolean; failed: ReturnType<typeof useBriefError>; copy: (text: string) => Promise<boolean> } {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -25,12 +25,13 @@ export function useCopy(): { copied: boolean; failed: ReturnType<typeof useBrief
       clearTimeout(timer.current);
       setCopied(false);
       failed.flash();
-      return;
+      return false;
     }
     failed.clear();
     clearTimeout(timer.current);
     setCopied(true);
     timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+    return true;
   };
 
   return { copied, failed, copy };

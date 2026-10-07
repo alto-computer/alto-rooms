@@ -17,13 +17,14 @@ def iso(days_ago=0.0):
 
 
 class Env:
-    """A synthetic HOME with fake Claude Code and Codex log dirs."""
+    """A synthetic HOME with fake Claude Code, Codex and Aside log dirs."""
 
     def __init__(self):
         self.root = os.path.realpath(tempfile.mkdtemp(prefix="findhtml-"))
         self.home = os.path.join(self.root, "rooms")
         self.claude = os.path.join(self.root, ".claude", "projects")
         self.codex = os.path.join(self.root, ".codex", "sessions")
+        self.aside = os.path.join(self.root, ".aside", "u")
         os.makedirs(self.home)
         os.makedirs(os.path.join(self.claude, "-proj"))
 
@@ -54,11 +55,19 @@ class Env:
                 f.write((l if isinstance(l, str) else json.dumps(l)) + "\n")
         return p
 
+    def aside_log(self, records, sid="ses0ExampleAside1", days_ago=0, account="0"):
+        day = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+        d = os.path.join(self.aside, account, "sessions", "%s_%s" % (day, sid))
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "messages.jsonl"), "w") as f:
+            for r in records:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
     def run(self, *extra):
         env = dict(os.environ, HOME=self.root)
         r = subprocess.run(
             [sys.executable, SCRIPT, "--home", self.home, "--claude-dir", self.claude,
-             "--codex-dir", self.codex, *extra],
+             "--codex-dir", self.codex, "--aside-dir", self.aside, *extra],
             capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
         return json.loads(r.stdout)
@@ -68,6 +77,19 @@ def cc(name, path, days_ago=1, cwd="/x", sid="sess-cc", block_type="tool_use"):
     return {"type": "assistant", "timestamp": iso(days_ago), "cwd": cwd, "sessionId": sid,
             "message": {"content": [{"type": block_type, "name": name,
                                      "input": {"file_path": path}}]}}
+
+
+def cc_bash(command, days_ago=1, cwd="/x", sid="sess-cc"):
+    return {"type": "assistant", "timestamp": iso(days_ago), "cwd": cwd, "sessionId": sid,
+            "message": {"content": [{"type": "tool_use", "name": "Bash",
+                                     "input": {"command": command}}]}}
+
+
+def aside_call(name, arguments, days_ago=1):
+    ms = (datetime.now(timezone.utc) - timedelta(days=days_ago)).timestamp() * 1000
+    return {"role": "assistant", "timestamp": int(ms),
+            "content": [{"type": "text", "text": "ok"},
+                        {"type": "toolCall", "name": name, "arguments": arguments}]}
 
 
 def cx_meta(cwd, sid="sess-cx", days_ago=1):
@@ -168,14 +190,14 @@ class FindHtmlTest(unittest.TestCase):
         n2 = self.e.html("proj/node_modules/pkg/n.html")
         n3 = self.e.html("proj/scratchpad/n.html")
         n4 = self.e.html(".superpowers/brainstorm/n.html")
-        n5 = self.e.html("rooms/inbox/n.html")
+        n5 = self.e.html("rooms/.rooms/n.html")
         ok = self.e.html("proj/ok.html")
         self.e.claude_log([cc("Write", p) for p in (n1, n2, n3, n4, n5, ok)])
         out = self.e.run()
         self.assertEqual(self.paths(out), [ok])
         self.assertEqual(out["skipped"]["noise"], 5)
         out = self.e.run("--include-noise")
-        self.assertEqual(len(out["candidates"]), 6)
+        self.assertEqual(len(out["candidates"]), 5)
 
     def test_worktree_copies_share_repo_key(self):
         a = self.e.html("orca/workspaces/myrepo/feat-a/docs/x.html")
@@ -370,6 +392,369 @@ class FindHtmlTest(unittest.TestCase):
         a = self.e.html("proj/v.html")
         self.e.claude_log([cc("Write", a)])
         self.assertEqual(self.e.run()["version"], 2)
+
+    # ---- --record-sources ----
+
+    def dot_rooms(self):
+        d = os.path.join(self.e.home, ".rooms")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def sources(self):
+        with open(os.path.join(self.e.home, ".rooms", "sources.json")) as f:
+            return json.load(f)
+
+    def test_record_sources_writes_entry(self):
+        self.dot_rooms()
+        a = self.e.html("proj/rs.html")
+        self.e.claude_log([cc("Write", a, cwd="/work", sid="sid-1")])
+        out = self.e.run("--record-sources")
+        self.assertEqual(out["recorded"], 1)
+        c = out["candidates"][0]
+        self.assertEqual(self.sources(), {"version": 1, "sources": {a: {
+            "agent": "claude-code", "session": "sid-1", "cwd": "/work",
+            "writtenAt": c["last_written"]}}})
+
+    def test_record_sources_includes_linked(self):
+        self.dot_rooms()
+        a = self.e.html("proj/rl.html")
+        room = os.path.join(self.e.home, "room")
+        os.makedirs(room)
+        os.symlink(a, os.path.join(room, "alias.html"))
+        self.e.claude_log([cc("Write", a, sid="sid-l")])
+        out = self.e.run("--record-sources")
+        self.assertTrue(out["candidates"][0]["linked"])
+        self.assertEqual(out["recorded"], 1)
+        self.assertEqual(self.sources()["sources"][a]["session"], "sid-l")
+
+    def test_record_sources_last_write_wins(self):
+        self.dot_rooms()
+        a = self.e.html("proj/rw.html")
+        self.e.claude_log([cc("Write", a, days_ago=3, sid="old")], name="a.jsonl")
+        self.e.claude_log([cc("Write", a, days_ago=1, sid="new", cwd="/n")], name="b.jsonl")
+        self.e.run("--record-sources")
+        e = self.sources()["sources"][a]
+        self.assertEqual((e["session"], e["cwd"]), ("new", "/n"))
+
+    def test_record_sources_keeps_newer_replaces_older(self):
+        a = self.e.html("proj/rk.html")
+        b = self.e.html("proj/rk2.html")
+        self.e.claude_log([cc("Write", a, days_ago=1, sid="s-a"),
+                           cc("Write", b, days_ago=1, sid="s-b")])
+        self.dot_rooms()
+        old = {"agent": "codex", "session": "old", "cwd": "/o", "writtenAt": "2000-01-01T00:00:00Z"}
+        newer = {"agent": "codex", "session": "newer", "cwd": "/o", "writtenAt": "2999-01-01T00:00:00Z"}
+        with open(os.path.join(self.e.home, ".rooms", "sources.json"), "w") as f:
+            json.dump({"version": 1, "sources": {a: newer, b: old, "/other": old}}, f)
+        out = self.e.run("--record-sources")
+        s = self.sources()["sources"]
+        self.assertEqual(s[a], newer)
+        self.assertEqual(s[b]["session"], "s-b")
+        self.assertEqual(s["/other"], old)
+        self.assertEqual(out["recorded"], 1)
+
+    def test_record_sources_equal_time_replaced(self):
+        a = self.e.html("proj/re.html")
+        self.e.claude_log([cc("Write", a, sid="s-eq")])
+        t = self.e.run()["candidates"][0]["last_written"]
+        self.dot_rooms()
+        with open(os.path.join(self.e.home, ".rooms", "sources.json"), "w") as f:
+            json.dump({"version": 1, "sources": {a: {"agent": "codex", "session": "x",
+                       "cwd": "/o", "writtenAt": t}}}, f)
+        self.assertEqual(self.e.run("--record-sources")["recorded"], 1)
+        self.assertEqual(self.sources()["sources"][a]["session"], "s-eq")
+
+    def test_record_sources_corrupt_file_replaced(self):
+        a = self.e.html("proj/rc.html")
+        self.e.claude_log([cc("Write", a, sid="s-c")])
+        self.dot_rooms()
+        with open(os.path.join(self.e.home, ".rooms", "sources.json"), "w") as f:
+            f.write("{")
+        self.e.run("--record-sources")
+        self.assertEqual(self.sources()["sources"][a]["session"], "s-c")
+
+    def test_record_sources_skips_candidates_without_session(self):
+        # the log scanners fall back to the file name, so exercise the helper directly
+        sys.path.insert(0, HERE)
+        try:
+            import find_html
+        finally:
+            sys.path.remove(HERE)
+        t = datetime.now(timezone.utc)
+        a = self.e.html("proj/rn.html")
+        self.dot_rooms()
+        r = find_html.record_sources(self.e.home, {a: [(t, "codex", "", None, True)]})
+        self.assertEqual(r, {"recorded": 0})
+        self.assertEqual(self.sources()["sources"], {})
+
+    def test_record_sources_prefers_last_explicit_write(self):
+        # a later Codex shell command that only mentions the path must not take the doc over
+        self.dot_rooms()
+        a = self.e.html("proj/rx.html")
+        self.e.claude_log([cc("Write", a, days_ago=2, cwd="/w", sid="writer")])
+        self.e.codex_log([cx_meta("/r", sid="reviewer"), cx_exec("cat %s 2>/dev/null" % a)])
+        out = self.e.run("--record-sources")
+        self.assertEqual(out["candidates"][0]["agent"], "codex")  # loose match is the last write
+        e = self.sources()["sources"][a]
+        self.assertEqual((e["agent"], e["session"], e["cwd"]), ("claude-code", "writer", "/w"))
+
+    def test_record_sources_without_dot_rooms_creates_nothing(self):
+        a = self.e.html("proj/rd.html")
+        self.e.claude_log([cc("Write", a, sid="s-d")])
+        out = self.e.run("--record-sources")
+        self.assertEqual(len(out["candidates"]), 1)
+        self.assertEqual(out["recorded"], 0)
+        self.assertIn("no .rooms in", out["record_error"])
+        self.assertFalse(os.path.exists(os.path.join(self.e.home, ".rooms")))
+
+    @unittest.skipIf(os.name != "posix" or os.geteuid() == 0, "needs a non-root POSIX user")
+    def test_record_failure_still_prints_candidates(self):
+        a = self.e.html("proj/rr.html")
+        self.e.claude_log([cc("Write", a, sid="s-r")])
+        d = self.dot_rooms()
+        os.chmod(d, 0o500)
+        self.addCleanup(os.chmod, d, 0o700)
+        out = self.e.run("--record-sources")
+        self.assertEqual(self.paths(out), [a])
+        self.assertIsNone(out["recorded"])
+        self.assertTrue(out["record_error"])
+        self.assertEqual(os.listdir(d), [])
+
+    def test_record_sources_leaves_no_temp_files(self):
+        a = self.e.html("proj/rt.html")
+        self.e.claude_log([cc("Write", a, sid="s-t")])
+        d = self.dot_rooms()
+        self.e.run("--record-sources")
+        self.e.run("--record-sources")
+        self.assertEqual(os.listdir(d), ["sources.json"])
+
+    def test_no_flag_no_file_no_key(self):
+        a = self.e.html("proj/rf.html")
+        self.e.claude_log([cc("Write", a)])
+        out = self.e.run()
+        self.assertNotIn("recorded", out)
+        self.assertFalse(os.path.exists(os.path.join(self.e.home, ".rooms", "sources.json")))
+
+    # ---- Claude Code Bash copies ----
+    def test_claude_bash_cp_into_directory_is_loose(self):
+        self.dot_rooms()
+        dest = self.e.html("bench-study/bu-vs-odysseys.html")
+        cmd = ("ls %(r)s/rooms/browser; mkdir -p %(r)s/bench-study && "
+               "cp /private/tmp/claude-501/x/scratchpad/bench/bu-vs-odysseys.html %(r)s/bench-study/ && "
+               "find %(r)s/rooms -path '*x*' -print") % {"r": self.e.root}
+        self.e.claude_log([cc_bash(cmd, sid="bash-sess")])
+        out = self.e.run("--record-sources")
+        self.assertEqual(self.paths(out), [dest])
+        self.assertEqual(out["candidates"][0]["sessions"], ["bash-sess"])
+        self.assertEqual(self.sources()["sources"][dest]["session"], "bash-sess")
+
+    def test_claude_bash_cd_then_relative_cp(self):
+        proj = os.path.join(self.e.root, "proj")
+        b = self.e.html("proj/sub/b.html")
+        self.e.claude_log([cc_bash("cd sub && cp a.html b.html", cwd=proj)])
+        self.assertEqual(self.paths(self.e.run()), [b])
+
+    def test_claude_bash_cp_into_existing_dir_and_target_dir(self):
+        a = self.e.html("out/a.html")
+        b = self.e.html("out2/b.html")
+        self.e.claude_log([cc_bash("cp -f src/a.html %s/out; mv -t out2 x/b.html" % self.e.root,
+                                   cwd=self.e.root)])
+        self.assertEqual(self.paths(self.e.run()), sorted([a, b]))
+
+    def test_claude_bash_redirect_and_tee(self):
+        r = self.e.html("proj/r.html")
+        t = self.e.html("proj/t.html")
+        self.e.html("proj/read.html")
+        cmd = "echo '<p>' > r.html\ncat read.html | tee -a t.html >/dev/null"
+        self.e.claude_log([cc_bash(cmd, cwd=os.path.join(self.e.root, "proj"))])
+        self.assertEqual(self.paths(self.e.run()), sorted([r, t]))
+
+    def test_claude_bash_heredoc_body_ignored(self):
+        h = self.e.html("proj/h.html")
+        self.e.html("proj/body.html")
+        cmd = "cat > h.html <<'EOF'\n<a href=\"x\">don't</a> > body.html\nEOF"
+        self.e.claude_log([cc_bash(cmd, cwd=os.path.join(self.e.root, "proj"))])
+        self.assertEqual(self.paths(self.e.run()), [h])
+
+    def test_explicit_write_beats_later_loose_cp(self):
+        self.dot_rooms()
+        a = self.e.html("proj/w.html")
+        self.e.claude_log([cc("Write", a, days_ago=2, cwd="/w", sid="writer"),
+                           cc_bash("cp other.html %s" % a, days_ago=1, sid="copier")])
+        out = self.e.run("--record-sources")
+        self.assertEqual(sorted(out["candidates"][0]["sessions"]), ["copier", "writer"])
+        self.assertEqual(self.sources()["sources"][a]["session"], "writer")
+
+    def test_shell_writes_unit(self):
+        sys.path.insert(0, HERE)
+        try:
+            import find_html
+        finally:
+            sys.path.remove(HERE)
+        w = lambda cmd, cwd="/c": list(find_html.shell_writes(cmd, cwd))
+        self.assertEqual(w("cp a.html b.htm"), ["/c/b.htm"])
+        self.assertEqual(w("install -m 644 a.html ~/x/"), [os.path.expanduser("~/x/a.html")])
+        self.assertEqual(w("cp a.html b.html c/"), ["/c/c/a.html", "/c/c/b.html"])
+        self.assertEqual(w("cat a.html; ls x.html"), [])
+        self.assertEqual(w("cd /d && echo hi >> o.html || true"), ["/d/o.html"])
+        self.assertEqual(w("echo 'unterminated > q.html"), ["/c/q.html"])  # fallback tokens
+        self.assertEqual(w("cp a.html b/ # copy it\ncp c.html d.html"), ["/c/b/a.html", "/c/d.html"])
+        self.assertEqual(w("cp a.html b/ # don't\ncp c.html d.html"), ["/c/b/a.html", "/c/d.html"])
+        self.assertEqual(w("cp a.html b.html", None), [])
+        self.assertEqual(w(None), [])
+
+    def test_shell_writes_quoting_flags_and_prefixes(self):
+        sys.path.insert(0, HERE)
+        try:
+            import find_html
+        finally:
+            sys.path.remove(HERE)
+        w = lambda cmd, cwd="/c": list(find_html.shell_writes(cmd, cwd))
+        # operators count only outside quotes
+        self.assertEqual(w('grep ">" a.html > b.html'), ["/c/b.html"])
+        self.assertEqual(w('echo ">" x.html'), [])
+        self.assertEqual(w("echo '&&' 'cp a.html b.html'"), [])
+        self.assertEqual(w("cat a.html > y.txt"), [])
+        self.assertEqual(w("sort < a.html"), [])
+        self.assertEqual(w('cp "/sp ace/a.html" o\\ ut/"x y.html"'), ["/c/o ut/x y.html"])
+        # value-taking flags
+        self.assertEqual(w("install -m 644 a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("install -o me -g staff -S .bak a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("cp -S .orig --suffix=.b a.html b.html"), ["/c/b.html"])
+        # clustered short flags: a value letter takes the next arg only when it ends the cluster
+        self.assertEqual(w("install -Dm 644 a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("install -Dm644 a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("cp -aS .bak a.html b.html"), ["/c/b.html"])
+        self.assertEqual(w("cp -at /out a.html"), ["/out/a.html"])
+        # long value flags, separate or attached
+        self.assertEqual(w("install --mode 644 --owner me --group g a.html /x/b.html"), ["/x/b.html"])
+        self.assertEqual(w("mv --suffix .old --mode=1 a.html b.html"), ["/c/b.html"])
+        self.assertEqual(w("cp --target-directory /out a.html"), ["/out/a.html"])
+        # sudo/env with their own flags
+        self.assertEqual(w("sudo -u root cp a.html b.html"), ["/c/b.html"])
+        self.assertEqual(w("sudo -E -g staff -C 3 -h host -p pw cp a.html b.html"), ["/c/b.html"])
+        self.assertEqual(w("env -i -u HOME -C /d cp a.html /o/b.html"), ["/o/b.html"])
+        self.assertEqual(w("env -0 -S x cp a.html b.html"), ["/c/b.html"])
+        # prefixes before the command word
+        self.assertEqual(w("FOO=1 sudo env A=b command cp a.html b.html"), ["/c/b.html"])
+        # dynamic words are unknown
+        self.assertEqual(w('cp a.html "$OUT/b.html"; cp a.html `pwd`/c.html'), [])
+        self.assertEqual(w("cd $D && cp a.html b.html"), [])
+        self.assertEqual(w("cp a.html b.html " + "x" * 200000), [])
+
+    def test_aside_malformed_records_and_write_tool_path(self):
+        canon, _ = self.aside_dirs()
+        a = self.e.html(os.path.join(canon, "w.html"))
+        r = self.e.html(os.path.join(canon, "r.html"))
+        bad = aside_call("repl", {"code": "x"})
+        bad["content"] = "a toolCall .html string"
+        bad2 = aside_call("repl", {"code": "x"})
+        bad2["content"] = ["toolCall", 3, {"type": "toolCall", "name": "repl", "arguments": "str"}]
+        self.e.aside_log([bad, bad2,
+                          aside_call("write_file", {"path": a, "content": "<html>"}),
+                          aside_call("read_file", {"path": r})])
+        out = self.e.run()
+        self.assertEqual(self.paths(out), [a])
+        self.assertEqual(out["candidates"][0]["agent"], "aside")
+
+    # ---- Aside ----
+    def aside_dirs(self):
+        """A canonical artifacts dir and Aside's symlinked agents/main/artifacts view of it."""
+        base = os.path.join(self.e.aside, "0")
+        canon = os.path.join(base, "artifacts", "astack", "quest", "q1")
+        os.makedirs(canon)
+        os.makedirs(os.path.join(base, "agents", "main"))
+        os.symlink("../../artifacts", os.path.join(base, "agents", "main", "artifacts"))
+        return canon, os.path.join(base, "agents", "main", "artifacts", "astack", "quest", "q1")
+
+    def test_aside_repl_const_then_writefile(self):
+        self.dot_rooms()
+        canon, via_link = self.aside_dirs()
+        target = self.e.html(os.path.join(canon, "00-지도.html"))
+        self.e.aside_log([
+            aside_call("repl", {"title": "setup", "code": "const qdir = '%s';" % via_link}, days_ago=2),
+            aside_call("repl", {"title": "write",
+                                "code": "await fs.writeFile(qdir + '/00-지도.html', mapHtml);"}),
+        ])
+        out = self.e.run("--record-sources")
+        self.assertEqual(self.paths(out), [target])
+        c = out["candidates"][0]
+        self.assertEqual((c["agent"], c["sessions"]), ("aside", ["ses0ExampleAside1"]))
+        self.assertEqual(self.sources()["sources"], {target: {
+            "agent": "aside", "session": "ses0ExampleAside1",
+            "cwd": via_link, "writtenAt": c["last_written"]}})
+
+    def test_aside_template_literal_and_bash(self):
+        canon, _ = self.aside_dirs()
+        t = self.e.html(os.path.join(canon, "t.html"))
+        b = self.e.html(os.path.join(canon, "b.html"))
+        code = 'let dir = `%s`\nfs.writeFileSync(`${dir}/t.html`, html)' % canon
+        self.e.aside_log([aside_call("repl", {"code": code}),
+                          aside_call("bash", {"command": "cd %s && echo x > b.html" % canon})])
+        by = {c["path"]: c for c in self.e.run()["candidates"]}
+        self.assertEqual(sorted(by), sorted([t, b]))
+        self.assertEqual(by[t]["agent"], "aside")
+
+    def test_aside_unresolved_expressions_ignored(self):
+        canon, _ = self.aside_dirs()
+        self.e.html(os.path.join(canon, "u.html"))
+        code = ("const d = base + '/x';\nawait fs.writeFile(d + '/u.html', h);\n"
+                "await fs.writeFile(`${other}/u.html`, h);\nawait fs.writeFile(path.join(q, 'u.html'), h);")
+        self.e.aside_log([aside_call("repl", {"code": code})])
+        self.assertEqual(self.e.run()["candidates"], [])
+
+    def test_aside_old_session_folder_skipped(self):
+        canon, _ = self.aside_dirs()
+        a = self.e.html(os.path.join(canon, "old.html"))
+        self.e.aside_log([aside_call("repl", {"code": "fs.writeFile('%s', h)" % a})], days_ago=20)
+        self.assertEqual(self.e.run()["candidates"], [])  # the 1-day-old record is not read
+        self.assertEqual(self.paths(self.e.run("--days", "30")), [a])
+
+    def test_aside_scratch_is_noise_artifacts_are_not(self):
+        canon, _ = self.aside_dirs()
+        keep = self.e.html(os.path.join(canon, "k.html"))
+        tmp = self.e.html(".aside/u/0/sessions/2026-10-06_x/tmp/n.html")
+        self.e.aside_log([aside_call("repl", {"code": "fs.writeFile('%s', h); fs.writeFile('%s', h)"
+                                              % (keep, tmp)})])
+        out = self.e.run()
+        self.assertEqual(self.paths(out), [keep])
+        self.assertEqual(out["skipped"]["noise"], 1)
+
+    def test_record_sources_claude_bash_and_aside_together(self):
+        self.dot_rooms()
+        canon, _ = self.aside_dirs()
+        a = self.e.html(os.path.join(canon, "a.html"))
+        c = self.e.html("bench/c.html")
+        self.e.aside_log([aside_call("repl", {"code": "await fs.writeFile(\"%s\", h)" % a})])
+        self.e.claude_log([cc_bash("cp /tmp/c.html %s/bench/" % self.e.root, sid="cc-1")])
+        out = self.e.run("--record-sources")
+        self.assertEqual(out["recorded"], 2)
+        s = self.sources()["sources"]
+        self.assertEqual((s[a]["agent"], s[a]["session"]), ("aside", "ses0ExampleAside1"))
+        self.assertEqual((s[c]["agent"], s[c]["session"]), ("claude-code", "cc-1"))
+
+    def test_files_written_inside_rooms_are_recorded_but_not_candidates(self):
+        self.dot_rooms()
+        copied = self.e.html("rooms/browser/x.html")
+        journal = self.e.html("rooms/journal/2026-10-07/y.html")
+        self.e.claude_log([
+            cc_bash("cp %s/scratchpad/x.html %s" % (self.e.root, copied), sid="cc-cp"),
+            cc("Write", journal, sid="cc-journal")])
+        out = self.e.run("--record-sources")
+        self.assertEqual(out["candidates"], [])
+        self.assertEqual(out["recorded"], 2)
+        s = self.sources()["sources"]
+        self.assertEqual(s[copied]["session"], "cc-cp")
+        self.assertEqual(s[journal]["session"], "cc-journal")
+
+    def test_dot_rooms_and_scratch_never_recorded(self):
+        self.dot_rooms()
+        hidden = self.e.html("rooms/.rooms/h.html")
+        scratch = self.e.html("proj/scratchpad/s.html")
+        self.e.claude_log([cc("Write", hidden), cc("Write", scratch)])
+        out = self.e.run("--record-sources")
+        self.assertEqual(out["recorded"], 0)
+        self.assertEqual(self.sources()["sources"], {})
 
 
 if __name__ == "__main__":

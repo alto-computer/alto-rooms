@@ -7,7 +7,7 @@ version.workspace = true
 serde.workspace = true
 ts-rs.workspace = true
 schemars.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 insta = { version = "1", features = ["json"] }

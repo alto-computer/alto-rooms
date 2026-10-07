@@ -23,6 +23,34 @@ pub fn acquire_home_lock(home: &std::path::Path) -> std::io::Result<std::fs::Fil
     }
 }
 
+/// `ROOMS_MCP_BIN` if set (made absolute, and the file must exist), else `rooms-mcp` next to the roomsd executable.
+pub fn resolve_mcp_bin(env_override: Option<&str>, current_exe: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    let found = match env_override.filter(|s| !s.is_empty()) {
+        Some(p) => std::fs::canonicalize(p).ok()?,
+        None => current_exe?.parent()?.join("rooms-mcp"),
+    };
+    found.is_file().then_some(found)
+}
+
+/// Writes `<home>/.rooms/mcp.json` so agents can launch rooms-mcp (`--mcp-config`). Without a
+/// binary no file is written and a stale one is removed, so asks drop the flag. Returns the path written.
+pub fn write_mcp_config(home: &std::path::Path, bin: Option<&std::path::Path>, api_port: u16) -> std::io::Result<Option<std::path::PathBuf>> {
+    let path = home.join(".rooms/mcp.json");
+    let Some(bin) = bin.filter(|b| b.is_file()) else {
+        return match std::fs::remove_file(&path) {
+            Ok(()) => Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        };
+    };
+    let mut env = serde_json::json!({ "ROOMS_HOME": home });
+    if api_port != NetConfig::default().api_port { env["ROOMS_API_PORT"] = api_port.to_string().into(); }
+    let doc = serde_json::json!({ "mcpServers": { "rooms": { "command": bin, "env": env } } });
+    std::fs::create_dir_all(path.parent().expect("has parent"))?;
+    std::fs::write(&path, serde_json::to_vec_pretty(&doc).expect("json"))?;
+    Ok(Some(path))
+}
+
 /// Writes a fresh 32-char token to `<home>/.rooms/token` (file 0600, dir 0700).
 pub fn write_token(home: &std::path::Path) -> std::io::Result<String> {
     use std::io::Write;
@@ -94,6 +122,7 @@ impl NetConfig {
 #[derive(Clone)]
 pub struct AppState {
     pub core: RoomsCore,
+    pub asks: rooms_core::asks::Asks,
     pub token: String,
     pub read_only: bool,
     pub files_origin: String,
@@ -121,6 +150,11 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/journal/{date}/notes/{name}/rename", post(routes::rename_note))
         .route("/v1/artifacts/move", post(routes::move_artifact))
         .route("/v1/artifacts/by-file-key/{key}", get(routes::artifact_by_file_key))
+        .route("/v1/asks", get(routes::ask_thread).post(routes::start_ask))
+        .route("/v1/asks/target", get(routes::ask_target))
+        .route("/v1/asks/{ask_id}", axum::routing::delete(routes::cancel_ask))
+        .route("/v1/tools", get(routes::list_tools))
+        .route("/v1/tools/call", post(routes::call_tool))
         .route("/v1/plugins", get(routes::list_plugins))
         .route("/v1/plugins/{id}", patch(routes::set_plugin_enabled))
         .route("/v1/plugins/{id}/data", get(routes::list_plugin_data))

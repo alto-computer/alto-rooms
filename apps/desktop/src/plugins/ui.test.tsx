@@ -163,6 +163,35 @@ describe("artifact side panel", () => {
     );
   });
 
+  it("tells the frame when its own plugin's data changes, and no other plugin's", async () => {
+    const h = await openDoc();
+    const { posted } = await openPanel();
+    h.emit({ type: "plugin.data.changed", pluginId: "other", path: "drawings/a.jsonl" });
+    expect(posted).not.toHaveBeenCalled();
+    h.emit({ type: "plugin.data.changed", pluginId: "echo", path: "drawings/a.jsonl" });
+    expect(posted).toHaveBeenLastCalledWith({ rooms: 1, type: "dataChanged", path: "drawings/a.jsonl" }, "*");
+  });
+
+  it("stops relaying data changes once the frame is gone", async () => {
+    const h = await openDoc();
+    let listeners = 0;
+    const onSignal = h.rooms.onSignal.bind(h.rooms);
+    vi.spyOn(h.rooms, "onSignal").mockImplementation((fn) => {
+      listeners++;
+      const off = onSignal(fn);
+      return () => {
+        listeners--;
+        off();
+      };
+    });
+    const { posted } = await openPanel();
+    expect(listeners).toBeGreaterThan(0);
+    cleanup();
+    expect(listeners).toBe(0);
+    h.emit({ type: "plugin.data.changed", pluginId: "echo", path: "a.jsonl" });
+    expect(posted.mock.calls.filter((c) => (c[0] as { type?: string }).type === "dataChanged")).toEqual([]);
+  });
+
   it("ignores messages from any other window", async () => {
     const h = await openDoc();
     const { posted } = await openPanel();

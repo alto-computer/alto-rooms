@@ -1,4 +1,4 @@
-<!-- rooms-onboarding v4 -->
+<!-- rooms-onboarding v7 -->
 # Rooms onboarding (for agents)
 
 Rooms is an app that shows HTML artifacts grouped into topic rooms. A room is one folder under Home. Artifacts go into a room as file symlinks that point to the original. The original never moves.
@@ -57,4 +57,4 @@ Follow the "First sort / re-sort" section of the installed `SKILL.md` (or the so
 ## Rules
 
 - Never move, edit, or delete original files.
-- Inside `<home>/.rooms`, only read the skill source. Touch nothing else.
+- Never touch `<home>/.rooms` by hand. Exceptions: reading the skill source, and `find_html.py --record-sources`, which writes only `<home>/.rooms/sources.json`.

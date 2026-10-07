@@ -44,4 +44,11 @@ describe("shortcuts", () => {
     expect(allowedWithFocus("close-tab", document.body)).toBe(true);
     expect(allowedWithFocus("toggle-sidebar", null)).toBe(true);
   });
+
+  it("⌘J toggles the ask bar, also with a Korean layout, and works from text fields", () => {
+    expect(keyAction(kd("j"))).toBe("toggle-ask");
+    expect(keyAction(new KeyboardEvent("keydown", { key: "ㅓ", code: "KeyJ", metaKey: true }))).toBe("toggle-ask");
+    const input = document.createElement("input");
+    expect(allowedWithFocus("toggle-ask", input)).toBe(true);
+  });
 });

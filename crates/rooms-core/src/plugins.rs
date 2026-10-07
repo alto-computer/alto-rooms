@@ -25,7 +25,21 @@ pub struct Manifest {
     pub entry: String,
     pub permissions: Vec<String>,
     pub slots: PluginSlots,
+    pub(crate) tools: Vec<ManifestTool>,
 }
+
+/// A tool declared in `manifest.json`: `input` is a JSON Schema for the agent (stored, not enforced);
+/// `append_to` is a data path template where `{doc}` stands for a document's fileKey.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ManifestTool {
+    pub name: String,
+    pub description: String,
+    pub input: Value,
+    pub append_to: String,
+}
+
+const MAX_TOOLS: usize = 16;
+const MAX_TOOL_INPUT_BYTES: usize = 16 * 1024;
 
 pub fn plugins_dir(home: &Path) -> PathBuf {
     home.join(".rooms").join("plugins")
@@ -53,6 +67,32 @@ pub fn valid_path(rel: &str) -> bool {
     let segs: Vec<&str> = rel.split('/').collect();
     segs.len() <= 8
         && segs.iter().all(|s| !s.is_empty() && *s != "." && *s != ".." && s.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
+}
+
+fn valid_tool_name(n: &str) -> bool {
+    let b = n.as_bytes();
+    (1..=40).contains(&b.len()) && b[0].is_ascii_lowercase() && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_')
+}
+
+fn tools(v: Option<&Value>) -> Result<Vec<ManifestTool>, String> {
+    let Some(v) = v else { return Ok(Vec::new()) };
+    let obj = v.as_object().ok_or("tools must be an object")?;
+    if obj.len() > MAX_TOOLS { return Err(format!("at most {MAX_TOOLS} tools")); }
+    let mut out = Vec::new();
+    for (name, t) in obj {
+        if !valid_tool_name(name) { return Err(format!("invalid tool name: {name}")); }
+        let description = t.get("description").and_then(Value::as_str).unwrap_or("");
+        if !(1..=500).contains(&description.chars().count()) { return Err(format!("tool {name}: description must be 1–500 characters")); }
+        let input = t.get("input").filter(|i| i.is_object()).ok_or_else(|| format!("tool {name}: input must be a JSON object"))?;
+        if input.get("type") != Some(&Value::from("object")) { return Err(format!("tool {name}: input must be a JSON Schema with \"type\": \"object\"")); }
+        if input.to_string().len() > MAX_TOOL_INPUT_BYTES { return Err(format!("tool {name}: input must be at most 16 KiB")); }
+        let append_to = t.get("appendTo").and_then(Value::as_str).unwrap_or("");
+        if !valid_path(&append_to.replace("{doc}", "0123456789abcdef")) {
+            return Err(format!("tool {name}: appendTo must be a data path, with only {{doc}} as placeholder"));
+        }
+        out.push(ManifestTool { name: name.clone(), description: description.to_string(), input: input.clone(), append_to: append_to.to_string() });
+    }
+    Ok(out)
 }
 
 fn title(v: &Value) -> Result<String, String> {
@@ -97,7 +137,8 @@ pub fn load_manifest(dir: &Path) -> Result<Manifest, String> {
         }
     }
     if slots.artifact_side_panel.is_none() && slots.tab.is_none() { return Err("declare at least one slot".into()); }
-    Ok(Manifest { id, name, version, min_app_version, description, entry, permissions, slots })
+    let tools = tools(v.get("tools"))?;
+    Ok(Manifest { id, name, version, min_app_version, description, entry, permissions, slots, tools })
 }
 
 /// Changes when the manifest or the entry file changes (first 12 hex of a sha256).
@@ -161,6 +202,27 @@ pub fn write_data(dir: &Path, rel: &str, text: &str) -> Result<(), CoreError> {
     let tmp = parent.join(format!(".{name}.{}-{nanos}.part", std::process::id()));
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, &p).inspect_err(|_| { let _ = std::fs::remove_file(&tmp); })?;
+    Ok(())
+}
+
+/// Appends `line` (which carries its own newline) to a data file with one `O_APPEND` write, so
+/// concurrent appends never interleave. The file (existing length + `line`) must stay within
+/// `MAX_DATA_BYTES`; the check and the write share one lock, so the cap is exact in this process.
+pub fn append_data(dir: &Path, rel: &str, line: &str) -> Result<(), CoreError> {
+    use std::io::Write;
+    static APPEND: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let p = data_file(dir, rel)?;
+    let _guard = APPEND.lock().unwrap_or_else(|e| e.into_inner());
+    let have = match std::fs::symlink_metadata(&p) {
+        Ok(m) if m.is_file() => m.len() as usize,
+        Ok(_) => return Err(CoreError::InvalidInput("is a folder".into())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(e) => return Err(e.into()),
+    };
+    if have.saturating_add(line.len()) > MAX_DATA_BYTES { return Err(CoreError::InvalidInput("too_large".into())); }
+    std::fs::create_dir_all(p.parent().ok_or_else(invalid_path)?)?;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&p)?;
+    f.write_all(line.as_bytes())?;
     Ok(())
 }
 
@@ -239,6 +301,60 @@ mod tests {
         let tab = m.slots.tab.unwrap();
         assert!(tab.sidebar);
         assert_eq!(tab.icon.as_deref(), Some("puzzle"));
+    }
+
+    fn with_tools(folder: &str, tools: &str) -> String {
+        OK.replacen(r#""id":"echo""#, &format!(r#""id":"{folder}""#), 1).replacen(r#""permissions""#, &format!(r#""tools":{tools},"permissions""#), 1)
+    }
+
+    #[test]
+    fn a_manifest_without_tools_has_none() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(load_manifest(&plugin(d.path(), "echo", OK)).unwrap().tools.is_empty());
+    }
+
+    #[test]
+    fn tools_are_parsed() {
+        let d = tempfile::tempdir().unwrap();
+        let m = with_tools("echo", r#"{"draw":{"description":"Draw things","input":{"type":"object"},"appendTo":"notes/{doc}.ops.jsonl"},"log":{"description":"x","input":{"type":"object"},"appendTo":"log.jsonl"}}"#);
+        let t = load_manifest(&plugin(d.path(), "echo", &m)).unwrap().tools;
+        assert_eq!(t.len(), 2);
+        let draw = t.iter().find(|t| t.name == "draw").unwrap();
+        assert_eq!(draw.description, "Draw things");
+        assert_eq!(draw.input, serde_json::json!({"type":"object"}));
+        assert_eq!(draw.append_to, "notes/{doc}.ops.jsonl");
+    }
+
+    #[test]
+    fn invalid_tools_invalidate_the_manifest() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path();
+        let one = |name: &str, body: &str| format!(r#"{{"{name}":{body}}}"#);
+        let ok = r#"{"description":"d","input":{"type":"object"},"appendTo":"a/{doc}.jsonl"}"#;
+        let bad = |i: usize, tools: String| reason(h, &format!("t{i}"), &with_tools(&format!("t{i}"), &tools));
+        assert!(bad(0, one("Draw", ok)).contains("tool"));
+        assert!(bad(1, one("1draw", ok)).contains("tool"));
+        assert!(bad(2, one(&format!("a{}", "b".repeat(40)), ok)).contains("tool"));
+        assert!(bad(3, one("t", r#"{"input":{"type":"object"},"appendTo":"a.jsonl"}"#)).contains("description"));
+        assert!(bad(4, one("t", r#"{"description":"","input":{"type":"object"},"appendTo":"a.jsonl"}"#)).contains("description"));
+        let long = "x".repeat(501);
+        assert!(bad(5, one("t", &format!(r#"{{"description":"{long}","input":{{"type":"object"}},"appendTo":"a.jsonl"}}"#))).contains("description"));
+        assert!(bad(6, one("t", r#"{"description":"d","input":[],"appendTo":"a.jsonl"}"#)).contains("input"));
+        assert!(bad(16, one("t", r#"{"description":"d","input":{},"appendTo":"a.jsonl"}"#)).contains("type"));
+        assert!(bad(17, one("t", r#"{"description":"d","input":{"type":"string"},"appendTo":"a.jsonl"}"#)).contains("type"));
+        assert!(bad(7, one("t", r#"{"description":"d","appendTo":"a.jsonl"}"#)).contains("input"));
+        let big = "x".repeat(16 * 1024);
+        assert!(bad(8, one("t", &format!(r#"{{"description":"d","input":{{"k":"{big}"}},"appendTo":"a.jsonl"}}"#))).contains("input"));
+        assert!(bad(9, one("t", r#"{"description":"d","input":{"type":"object"},"appendTo":"a/{x}.jsonl"}"#)).contains("appendTo"));
+        assert!(bad(10, one("t", r#"{"description":"d","input":{"type":"object"},"appendTo":"/abs/{doc}.jsonl"}"#)).contains("appendTo"));
+        assert!(bad(11, one("t", r#"{"description":"d","input":{"type":"object"},"appendTo":"../{doc}.jsonl"}"#)).contains("appendTo"));
+        assert!(bad(12, one("t", r#"{"description":"d","input":{"type":"object"},"appendTo":"a/{doc"}"#)).contains("appendTo"));
+        assert!(bad(13, one("t", r#"{"description":"d","input":{"type":"object"}}"#)).contains("appendTo"));
+        assert!(bad(14, "[]".into()).contains("tools"));
+        let many: Vec<String> = (0..17).map(|i| format!(r#""t{i}":{ok}"#)).collect();
+        assert!(bad(15, format!("{{{}}}", many.join(","))).contains("16"));
+        let sixteen: Vec<String> = (0..16).map(|i| format!(r#""t{i}":{ok}"#)).collect();
+        assert_eq!(load_manifest(&plugin(h, "t16", &with_tools("t16", &format!("{{{}}}", sixteen.join(","))))).unwrap().tools.len(), 16);
     }
 
     #[test]

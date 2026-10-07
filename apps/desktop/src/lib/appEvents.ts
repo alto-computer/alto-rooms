@@ -2,8 +2,8 @@
  * Native (Tauri) app events.
  *
  * - The macOS menu's "New Tab" (⌘T), "Close Tab" (⌘W), "Find" (⌘K) and "Toggle Sidebar"
- *   (⌘B) arrive as `menu://new-tab`, `menu://close-tab`, `menu://find` and
- *   `menu://toggle-sidebar`; "Back" (⌘[) and "Forward" (⌘]) as `menu://back`
+ *   (⌘B) and "Ask Bar" (⌘J) arrive as `menu://new-tab`, `menu://close-tab`,
+ *   `menu://find`, `menu://toggle-sidebar` and `menu://toggle-ask`; "Back" (⌘[) and "Forward" (⌘]) as `menu://back`
  *   and `menu://forward`.
  * - `daemon://exited`: the roomsd we spawned died (App shows the core error).
  * - Before the window closes or the app quits, Rust emits `app://flush` and
@@ -20,6 +20,7 @@ export const MENU_NEW_TAB = "menu://new-tab";
 export const MENU_CLOSE_TAB = "menu://close-tab";
 export const MENU_FIND = "menu://find";
 export const MENU_TOGGLE_SIDEBAR = "menu://toggle-sidebar";
+export const MENU_TOGGLE_ASK = "menu://toggle-ask";
 export const MENU_BACK = "menu://back";
 export const MENU_FORWARD = "menu://forward";
 export const APP_FLUSH = "app://flush";

@@ -40,4 +40,5 @@ if (typeof window !== "undefined") {
     };
   }
   if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+  if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {};
 }

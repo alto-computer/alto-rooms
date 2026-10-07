@@ -136,6 +136,15 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
     return () => window.removeEventListener("message", onMessage);
   }, [client, viewer, rooms, post, sendContext]);
 
+  // Tell the frame when a declared tool of its own plugin appended to its data.
+  useEffect(
+    () =>
+      rooms.onSignal((_type, e) => {
+        if (e.type === "plugin.data.changed" && e.pluginId === plugin.id) post({ type: "dataChanged", path: e.path });
+      }),
+    [rooms, plugin.id, post],
+  );
+
   useEffect(() => {
     // Only a plugin that may still run reloads on an update; one that must stop just closes.
     if (!active || plugin.rev === shownRev) return;

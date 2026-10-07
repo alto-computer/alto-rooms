@@ -13,7 +13,7 @@ type Client = {
   listPlugins(): Promise<PluginInfo[]>;
   setPluginEnabled(id: string, enabled: boolean, permissions?: string[]): Promise<PluginInfo>;
 };
-type Signals = { onSignal(fn: (type: RoomsEvent["type"]) => void): () => void };
+type Signals = { onSignal(fn: (type: RoomsEvent["type"], e: RoomsEvent) => void): () => void };
 
 const core = (v: string) => v.split(/[-+]/)[0].split(".").map(Number);
 

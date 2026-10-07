@@ -1,8 +1,10 @@
 use crate::AppState;
-use axum::extract::{Path, State};
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use rooms_core::asks::AskError;
 use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
 use serde::Deserialize;
@@ -15,6 +17,61 @@ impl IntoResponse for ApiErr {
     }
 }
 impl From<CoreError> for ApiErr { fn from(e: CoreError) -> Self { ApiErr(e) } }
+
+pub struct AskErr(AskError);
+impl From<AskError> for AskErr { fn from(e: AskError) -> Self { AskErr(e) } }
+impl IntoResponse for AskErr {
+    fn into_response(self) -> Response {
+        let (status, code) = match &self.0 {
+            AskError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            AskError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            AskError::Busy => (StatusCode::CONFLICT, "ask_busy"),
+            AskError::Capacity => (StatusCode::CONFLICT, "ask_capacity"),
+            AskError::AgentConfig(_) => (StatusCode::UNPROCESSABLE_ENTITY, "agent_config"),
+            AskError::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "io"),
+        };
+        (status, Json(ApiError { error: code.into(), message: self.0.to_string() })).into_response()
+    }
+}
+
+pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
+    let Json(b) = b.map_err(|e| AskError::BadRequest(e.body_text()))?;
+    let turn = ask_blocking(&st, move |a| a.start(&b.room_id, &b.artifact_id, &b.question, b.model.as_deref())).await?;
+    Ok((StatusCode::ACCEPTED, Json(turn)))
+}
+
+/// `blocking` for `Asks`: start/thread do SQLite and file IO under a std Mutex.
+async fn ask_blocking<T, F>(st: &AppState, f: F) -> Result<T, AskErr>
+where
+    T: Send + 'static,
+    F: FnOnce(&rooms_core::asks::Asks) -> Result<T, AskError> + Send + 'static,
+{
+    let asks = st.asks.clone();
+    tokio::task::spawn_blocking(move || f(&asks)).await.map_err(|e| AskError::Io(e.to_string()))?.map_err(AskErr)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskQuery { file_key: String }
+
+pub async fn ask_thread(State(st): State<AppState>, q: Result<Query<AskQuery>, QueryRejection>) -> Result<Json<Vec<AskTurn>>, AskErr> {
+    let Query(q) = q.map_err(|e| AskError::BadRequest(e.body_text()))?;
+    Ok(Json(ask_blocking(&st, move |a| a.thread(&q.file_key)).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetQuery { room_id: String, artifact_id: String }
+
+pub async fn ask_target(State(st): State<AppState>, q: Result<Query<TargetQuery>, QueryRejection>) -> Result<Json<AskTarget>, AskErr> {
+    let Query(q) = q.map_err(|e| AskError::BadRequest(e.body_text()))?;
+    Ok(Json(ask_blocking(&st, move |a| a.target(&q.room_id, &q.artifact_id)).await?))
+}
+
+pub async fn cancel_ask(State(st): State<AppState>, Path(ask_id): Path<String>) -> StatusCode {
+    st.asks.cancel(&ask_id);
+    StatusCode::NO_CONTENT
+}
 
 /// Runs a core call on the blocking pool: core does filesystem/SQLite IO under a std Mutex,
 /// which must not stall the async workers. A panicked/cancelled task maps to 500 `internal`.
@@ -131,6 +188,31 @@ fn plugin_err(e: CoreError) -> Response {
     }
 }
 
+/// Tool errors: `bad_request:<why>` 400, `too_large` 413, anything else as `ApiErr` (NotFound 404).
+fn tool_err(e: CoreError) -> Response {
+    match &e {
+        CoreError::InvalidInput(c) if c.starts_with("bad_request:") => bad_request(c["bad_request:".len()..].to_string()),
+        CoreError::InvalidInput(c) if c == "too_large" => plugin_err(e),
+        _ => ApiErr(e).into_response(),
+    }
+}
+
+fn bad_request(message: String) -> Response {
+    (StatusCode::BAD_REQUEST, Json(ApiError { error: "bad_request".into(), message })).into_response()
+}
+
+pub async fn list_tools(State(st): State<AppState>) -> Result<Json<Vec<ToolInfo>>, ApiErr> {
+    Ok(Json(blocking(&st, |c| Ok(c.list_tools())).await?))
+}
+
+pub async fn call_tool(State(st): State<AppState>, b: Result<Json<ToolCall>, JsonRejection>) -> Response {
+    let Json(call) = match b { Ok(j) => j, Err(e) => return bad_request(e.body_text()) };
+    match blocking(&st, move |c| c.call_tool(&call)).await {
+        Ok(r) => Json(r).into_response(),
+        Err(ApiErr(e)) => tool_err(e),
+    }
+}
+
 pub async fn list_plugins(State(st): State<AppState>) -> Result<Json<Vec<PluginInfo>>, ApiErr> {
     Ok(Json(blocking(&st, |c| Ok(c.plugins())).await?))
 }
@@ -235,7 +317,8 @@ mod tests {
     fn state() -> (tempfile::TempDir, AppState) {
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
-        (d, AppState { core, token: "t".into(), read_only: false, files_origin: String::new(), net: crate::NetConfig::default() })
+        let asks = rooms_core::asks::Asks::new(core.clone(), None);
+        (d, AppState { core, asks, token: "t".into(), read_only: false, files_origin: String::new(), net: crate::NetConfig::default() })
     }
 
     /// Spec §5 S3 rule ③: the client drops buffered events with seq ≤ snapshot seq, so the header

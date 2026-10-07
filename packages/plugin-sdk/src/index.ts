@@ -56,6 +56,8 @@ export interface RoomsPlugin {
     list(prefix?: string): Promise<string[]>;
     /** Removes a file; a missing file is fine. */
     delete(path: string): Promise<void>;
+    /** Called with the path when a tool of yours appended to your data (not for your own writes). Returns an unsubscribe. */
+    onChange(cb: (path: string) => void): () => void;
   };
   /** Needs the `rooms.read` permission. */
   rooms: { list(): Promise<PluginRoom[]> };
@@ -69,6 +71,7 @@ type Inbound =
   | { rooms: 1; type: "context"; pluginId: string; context: PluginContext }
   | { rooms: 1; type: "beforeClose"; id: string }
   | { rooms: 1; type: "ping"; id: string }
+  | { rooms: 1; type: "dataChanged"; path: string }
   | { rooms: 1; id: string; result?: unknown; error?: { code: PluginErrorCode; message?: string } };
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -82,6 +85,7 @@ export function connect(opts: { timeoutMs?: number } = {}): Promise<RoomsPlugin>
   let pluginId = "";
   let current: PluginContext | null = null;
   const contextListeners = new Set<(c: PluginContext) => void>();
+  const changeListeners = new Set<(path: string) => void>();
   const closeHandlers = new Set<() => Promise<void> | void>();
   const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: PluginError) => void; timer: ReturnType<typeof setTimeout> }>();
   let nextId = 0;
@@ -117,6 +121,8 @@ export function connect(opts: { timeoutMs?: number } = {}): Promise<RoomsPlugin>
         void runBeforeClose(d.id);
       } else if (d.type === "ping") {
         post({ type: "pong", id: d.id });
+      } else if (d.type === "dataChanged") {
+        for (const l of [...changeListeners]) l(d.path);
       }
       return;
     }
@@ -146,6 +152,10 @@ export function connect(opts: { timeoutMs?: number } = {}): Promise<RoomsPlugin>
       write: (path, text) => request<void>("storage.write", { path, text }),
       list: (prefix = "") => request<string[]>("storage.list", { prefix }),
       delete: (path) => request<void>("storage.delete", { path }),
+      onChange(cb) {
+        changeListeners.add(cb);
+        return () => void changeListeners.delete(cb);
+      },
     },
     rooms: { list: () => request<PluginRoom[]>("rooms.list", {}) },
     artifacts: { list: (roomId) => request<PluginArtifact[]>("artifacts.list", { roomId }) },

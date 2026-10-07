@@ -1,5 +1,7 @@
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Artifact } from "@alto-rooms/protocol-ts";
+import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
 import { AppShell } from "./AppShell";
 
@@ -37,6 +39,17 @@ const keyOn = (el: EventTarget, k: string) => {
   });
   return ev;
 };
+
+const doc: Artifact = {
+  id: "a1", roomId: "r1", relPath: "doc.html", title: "Doc", createdAt: "2026-10-06T09:00:00+09:00",
+  updatedAt: "2026-10-06T09:00:00+09:00", author: "agent", fileKey: "k1",
+  source: { agent: "claude-code", session: "S1", cwd: null, machine: null },
+};
+let asksStore: ReturnType<typeof useAsksStore>;
+function Grab() {
+  asksStore = useAsksStore();
+  return null;
+}
 
 describe("AppShell in Tauri", () => {
   it("the page leaves ⌘W/⌘T/⌘B/⌘K to the menu, so they never fire twice", async () => {
@@ -124,5 +137,30 @@ describe("AppShell in Tauri", () => {
     menu("menu://new-tab");
     expect(h.viewer.getState().tabs).toHaveLength(before);
     expect(screen.getByLabelText("New room name")).toBeInTheDocument();
+  });
+
+  it("menu://toggle-ask shows and hides the ask bar on a doc tab, and is ignored on other tabs", async () => {
+    const h = await renderWithStores(
+      <>
+        <Grab />
+        <AppShell />
+      </>,
+      { rooms, artifacts: { r1: [doc] } },
+    );
+    act(() => {
+      h.viewer.open({ kind: "doc", roomId: "r1", artifactId: "a1" });
+    });
+    await act(async () => {}); // listeners register asynchronously
+    // open by default
+    expect(await screen.findByPlaceholderText("Ask about this doc…")).toBeInTheDocument();
+    menu("menu://toggle-ask");
+    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
+    menu("menu://toggle-ask");
+    expect(await screen.findByPlaceholderText("Ask about this doc…")).toBeInTheDocument();
+    act(() => {
+      h.viewer.open({ kind: "new" });
+    });
+    menu("menu://toggle-ask");
+    expect(asksStore.getState().open).toBe(true);
   });
 });

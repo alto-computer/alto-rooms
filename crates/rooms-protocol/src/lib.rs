@@ -138,6 +138,73 @@ wire!(pub struct ApiError {
     pub message: String,
 });
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum AskStatus { Running, Done, Failed, Cancelled }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum AskMode { Resume, New }
+
+wire!(
+/// One question and its answer, asked from a doc to the agent that made it (spec v2 ask).
+pub struct AskTurn {
+    pub id: String,
+    pub file_key: String,
+    pub question: String,
+    /// The agent's stdout (ANSI stripped, trimmed); empty while running.
+    pub answer: String,
+    pub agent: String,
+    /// The model picked for this turn; `None` = the agent's own default.
+    pub model: Option<String>,
+    pub mode: AskMode,
+    pub status: AskStatus,
+    pub error: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+});
+
+wire!(
+/// A tool a plugin declares in its manifest; `input` is a JSON Schema for the agent (stored, not enforced).
+pub struct ToolInfo {
+    pub plugin_id: String,
+    pub name: String,
+    pub description: String,
+    #[ts(type = "unknown")]
+    pub input: serde_json::Value,
+});
+
+wire!(pub struct ToolCall {
+    pub plugin_id: String,
+    pub name: String,
+    #[ts(type = "unknown")]
+    pub input: serde_json::Value,
+});
+
+wire!(
+/// The data path (under the plugin's `data/`) a tool call appended to.
+pub struct ToolResult {
+    pub path: String,
+});
+
+wire!(pub struct StartAsk {
+    pub room_id: RoomId,
+    pub artifact_id: ArtifactId,
+    pub question: String,
+    /// One of `AskTarget::models`; `None` or empty = the agent's own default.
+    pub model: Option<String>,
+});
+
+wire!(
+/// Which agent an ask from this doc would go to, and the models it can pick from (empty = no choice).
+pub struct AskTarget {
+    pub agent: String,
+    pub mode: AskMode,
+    pub models: Vec<String>,
+});
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(tag = "type")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
@@ -149,12 +216,17 @@ pub enum EventKind {
     #[serde(rename = "rooms.reordered", rename_all = "camelCase")] RoomsReordered { room_ids: Vec<RoomId> },
     /// Something under `.rooms/plugins/` changed (outside plugins' `data/`) or a plugin was turned on/off: list again.
     #[serde(rename = "plugins.changed")] PluginsChanged {},
+    /// A tool call appended to a plugin's data file (bridge writes do not emit this).
+    #[serde(rename = "plugin.data.changed", rename_all = "camelCase")] PluginDataChanged { plugin_id: String, path: String },
     #[serde(rename = "artifact.added")] ArtifactAdded { artifact: Artifact },
     #[serde(rename = "artifact.updated")] ArtifactUpdated { artifact: Artifact },
     #[serde(rename = "artifact.removed", rename_all = "camelCase")] ArtifactRemoved { room_id: RoomId, artifact_id: ArtifactId },
     #[serde(rename = "note.saved")] NoteSaved { note: Note },
     #[serde(rename = "note.removed")] NoteRemoved { date: IsoDate, name: String },
     #[serde(rename = "journal.changed")] JournalChanged { date: IsoDate },
+    #[serde(rename = "ask.started")] AskStarted { turn: AskTurn },
+    /// Exactly once per started turn; `turn.answer` is the whole answer.
+    #[serde(rename = "ask.done")] AskDone { turn: AskTurn },
     #[serde(rename = "resync", rename_all = "camelCase")] Resync { room_id: Option<RoomId> },
 }
 
