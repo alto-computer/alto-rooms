@@ -245,7 +245,10 @@ export class ViewerStore {
     const i = this.state.tabs.findIndex((t) => t.id === id);
     if (i < 0) return;
     const closing = this.state.tabs[i];
-    this.closed = [...this.closed, { tab: toInput(closing), index: i, history: this.historyOf(id) }].slice(-CLOSED_LIMIT);
+    // A New tab is nothing to bring back (and the last tab's close leaves one anyway).
+    if (closing.kind !== "new") {
+      this.closed = [...this.closed, { tab: toInput(closing), index: i, history: this.historyOf(id) }].slice(-CLOSED_LIMIT);
+    }
     let tabs = this.state.tabs.filter((t) => t.id !== id);
     const { [id]: _dropped, ...history } = this.state.history;
     this.navCounts.delete(id);

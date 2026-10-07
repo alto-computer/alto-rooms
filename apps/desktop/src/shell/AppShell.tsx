@@ -27,7 +27,7 @@ import { RoomView } from "@/views/RoomView";
 import { EnableCard } from "@/plugins/EnableCard";
 import { PluginSlot } from "@/plugins/PluginSlot";
 import { allowedWithFocus, historyKey, isMenuHistoryKey, isMenuTabKey, isTextField, keyAction, tabKey, type ShortcutAction, type TabKey } from "./shortcuts";
-import { CurrentTabContext } from "./currentTab";
+import { CurrentTabContext, TabVisibleContext } from "./currentTab";
 import { Sidebar } from "./Sidebar";
 import { TAB_PANEL_ID, TabBar, tabDomId } from "./TabBar";
 
@@ -153,6 +153,8 @@ function useTabKeys(viewer: ViewerStore) {
       const k = tabKey(e);
       if (!k) return;
       e.preventDefault();
+      // Let a field being edited (a rename) save on blur before its view goes away.
+      if (isTextField(document.activeElement)) (document.activeElement as HTMLElement).blur();
       runTabKey(k, viewer);
     };
     window.addEventListener("keydown", onKey);
@@ -198,7 +200,13 @@ function useMountedTabs(tabs: Tab[], active: Tab | undefined): Tab[] {
     recent.current = [active.id, ...recent.current.filter((id) => id !== active.id)].slice(0, KEPT_DOC_TABS + 1);
   }
   const kept = new Set(recent.current);
-  return tabs.filter((t) => t === active || (t.kind === "doc" && kept.has(t.id)));
+  const mounted = tabs.filter((t) => t === active || (t.kind === "doc" && kept.has(t.id)));
+  // Rendered in the order they were first mounted, never in tab order: moving an iframe's
+  // DOM node reloads it, so reordering tabs (or switching between them) must not move any.
+  const order = useRef<string[]>([]);
+  const ids = new Set(mounted.map((t) => t.id));
+  order.current = [...order.current.filter((id) => ids.has(id)), ...mounted.map((t) => t.id).filter((id) => !order.current.includes(id))];
+  return order.current.map((id) => mounted.find((t) => t.id === id)!);
 }
 
 const SIDEBAR_STYLE = { "--sidebar-width": "232px" } as CSSProperties;
@@ -246,7 +254,9 @@ export function AppShell() {
             {mounted.map((tab) => (
               <Activity key={viewer.navKey(tab.id)} mode={tab === active ? "visible" : "hidden"}>
                 <CurrentTabContext.Provider value={tab.id}>
-                  <TabView tab={tab} />
+                  <TabVisibleContext.Provider value={tab === active}>
+                    <TabView tab={tab} />
+                  </TabVisibleContext.Provider>
                 </CurrentTabContext.Provider>
               </Activity>
             ))}

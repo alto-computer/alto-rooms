@@ -35,6 +35,8 @@ const EMPTY: Thread = { turns: [], loaded: false, error: false };
 export class AsksStore {
   private state: AsksState = { open: true, threads: {} };
   private listeners = new Set<() => void>();
+  /** File keys an ask bar is showing, with a count per bar. */
+  private held = new Map<string, number>();
   private stopSignals: (() => void) | null = null;
 
   constructor(
@@ -107,6 +109,16 @@ export class AsksStore {
     void this.client?.cancelAsk(askId).catch((e) => console.warn("rooms: could not cancel ask", e));
   }
 
+  /** Keeps `fileKey`'s thread from being pruned while an ask bar shows it; returns the release. */
+  hold(fileKey: string): () => void {
+    this.held.set(fileKey, (this.held.get(fileKey) ?? 0) + 1);
+    return () => {
+      const n = (this.held.get(fileKey) ?? 1) - 1;
+      if (n > 0) this.held.set(fileKey, n);
+      else this.held.delete(fileKey);
+    };
+  }
+
   private apply(t: AskTurn) {
     const th = this.state.threads[t.fileKey] ?? EMPTY;
     this.setThread(t.fileKey, { ...th, turns: upsert(th.turns, t) });
@@ -119,7 +131,7 @@ export class AsksStore {
     let extra = Object.keys(threads).length - MAX_THREADS;
     for (const [k, t] of Object.entries(threads)) {
       if (extra <= 0) break;
-      if (k === key || t.turns.some((x) => !finished(x))) continue;
+      if (k === key || this.held.has(k) || t.turns.some((x) => !finished(x))) continue;
       delete threads[k];
       extra--;
     }

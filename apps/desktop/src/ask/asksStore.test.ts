@@ -44,6 +44,17 @@ describe("AsksStore", () => {
     expect(keys).not.toContain("f0");
   });
 
+  it("never drops a thread an ask bar holds, until it lets go", () => {
+    const { store, emit } = setup();
+    emit({ type: "ask.done", turn: turn("seen", "done", { fileKey: "seen" }) });
+    const release = store.hold("seen");
+    for (let i = 0; i < MAX_THREADS + 5; i++) emit({ type: "ask.done", turn: turn(`t${i}`, "done", { fileKey: `f${i}` }) });
+    expect(Object.keys(store.getState().threads)).toContain("seen");
+    release();
+    emit({ type: "ask.done", turn: turn("last", "done", { fileKey: "last" }) });
+    expect(Object.keys(store.getState().threads)).not.toContain("seen");
+  });
+
   it("starts open and toggles", () => {
     const { store } = setup();
     expect(store.getState().open).toBe(true);

@@ -445,6 +445,23 @@ describe("AppShell: kept doc tabs", () => {
     expect(frame).toBeVisible();
   });
 
+  it("reordering tabs never moves a kept frame (a moved iframe reloads)", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    const a = viewer.open({ kind: "doc", roomId: "r1", artifactId: "a" });
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [doc("a", "첫 문서"), doc("b", "둘째")] }, viewer });
+    await screen.findByTitle("첫 문서");
+    act(() => {
+      viewer.open({ kind: "doc", roomId: "r1", artifactId: "b" });
+    });
+    await screen.findByTitle("둘째");
+    act(() => viewer.activate(a));
+    const panel = screen.getByRole("tabpanel");
+    const order = () => [...panel.querySelectorAll("iframe")].map((f) => f.title);
+    const before = order();
+    act(() => viewer.move(a, 99));
+    expect(order()).toEqual(before);
+  });
+
   it("keeps at most three doc tabs besides the active one", async () => {
     const viewer = new ViewerStore(memoryStorage());
     const ids = ["a", "b", "c", "d", "e"];

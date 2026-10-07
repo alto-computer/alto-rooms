@@ -99,6 +99,16 @@ describe("ViewerStore", () => {
     expect(st.getState().tabs).toHaveLength(3);
   });
 
+  it("closing a New tab leaves nothing to reopen", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const r = st.open({ kind: "room", roomId: "a" });
+    st.close(r);
+    st.close(st.getState().tabs[0].id); // the New tab: replaced by another New tab
+    st.close(st.getState().tabs[0].id);
+    st.reopen(); // the room, not one of the New tabs
+    expect(st.getState().tabs.map((t) => t.kind)).toEqual(["new", "room"]);
+  });
+
   it("activateAt picks by index (-1 = last); cycle wraps around", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const n = st.getState().tabs[0].id;

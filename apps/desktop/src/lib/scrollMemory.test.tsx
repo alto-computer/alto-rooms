@@ -28,6 +28,19 @@ describe("useScrollMemory", () => {
     expect(other.getByTestId("pane").scrollTop).toBe(0);
   });
 
+  it("restores again when the same view shows other content", () => {
+    const v = render(<Pane k="journal:a" />);
+    const pane = v.getByTestId("pane");
+    pane.scrollTop = 200;
+    fireEvent.scroll(pane);
+    v.rerender(<Pane k="journal:b" />);
+    expect(pane.scrollTop).toBe(0);
+    pane.scrollTop = 50;
+    fireEvent.scroll(pane);
+    v.rerender(<Pane k="journal:a" />);
+    expect(pane.scrollTop).toBe(200);
+  });
+
   it("waits until the content is ready, and restores only once", () => {
     const a = render(<Pane k="k" />);
     a.getByTestId("pane").scrollTop = 300;

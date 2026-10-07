@@ -107,6 +107,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const container = useRef<HTMLDivElement>(null);
   /** Set synchronously on send, so a second Enter before the turn shows up does nothing. */
   const sending = useRef(false);
+  useEffect(() => store.hold(artifact.fileKey), [store, artifact.fileKey]);
   const loading = useRef<string | null>(null);
   const shown = open && !readOnly;
   const loaded = thread?.loaded ?? false;
@@ -194,7 +195,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
     setSendError(null);
     try {
       await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, q, withModel);
-      if (q === draft.trim()) setDraft("");
+      // Only clear what was sent: the next question may have been typed in the meantime.
+      setDraft((d) => (d.trim() === q ? "" : d));
       setSheet(true);
     } catch (e) {
       setSendError(e instanceof RoomsApiError ? e.message : GENERIC_ERROR);

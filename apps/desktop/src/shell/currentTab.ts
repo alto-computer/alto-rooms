@@ -4,3 +4,8 @@ import { createContext, useContext } from "react";
 export const CurrentTabContext = createContext("");
 
 export const useCurrentTabId = (): string => useContext(CurrentTabContext);
+
+/** False while the view's tab is kept alive in the background (see AppShell's kept doc tabs). */
+export const TabVisibleContext = createContext(true);
+
+export const useTabVisible = (): boolean => useContext(TabVisibleContext);

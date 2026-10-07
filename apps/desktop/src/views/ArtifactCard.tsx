@@ -5,6 +5,7 @@ import { useClient } from "@/data/hooks";
 import { artifactDragSource } from "@/lib/drag";
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
+import { useLingering } from "@/lib/useLingering";
 import { DocSkeleton } from "./DocSkeleton";
 
 /** Previews are laid out at this width, then scaled down to the page box. */
@@ -67,19 +68,6 @@ function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
   return near;
 }
 
-/** `value`, except that turning false waits `ms` (and is dropped if it turns true again meanwhile). */
-function useLingering(value: boolean, ms: number): boolean {
-  const [held, setHeld] = useState(value);
-  useEffect(() => {
-    if (value) {
-      setHeld(true);
-      return;
-    }
-    const t = setTimeout(() => setHeld(false), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return value || held;
-}
 
 /** The page box's inner size; `fallback` until measured. */
 function useBoxSize(ref: RefObject<HTMLElement | null>, fallback: { w: number; h: number }) {

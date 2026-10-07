@@ -16,15 +16,15 @@ function remember(key: string, top: number) {
  */
 export function useScrollMemory<T extends HTMLElement>(key: string, ready: boolean): RefObject<T | null> {
   const ref = useRef<T>(null);
-  const restored = useRef(false);
+  /** The key whose offset was last restored: a new key (same view, other content) restores again. */
+  const restored = useRef<string | null>(null);
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !ready) return;
-    if (!restored.current) {
-      restored.current = true;
-      const top = saved.get(key);
-      if (top !== undefined) el.scrollTop = top;
+    if (restored.current !== key) {
+      restored.current = key;
+      el.scrollTop = saved.get(key) ?? 0;
     }
     const onScroll = () => remember(key, el.scrollTop);
     el.addEventListener("scroll", onScroll, { passive: true });

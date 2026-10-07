@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { useLingering } from "@/lib/useLingering";
 import type { Artifact, Room } from "@alto-rooms/protocol-ts";
 import { FileText, Folder } from "lucide-react";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -16,11 +17,22 @@ const norm = (s: string) => s.normalize("NFC").toLowerCase();
  * open; results fill in as rooms arrive. Normalized names and titles are
  * computed once per list, not per keystroke.
  */
+/** How long the body outlives a close, so the dialog's fade-out still shows the results. */
+const CLOSE_ANIMATION_MS = 200;
+
 export function QuickFind({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const mounted = useLingering(open, CLOSE_ANIMATION_MS);
+  // A fresh body (empty query) per opening, even when reopened mid-fade.
+  const [opened, setOpened] = useState(0);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setOpened((n) => n + 1);
+  }
   return (
     <CommandDialog open={open} onOpenChange={(o) => !o && onClose()} title="Find" description="Find a room or doc">
-      {/* Mounted only while open: a closed Find neither watches rooms nor re-renders on their changes, and opens with an empty query. */}
-      {open ? <FindBody onClose={onClose} /> : null}
+      {/* Mounted only while open (and through the close animation): a closed Find neither watches rooms nor re-renders on their changes, and opens with an empty query. */}
+      {mounted ? <FindBody key={opened} onClose={onClose} /> : null}
     </CommandDialog>
   );
 }

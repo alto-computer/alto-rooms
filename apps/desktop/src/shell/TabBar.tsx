@@ -295,6 +295,8 @@ function TabItem({
             // dnd-kit's attributes would turn the tab into a "button" and a Tab stop; it stays a tab, and only the active one is a stop.
             role="tab"
             tabIndex={active ? 0 : -1}
+            aria-roledescription={undefined}
+            aria-pressed={undefined}
             className={cn(
               // The active tab keeps room for its always-visible close button; the others never
               // change padding on hover (their close button fades in over the label's end instead).
