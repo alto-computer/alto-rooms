@@ -227,6 +227,40 @@ describe("AppShell: tabs", () => {
     await waitFor(() => expect(tabNames()).toEqual(["New tab", "디자인", "벤치마크"]));
   });
 
+  it("tabs are one Tab stop: arrows, Home and End switch tabs, Delete closes the focused one", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(screen.getAllByRole("tab").map((t) => t.tabIndex)).toEqual([-1, -1, 0]);
+    expect(screen.getAllByRole("button", { name: "Close tab" }).every((b) => b.tabIndex === -1)).toBe(true);
+
+    const press = (key: string) => fireEvent.keyDown(document.activeElement!, { key });
+    screen.getByRole("tab", { name: "디자인" }).focus();
+    press("ArrowLeft");
+    expect(activeTab()).toHaveTextContent("벤치마크");
+    expect(document.activeElement).toBe(activeTab());
+    press("Home");
+    expect(activeTab()).toHaveTextContent("New tab");
+    press("ArrowLeft"); // wraps
+    expect(activeTab()).toHaveTextContent("디자인");
+    press("Delete");
+    expect(tabNames()).toEqual(["New tab", "벤치마크"]);
+    expect(h.viewer.getState().tabs).toHaveLength(2);
+  });
+
+  it("after a close click, tabs keep their width until the pointer leaves the strip", async () => {
+    await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
+    const wrapper = (name: string) => screen.getByRole("tab", { name }).parentElement!;
+    wrapper("벤치마크").getBoundingClientRect = () => ({ width: 140 }) as DOMRect;
+    fireEvent.click(within(wrapper("벤치마크")).getByRole("button", { name: "Close tab" }), { detail: 1 });
+    expect(wrapper("디자인").style.flex).toBe("0 0 140px");
+    fireEvent.mouseLeave(screen.getByRole("tablist"));
+    expect(wrapper("디자인").style.flex).toBe("");
+  });
+
   it("middle-click closes a tab", async () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
