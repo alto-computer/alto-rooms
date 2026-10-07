@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AskTarget, AskTurn, RoomsEvent } from "@alto-rooms/protocol-ts";
-import { AsksStore, upsert } from "./asksStore";
+import { AsksStore, MAX_THREADS, upsert } from "./asksStore";
 
 type EventInput = RoomsEvent extends infer T ? (T extends RoomsEvent ? Omit<T, "seq"> : never) : never;
 
@@ -33,6 +33,17 @@ describe("upsert", () => {
 });
 
 describe("AsksStore", () => {
+  it("keeps the most recently touched threads and never drops a running one", () => {
+    const { store, emit } = setup();
+    emit({ type: "ask.started", turn: turn("busy", "running", { fileKey: "busy" }) });
+    for (let i = 0; i < MAX_THREADS + 5; i++) emit({ type: "ask.done", turn: turn(`t${i}`, "done", { fileKey: `f${i}` }) });
+    const keys = Object.keys(store.getState().threads);
+    expect(keys).toHaveLength(MAX_THREADS);
+    expect(keys).toContain("busy");
+    expect(keys).toContain(`f${MAX_THREADS + 4}`);
+    expect(keys).not.toContain("f0");
+  });
+
   it("starts open and toggles", () => {
     const { store } = setup();
     expect(store.getState().open).toBe(true);

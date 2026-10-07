@@ -27,6 +27,9 @@ export function upsert(turns: AskTurn[], t: AskTurn): AskTurn[] {
   return next;
 }
 
+/** Threads kept in memory; a dropped one reloads from roomsd when its doc is shown again. */
+export const MAX_THREADS = 20;
+
 const EMPTY: Thread = { turns: [], loaded: false, error: false };
 
 export class AsksStore {
@@ -109,8 +112,18 @@ export class AsksStore {
     this.setThread(t.fileKey, { ...th, turns: upsert(th.turns, t) });
   }
 
+  /** Moves `key` to the end (most recently touched) and drops the oldest idle threads past the cap. */
   private setThread(key: string, th: Thread) {
-    this.set({ ...this.state, threads: { ...this.state.threads, [key]: th } });
+    const { [key]: _old, ...rest } = this.state.threads;
+    const threads: Record<string, Thread> = { ...rest, [key]: th };
+    let extra = Object.keys(threads).length - MAX_THREADS;
+    for (const [k, t] of Object.entries(threads)) {
+      if (extra <= 0) break;
+      if (k === key || t.turns.some((x) => !finished(x))) continue;
+      delete threads[k];
+      extra--;
+    }
+    this.set({ ...this.state, threads });
   }
 
   private set(next: AsksState) {
