@@ -65,7 +65,7 @@ If a new version asks for more permissions, Rooms asks the user again.
 ## The SDK
 
 ```sh
-bun add https://github.com/alto-computer/alto-rooms/releases/download/plugin-sdk-v0.1.0/alto-rooms-plugin-sdk-0.1.0.tgz
+bun add https://github.com/alto-computer/alto-rooms/releases/download/plugin-sdk-v0.2.0/alto-rooms-plugin-sdk-0.2.0.tgz
 ```
 
 Build with any bundler; set its base to `./` so every URL in the build is relative. [Goals](https://github.com/alto-computer/rooms-plugin-goals) and [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw) are complete examples.
@@ -99,6 +99,7 @@ rooms.onBeforeClose(async () => {
 | `storage.write(path, text)` | Writes atomically; up to 10 MB |
 | `storage.list(prefix?)` | Your files under `data/`, sorted |
 | `storage.delete(path)` | Removes a file; a missing file is fine |
+| `storage.onChange(cb)` | Calls `cb(path)` when one of your files changes from outside the frame (an agent called one of your tools); returns an unsubscribe function |
 | `rooms.list()` | Rooms in sidebar order (`rooms.read`) |
 | `artifacts.list(roomId)` | Documents in a room, newest first (`rooms.read`) |
 | `open({ roomId } \| { fileKey })` | Opens a room or document in the current tab |
@@ -106,6 +107,25 @@ rooms.onBeforeClose(async () => {
 Errors are `PluginError` with a `code`: `permission_denied`, `invalid_path`, `too_large`, `not_found`, `write_failed`, `unknown_method`, `timeout`.
 
 The context is `{ slot: "artifact.sidePanel", artifact }` or `{ slot: "tab" }`. `artifact.fileKey` identifies the original file: it stays the same when Rooms moves the document, and every room that links the same original gets the same key. Key your per-document data by it.
+
+## Tools for agents
+
+A plugin can let agents write into its data by declaring tools in `manifest.json`. Rooms exposes them to agents through `rooms-mcp`, an MCP server that ships with the app; asks from the ask bar get it automatically.
+
+```json
+"tools": {
+  "draw": {
+    "description": "Add shapes to this doc's notes. Call several times to draw step by step.",
+    "input": { "type": "object", "required": ["doc", "ops"], "properties": { "doc": { "type": "string" }, "ops": { "type": "array" } } },
+    "appendTo": "notes/{doc}.ops.jsonl"
+  }
+}
+```
+
+- `name` is `[a-z][a-z0-9_]{0,39}`; at most 16 tools; `description` 1–500 characters; `input` is a JSON Schema object (`"type": "object"`, up to 16 KB) shown to the agent.
+- Every call must include `doc`: a document's `fileKey` or the absolute path of its original. Rooms appends one line, `{"at", "tool", "input"}`, to the `appendTo` file (`{doc}` becomes the fileKey) and your frame hears it through `storage.onChange`. Rooms never checks `input` against the schema: validate it when you read the lines.
+- Treat `appendTo` files as append-only from your side: rewriting them can race with an agent's call. Each file is capped at 10 MB.
+- Rooms itself never interprets your tools. What a line means is up to your plugin. [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw) is a complete example (`draw`).
 
 ## Rules of the sandbox
 
