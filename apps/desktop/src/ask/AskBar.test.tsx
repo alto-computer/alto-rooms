@@ -216,40 +216,73 @@ describe("AskBar", () => {
     const { client } = await setup({}, false, { agent: "codex", mode: "new", models: [] });
     expect(await screen.findByText("codex")).toBeTruthy();
     expect(client.askTarget).toHaveBeenCalledWith("r1", "a1");
-    expect(screen.queryByLabelText("Model")).toBeNull();
+    expect(screen.queryByLabelText(/^Model/)).toBeNull();
   });
 
-  it("a model menu lists Default and the models, checks the current one, and sends the pick", async () => {
+  it("falls back to the doc's agent when roomsd can't say where the ask goes", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const noAgent = { ...doc, source: { ...doc.source, agent: null } };
+      await renderWithStores(<AskBar artifact={noAgent} />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { a1: new Error("down") } });
+      expect(await screen.findByText("Default agent")).toBeTruthy();
+      await waitFor(() => expect(warn).toHaveBeenCalled());
+      expect(screen.getByText("Default agent")).toBeTruthy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a model menu lists Default and the models as radio items, checks the current one, and sends the pick", async () => {
     const { client } = await setup({}, false, claude);
-    const trigger = await screen.findByLabelText("Model");
+    const trigger = await screen.findByLabelText("Model: claude-code · Default");
     expect(trigger.textContent).toBe("claude-code · Default");
     fireEvent.keyDown(trigger, { key: "Enter" });
-    const items = await screen.findAllByRole("menuitem");
+    const items = await screen.findAllByRole("menuitemradio");
     expect(items.map((i) => i.textContent)).toEqual(["Default", "Opus", "Sonnet", "Haiku", "claude-x-1"]);
-    expect(items[0].querySelector("[aria-label=Current]")).toBeTruthy();
-    expect(items[2].querySelector("[aria-label=Current]")).toBeNull();
+    expect(items.map((i) => i.getAttribute("aria-checked"))).toEqual(["true", "false", "false", "false", "false"]);
     fireEvent.click(items[2]);
-    await waitFor(() => expect(screen.getByLabelText("Model").textContent).toBe("claude-code · Sonnet"));
+    expect(await screen.findByLabelText("Model: claude-code · Sonnet")).toBeTruthy();
     const input = screen.getByPlaceholderText("Ask about this doc…");
     fireEvent.change(input, { target: { value: "왜?" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?", model: "sonnet" }));
   });
 
+  it("a pointerdown in the model menu keeps the sheet open", async () => {
+    await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] }, false, claude);
+    expect(await screen.findByText("답")).toBeTruthy();
+    fireEvent.keyDown(await screen.findByLabelText(/^Model:/), { key: "Enter" });
+    fireEvent.pointerDown((await screen.findAllByRole("menuitemradio"))[1]);
+    expect(screen.getByText("답")).toBeTruthy();
+  });
+
   it("remembers the pick per agent and ignores a remembered model that is no longer offered", async () => {
     localStorage.setItem("alto-rooms.askModel.claude-code", "haiku");
     localStorage.setItem("alto-rooms.askModel.codex", "gpt-6-sol");
     await setup({}, false, claude);
-    const trigger = await screen.findByLabelText("Model");
-    expect(trigger.textContent).toBe("claude-code · Haiku");
+    const trigger = await screen.findByLabelText("Model: claude-code · Haiku");
     fireEvent.keyDown(trigger, { key: "Enter" });
-    fireEvent.click((await screen.findAllByRole("menuitem"))[1]);
+    fireEvent.click((await screen.findAllByRole("menuitemradio"))[1]);
     expect(localStorage.getItem("alto-rooms.askModel.claude-code")).toBe("opus");
     expect(localStorage.getItem("alto-rooms.askModel.codex")).toBe("gpt-6-sol");
     cleanup();
     localStorage.setItem("alto-rooms.askModel.claude-code", "retired-model");
     await setup({}, false, claude);
-    expect((await screen.findByLabelText("Model")).textContent).toBe("claude-code · Default");
+    expect(await screen.findByLabelText("Model: claude-code · Default")).toBeTruthy();
+  });
+
+  it("retry keeps the turn's model while it is offered, else uses the picker's", async () => {
+    localStorage.setItem("alto-rooms.askModel.claude-code", "haiku");
+    const failed = (id: string, model: string) =>
+      turn({ id, question: id, model, status: "failed", error: `err ${id}`, endedAt: "2026-10-06T10:00:01+09:00" });
+    const { client, emit } = await setup({ k1: [failed("q-opus", "opus"), failed("q-gone", "retired")] }, false, claude);
+    await screen.findByLabelText("Model: claude-code · Haiku");
+    fireEvent.click((await screen.findAllByText("Retry"))[0]);
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q-opus", model: "opus" }));
+    act(() => emit({ type: "ask.done", turn: turn({ id: "ask-q-opus", question: "q-opus", status: "done", answer: "ok", endedAt: "2026-10-06T10:00:02+09:00" }) }));
+    await screen.findByText("ok");
+    fireEvent.click(screen.getAllByText("Retry")[1]);
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q-gone", model: "haiku" }));
   });
 
   it("shows the turn's model in the sheet header", async () => {

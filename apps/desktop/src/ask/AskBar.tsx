@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { AnswerMarkdown } from "./AnswerMarkdown";
 import { loadModel, modelLabel, saveModel } from "./askModel";
 import { CopyAnswerButton } from "./CopyAnswerButton";
-import { ModelPicker } from "./ModelPicker";
+import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThinkingLine } from "./ThinkingLine";
 import { useStickToBottom } from "./useStickToBottom";
 
@@ -156,13 +156,15 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   if (!shown) return null;
   const last = turns.at(-1);
 
-  const send = async (question: string) => {
+  /** A retry keeps its turn's model while the agent still offers it. */
+  const retryModel = (t: AskTurn) => (t.model && target?.models.includes(t.model) ? t.model : model);
+  const send = async (question: string, withModel: string | null = model) => {
     const q = question.trim();
     if (!q || running || sending.current) return;
     sending.current = true;
     setSendError(null);
     try {
-      await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, q, model);
+      await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, q, withModel);
       if (q === draft.trim()) setDraft("");
       setSheet(true);
     } catch (e) {
@@ -197,7 +199,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           ) : null}
           <div className="space-y-4">
             {turns.map((t) => (
-              <Turn key={t.id} t={t} onRetry={() => void send(t.question)} />
+              <Turn key={t.id} t={t} onRetry={() => void send(t.question, retryModel(t))} />
             ))}
           </div>
         </div>
@@ -215,7 +217,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           onFocus={() => setSheet(true)}
           className="max-h-32 flex-1 resize-none overflow-y-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-[13.5px] outline-none placeholder:text-[#9a9a9a]"
         />
-        {target ? <ModelPicker target={target} model={model} onChange={pick} /> : null}
+        {target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={artifact.source.agent ?? "Default agent"} />}
         <button
           type="button"
           aria-label={running ? "Stop" : "Send"}

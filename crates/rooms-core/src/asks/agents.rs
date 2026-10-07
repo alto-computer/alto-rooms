@@ -14,7 +14,7 @@ pub(crate) const DEFAULT_PREAMBLE: &str =
 pub(crate) struct Profile {
     pub resume: Option<Vec<String>>,
     pub new: Vec<String>,
-    /// Models the user can pick; offered only for a template that has a `{model}` element.
+    /// Models the user can pick; offered only for a template with an element that is exactly `{model}`.
     #[serde(default)]
     pub models: Vec<String>,
 }
@@ -109,6 +109,11 @@ impl AgentProfiles {
             if let Some(m) = p.models.iter().find(|m| !valid_model(m)) {
                 return Err(format!("agents.{name}.models: \"{m}\" is not a valid model name"));
             }
+            // Only an element that is exactly {model} can be dropped for "Default"; "--model={model}" would send "--model=".
+            let partial = std::iter::once(&p.new).chain(p.resume.as_ref()).flatten().any(|a| a.contains("{model}") && a != "{model}");
+            if !p.models.is_empty() && partial {
+                return Err(format!("agents.{name}: with models, {{model}} must be a whole element (e.g. \"--model\", \"{{model}}\")"));
+            }
         }
         let default = cfg.default.unwrap_or_else(|| DEFAULT_AGENT.to_string());
         if !agents.contains_key(&default) {
@@ -126,7 +131,7 @@ impl AgentProfiles {
             (Some(_), Some(_), Some(t)) => (AskMode::Resume, t.clone()),
             _ => (AskMode::New, p.new.clone()),
         };
-        let models = if template.iter().any(|a| a.contains("{model}")) { p.models.clone() } else { Vec::new() };
+        let models = if template.iter().any(|a| a == "{model}") { p.models.clone() } else { Vec::new() };
         Plan { agent: name, mode, models, template }
     }
 
@@ -284,6 +289,8 @@ new = ["codex2", "{prompt}"]
             ("[agents.x]\nnew = [\"a\"]\nmodels = [\"--evil\"]", "agents.x.models"),
             ("[agents.x]\nnew = [\"a\"]\nmodels = [\"\"]", "agents.x.models"),
             ("[agents.x]\nnew = [\"a\"]\nmodels = [\"a b\"]", "agents.x.models"),
+            ("[agents.x]\nnew = [\"a\", \"--model={model}\"]\nmodels = [\"m\"]", "whole element"),
+            ("[agents.x]\nnew = [\"a\", \"-m\", \"{model}\"]\nresume = [\"a\", \"-m{model}\"]\nmodels = [\"m\"]", "whole element"),
         ] {
             let (_d, p) = tmp(Some(text));
             let e = AgentProfiles::load(&p).err().unwrap_or_else(|| panic!("accepted: {text}"));
@@ -321,6 +328,10 @@ new = ["codex2", "{prompt}"]
         let a = AgentProfiles::load(&p).unwrap();
         assert!(a.plan(Some("x"), Some("S1")).models.is_empty());
         assert_eq!(a.plan(Some("x"), None).models, vec!["m1"]);
+        // without models, a partial {model} is allowed but offers nothing (it renders as "")
+        let (_d, p) = tmp(Some("[agents.x]\nnew = [\"x\", \"--model={model}\", \"{prompt}\"]\n"));
+        let plan = AgentProfiles::load(&p).unwrap().plan(Some("x"), None);
+        assert!(plan.models.is_empty());
     }
 
     #[test]

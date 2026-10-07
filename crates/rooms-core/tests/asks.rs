@@ -283,21 +283,26 @@ fn with_models(home: &std::path::Path) {
 
 #[tokio::test]
 async fn target_matches_what_start_picks() {
-    // (doc meta, sidecar (agent, session)) → the same agent and mode from target and start
-    let cases: [(&str, Option<(&str, &str)>); 4] = [
-        (r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#, None),
-        ("", Some(("claude-code", "S-9"))),
-        (r#"<meta name="rooms:agent" content="codex">"#, Some(("claude-code", "S-9"))),
-        (r#"<meta name="rooms:agent" content="codex">"#, None),
+    // (doc meta, sidecar (agent, session), models offered) → the same agent, mode and models from target and start
+    let cases: [(&str, Option<(&str, &str)>, &[&str]); 5] = [
+        (r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#, None, &[]),
+        ("", Some(("claude-code", "S-9")), &[]),
+        (r#"<meta name="rooms:agent" content="codex">"#, Some(("claude-code", "S-9")), &[]),
+        (r#"<meta name="rooms:agent" content="codex">"#, None, &[]),
+        ("", None, &["m1", "m2"]),
     ];
-    for (meta, side) in cases {
+    for (meta, side, models) in cases {
         let (d, core, room, art) = setup(meta);
         with_models(d.path());
         if let Some((agent, session)) = side { write_sources(d.path(), &doc_path(&core, &room), agent, session, "/"); }
         let asks = Asks::new(core.clone(), None);
         let target = asks.target(&room, &art).unwrap();
-        let t = asks.start(&room, &art, "q", None).unwrap();
+        assert_eq!(target.models, models, "{meta} {side:?}");
+        // start validates the model before anything else: a not-offered one is refused, an offered one is not
+        assert!(matches!(asks.start(&room, &art, "q", Some("not-offered")), Err(AskError::BadRequest(_))));
+        let t = asks.start(&room, &art, "q", models.first().copied()).unwrap();
         assert_eq!((target.agent.as_str(), target.mode), (t.agent.as_str(), t.mode), "{meta} {side:?}");
+        assert_eq!(t.model.as_deref(), models.first().copied());
         asks.shutdown().await;
     }
 }

@@ -52,8 +52,8 @@ export function fakeClient(
     home?: string;
     /** Ask threads by file key. */
     asks?: Record<string, AskTurn[]>;
-    /** What `askTarget` answers, by artifact id; default: the doc's own agent with no models. */
-    askTargets?: Record<string, AskTarget>;
+    /** What `askTarget` answers (or throws), by artifact id; default: the doc's own agent with no models. */
+    askTargets?: Record<string, AskTarget | Error>;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -171,7 +171,9 @@ export function fakeClient(
     askTarget: vi.fn(async (roomId: string, artifactId: string): Promise<AskTarget> => {
       const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);
       if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
-      return opts.askTargets?.[artifactId] ?? { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new", models: [] };
+      const t = opts.askTargets?.[artifactId];
+      if (t instanceof Error) throw t;
+      return t ?? { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new", models: [] };
     }),
     askThread: vi.fn(async (fileKey: string) => state.asks[fileKey] ?? []),
     cancelAsk: vi.fn(async () => {}),
