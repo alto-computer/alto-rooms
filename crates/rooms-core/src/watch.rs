@@ -421,16 +421,21 @@ fn spawn_event_follower(core: &RoomsCore, deb: Weak<Mutex<Deb>>, linked: LinkedW
 
 /// Every `RETRY_INTERVAL`: re-checks unavailable rooms (a returning root emits room.updated→ok,
 /// which the event follower re-watches), retries linked roots and original folders that could not
-/// be watched (the target sync itself waits out its backoff).
+/// be watched (the target sync itself waits out its backoff), and follows dangling links found by
+/// scans, which emit no event (the startup scan finding a link whose original is missing).
 fn spawn_retry_tick(core: &RoomsCore, deb: Weak<Mutex<Deb>>, linked: LinkedWatch, rescan: mpsc::Sender<()>,
                     target_sync: mpsc::Sender<()>, targets: Weak<Mutex<TargetWatch>>) {
     let weak = core.downgrade();
+    let mut dangling_seen = 0;
     std::thread::spawn(move || loop {
         std::thread::sleep(RETRY_INTERVAL);
         let (Some(core), Some(deb)) = (weak.upgrade(), deb.upgrade()) else { break };
         core.rescan_unavailable();
         if linked.ensure(&core, &deb) { let _ = rescan.send(()); }
-        if targets.upgrade().is_some_and(|tw| !lock(&tw).failed.is_empty()) { let _ = target_sync.send(()); }
+        let dangling = core.dangling_generation();
+        let retry_failed = targets.upgrade().is_some_and(|tw| !lock(&tw).failed.is_empty());
+        if retry_failed || dangling != dangling_seen { let _ = target_sync.send(()); }
+        dangling_seen = dangling;
     });
 }
 

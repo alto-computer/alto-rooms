@@ -19,8 +19,25 @@ pub fn symlink_html_target(link: &Path) -> Option<PathBuf> {
     std::fs::canonicalize(link).ok().filter(|t| is_html(t))
 }
 
+/// Where a broken html link points, as an absolute path with its existing part canonical (the
+/// form stored targets have): `None` unless `link` is a symlink to a missing `.html`/`.htm` path
+/// (or one that is not a regular file).
+pub fn missing_html_target(link: &Path) -> Option<PathBuf> {
+    let to = link.parent()?.join(std::fs::read_link(link).ok()?);
+    if !is_html(&to) || std::fs::metadata(&to).is_ok_and(|m| m.is_file()) { return None; }
+    let existing = to.ancestors().find(|a| a.exists())?;
+    Some(std::fs::canonicalize(existing).ok()?.join(to.strip_prefix(existing).ok()?))
+}
+
 pub fn scan_room(root: &Path, honor_gitignore: bool, in_journal: bool) -> Vec<ScanEntry> {
+    scan_room_and_dangling(root, honor_gitignore, in_journal).0
+}
+
+/// `scan_room` plus the html links it skipped because their original is missing: (rel path,
+/// `missing_html_target`).
+pub fn scan_room_and_dangling(root: &Path, honor_gitignore: bool, in_journal: bool) -> (Vec<ScanEntry>, Vec<(String, PathBuf)>) {
     let mut out = Vec::new();
+    let mut dangling = Vec::new();
     let walker = WalkBuilder::new(root)
         .hidden(true)
         .follow_links(false)
@@ -38,7 +55,7 @@ pub fn scan_room(root: &Path, honor_gitignore: bool, in_journal: bool) -> Vec<Sc
         .build();
     // Regular files are reached through real directories only (links are never followed), so
     // their canonical path is the canonical root joined with the relative path: no per-file syscall.
-    let Ok(canonical_root) = std::fs::canonicalize(root) else { return out };
+    let Ok(canonical_root) = std::fs::canonicalize(root) else { return (out, dangling) };
     for entry in walker.flatten() {
         let abs = entry.path();
         let Ok(rel) = abs.strip_prefix(root) else { continue };
@@ -49,14 +66,20 @@ pub fn scan_room(root: &Path, honor_gitignore: bool, in_journal: bool) -> Vec<Sc
         let target = if ft.is_file() {
             canonical_root.join(rel)
         } else if ft.is_symlink() && class == PathClass::Artifact {
-            match symlink_html_target(abs) { Some(t) => t, None => continue }
+            match symlink_html_target(abs) {
+                Some(t) => t,
+                None => {
+                    if let Some(t) = missing_html_target(abs) { dangling.push((rel.to_string_lossy().replace('\\', "/"), t)); }
+                    continue;
+                }
+            }
         } else {
             continue;
         };
         out.push(ScanEntry { rel_path: rel.to_string_lossy().replace('\\', "/"), abs_path: abs.to_path_buf(), target, class });
     }
     out.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-    out
+    (out, dangling)
 }
 
 /// The entry `scan_room(root, ..)` would list at `rel`, found without walking the room: `None`
@@ -263,6 +286,22 @@ mod tests {
         assert!(entry_at(r, Path::new("x.html"), false, false).is_none(), "after a case-only rename x.html is gone");
         assert!(entry_at(r, Path::new(&nfc), false, false).is_some());
         assert!(entry_at(r, Path::new(&nfd), false, false).is_none(), "after an NFD→NFC rename the NFD name is gone");
+    }
+
+    #[test]
+    fn missing_html_target_is_where_a_broken_html_link_points() {
+        let d = tempfile::tempdir().unwrap();
+        let r = fs::canonicalize(d.path()).unwrap();
+        fs::write(r.join("there.html"), "").unwrap();
+        symlink("gone/o.html", r.join("rel.html")).unwrap();
+        symlink(r.join("there.html"), r.join("ok.html")).unwrap();
+        symlink(r.join("gone.txt"), r.join("txt.html")).unwrap();
+        assert_eq!(missing_html_target(&r.join("rel.html")), Some(r.join("gone/o.html")));
+        assert_eq!(missing_html_target(&r.join("ok.html")), None);
+        assert_eq!(missing_html_target(&r.join("txt.html")), None);
+        assert_eq!(missing_html_target(&r.join("there.html")), None, "not a link");
+        let (_, dangling) = scan_room_and_dangling(&r, false, false);
+        assert_eq!(dangling, vec![("rel.html".to_string(), r.join("gone/o.html"))]);
     }
 
     #[test]

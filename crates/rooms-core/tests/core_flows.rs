@@ -1359,3 +1359,19 @@ fn an_original_deleted_and_recreated_comes_back() {
     fs::write(dir.join("o.html"), "<title>Again</title>").unwrap();
     eventually(slow(Duration::from_secs(3)), || titles_of(&core, &a.id), |v| v == &["Again"]);
 }
+
+#[test]
+fn a_link_dangling_at_startup_is_added_once_its_original_appears() {
+    let d = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let orig = fs::canonicalize(out.path()).unwrap().join("later/o.html"); // its folder is missing too
+    fs::create_dir_all(d.path().join("inbox")).unwrap();
+    symlink(&orig, d.path().join("inbox/s.html")).unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let inbox: RoomId = "inbox".into();
+    std::thread::sleep(Duration::from_millis(500)); // startup scan + the original-file watch
+    assert!(titles_of(&core, &inbox).is_empty());
+    fs::create_dir_all(orig.parent().unwrap()).unwrap();
+    fs::write(&orig, "<title>Here</title>").unwrap();
+    eventually(slow(Duration::from_secs(3)), || titles_of(&core, &inbox), |v| v == &["Here"]);
+}

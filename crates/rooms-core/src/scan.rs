@@ -12,7 +12,7 @@ use crate::error::CoreError;
 use crate::index::{read_entry, Change, Index};
 use crate::lock::lock;
 use crate::rules::PathClass;
-use crate::walk::scan_room;
+use crate::walk::scan_room_and_dangling;
 use rooms_protocol::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -72,11 +72,13 @@ impl RoomsCore {
         let _serial = lock(&serial); // lock order: room scan lock → Inner
         let Some((root, kind)) = self.room_root(room) else { return Ok(()) };
         if !root_available(&root) { self.mark_unavailable(&mut lock(&self.inner), room); return Ok(()); }
-        let entries = scan_room(&root, kind == RoomKind::Linked, kind == RoomKind::Journal); // no lock
+        let (entries, broken) = scan_room_and_dangling(&root, kind == RoomKind::Linked, kind == RoomKind::Journal); // no lock
         let fps = { lock(&self.inner).index.fingerprints(room)? };
         let facts: Vec<_> = entries.iter().filter_map(|e| read_entry(room, e, fps.get(&e.rel_path))).collect(); // no lock
         let present: HashSet<String> = entries.iter().filter(|e| e.class == PathClass::Artifact).map(|e| e.rel_path.clone()).collect();
-        let lost: HashMap<String, PathBuf> = fps.into_iter().filter(|(rel, _)| !present.contains(rel)).map(|(rel, fp)| (rel, PathBuf::from(fp.target))).collect();
+        // Links without their original: rows that lost it, and links found already broken.
+        let lost: HashMap<String, PathBuf> = fps.into_iter().filter(|(rel, _)| !present.contains(rel))
+            .map(|(rel, fp)| (rel, PathBuf::from(fp.target))).chain(broken).collect();
         self.apply_scan(room, &root, |index| index.apply(room, &facts, &present), |dangling| {
             let rels: Vec<String> = dangling.rels_of(room).into_iter().chain(lost.keys().cloned()).collect();
             dangling.update(room, &root, rels, lost, |rel| present.contains(rel));
@@ -214,6 +216,9 @@ impl RoomsCore {
         }
         out
     }
+
+    /// Changes whenever the set of dangling links changes (see `DanglingLinks`).
+    pub fn dangling_generation(&self) -> u64 { lock(&self.inner).dangling.generation() }
 
     /// The originals (of artifacts and dangling links) that live outside home and every linked
     /// root, so no room watch sees them.

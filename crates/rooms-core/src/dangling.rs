@@ -1,15 +1,19 @@
-//! Links whose original vanished after they were indexed.
+//! Html links whose original is missing, remembered so they are added when it returns.
 
 use rooms_protocol::RoomId;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Links whose original vanished after they were indexed: (room, rel path) → the original's
-/// path. Their rows are gone, so they are remembered here, and when the original comes back
-/// (the file recreated, its folder restored) the watcher finds the link by that path and
-/// re-adds it. In memory only: after a restart such a link waits for a rescan of its room.
+/// Html links whose original is missing: (room, rel path) → the original's path. Both links
+/// whose original vanished after they were indexed and links a full scan finds already broken
+/// (at startup, say) are here, so when the original comes back (the file recreated, its folder
+/// restored) the watcher finds the link by that path and adds it.
 #[derive(Default)]
-pub(crate) struct DanglingLinks(HashMap<(RoomId, String), PathBuf>);
+pub(crate) struct DanglingLinks {
+    links: HashMap<(RoomId, String), PathBuf>,
+    /// Bumped on every change, so the watcher can tell when the originals to follow changed.
+    generation: u64,
+}
 
 fn is_symlink(p: &Path) -> bool {
     std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())
@@ -22,26 +26,31 @@ impl DanglingLinks {
     pub(crate) fn update(&mut self, room: &RoomId, root: &Path, rels: impl IntoIterator<Item = String>, lost: HashMap<String, PathBuf>, present: impl Fn(&str) -> bool) {
         for rel in rels {
             let key = (room.clone(), rel);
-            if present(&key.1) || !is_symlink(&root.join(&key.1)) {
-                self.0.remove(&key);
+            let changed = if present(&key.1) || !is_symlink(&root.join(&key.1)) {
+                self.links.remove(&key).is_some()
             } else if let Some(target) = lost.get(&key.1) {
-                self.0.insert(key, target.clone());
-            }
+                self.links.insert(key, target.clone()).as_ref() != Some(target)
+            } else {
+                false
+            };
+            if changed { self.generation += 1; }
         }
     }
 
     pub(crate) fn rels_of(&self, room: &RoomId) -> Vec<String> {
-        self.0.keys().filter(|(r, _)| r == room).map(|(_, rel)| rel.clone()).collect()
+        self.links.keys().filter(|(r, _)| r == room).map(|(_, rel)| rel.clone()).collect()
     }
 
     /// Remembered links whose original is `target` or lies under the folder `target`.
     pub(crate) fn at_or_under(&self, target: &Path) -> impl Iterator<Item = (RoomId, PathBuf)> + '_ {
         let target = target.to_path_buf();
-        self.0.iter().filter(move |(_, t)| t.starts_with(&target)).map(|((room, rel), _)| (room.clone(), PathBuf::from(rel)))
+        self.links.iter().filter(move |(_, t)| t.starts_with(&target)).map(|((room, rel), _)| (room.clone(), PathBuf::from(rel)))
     }
 
     /// Every remembered original.
     pub(crate) fn targets(&self) -> impl Iterator<Item = &PathBuf> + '_ {
-        self.0.values()
+        self.links.values()
     }
+
+    pub(crate) fn generation(&self) -> u64 { self.generation }
 }
