@@ -614,6 +614,45 @@ async fn ask_extractor_rejections_use_the_error_shape() {
     assert_eq!(body_json(r).await["error"], "bad_request");
 }
 
+#[tokio::test]
+async fn ask_target_route_and_model() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("r").unwrap();
+    std::fs::write(st.core.room_root(&room.id).unwrap().0.join("doc.html"), "<title>d</title>").unwrap();
+    st.core.backfill_all().unwrap();
+    std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"-m\", \"{model}\"]\nmodels = [\"m1\"]\n").unwrap();
+    let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
+
+    let uri = format!("/v1/asks/target?roomId={}&artifactId={}", room.id, art.id);
+    let r = app.clone().oneshot(get(&uri, API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["m1"]}));
+    let r = app.clone().oneshot(get(&format!("/v1/asks/target?roomId={}&artifactId=nope", room.id), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let r = app.clone().oneshot(get("/v1/asks/target?roomId=r", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(r).await["error"], "bad_request");
+    let r = app.clone().oneshot(get(&uri, "evil.example:4317")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+
+    let mut rx = st.core.subscribe();
+    let body = format!(r#"{{"roomId":"{}","artifactId":"{}","question":"q","model":"m1"}}"#, room.id, art.id);
+    let r = app.clone().oneshot(post("/v1/asks", &body, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::ACCEPTED);
+    assert_eq!(body_json(r).await["model"], "m1");
+    loop {
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+        if let rooms_protocol::EventKind::AskDone { turn: t } = ev.kind { assert_eq!(t.answer, "-m m1"); break; }
+    }
+    let r = app.clone().oneshot(post("/v1/asks", &body.replace("m1", "zz"), Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    std::fs::write(d.path().join(".rooms/agents.toml"), "default = [").unwrap();
+    let r = app.clone().oneshot(get(&uri, API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body_json(r).await["error"], "agent_config");
+}
+
 // ---- plugin tools ----
 
 fn install_drawer(home: &std::path::Path) {

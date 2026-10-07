@@ -36,7 +36,7 @@ impl IntoResponse for AskErr {
 
 pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
     let Json(b) = b.map_err(|e| AskError::BadRequest(e.body_text()))?;
-    let turn = ask_blocking(&st, move |a| a.start(&b.room_id, &b.artifact_id, &b.question)).await?;
+    let turn = ask_blocking(&st, move |a| a.start(&b.room_id, &b.artifact_id, &b.question, b.model.as_deref())).await?;
     Ok((StatusCode::ACCEPTED, Json(turn)))
 }
 
@@ -57,6 +57,15 @@ pub struct AskQuery { file_key: String }
 pub async fn ask_thread(State(st): State<AppState>, q: Result<Query<AskQuery>, QueryRejection>) -> Result<Json<Vec<AskTurn>>, AskErr> {
     let Query(q) = q.map_err(|e| AskError::BadRequest(e.body_text()))?;
     Ok(Json(ask_blocking(&st, move |a| a.thread(&q.file_key)).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetQuery { room_id: String, artifact_id: String }
+
+pub async fn ask_target(State(st): State<AppState>, q: Result<Query<TargetQuery>, QueryRejection>) -> Result<Json<AskTarget>, AskErr> {
+    let Query(q) = q.map_err(|e| AskError::BadRequest(e.body_text()))?;
+    Ok(Json(ask_blocking(&st, move |a| a.target(&q.room_id, &q.artifact_id)).await?))
 }
 
 pub async fn cancel_ask(State(st): State<AppState>, Path(ask_id): Path<String>) -> StatusCode {

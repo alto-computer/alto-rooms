@@ -3,6 +3,7 @@ export * from "./generated/ApiError";
 export * from "./generated/Artifact";
 export * from "./generated/AskMode";
 export * from "./generated/AskStatus";
+export * from "./generated/AskTarget";
 export * from "./generated/AskTurn";
 export * from "./generated/Author";
 export * from "./generated/EventKind";

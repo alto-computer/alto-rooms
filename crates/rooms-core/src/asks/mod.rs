@@ -9,10 +9,10 @@ pub(crate) mod sources;
 pub use run::Limits;
 
 use crate::RoomsCore;
-use agents::{AgentProfiles, Vars};
+use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
 use prompt::{build_prompt, valid_file_key, valid_ident};
-use rooms_protocol::{AskStatus, AskTurn, EventKind};
+use rooms_protocol::{Artifact, AskStatus, AskTarget, AskTurn, EventKind};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -41,6 +41,16 @@ impl std::fmt::Display for AskError {
 }
 
 struct Entry { file_key: String, killer: Killer }
+
+/// Where an ask from a doc goes: the one answer both `target` and `start` use.
+struct Resolved {
+    artifact: Artifact,
+    file_abs: PathBuf,
+    profiles: AgentProfiles,
+    plan: Plan,
+    session: Option<String>,
+    cwd: PathBuf,
+}
 
 struct Inner {
     core: RoomsCore,
@@ -104,13 +114,8 @@ impl Asks {
 
     fn config_path(&self) -> PathBuf { self.0.core.home().join(".rooms/agents.toml") }
 
-    /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
-    pub fn start(&self, room: &str, artifact_id: &str, question: &str) -> Result<AskTurn, AskError> {
-        let _rt = self.0.rt.as_ref().map(|h| h.enter());
-        let q = question.trim();
-        if q.is_empty() || q.chars().count() > MAX_QUESTION_CHARS {
-            return Err(AskError::BadRequest(format!("A question must be 1–{MAX_QUESTION_CHARS} characters")));
-        }
+    /// Which doc, agent, template, session and cwd an ask from `artifact_id` would use.
+    fn resolve(&self, room: &str, artifact_id: &str) -> Result<Resolved, AskError> {
         let core = &self.0.core;
         let artifact = core.list_artifacts(&room.to_string()).map_err(|_| AskError::NotFound)?
             .into_iter().find(|a| a.id == artifact_id).ok_or(AskError::NotFound)?;
@@ -124,10 +129,35 @@ impl Asks {
         let sidecar = if meta_has_session { None } else { sources::lookup(core.home(), &file_abs) };
         let src = sidecar.as_ref().unwrap_or(meta);
         let agent = src.agent.as_deref().filter(|a| valid_ident(a));
-        let session = src.session.as_deref().filter(|s| valid_ident(s));
-        let plan = profiles.plan(agent, session);
+        let session = src.session.clone().filter(|s| valid_ident(s));
+        let plan = profiles.plan(agent, session.as_deref());
         let cwd = src.cwd.as_deref().map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir())
             .unwrap_or_else(|| file_abs.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| core.home().to_path_buf()));
+        Ok(Resolved { artifact, file_abs, profiles, plan, session, cwd })
+    }
+
+    /// Blocking, like `start`: what the ask bar shows before the first question.
+    pub fn target(&self, room: &str, artifact_id: &str) -> Result<AskTarget, AskError> {
+        let r = self.resolve(room, artifact_id)?;
+        Ok(AskTarget { agent: r.plan.agent, mode: r.plan.mode, models: r.plan.models })
+    }
+
+    /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
+    /// `model` must be one of the target's models; `None` or "" leaves the agent's default.
+    pub fn start(&self, room: &str, artifact_id: &str, question: &str, model: Option<&str>) -> Result<AskTurn, AskError> {
+        let _rt = self.0.rt.as_ref().map(|h| h.enter());
+        let q = question.trim();
+        if q.is_empty() || q.chars().count() > MAX_QUESTION_CHARS {
+            return Err(AskError::BadRequest(format!("A question must be 1–{MAX_QUESTION_CHARS} characters")));
+        }
+        let core = &self.0.core;
+        let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(room, artifact_id)?;
+        let model = model.filter(|m| !m.is_empty());
+        if let Some(m) = model {
+            if !plan.models.iter().any(|x| x == m) {
+                return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
+            }
+        }
         let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
 
         let mut running = self.0.running.lock().unwrap();
@@ -139,10 +169,10 @@ impl Asks {
         // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
         let mcp = core.home().join(".rooms/mcp.json");
         let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
-        let argv = plan.render(&Vars { prompt: &prompt, session: session.unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s });
+        let argv = plan.render(&Vars { prompt: &prompt, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s, model: model.unwrap_or("") });
         let turn = AskTurn {
             id: nanoid::nanoid!(16), file_key: artifact.file_key.clone(), question: q.to_string(), answer: String::new(),
-            agent: plan.agent.clone(), mode: plan.mode, status: AskStatus::Running, error: None, started_at: now(), ended_at: None,
+            agent: plan.agent.clone(), model: model.map(str::to_string), mode: plan.mode, status: AskStatus::Running, error: None, started_at: now(), ended_at: None,
         };
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
         core.emit_ask(EventKind::AskStarted { turn: turn.clone() });

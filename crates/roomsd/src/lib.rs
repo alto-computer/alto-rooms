@@ -151,6 +151,7 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/artifacts/move", post(routes::move_artifact))
         .route("/v1/artifacts/by-file-key/{key}", get(routes::artifact_by_file_key))
         .route("/v1/asks", get(routes::ask_thread).post(routes::start_ask))
+        .route("/v1/asks/target", get(routes::ask_target))
         .route("/v1/asks/{ask_id}", axum::routing::delete(routes::cancel_ask))
         .route("/v1/tools", get(routes::list_tools))
         .route("/v1/tools/call", post(routes::call_tool))

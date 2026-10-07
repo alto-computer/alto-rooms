@@ -49,13 +49,14 @@ fn export_typescript_bindings() {
     ApiError::export_all().unwrap();
     AskTurn::export_all().unwrap();
     StartAsk::export_all().unwrap();
+    AskTarget::export_all().unwrap();
 }
 
 #[test]
 fn ask_events_are_camel_and_tagged() {
     let turn = AskTurn {
         id: "a1".into(), file_key: "0123456789abcdef".into(), question: "q".into(), answer: "".into(),
-        agent: "claude-code".into(), mode: AskMode::Resume, status: AskStatus::Running,
+        agent: "claude-code".into(), model: None, mode: AskMode::Resume, status: AskStatus::Running,
         error: None, started_at: "2026-10-06T10:00:00+09:00".into(), ended_at: None,
     };
     let v = serde_json::to_value(&RoomsEvent { seq: 3, kind: EventKind::AskStarted { turn: turn.clone() } }).unwrap();
@@ -67,7 +68,18 @@ fn ask_events_are_camel_and_tagged() {
     let d = serde_json::to_value(&RoomsEvent { seq: 4, kind: EventKind::AskDone { turn } }).unwrap();
     assert_eq!(d["type"], "ask.done");
     let s: StartAsk = serde_json::from_str(r#"{"roomId":"r","artifactId":"a","question":"hi"}"#).unwrap();
-    assert_eq!((s.room_id.as_str(), s.artifact_id.as_str(), s.question.as_str()), ("r", "a", "hi"));
+    assert_eq!((s.room_id.as_str(), s.artifact_id.as_str(), s.question.as_str(), s.model), ("r", "a", "hi", None));
+}
+
+#[test]
+fn ask_model_is_optional_on_the_wire() {
+    let s: StartAsk = serde_json::from_str(r#"{"roomId":"r","artifactId":"a","question":"hi","model":"sonnet"}"#).unwrap();
+    assert_eq!(s.model.as_deref(), Some("sonnet"));
+    // turns recorded before models existed still read back
+    let old = r#"{"id":"a1","fileKey":"k","question":"q","answer":"","agent":"codex","mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null}"#;
+    assert_eq!(serde_json::from_str::<AskTurn>(old).unwrap().model, None);
+    let t = serde_json::to_value(AskTarget { agent: "codex".into(), mode: AskMode::New, models: vec!["m".into()] }).unwrap();
+    assert_eq!(t, serde_json::json!({"agent": "codex", "mode": "new", "models": ["m"]}));
 }
 
 #[test]

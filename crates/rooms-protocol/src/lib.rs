@@ -157,6 +157,8 @@ pub struct AskTurn {
     /// The agent's stdout (ANSI stripped, trimmed); empty while running.
     pub answer: String,
     pub agent: String,
+    /// The model picked for this turn; `None` = the agent's own default.
+    pub model: Option<String>,
     pub mode: AskMode,
     pub status: AskStatus,
     pub error: Option<String>,
@@ -191,6 +193,16 @@ wire!(pub struct StartAsk {
     pub room_id: RoomId,
     pub artifact_id: ArtifactId,
     pub question: String,
+    /// One of `AskTarget::models`; `None` or empty = the agent's own default.
+    pub model: Option<String>,
+});
+
+wire!(
+/// Which agent an ask from this doc would go to, and the models it can pick from (empty = no choice).
+pub struct AskTarget {
+    pub agent: String,
+    pub mode: AskMode,
+    pub models: Vec<String>,
 });
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, JsonSchema)]

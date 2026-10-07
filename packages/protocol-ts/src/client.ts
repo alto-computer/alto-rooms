@@ -1,5 +1,6 @@
 import type { ApiError } from "./generated/ApiError";
 import type { Artifact } from "./generated/Artifact";
+import type { AskTarget } from "./generated/AskTarget";
 import type { AskTurn } from "./generated/AskTurn";
 import type { Info } from "./generated/Info";
 import type { JournalDay } from "./generated/JournalDay";
@@ -77,6 +78,9 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     moveArtifact: (roomId: string, artifactId: string, toRoomId: string) =>
       write<Artifact>("POST", "/v1/artifacts/move", JSON.stringify({ roomId, artifactId, toRoomId })),
     startAsk: (req: StartAsk) => write<AskTurn>("POST", "/v1/asks", JSON.stringify(req)),
+    /** Which agent an ask from this doc goes to, and the models it can pick from. */
+    askTarget: async (roomId: string, artifactId: string) =>
+      (await get<AskTarget>(`/v1/asks/target?roomId=${encodeURIComponent(roomId)}&artifactId=${encodeURIComponent(artifactId)}`)).data,
     askThread: async (fileKey: string) => (await get<AskTurn[]>(`/v1/asks?fileKey=${encodeURIComponent(fileKey)}`)).data,
     cancelAsk: (askId: string) => write<void>("DELETE", `/v1/asks/${encodeURIComponent(askId)}`, ""),
     listPlugins: async () => (await get<PluginInfo[]>("/v1/plugins")).data,

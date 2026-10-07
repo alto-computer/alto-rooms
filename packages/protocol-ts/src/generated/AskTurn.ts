@@ -9,4 +9,8 @@ export type AskTurn = { id: string, fileKey: string, question: string,
 /**
  * The agent's stdout (ANSI stripped, trimmed); empty while running.
  */
-answer: string, agent: string, mode: AskMode, status: AskStatus, error: string | null, startedAt: string, endedAt: string | null, };
+answer: string, agent: string, 
+/**
+ * The model picked for this turn; `None` = the agent's own default.
+ */
+model: string | null, mode: AskMode, status: AskStatus, error: string | null, startedAt: string, endedAt: string | null, };

@@ -45,7 +45,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn t(id: &str, status: AskStatus, answer: &str) -> AskTurn {
-        AskTurn { id: id.into(), file_key: "k1".into(), question: "q".into(), answer: answer.into(), agent: "a".into(),
+        AskTurn { id: id.into(), file_key: "k1".into(), question: "q".into(), answer: answer.into(), agent: "a".into(), model: None,
             mode: AskMode::New, status, error: None, started_at: "s".into(), ended_at: None }
     }
 

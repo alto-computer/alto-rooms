@@ -41,7 +41,7 @@ async fn resume_turn_runs_template_and_records() {
     let (d, core, room, art) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#);
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
-    let t = asks.start(&room, &art, "  왜?  ").unwrap();
+    let t = asks.start(&room, &art, "  왜?  ", None).unwrap();
     assert_eq!((t.status, t.mode, t.question.as_str(), t.agent.as_str()), (AskStatus::Running, AskMode::Resume, "왜?", "claude-code"));
     wait_started(&mut rx, &t.id).await;
     let done = wait_done(&mut rx, &t.id).await;
@@ -63,12 +63,12 @@ async fn mcp_config_arg_is_passed_only_when_the_file_exists() {
         "[agents.claude-code]\nnew = [\"{FAKE}\", \"--mcp-config\", \"{{mcp_config}}\", \"{{prompt}}\"]\n")).unwrap();
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
-    let t = asks.start(&room, &art, "one").unwrap();
+    let t = asks.start(&room, &art, "one", None).unwrap();
     let done = wait_done(&mut rx, &t.id).await;
     assert!(!done.answer.contains("--mcp-config"), "{}", done.answer);
     let mcp = d.path().join(".rooms/mcp.json");
     std::fs::write(&mcp, "{}").unwrap();
-    let t = asks.start(&room, &art, "two").unwrap();
+    let t = asks.start(&room, &art, "two", None).unwrap();
     let done = wait_done(&mut rx, &t.id).await;
     let canon = std::fs::canonicalize(&mcp).unwrap();
     assert!(done.answer.contains(&format!("[--mcp-config] [{}]", canon.display())), "{}", done.answer);
@@ -80,9 +80,9 @@ async fn second_question_carries_the_first_and_still_resumes() {
     let (_d, core, room, art) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#);
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
-    let t1 = asks.start(&room, &art, "first").unwrap();
+    let t1 = asks.start(&room, &art, "first", None).unwrap();
     wait_done(&mut rx, &t1.id).await;
-    let t2 = asks.start(&room, &art, "second").unwrap();
+    let t2 = asks.start(&room, &art, "second", None).unwrap();
     let d2 = wait_done(&mut rx, &t2.id).await;
     assert!(d2.answer.contains("[resume] [S-1]"));
     assert!(d2.answer.contains("Previous Q&A:\nQ: first\nA: ARGV:"));
@@ -93,7 +93,7 @@ async fn no_session_or_flag_shaped_session_runs_new_mode() {
     let (_d, core, room, art) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="--dangerously-bypass-approvals-and-sandbox">"#);
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
-    let t = asks.start(&room, &art, "q").unwrap();
+    let t = asks.start(&room, &art, "q", None).unwrap();
     assert_eq!(t.mode, AskMode::New);
     let done = wait_done(&mut rx, &t.id).await;
     assert!(done.answer.starts_with("ARGV: [new] ["));
@@ -108,7 +108,7 @@ async fn cwd_meta_used_only_when_it_is_a_real_dir() {
     let (_d, core, room, art) = setup(&format!(r#"<meta name="rooms:cwd" content="{}">"#, real.display()));
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
-    let t = asks.start(&room, &art, "q").unwrap();
+    let t = asks.start(&room, &art, "q", None).unwrap();
     let done = wait_done(&mut rx, &t.id).await;
     assert!(done.answer.contains(&format!("CWD: {}", real.display())), "{}", done.answer);
 }
@@ -119,19 +119,19 @@ async fn failure_busy_cancel_and_validation() {
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
     // validation
-    assert!(matches!(asks.start(&room, &art, "   "), Err(AskError::BadRequest(_))));
-    assert!(matches!(asks.start(&room, &art, &"x".repeat(8001)), Err(AskError::BadRequest(_))));
-    assert!(matches!(asks.start(&room, "nope", "q"), Err(AskError::NotFound)));
+    assert!(matches!(asks.start(&room, &art, "   ", None), Err(AskError::BadRequest(_))));
+    assert!(matches!(asks.start(&room, &art, &"x".repeat(8001), None), Err(AskError::BadRequest(_))));
+    assert!(matches!(asks.start(&room, "nope", "q", None), Err(AskError::NotFound)));
     assert!(matches!(asks.thread("../etc"), Err(AskError::BadRequest(_))));
     // non-zero exit
-    let f = asks.start(&room, &art, "FAIL").unwrap();
+    let f = asks.start(&room, &art, "FAIL", None).unwrap();
     let fd = wait_done(&mut rx, &f.id).await;
     assert_eq!(fd.status, AskStatus::Failed);
     assert!(fd.error.as_deref().unwrap().contains("code 7"));
     assert!(fd.error.as_deref().unwrap().contains("bad thing happened"));
     // busy, then cancel keeps partial
-    let s = asks.start(&room, &art, "SLEEP").unwrap();
-    assert!(matches!(asks.start(&room, &art, "again"), Err(AskError::Busy)));
+    let s = asks.start(&room, &art, "SLEEP", None).unwrap();
+    assert!(matches!(asks.start(&room, &art, "again", None), Err(AskError::Busy)));
     tokio::time::sleep(Duration::from_millis(300)).await;
     asks.cancel(&s.id);
     asks.cancel(&s.id); // idempotent
@@ -146,10 +146,10 @@ async fn bad_config_and_missing_program() {
     let (d, core, room, art) = setup("");
     let asks = Asks::new(core.clone(), None);
     std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = []\n").unwrap();
-    match asks.start(&room, &art, "q") { Err(AskError::AgentConfig(m)) => assert!(m.contains("agents.claude-code.new")), other => panic!("{other:?}") }
+    match asks.start(&room, &art, "q", None) { Err(AskError::AgentConfig(m)) => assert!(m.contains("agents.claude-code.new")), other => panic!("{other:?}") }
     std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"no-such-cli-xyz\", \"{prompt}\"]\n").unwrap();
     let mut rx = core.subscribe();
-    let t = asks.start(&room, &art, "q").unwrap();
+    let t = asks.start(&room, &art, "q", None).unwrap();
     let done = wait_done(&mut rx, &t.id).await;
     assert_eq!(done.status, AskStatus::Failed);
     assert!(done.error.as_deref().unwrap().contains("Command not found: no-such-cli-xyz"));
@@ -160,7 +160,7 @@ async fn timeout_is_failed() {
     let (_d, core, room, art) = setup("");
     let asks = Asks::with_limits(core.clone(), None, Limits { timeout: Duration::from_millis(300), ..Limits::default() });
     let mut rx = core.subscribe();
-    let t = asks.start(&room, &art, "SLEEP").unwrap();
+    let t = asks.start(&room, &art, "SLEEP", None).unwrap();
     let done = wait_done(&mut rx, &t.id).await;
     assert_eq!((done.status, done.error.as_deref()), (AskStatus::Failed, Some("Stopped: took too long")));
 }
@@ -169,12 +169,12 @@ async fn timeout_is_failed() {
 async fn restart_turns_running_into_failed_and_unblocks() {
     let (_d, core, room, art) = setup("");
     let asks = Asks::new(core.clone(), None);
-    let t = asks.start(&room, &art, "SLEEP").unwrap();
+    let t = asks.start(&room, &art, "SLEEP", None).unwrap();
     // A new Asks over the same home = roomsd restarted while t was running.
     let fresh = Asks::new(core.clone(), None);
     let th = fresh.thread(&t.file_key).unwrap();
     assert_eq!((th[0].status, th[0].error.as_deref()), (AskStatus::Failed, Some("Stopped because Rooms restarted")));
-    assert!(fresh.start(&room, &art, "after restart").is_ok());
+    assert!(fresh.start(&room, &art, "after restart", None).is_ok());
     asks.shutdown().await;
     fresh.shutdown().await;
 }
@@ -190,8 +190,8 @@ async fn capacity_is_four() {
     std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"{{prompt}}\"]\n")).unwrap();
     let asks = Asks::new(core.clone(), None);
     let arts = core.list_artifacts(&room.id).unwrap();
-    for a in &arts[..4] { asks.start(&room.id, &a.id, "SLEEP").unwrap(); }
-    assert!(matches!(asks.start(&room.id, &arts[4].id, "SLEEP"), Err(AskError::Capacity)));
+    for a in &arts[..4] { asks.start(&room.id, &a.id, "SLEEP", None).unwrap(); }
+    assert!(matches!(asks.start(&room.id, &arts[4].id, "SLEEP", None), Err(AskError::Capacity)));
     asks.shutdown().await;
 }
 
@@ -200,7 +200,7 @@ async fn start_after_shutdown_is_refused() {
     let (_d, core, room, art) = setup("");
     let asks = Asks::new(core.clone(), None);
     asks.shutdown().await;
-    assert!(matches!(asks.start(&room, &art, "q"), Err(AskError::Capacity)));
+    assert!(matches!(asks.start(&room, &art, "q", None), Err(AskError::Capacity)));
 }
 
 // ---- sources.json sidecar (doc has no usable rooms:session) ----
@@ -225,7 +225,7 @@ async fn sidecar_resumes_when_doc_has_no_meta() {
     write_sources(d.path(), &doc_path(&core, &room), "claude-code", "S-9", &real.to_string_lossy());
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
-    let t = asks.start(&room, &art, "q").unwrap();
+    let t = asks.start(&room, &art, "q", None).unwrap();
     assert_eq!(t.mode, AskMode::Resume);
     let done = wait_done(&mut rx, &t.id).await;
     assert!(done.answer.contains("[resume] [S-9]"), "{}", done.answer);
@@ -238,7 +238,7 @@ async fn meta_session_wins_over_sidecar() {
     write_sources(d.path(), &doc_path(&core, &room), "claude-code", "S-9", "/");
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
-    let t = asks.start(&room, &art, "q").unwrap();
+    let t = asks.start(&room, &art, "q", None).unwrap();
     let done = wait_done(&mut rx, &t.id).await;
     assert!(done.answer.contains("[resume] [S-1]"), "{}", done.answer);
 }
@@ -249,7 +249,7 @@ async fn sidecar_entry_is_used_whole_not_mixed_with_meta_agent() {
     write_sources(d.path(), &doc_path(&core, &room), "claude-code", "S-9", "/");
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
-    let t = asks.start(&room, &art, "q").unwrap();
+    let t = asks.start(&room, &art, "q", None).unwrap();
     assert_eq!((t.agent.as_str(), t.mode), ("claude-code", AskMode::Resume));
     let done = wait_done(&mut rx, &t.id).await;
     assert!(done.answer.contains("[resume] [S-9]"), "{}", done.answer);
@@ -260,7 +260,7 @@ async fn sidecar_values_are_still_validated() {
     let (d, core, room, art) = setup("");
     write_sources(d.path(), &doc_path(&core, &room), "claude-code", "--bad", "/");
     let asks = Asks::new(core.clone(), None);
-    let t = asks.start(&room, &art, "q").unwrap();
+    let t = asks.start(&room, &art, "q", None).unwrap();
     assert_eq!(t.mode, AskMode::New);
 }
 
@@ -269,6 +269,72 @@ async fn corrupt_sidecar_means_new_mode_without_error() {
     let (d, core, room, art) = setup("");
     std::fs::write(d.path().join(".rooms/sources.json"), "{").unwrap();
     let asks = Asks::new(core.clone(), None);
-    let t = asks.start(&room, &art, "q").unwrap();
+    let t = asks.start(&room, &art, "q", None).unwrap();
     assert_eq!(t.mode, AskMode::New);
+}
+
+// ---- target and model ----
+
+fn with_models(home: &std::path::Path) {
+    std::fs::write(home.join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nresume = [\"{FAKE}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"-m\", \"{{model}}\", \"{{prompt}}\"]\nmodels = [\"m1\", \"m2\"]\n[agents.codex]\nnew = [\"{FAKE}\", \"codex\", \"{{prompt}}\"]\n"
+    )).unwrap();
+}
+
+#[tokio::test]
+async fn target_matches_what_start_picks() {
+    // (doc meta, sidecar (agent, session)) → the same agent and mode from target and start
+    let cases: [(&str, Option<(&str, &str)>); 4] = [
+        (r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#, None),
+        ("", Some(("claude-code", "S-9"))),
+        (r#"<meta name="rooms:agent" content="codex">"#, Some(("claude-code", "S-9"))),
+        (r#"<meta name="rooms:agent" content="codex">"#, None),
+    ];
+    for (meta, side) in cases {
+        let (d, core, room, art) = setup(meta);
+        with_models(d.path());
+        if let Some((agent, session)) = side { write_sources(d.path(), &doc_path(&core, &room), agent, session, "/"); }
+        let asks = Asks::new(core.clone(), None);
+        let target = asks.target(&room, &art).unwrap();
+        let t = asks.start(&room, &art, "q", None).unwrap();
+        assert_eq!((target.agent.as_str(), target.mode), (t.agent.as_str(), t.mode), "{meta} {side:?}");
+        asks.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn target_lists_models_only_for_a_template_that_takes_one() {
+    let (d, core, room, art) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#);
+    with_models(d.path());
+    let asks = Asks::new(core.clone(), None);
+    let resumed = asks.target(&room, &art).unwrap();
+    assert_eq!((resumed.mode, resumed.models.len()), (AskMode::Resume, 0));
+    // a model the resume template can't take is refused
+    assert!(matches!(asks.start(&room, &art, "q", Some("m1")), Err(AskError::BadRequest(_))));
+    assert!(matches!(asks.target(&room, "nope"), Err(AskError::NotFound)));
+    std::fs::write(d.path().join(".rooms/agents.toml"), "default = [").unwrap();
+    assert!(matches!(asks.target(&room, &art), Err(AskError::AgentConfig(_))));
+}
+
+#[tokio::test]
+async fn model_is_passed_and_recorded() {
+    let (d, core, room, art) = setup("");
+    with_models(d.path());
+    let asks = Asks::new(core.clone(), None);
+    let target = asks.target(&room, &art).unwrap();
+    assert_eq!((target.agent.as_str(), target.mode, target.models.clone()), ("claude-code", AskMode::New, vec!["m1".to_string(), "m2".to_string()]));
+    for bad in ["nope", "--evil", "m1 "] {
+        assert!(matches!(asks.start(&room, &art, "q", Some(bad)), Err(AskError::BadRequest(_))), "{bad}");
+    }
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, &art, "q", Some("m2")).unwrap();
+    assert_eq!(t.model.as_deref(), Some("m2"));
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [new] [-m] [m2] ["), "{}", done.answer);
+    assert_eq!(asks.thread(&t.file_key).unwrap().last().unwrap().model.as_deref(), Some("m2"));
+    // "" is the agent's default: no flag, nothing recorded
+    let t = asks.start(&room, &art, "q2", Some("")).unwrap();
+    assert_eq!(t.model, None);
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [new] [[Rooms]"), "{}", done.answer);
 }
