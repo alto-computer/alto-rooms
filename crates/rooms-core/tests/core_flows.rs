@@ -1146,3 +1146,21 @@ fn bundled_plugins_never_replace_a_users_own_plugin_or_install_invalid_ones() {
     assert!(core2.install_bundled_plugins(bad.path()).unwrap().is_empty());
     assert!(core2.plugins().is_empty());
 }
+
+#[test]
+fn a_big_batch_is_one_room_resync_and_a_small_one_is_per_file() {
+    let (d, core) = home();
+    let r = core.create_room("big").unwrap();
+    for i in 0..300 { fs::write(d.path().join(format!("big/{i}.html")), "").unwrap(); }
+    let mut rx = core.subscribe();
+    core.rescan_room(&r.id);
+    let evs = drain(&mut rx);
+    assert!(!evs.iter().any(|e| matches!(e.kind, EventKind::ArtifactAdded { .. })), "{} events", evs.len());
+    assert!(evs.iter().any(|e| matches!(&e.kind, EventKind::Resync { room_id: Some(id) } if id == &r.id)));
+    assert!(evs.iter().any(|e| matches!(&e.kind, EventKind::RoomUpdated { room } if room.id == r.id && room.artifact_count == 300)));
+    assert!(evs.iter().any(|e| matches!(e.kind, EventKind::JournalChanged { .. })), "touched days are still signalled");
+    for i in 0..3 { fs::write(d.path().join(format!("big/new{i}.html")), "").unwrap(); }
+    core.rescan_room(&r.id);
+    let adds = drain(&mut rx).iter().filter(|e| matches!(e.kind, EventKind::ArtifactAdded { .. })).count();
+    assert_eq!(adds, 3);
+}

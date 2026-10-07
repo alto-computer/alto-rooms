@@ -70,6 +70,13 @@ impl WeakRoomsCore {
 
 const MAX_NOTE_BYTES: usize = 1_048_576;
 
+/// Capacity of the event channel: a subscriber further behind than this lags and must resync.
+const EVENT_BUFFER: usize = 1024;
+
+/// Above this many changes in one batch, `emit_changes` sends per-room resyncs instead of one
+/// event per change, keeping well inside `EVENT_BUFFER`.
+const MAX_CHANGE_EVENTS: usize = 256;
+
 /// Test-only seam: called in `try_rescan_room` between the read phase and the apply phase, with
 /// the room id. Compiles to nothing outside `cfg(test)`.
 #[cfg(test)]
@@ -182,7 +189,7 @@ impl RoomsCore {
         }
         let _ = index.take_touched_days();
         if let Err(e) = crate::onboarding::ensure(&home) { eprintln!("rooms-core: onboarding files not written: {e}"); }
-        let (tx, _) = broadcast::channel(1024);
+        let (tx, _) = broadcast::channel(EVENT_BUFFER);
         Ok(RoomsCore {
             inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new() })),
             seq: Arc::new(AtomicU64::new(0)),
@@ -235,6 +242,30 @@ impl RoomsCore {
     }
 
     fn emit_changes(&self, inner: &mut Inner, changes: Vec<Change>) {
+        if changes.len() > MAX_CHANGE_EVENTS {
+            self.emit_room_resyncs(inner, &changes);
+        } else {
+            self.emit_each_change(inner, changes);
+        }
+        // Stored created_day (old and new on a move, plus removed rows' days), not a recomputation.
+        for date in inner.index.take_touched_days() { self.emit(inner, EventKind::JournalChanged { date }); }
+    }
+
+    /// A big batch as `resync {room}` (refetch that room) plus `room.updated` (its new count) per
+    /// room: one event per change would overflow subscribers' buffers, and every lagging client
+    /// would then refetch everything.
+    fn emit_room_resyncs(&self, inner: &mut Inner, changes: &[Change]) {
+        let rooms: std::collections::BTreeSet<RoomId> = changes.iter().map(|c| match c {
+            Change::Added(a) | Change::Updated(a) => a.room_id.clone(),
+            Change::Removed { room_id, .. } => room_id.clone(),
+        }).collect();
+        for room in rooms {
+            self.emit(inner, EventKind::Resync { room_id: Some(room.clone()) });
+            self.emit_room_updated(inner, &room);
+        }
+    }
+
+    fn emit_each_change(&self, inner: &mut Inner, changes: Vec<Change>) {
         for c in changes {
             let kind = match c {
                 Change::Added(a) => EventKind::ArtifactAdded { artifact: a },
@@ -243,8 +274,6 @@ impl RoomsCore {
             };
             self.emit(inner, kind);
         }
-        // Stored created_day (old and new on a move, plus removed rows' days), not a recomputation.
-        for date in inner.index.take_touched_days() { self.emit(inner, EventKind::JournalChanged { date }); }
     }
 
     fn to_room(inner: &Inner, r: &RoomRecord) -> Room {
