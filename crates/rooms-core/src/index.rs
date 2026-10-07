@@ -233,6 +233,14 @@ impl Index {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
     }
 
+    /// (room, rel_path) of every row whose original lies under the folder `dir`.
+    pub fn rows_with_target_under(&self, dir: &str) -> Result<Vec<(String, String)>, CoreError> {
+        let mut st = self.conn.prepare_cached(
+            "SELECT room_id, rel_path FROM artifacts WHERE target >= ?1 || '/' AND target < ?1 || '0'").map_err(err)?;
+        let rows = st.query_map(params![dir], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
+    }
+
     /// Every distinct original path in the index.
     pub fn targets(&self) -> Result<Vec<String>, CoreError> {
         let mut st = self.conn.prepare("SELECT DISTINCT target FROM artifacts").map_err(err)?;

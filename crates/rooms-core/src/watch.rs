@@ -6,7 +6,7 @@ use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, N
 use rooms_protocol::{EventKind, RoomId, RoomKind, RoomStatus};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -33,16 +33,16 @@ fn watch_dir(deb: &Mutex<Deb>, path: &Path) -> Result<(), notify::Error> {
 /// A root that goes unavailable is dropped from the set (and unwatched) so its return re-watches.
 /// A root whose watch() fails is logged once per path (`failed` holds the already-logged paths);
 /// a later success clears the entry so a future failure logs again.
-/// Returns whether a watch was added.
+/// Returns whether it touched the watcher at all: a failed watch() restarts the stream too.
 fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<HashSet<PathBuf>>, failed: &Mutex<HashSet<PathBuf>>) -> bool {
-    let mut added = false;
+    let mut touched = false;
     for p in core.linked_roots() {
         if watched.lock().unwrap().contains(&p) { continue; }
+        touched = true;
         match watch_dir(deb, &p) {
             Ok(()) => {
                 failed.lock().unwrap().remove(&p);
                 watched.lock().unwrap().insert(p);
-                added = true;
             }
             Err(e) => {
                 if failed.lock().unwrap().insert(p.clone()) {
@@ -51,12 +51,15 @@ fn ensure_linked_watched(core: &RoomsCore, deb: &Mutex<Deb>, watched: &Mutex<Has
             }
         }
     }
-    added
+    touched
 }
 
 /// Minimum gap between watcher-triggered resyncs, so a persistent watcher error can't cause a
 /// refetch storm.
 const RESYNC_MIN_GAP: Duration = Duration::from_secs(2);
+
+/// Minimum gap between the rescans that follow watch changes.
+const WATCH_GAP_RESCAN_MIN_GAP: Duration = Duration::from_secs(30);
 
 /// Runs `run` on its own worker thread, coalescing requests (sent on the returned channel): at most
 /// one run at a time; every request that arrives during a run or its min-gap wait collapses into
@@ -159,6 +162,8 @@ struct Pending {
     gone: HashMap<RoomId, HashSet<PathBuf>>,
     /// Changed files that may be the original of linked artifacts, in any room.
     targets: HashSet<PathBuf>,
+    /// Folders the original-file watch saw change: every original under them is rechecked.
+    target_dirs: HashSet<PathBuf>,
 }
 
 fn has_doc_ext(p: &Path) -> bool {
@@ -189,45 +194,55 @@ fn note_change(pending: &mut Pending, roots: &[(RoomId, PathBuf)], home: &Path, 
 /// Does the work in `pending`: home folders first (new or renamed rooms are rescanned whole),
 /// then whole rooms, then single paths, including every artifact whose original changed.
 fn run_pending(core: &RoomsCore, pending: Pending) {
-    let Pending { sync_home, mut rooms, mut paths, gone, targets } = pending;
+    let Pending { sync_home, mut rooms, mut paths, gone, targets, target_dirs } = pending;
     if sync_home { rooms.extend(core.sync_home_dirs()); }
     for (room, rels) in gone {
         let under = core.artifacts_under(&room, &rels);
         paths.entry(room).or_default().extend(under);
     }
-    for (room, rel) in core.artifacts_with_targets(targets.iter().map(PathBuf::as_path)) {
-        paths.entry(room).or_default().insert(rel);
-    }
+    let linked = core.artifacts_with_targets(targets.iter().map(PathBuf::as_path)).into_iter()
+        .chain(core.artifacts_with_targets_under(target_dirs.iter().map(PathBuf::as_path)));
+    for (room, rel) in linked { paths.entry(room).or_default().insert(rel); }
     for room in &rooms { core.rescan_room(room); }
     for (room, rels) in paths.into_iter().filter(|(room, _)| !rooms.contains(room)) {
         core.rescan_paths(&room, &rels.into_iter().collect::<Vec<_>>());
     }
 }
 
-/// Originals outside every watched root (home, linked roots) are seen by a watch of their
-/// folders, non-recursive. `wanted` is the folder set last asked for (some may have failed).
+/// Originals outside every watched root (home, linked roots) are seen by a non-recursive watch
+/// of their folder, or of its nearest existing ancestor while the folder is gone (so its return
+/// is seen). Folders that could not be watched are in `failed`, retried after a while.
 struct TargetWatch {
     watcher: RecommendedWatcher,
-    wanted: HashSet<PathBuf>,
     watched: HashSet<PathBuf>,
+    failed: HashSet<PathBuf>,
+    failed_at: Option<Instant>,
 }
+
+/// Minimum time before folders the original-file watch could not watch are tried again.
+const TARGET_RETRY_GAP: Duration = Duration::from_secs(30);
 
 /// Brings the target watch in line with the index. Returns whether the watch set changed.
 fn sync_target_watch(core: &RoomsCore, tw: &Mutex<TargetWatch>) -> bool {
-    let want: HashSet<PathBuf> = core.outside_targets().iter().filter_map(|t| t.parent().map(Path::to_path_buf)).collect();
+    let want: HashSet<PathBuf> = core.outside_targets().iter()
+        .filter_map(|t| t.parent()?.ancestors().find(|a| a.is_dir()).map(Path::to_path_buf))
+        .collect();
     let mut tw = tw.lock().unwrap();
-    if want == tw.wanted { return false; }
-    let TargetWatch { watcher, wanted, watched } = &mut *tw;
+    let TargetWatch { watcher, watched, failed, failed_at } = &mut *tw;
+    if want == *watched { failed.clear(); return false; }
+    let only_retries = want.difference(watched).all(|d| failed.contains(d)) && watched.is_subset(&want);
+    if only_retries && failed_at.is_some_and(|t| t.elapsed() < TARGET_RETRY_GAP) { return false; }
     // One batch: FSEvents restarts its stream once, not once per folder.
     let mut batch = watcher.paths_mut();
     for d in watched.difference(&want) { let _ = batch.remove(d); }
     let mut now = HashSet::new();
+    failed.clear();
     for d in &want {
-        if watched.contains(d) || batch.add(d, RecursiveMode::NonRecursive).is_ok() { now.insert(d.clone()); }
+        if watched.contains(d) || batch.add(d, RecursiveMode::NonRecursive).is_ok() { now.insert(d.clone()); } else { failed.insert(d.clone()); }
     }
     if let Err(e) = batch.commit() { eprintln!("rooms-core: updating the original-file watch failed: {e}"); }
+    *failed_at = (!failed.is_empty()).then(Instant::now);
     *watched = now;
-    *wanted = want;
     true
 }
 
@@ -295,8 +310,9 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     };
     // Adding or removing a watch restarts the FSEvents stream, and events in that gap are lost:
     // each change is followed by a coalesced rescan of everything (it emits only what changed).
+    // The long gap bounds the cost when a linked root flaps or keeps failing to be watched.
     let wrescan = core.downgrade();
-    let rescan = spawn_coalescer(RESYNC_MIN_GAP, move || match wrescan.upgrade() {
+    let rescan = spawn_coalescer(WATCH_GAP_RESCAN_MIN_GAP, move || match wrescan.upgrade() {
         Some(core) => { core.rescan_all(); true }
         None => false,
     });
@@ -309,16 +325,31 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     ensure_linked_watched(&core, &deb, &watched, &failed); // the startup backfill covers the gap
 
     // An edit to an original (or an editor's tmp + rename over it) refreshes its artifacts.
-    let (pending_t, work_t, resync_t) = (pending.clone(), work.clone(), resync.clone());
+    // A folder event (created, removed, renamed) also re-syncs the watch, so the folders of
+    // dangling links' originals are followed as they come back.
+    let target_sync_cell: Arc<OnceLock<mpsc::Sender<()>>> = Arc::default();
+    let (pending_t, work_t, resync_t, sync_t) = (pending.clone(), work.clone(), resync.clone(), target_sync_cell.clone());
     let target_watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
         Ok(ev) if ev.need_rescan() => { let _ = resync_t.send(()); }
         Ok(ev) => {
-            pending_t.lock().unwrap().targets.extend(ev.paths.into_iter().filter(|p| has_doc_ext(p)));
+            let mut folder_changed = false;
+            {
+                let mut pending = pending_t.lock().unwrap();
+                for p in ev.paths {
+                    if has_doc_ext(&p) && !p.is_dir() {
+                        pending.targets.insert(p);
+                    } else {
+                        pending.target_dirs.insert(p);
+                        folder_changed = true;
+                    }
+                }
+            }
             let _ = work_t.send(());
+            if let (true, Some(sync)) = (folder_changed, sync_t.get()) { let _ = sync.send(()); }
         }
         Err(e) => eprintln!("rooms-core: original-file watcher error: {e}"),
     }).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
-    let targets = Arc::new(Mutex::new(TargetWatch { watcher: target_watcher, wanted: HashSet::new(), watched: HashSet::new() }));
+    let targets = Arc::new(Mutex::new(TargetWatch { watcher: target_watcher, watched: HashSet::new(), failed: HashSet::new(), failed_at: None }));
     let (wcore_ts, wtargets, pending_ts, work_ts) = (core.downgrade(), Arc::downgrade(&targets), pending.clone(), work.clone());
     let target_sync = spawn_coalescer(TARGET_SYNC_MIN_GAP, move || {
         let (Some(core), Some(tw)) = (wcore_ts.upgrade(), wtargets.upgrade()) else { return false };
@@ -329,6 +360,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         }
         true
     });
+    let _ = target_sync_cell.set(target_sync.clone());
     let _ = target_sync.send(()); // the index may already hold artifacts from the last run
     drop((pending, work));
 
@@ -340,6 +372,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
     let (w3, f3) = (watched.clone(), failed.clone());
     let (wcore3, wdeb3) = (wcore.clone(), wdeb.clone());
     let rescan3 = rescan.clone();
+    let (target_sync_tick, wtargets_tick) = (target_sync.clone(), Arc::downgrade(&targets));
     std::thread::spawn(move || loop {
         match rx.blocking_recv() {
             Ok(e) => {
@@ -374,6 +407,8 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         let (Some(core), Some(deb)) = (wcore.upgrade(), wdeb.upgrade()) else { break };
         core.rescan_unavailable();
         if ensure_linked_watched(&core, &deb, &watched, &failed) { let _ = rescan.send(()); }
+        // Retries original folders that could not be watched (the sync itself waits out the backoff).
+        if wtargets_tick.upgrade().is_some_and(|tw| !tw.lock().unwrap().failed.is_empty()) { let _ = target_sync_tick.send(()); }
     });
     Ok(WatchHandle { _debouncer: deb, _targets: targets })
 }

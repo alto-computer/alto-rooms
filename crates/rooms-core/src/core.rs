@@ -16,6 +16,44 @@ struct Inner {
     index: Index,
     /// Rooms whose root was missing/unreadable at the last rescan (drives one room.updated per transition).
     unavailable: HashSet<RoomId>,
+    dangling: DanglingLinks,
+}
+
+/// Links whose original vanished after they were indexed: (room, rel path) → the original's
+/// path. Their rows are gone, so they are remembered here, and when the original comes back
+/// (the file recreated, its folder restored) the watcher finds the link by that path and
+/// re-adds it. In memory only: after a restart such a link waits for a rescan of its room.
+#[derive(Default)]
+struct DanglingLinks(HashMap<(RoomId, String), PathBuf>);
+
+fn is_symlink(p: &Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+impl DanglingLinks {
+    /// After a scan of `rels` in `room` at `root`: a link that lost its row (`lost`: rel → its
+    /// original) is remembered; a remembered rel that is an artifact again, or no longer a link,
+    /// is forgotten.
+    fn update(&mut self, room: &RoomId, root: &Path, rels: impl IntoIterator<Item = String>, lost: HashMap<String, PathBuf>, present: impl Fn(&str) -> bool) {
+        for rel in rels {
+            let key = (room.clone(), rel);
+            if present(&key.1) || !is_symlink(&root.join(&key.1)) {
+                self.0.remove(&key);
+            } else if let Some(target) = lost.get(&key.1) {
+                self.0.insert(key, target.clone());
+            }
+        }
+    }
+
+    fn rels_of(&self, room: &RoomId) -> Vec<String> {
+        self.0.keys().filter(|(r, _)| r == room).map(|(_, rel)| rel.clone()).collect()
+    }
+
+    /// Remembered links whose original is `target` or lies under the folder `target`.
+    fn at_or_under(&self, target: &Path) -> impl Iterator<Item = (RoomId, PathBuf)> + '_ {
+        let target = target.to_path_buf();
+        self.0.iter().filter(move |(_, t)| t.starts_with(&target)).map(|((room, rel), _)| (room.clone(), PathBuf::from(rel)))
+    }
 }
 
 /// A room root is usable only if it is a directory we can list. Scanning anything else would
@@ -196,7 +234,7 @@ impl RoomsCore {
         if let Err(e) = crate::onboarding::ensure(&home) { eprintln!("rooms-core: onboarding files not written: {e}"); }
         let (tx, _) = broadcast::channel(EVENT_BUFFER);
         Ok(RoomsCore {
-            inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new() })),
+            inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new(), dangling: DanglingLinks::default() })),
             seq: Arc::new(AtomicU64::new(0)),
             scan_locks: Arc::new(Mutex::new(HashMap::new())),
             notes_lock: Arc::new(Mutex::new(())),
@@ -337,7 +375,11 @@ impl RoomsCore {
         let fps = { self.inner.lock().unwrap().index.fingerprints(room)? };
         let facts: Vec<_> = entries.iter().filter_map(|e| read_entry(room, e, fps.get(&e.rel_path))).collect(); // no lock
         let present: HashSet<String> = entries.iter().filter(|e| e.class == PathClass::Artifact).map(|e| e.rel_path.clone()).collect();
-        self.apply_scan(room, &root, |index| index.apply(room, &facts, &present))
+        let lost: HashMap<String, PathBuf> = fps.into_iter().filter(|(rel, _)| !present.contains(rel)).map(|(rel, fp)| (rel, PathBuf::from(fp.target))).collect();
+        self.apply_scan(room, &root, |index| index.apply(room, &facts, &present), |dangling| {
+            let rels: Vec<String> = dangling.rels_of(room).into_iter().chain(lost.keys().cloned()).collect();
+            dangling.update(room, &root, rels, lost, |rel| present.contains(rel));
+        })
     }
 
     /// The rescan pipeline for some paths of a room only (each relative to its root): a path that
@@ -351,22 +393,33 @@ impl RoomsCore {
         let (honor_gitignore, in_journal) = (kind == RoomKind::Linked, kind == RoomKind::Journal);
         let mut facts = Vec::new();
         let mut gone = Vec::new();
+        let mut present = HashSet::new();
+        let mut lost = HashMap::new();
         for rel in rels {
             let rel_path = rel.to_string_lossy().replace('\\', "/");
+            let fp = { self.inner.lock().unwrap().index.fingerprint(room, &rel_path)? };
             match crate::walk::entry_at(&root, rel, honor_gitignore, in_journal) {
                 Some(e) if e.class == PathClass::Artifact => {
-                    let fp = { self.inner.lock().unwrap().index.fingerprint(room, &rel_path)? };
                     facts.extend(read_entry(room, &e, fp.as_ref())); // no lock
+                    present.insert(rel_path);
                 }
-                _ => gone.push(rel_path),
+                _ => {
+                    if let Some(fp) = fp { lost.insert(rel_path.clone(), PathBuf::from(fp.target)); }
+                    gone.push(rel_path);
+                }
             }
         }
-        self.apply_scan(room, &root, |index| index.apply_paths(room, &facts, &gone))
+        self.apply_scan(room, &root, |index| index.apply_paths(room, &facts, &gone), |dangling| {
+            let rels = present.iter().chain(&gone).cloned().collect::<Vec<_>>();
+            dangling.update(room, &root, rels, lost, |rel| present.contains(rel));
+        })
     }
 
     /// Phase 3 of a scan of `room` at `root`, under `Inner`: runs `apply` and emits its changes,
     /// unless the room was removed or moved, or its root vanished, while the scan was reading.
-    fn apply_scan(&self, room: &RoomId, root: &Path, apply: impl FnOnce(&mut Index) -> Result<Vec<Change>, CoreError>) -> Result<(), CoreError> {
+    /// `remember` then updates the dangling links (see `DanglingLinks`) in the same critical section.
+    fn apply_scan(&self, room: &RoomId, root: &Path, apply: impl FnOnce(&mut Index) -> Result<Vec<Change>, CoreError>,
+                  remember: impl FnOnce(&mut DanglingLinks)) -> Result<(), CoreError> {
         #[cfg(test)]
         {
             // Clone out and release the hook mutex before calling, so the hook never serializes scans.
@@ -387,6 +440,7 @@ impl RoomsCore {
             return Ok(());
         }
         let ch = apply(&mut inner.index)?;
+        remember(&mut inner.dangling);
         self.emit_changes(&mut inner, ch);
         if inner.unavailable.remove(room) { self.emit_room_updated(&mut inner, room); }
         Ok(())
@@ -423,15 +477,29 @@ impl RoomsCore {
         if let Err(e) = self.try_rescan_paths(room, rels) { eprintln!("rooms-core: rescan of {} paths in room {room} failed: {e}", rels.len()); }
     }
 
-    /// (room, path relative to its root) of every artifact whose original is one of `targets`.
+    /// (room, path relative to its root) of every artifact, or dangling link, whose original is
+    /// one of `targets`.
     pub fn artifacts_with_targets<'a>(&self, targets: impl IntoIterator<Item = &'a Path>) -> Vec<(RoomId, PathBuf)> {
+        self.links_to(targets, false)
+    }
+
+    /// `artifacts_with_targets` for originals anywhere under the folders `dirs` (a folder event
+    /// in the original-file watch: created, removed or renamed).
+    pub fn artifacts_with_targets_under<'a>(&self, dirs: impl IntoIterator<Item = &'a Path>) -> Vec<(RoomId, PathBuf)> {
+        self.links_to(dirs, true)
+    }
+
+    fn links_to<'a>(&self, paths: impl IntoIterator<Item = &'a Path>, under: bool) -> Vec<(RoomId, PathBuf)> {
         let inner = self.inner.lock().unwrap();
         let mut out = Vec::new();
-        for t in targets {
-            match inner.index.rows_with_target(&t.to_string_lossy()) {
+        for p in paths {
+            let key = p.to_string_lossy();
+            let rows = if under { inner.index.rows_with_target_under(&key) } else { inner.index.rows_with_target(&key) };
+            match rows {
                 Ok(rows) => out.extend(rows.into_iter().map(|(room, rel)| (room, PathBuf::from(rel)))),
-                Err(e) => eprintln!("rooms-core: looking up artifacts of {} failed: {e}", t.display()),
+                Err(e) => eprintln!("rooms-core: looking up artifacts of {} failed: {e}", p.display()),
             }
+            out.extend(inner.dangling.at_or_under(p)); // a file path is "under" only itself
         }
         out
     }
@@ -449,15 +517,18 @@ impl RoomsCore {
         out
     }
 
-    /// The originals that live outside home and every linked root, so no room watch sees them.
+    /// The originals (of artifacts and dangling links) that live outside home and every linked
+    /// root, so no room watch sees them.
     pub fn outside_targets(&self) -> Vec<PathBuf> {
         let (targets, linked) = {
             let inner = self.inner.lock().unwrap();
             let linked: Vec<PathBuf> = inner.state.rooms.iter().filter(|r| r.kind == RoomKind::Linked).map(|r| r.path.clone()).collect();
-            (inner.index.targets().unwrap_or_default(), linked)
+            let mut targets: Vec<PathBuf> = inner.index.targets().unwrap_or_default().into_iter().map(PathBuf::from).collect();
+            targets.extend(inner.dangling.0.values().cloned());
+            (targets, linked)
         };
         let watched = |p: &Path| p.starts_with(&self.home) || linked.iter().any(|root| p.starts_with(root));
-        targets.into_iter().map(PathBuf::from).filter(|t| !watched(t)).collect()
+        targets.into_iter().filter(|t| !watched(t)).collect()
     }
 
     /// Every room root (journal included), longest first, for mapping many paths to rooms with one

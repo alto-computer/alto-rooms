@@ -1261,3 +1261,101 @@ fn rescan_paths_touches_only_the_given_paths() {
     }).collect();
     assert_eq!(kinds, ["added", "removed"], "old.html is unchanged");
 }
+
+/// Polls until `cond` holds (or fails after `max`), returning the last value it saw.
+fn eventually<T: std::fmt::Debug>(max: Duration, mut get: impl FnMut() -> T, cond: impl Fn(&T) -> bool) -> T {
+    let start = Instant::now();
+    loop {
+        let v = get();
+        if cond(&v) { return v; }
+        assert!(start.elapsed() < max, "never happened; last: {v:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn rels_of(core: &RoomsCore, room: &RoomId) -> Vec<String> {
+    let mut v: Vec<String> = core.list_artifacts(room).unwrap().into_iter().map(|a| a.rel_path).collect();
+    v.sort();
+    v
+}
+
+fn titles_of(core: &RoomsCore, room: &RoomId) -> Vec<String> {
+    core.list_artifacts(room).unwrap().into_iter().map(|a| a.title).collect()
+}
+
+#[test]
+fn case_and_normalization_only_renames_leave_one_row() {
+    use unicode_normalization::UnicodeNormalization;
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    let a = core.home().join("a");
+    fs::write(a.join("x.html"), "<title>X</title>").unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v == &["x.html"]);
+    fs::rename(a.join("x.html"), a.join("X.html")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v == &["X.html"]);
+    let (nfc, nfd): (String, String) = ("회의.html".nfc().collect(), "회의.html".nfd().collect());
+    fs::write(a.join(&nfd), "").unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v.len() == 2);
+    fs::rename(a.join(&nfd), a.join(&nfc)).unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v == &["X.html".to_string(), nfc.clone()]);
+}
+
+#[test]
+fn a_dotted_folder_moved_out_or_hidden_drops_its_rows() {
+    let d = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let r = core.create_room("a").unwrap();
+    let a = core.home().join("a");
+    for dir in ["v1.2", "v2.0"] {
+        fs::create_dir_all(a.join(dir)).unwrap();
+        fs::write(a.join(dir).join("x.html"), "").unwrap();
+    }
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v.len() == 2);
+    fs::rename(a.join("v1.2"), out.path().join("v1.2")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v == &["v2.0/x.html"]);
+    fs::rename(a.join("v2.0"), a.join(".old")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || rels_of(&core, &r.id), |v| v.is_empty());
+}
+
+#[test]
+fn an_original_inside_an_ignored_folder_still_refreshes_its_link() {
+    let d = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let a = core.create_room("a").unwrap();
+    core.create_room("b").unwrap();
+    let orig = core.home().join("b/dist/o.html");
+    fs::create_dir_all(orig.parent().unwrap()).unwrap();
+    fs::write(&orig, "<title>One</title>").unwrap();
+    symlink(&orig, core.home().join("a/s.html")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v == &["One"]);
+    std::thread::sleep(Duration::from_millis(500)); // the original's folder gets watched
+    fs::write(&orig, "<title>Two</title>").unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v == &["Two"]);
+}
+
+#[test]
+fn an_original_deleted_and_recreated_comes_back() {
+    let d = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let (core, _w) = rooms_core::watch::open_and_watch(d.path()).unwrap();
+    let a = core.create_room("a").unwrap();
+    let dir = fs::canonicalize(out.path()).unwrap().join("o");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("o.html"), "<title>One</title>").unwrap();
+    symlink(dir.join("o.html"), core.home().join("a/s.html")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v == &["One"]);
+    std::thread::sleep(Duration::from_millis(500));
+    // The file alone, then its whole folder.
+    fs::remove_file(dir.join("o.html")).unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v.is_empty());
+    fs::write(dir.join("o.html"), "<title>Back</title>").unwrap();
+    eventually(slow(Duration::from_secs(3)), || titles_of(&core, &a.id), |v| v == &["Back"]);
+    std::thread::sleep(Duration::from_millis(500));
+    fs::remove_dir_all(&dir).unwrap();
+    eventually(slow(Duration::from_secs(2)), || titles_of(&core, &a.id), |v| v.is_empty());
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("o.html"), "<title>Again</title>").unwrap();
+    eventually(slow(Duration::from_secs(3)), || titles_of(&core, &a.id), |v| v == &["Again"]);
+}
