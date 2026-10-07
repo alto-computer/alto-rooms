@@ -13,7 +13,8 @@ import { ThinkingLine } from "./ThinkingLine";
 import { useStickToBottom } from "./useStickToBottom";
 
 /** The Markdown chain is heavy and only needed once an answer arrives. */
-const AnswerMarkdown = lazy(() => import("./AnswerMarkdown").then((m) => ({ default: m.AnswerMarkdown })));
+const loadAnswerMarkdown = () => import("./AnswerMarkdown");
+const AnswerMarkdown = lazy(() => loadAnswerMarkdown().then((m) => ({ default: m.AnswerMarkdown })));
 
 /** Plain answer text with the Markdown view's typography, so the swap doesn't jump. */
 function AnswerFallback({ text }: { text: string }) {
@@ -108,6 +109,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   /** Set synchronously on send, so a second Enter before the turn shows up does nothing. */
   const sending = useRef(false);
   useEffect(() => store.hold(artifact.fileKey), [store, artifact.fileKey]);
+  // Fetch the markdown renderer while the doc is read, so an answer never waits on it.
+  useEffect(() => void loadAnswerMarkdown(), []);
   const loading = useRef<string | null>(null);
   const shown = open && !readOnly;
   const loaded = thread?.loaded ?? false;
