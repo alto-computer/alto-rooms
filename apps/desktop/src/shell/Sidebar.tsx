@@ -117,7 +117,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             aria-label="Home"
             // Browser style: the home page replaces this tab; ⌘/middle click opens it in a new one.
             onClick={(e) => viewer.go({ kind: "new" }, wantsNewTab(e))}
-            onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "new" })}
+            onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "new" }, true)}
             className="-my-1 -ml-1.5 flex items-center gap-2.5 rounded-lg py-1 pr-2 pl-1.5 hover:bg-[#f2f2f2] focus-visible:outline-2 focus-visible:outline-ink"
           >
             <img src={logo} alt="" width={26} height={26} className="size-[26px] shrink-0" />

@@ -99,6 +99,20 @@ describe("ViewerStore", () => {
     expect(st.getState().tabs).toHaveLength(3);
   });
 
+  it("go(…, newTab) opens next to the active tab, after the ones already opened from it", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const home = st.getState().tabs[0].id;
+    st.open({ kind: "room", roomId: "end" });
+    st.activate(home);
+    st.go({ kind: "doc", roomId: "r", artifactId: "a" }, true);
+    st.activate(home);
+    st.go({ kind: "doc", roomId: "r", artifactId: "b" }, true);
+    const order = () => st.getState().tabs.map((t) => (t.kind === "doc" ? t.artifactId : t.kind === "room" ? t.roomId : t.kind));
+    expect(order()).toEqual(["new", "a", "b", "end"]);
+    st.open({ kind: "journal", date: "2026-10-07" }); // ⌘T-style opens still go last
+    expect(order()).toEqual(["new", "a", "b", "end", "journal"]);
+  });
+
   it("closing a New tab leaves nothing to reopen", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const r = st.open({ kind: "room", roomId: "a" });

@@ -95,7 +95,7 @@ export function RoomRow({
       type="button"
       aria-current={active ? "page" : undefined}
       onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))}
-      onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "room", roomId: room.id })}
+      onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "room", roomId: room.id }, true)}
       onDoubleClick={readOnly ? undefined : () => setEditing(true)}
       {...(sortable ? { ...sort.attributes, ...sort.listeners } : {})}
       {...drop.handlers}

@@ -119,7 +119,7 @@ export function NewTabView() {
               type="button"
               data-testid="new-room-card"
               onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))}
-              onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "room", roomId: room.id })}
+              onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "room", roomId: room.id }, true)}
               className="flex flex-col gap-1 rounded-[14px] border border-[#ddd] bg-white px-5 py-[18px] text-left hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink"
             >
               <span data-testid="new-room-name" className="text-[18px] font-medium text-ink">

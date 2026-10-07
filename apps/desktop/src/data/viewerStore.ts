@@ -185,6 +185,8 @@ export class ViewerStore {
   private counter = 0;
   /** Transient: bumped per tab on every in-tab navigation, so its view remounts. */
   private navCounts = new Map<string, number>();
+  /** Transient: the tab last opened next to its opener, so the next one lines up after it. */
+  private lastChild: { opener: string; id: string } | null = null;
   /** Transient: recently closed tabs, oldest first. */
   private closed: { tab: TabInput; index: number; history: TabHistory }[] = [];
   private readonly storage: StorageLike | undefined;
@@ -227,7 +229,11 @@ export class ViewerStore {
     };
   };
 
-  open(tab: TabInput, opts: { activate?: boolean } = {}): string {
+  /**
+   * Opens `tab` (or activates an equal one). New tabs go at the end, or with `nextToActive`
+   * right after the active tab and the tabs already opened from it, in order (Chrome).
+   */
+  open(tab: TabInput, opts: { activate?: boolean; nextToActive?: boolean } = {}): string {
     const activate = opts.activate ?? true;
     const existing = this.state.tabs.find((t) => sameTab(t, tab));
     if (existing) {
@@ -235,7 +241,9 @@ export class ViewerStore {
       return existing.id;
     }
     const created = makeTab(this.newId(), tab);
-    const tabs = [...this.state.tabs, created];
+    const tabs = [...this.state.tabs];
+    tabs.splice(opts.nextToActive ? this.childSlot() : tabs.length, 0, created);
+    if (opts.nextToActive && this.state.activeId) this.lastChild = { opener: this.state.activeId, id: created.id };
     if (activate) this.set({ ...this.leaving(), tabs, activeId: created.id });
     else this.set({ tabs });
     return created.id;
@@ -310,7 +318,7 @@ export class ViewerStore {
 
   /** A click's destination: a new tab (⌘/Ctrl or middle click) or this one. */
   go(tab: TabInput, newTab = false): void {
-    if (newTab) this.open(tab);
+    if (newTab) this.open(tab, { nextToActive: true });
     else this.navigate(tab);
   }
 
@@ -362,6 +370,7 @@ export class ViewerStore {
     if (at === from) return;
     const tabs = [...this.state.tabs];
     const [tab] = tabs.splice(from, 1);
+    this.lastChild = null; // a hand-placed order starts a new run
     tabs.splice(at, 0, tab);
     this.set({ tabs });
   }
@@ -393,6 +402,15 @@ export class ViewerStore {
     const since = Date.parse(this.state.lastVisit[a.roomId] ?? this.state.firstRunAt);
     if (Number.isNaN(created) || Number.isNaN(since)) return false;
     return created > since;
+  }
+
+  /** Where a tab opened from the active one goes: after it, and after its last such child. */
+  private childSlot(): number {
+    const tabs = this.state.tabs;
+    const active = tabs.findIndex((t) => t.id === this.state.activeId);
+    if (active < 0) return tabs.length;
+    const child = this.lastChild?.opener === this.state.activeId ? tabs.findIndex((t) => t.id === this.lastChild!.id) : -1;
+    return Math.max(active, child) + 1;
   }
 
   private activeTab(): Tab | undefined {
