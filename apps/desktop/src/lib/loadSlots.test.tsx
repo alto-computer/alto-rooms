@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_LOADING, resetLoadSlots, useLoadSlot } from "./loadSlots";
@@ -37,5 +38,17 @@ describe("useLoadSlot", () => {
     expect(r.getByTestId(`f${MAX_LOADING + 1}`).textContent).toBe("loading");
     act(() => vi.advanceTimersByTime(5000)); // the rest never report a load
     expect(r.getByTestId(`f${MAX_LOADING + 2}`).textContent).toBe("loading");
+  });
+
+  it("keeps the cap under StrictMode's mount, unmount, mount", () => {
+    const n = MAX_LOADING + 4;
+    const r = render(
+      <StrictMode>
+        {Array.from({ length: n }, (_, i) => (
+          <Frame key={i} id={`f${i}`} />
+        ))}
+      </StrictMode>,
+    );
+    expect(states(n, r.getByTestId).filter((s) => s === "loading")).toHaveLength(MAX_LOADING);
   });
 });

@@ -51,6 +51,8 @@ export function useLoadSlot(want: boolean): { granted: boolean; loaded: () => vo
     setRelease(() => r);
     return () => {
       r();
+      // A re-run effect (StrictMode, a hidden <Activity> coming back) must queue again, not keep an old grant.
+      setGranted(false);
       setRelease(null);
     };
   }, [want]);

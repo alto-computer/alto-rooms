@@ -17,5 +17,8 @@ Branch `polish/perf-ux-quality`, a 6-hour goal loop on 2026-10-07 against four g
 - Read failures still use the `write_failed` wire code ("Couldn't save"); the error type is split, so it is a one-line change, but a protocol change.
 - A hidden (kept) doc tab keeps running its page, including audio/video, like a background browser tab.
 - New tabs open at the end of the strip; Chrome opens tabs from the current one next to it.
+- A live reload (file rewritten while its preview is near) reloads the frame without taking a load slot, so a mass rewrite reloads all near previews at once. Re-acquiring per version would blank the preview while it waits.
+- The web build (not the Tauri app, which has `daemon://exited`) shows nothing when roomsd dies mid-session; opening a room then says "Something went wrong" with no retry.
+- Proposals left for the owner: macOS overlay title bar with the tab row as drag region (~28 px back); one hover style and one cursor rule for all cards; focusing an already-open room tab instead of a duplicate; a line (or no row) for an empty past Journal day; the global reduced-motion rule also freezes the toast spinner and skeleton pulse.
 - `tests/timing.rs` and one watcher test flake when the machine's load average is very high (also on the pre-branch commit).
 - The CLAUDE.md astack hooks (astack:change / recall / spec) could not run: the astack skills are not installed in this environment.
