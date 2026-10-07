@@ -17,6 +17,14 @@ fn is_html_ext(p: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Canonical target of a file symlink that resolves to a regular `.html`/`.htm` file. Directory
+/// symlinks inside rooms are never followed.
+pub fn symlink_html_target(link: &Path) -> Option<PathBuf> {
+    let m = std::fs::metadata(link).ok()?;
+    if !m.is_file() { return None; }
+    std::fs::canonicalize(link).ok().filter(|t| is_html_ext(t))
+}
+
 pub fn scan_room(root: &Path, honor_gitignore: bool, in_journal: bool) -> Vec<ScanEntry> {
     let mut out = Vec::new();
     let walker = WalkBuilder::new(root)
@@ -34,29 +42,24 @@ pub fn scan_room(root: &Path, honor_gitignore: bool, in_journal: bool) -> Vec<Sc
             !(e.file_type().map(|t| t.is_dir()).unwrap_or(false) && DEFAULT_IGNORED_DIRS.contains(&name.as_ref()))
         })
         .build();
+    // Regular files are reached through real directories only (links are never followed), so
+    // their canonical path is the canonical root joined with the relative path: no per-file syscall.
+    let Ok(canonical_root) = std::fs::canonicalize(root) else { return out };
     for entry in walker.flatten() {
-        let abs = entry.path().to_path_buf();
+        let abs = entry.path();
         let Ok(rel) = abs.strip_prefix(root) else { continue };
         if rel.as_os_str().is_empty() { continue; }
-        let ft = match entry.file_type() { Some(t) => t, None => continue };
-        // Directory symlinks inside rooms are never followed; file symlinks must point to a regular file.
-        let target = if ft.is_symlink() {
-            match std::fs::metadata(&abs) {
-                Ok(m) if m.is_file() => match std::fs::canonicalize(&abs) {
-                    Ok(t) if is_html_ext(&t) => t,
-                    _ => continue,
-                },
-                _ => continue,
-            }
-        } else if ft.is_file() {
-            match std::fs::canonicalize(&abs) { Ok(t) => t, Err(_) => continue }
+        let Some(ft) = entry.file_type() else { continue };
+        let class = classify_path(rel, in_journal);
+        if class == PathClass::Ignored { continue; }
+        let target = if ft.is_file() {
+            canonical_root.join(rel)
+        } else if ft.is_symlink() && class == PathClass::Artifact {
+            match symlink_html_target(abs) { Some(t) => t, None => continue }
         } else {
             continue;
         };
-        let class = classify_path(rel, in_journal);
-        if class == PathClass::Ignored { continue; }
-        if ft.is_symlink() && class != PathClass::Artifact { continue; }
-        out.push(ScanEntry { rel_path: rel.to_string_lossy().replace('\\', "/"), abs_path: abs, target, class });
+        out.push(ScanEntry { rel_path: rel.to_string_lossy().replace('\\', "/"), abs_path: abs.to_path_buf(), target, class });
     }
     out.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     out
@@ -110,6 +113,15 @@ mod tests {
         let v = scan_room(&room, false, false);
         assert_eq!(rels(&v), vec!["spec.html"]);
         assert_eq!(v[0].target, fs::canonicalize(orig.join("spec.html")).unwrap());
+    }
+
+    #[test]
+    fn regular_file_target_is_its_canonical_path() {
+        let d = tempfile::tempdir().unwrap(); // under /var, itself a symlink on macOS
+        fs::create_dir_all(d.path().join("room/sub")).unwrap();
+        fs::write(d.path().join("room/sub/a.html"), "").unwrap();
+        let v = scan_room(&d.path().join("room"), false, false);
+        assert_eq!(v[0].target, fs::canonicalize(d.path().join("room/sub/a.html")).unwrap());
     }
 
     #[test]

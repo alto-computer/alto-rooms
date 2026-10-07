@@ -1,6 +1,6 @@
 use crate::{CoreError, RoomsCore};
 use notify::RecursiveMode;
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
+use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, NoCache};
 use rooms_protocol::{EventKind, RoomKind, RoomStatus};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -8,7 +8,9 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
 
-type Deb = Debouncer<notify::RecommendedWatcher, RecommendedCache>;
+/// No file-id cache: it walks and stats every watched tree (node_modules, .git included) on each
+/// watch(), and rescans never rely on rename stitching.
+type Deb = Debouncer<notify::RecommendedWatcher, NoCache>;
 
 /// Dropping this stops watching.
 pub struct WatchHandle {
@@ -101,7 +103,7 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
         Some(core) => { core.resync_all(); true }
         None => false,
     });
-    let debouncer = new_debouncer(Duration::from_millis(300), None, move |res: DebounceEventResult| {
+    let on_events = move |res: DebounceEventResult| {
         match res {
             // Overflow (events were dropped) or a watcher error: per-room rescans can't be trusted.
             Ok(events) if events.iter().any(|ev| ev.need_rescan()) => {
@@ -131,7 +133,9 @@ pub fn start_watching(core: RoomsCore) -> Result<WatchHandle, CoreError> {
                 for id in rooms { c2.rescan_room(&id); }
             }
         }
-    }).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
+    };
+    let debouncer = new_debouncer_opt::<_, notify::RecommendedWatcher, _>(Duration::from_millis(300), None, on_events, NoCache, notify::Config::default())
+        .map_err(|e| CoreError::WriteFailed(e.to_string()))?;
     let deb = Arc::new(Mutex::new(debouncer));
     watch_dir(&deb, core.home()).map_err(|e| CoreError::WriteFailed(e.to_string()))?;
     let watched = Arc::new(Mutex::new(HashSet::new()));
