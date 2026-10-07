@@ -47,7 +47,7 @@ export type ArtifactCardProps = {
   draggable?: boolean;
 };
 
-/** True while `el` is within half a viewport (above or below) of its scroll root (the nearest `[data-scroll-root]`, else the viewport). */
+/** True while `el` is within half a viewport (each way, so the horizontal Journal row preloads too) of its scroll root (the nearest `[data-scroll-root]`, else the viewport). */
 function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
   const [near, setNear] = useState(false);
   useEffect(() => {
@@ -60,7 +60,7 @@ function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
     const root = el.closest<HTMLElement>("[data-scroll-root]");
     const io = new IntersectionObserver((entries) => setNear(entries[entries.length - 1]?.isIntersecting ?? false), {
       root,
-      rootMargin: "50% 0px",
+      rootMargin: "50%",
     });
     io.observe(el);
     return () => io.disconnect();

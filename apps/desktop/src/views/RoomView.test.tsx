@@ -267,6 +267,31 @@ describe("ArtifactCard: lazy preview", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("preloads sideways too, so cards past the edge of the horizontal Journal row load", async () => {
+    let margin: string | undefined;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(_cb: IntersectionObserverCallback, opts?: IntersectionObserverInit) {
+          margin = opts?.rootMargin;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    try {
+      await renderWithStores(
+        <ArtifactCard artifact={artifact("a", "첫 문서", longAgo)} info={info} label="Today" isNew={false} size="journal" onOpen={() => {}} />,
+      );
+      const parts = (margin ?? "").trim().split(/\s+/);
+      const horizontal = parts.length === 1 ? parts[0] : parts[1];
+      expect(horizontal).not.toMatch(/^0(px|%)?$/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("EmptyRoom", () => {
