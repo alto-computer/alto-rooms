@@ -1,5 +1,5 @@
 use crate::rules::DEFAULT_IGNORED_DIRS;
-use crate::core::owner_of;
+use crate::scan::owner_of;
 use crate::{CoreError, RoomsCore};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, NoCache};

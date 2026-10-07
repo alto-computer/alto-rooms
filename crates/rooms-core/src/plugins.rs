@@ -3,7 +3,7 @@
 //! them with the enable/grant state in `state.json`.
 
 use crate::error::CoreError;
-use rooms_protocol::{PluginSlots, SidePanelSlot, TabSlot};
+use rooms_protocol::{EventKind, PluginInfo, PluginSlots, PluginStatus, SidePanelSlot, TabSlot, ToolCall, ToolInfo, ToolResult};
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 
@@ -505,4 +505,170 @@ fn copy_code(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+// ---- the plugin registry on RoomsCore: manifests combined with the enable/grant state ----
+
+impl crate::core::RoomsCore {
+    fn plugin_info(state: &crate::state::PluginState, folder: String, r: Result<(Manifest, String), String>) -> PluginInfo {
+        match r {
+            Ok((m, rev)) => {
+                let enabled = state.enabled.contains(&m.id);
+                let granted = state.grants.get(&m.id).cloned();
+                let needs_approval = granted.as_ref().is_none_or(|g| !m.permissions.iter().all(|p| g.contains(p)));
+                PluginInfo {
+                    id: m.id, name: m.name, version: m.version, min_app_version: m.min_app_version, description: m.description,
+                    entry: m.entry, permissions: m.permissions, slots: m.slots, status: PluginStatus::Ok, reason: None,
+                    enabled, granted, needs_approval, rev,
+                }
+            }
+            Err(reason) => PluginInfo {
+                id: folder.clone(), name: folder, version: String::new(), min_app_version: String::new(), description: None,
+                entry: String::new(), permissions: Vec::new(), slots: PluginSlots::default(), status: PluginStatus::Invalid,
+                reason: Some(reason), enabled: false, granted: None, needs_approval: false, rev: String::new(),
+            },
+        }
+    }
+
+    /// Every plugin folder, sorted by id, with its enable state.
+    pub fn plugins(&self) -> Vec<PluginInfo> {
+        let state = self.inner.lock().unwrap().state.plugins.clone();
+        scan(&self.home).into_iter().map(|(f, r)| Self::plugin_info(&state, f, r)).collect()
+    }
+
+    fn plugin(&self, id: &str) -> Option<PluginInfo> {
+        self.plugins().into_iter().find(|p| p.id == id)
+    }
+
+    /// Turns a valid plugin on or off. Turning on grants `shown` (the permissions the user saw)
+    /// limited to what the manifest declares now; `None` grants what it declares now. Turning off
+    /// keeps the approval.
+    pub fn set_plugin_enabled(&self, id: &str, enabled: bool, shown: Option<Vec<String>>) -> Result<PluginInfo, CoreError> {
+        let p = self.plugin(id).ok_or(CoreError::NotFound)?;
+        if p.status != PluginStatus::Ok { return Err(CoreError::InvalidInput(p.reason.unwrap_or_else(|| "invalid plugin".into()))); }
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let st = &mut inner.state.plugins;
+            st.enabled.retain(|x| x != id);
+            if enabled {
+                st.enabled.push(id.to_string());
+                st.enabled.sort();
+                let granted: Vec<String> = match shown {
+                    Some(seen) => p.permissions.iter().filter(|x| seen.contains(x)).cloned().collect(),
+                    None => p.permissions.clone(),
+                };
+                st.grants.insert(id.to_string(), granted);
+            }
+            inner.state.save()?;
+            self.emit(&mut inner, EventKind::PluginsChanged {});
+        }
+        self.plugin(id).ok_or(CoreError::NotFound)
+    }
+
+    /// The folder of a valid plugin the user turned on; else `NotFound`. Storage comes with turning
+    /// it on, so a plugin waiting to approve *new* permissions can still save (e.g. while closing).
+    fn usable_plugin_dir(&self, id: &str) -> Result<std::path::PathBuf, CoreError> {
+        match self.plugin(id) {
+            Some(p) if p.status == PluginStatus::Ok && p.enabled => Ok(plugins_dir(&self.home).join(id)),
+            _ => Err(CoreError::NotFound),
+        }
+    }
+
+    /// The tools of valid, enabled plugins, in plugin-id then tool-name (alphabetical) order; the
+    /// manifest's `tools` is a map, so its own order is not kept.
+    ///
+    /// Plugins should treat `appendTo` files as append-only: the bridge may rewrite them, which
+    /// races with tool appends.
+    pub fn list_tools(&self) -> Vec<ToolInfo> {
+        let enabled = self.inner.lock().unwrap().state.plugins.enabled.clone();
+        let mut out = Vec::new();
+        for (_, r) in scan(&self.home) {
+            let Ok((m, _)) = r else { continue };
+            if !enabled.contains(&m.id) { continue; }
+            for t in &m.tools {
+                out.push(ToolInfo { plugin_id: m.id.clone(), name: t.name.clone(), description: t.description.clone(), input: t.input.clone() });
+            }
+        }
+        out
+    }
+
+    /// Appends the call's input, as one envelope line, to the plugin's data file the tool declares
+    /// for the resolved document, then emits `plugin.data.changed`. See `crate::tools`.
+    pub fn call_tool(&self, call: &ToolCall) -> Result<ToolResult, CoreError> {
+        let dir = self.usable_plugin_dir(&call.plugin_id)?;
+        let tool = scan(&self.home).into_iter()
+            .filter_map(|(_, r)| r.ok()).map(|(m, _)| m)
+            .find(|m| m.id == call.plugin_id)
+            .and_then(|m| m.tools.into_iter().find(|t| t.name == call.name))
+            .ok_or(CoreError::NotFound)?;
+        let doc = crate::tools::doc_of(&call.input)?;
+        let file_key = crate::tools::resolve_doc(self, doc)?;
+        let path = tool.append_to.replace("{doc}", &file_key);
+        let line = crate::tools::envelope_line(&chrono::Local::now().to_rfc3339(), &call.name, &call.input);
+        append_data(&dir, &path, &line)?;
+        let mut inner = self.inner.lock().unwrap();
+        self.emit(&mut inner, EventKind::PluginDataChanged { plugin_id: call.plugin_id.clone(), path: path.clone() });
+        Ok(ToolResult { path })
+    }
+
+    pub fn read_plugin_data(&self, id: &str, rel: &str) -> Result<Option<String>, CoreError> {
+        read_data(&self.usable_plugin_dir(id)?, rel)
+    }
+
+    pub fn write_plugin_data(&self, id: &str, rel: &str, text: &str) -> Result<(), CoreError> {
+        write_data(&self.usable_plugin_dir(id)?, rel, text)
+    }
+
+    pub fn list_plugin_data(&self, id: &str, prefix: &str) -> Result<Vec<String>, CoreError> {
+        list_data(&self.usable_plugin_dir(id)?, prefix)
+    }
+
+    pub fn delete_plugin_data(&self, id: &str, rel: &str) -> Result<(), CoreError> {
+        delete_data(&self.usable_plugin_dir(id)?, rel)
+    }
+
+    /// A file of a valid plugin to serve (never under data/). Enabled or not: the app only opens
+    /// frames for enabled plugins, and serving lets the enable card show nothing but the manifest.
+    pub fn resolve_plugin_file(&self, id: &str, rel: &str) -> Result<std::path::PathBuf, CoreError> {
+        match self.plugin(id) {
+            Some(p) if p.status == PluginStatus::Ok => resolve_asset(&plugins_dir(&self.home).join(id), rel),
+            _ => Err(CoreError::NotFound),
+        }
+    }
+
+    /// Installs the plugins the app ships (`src/<id>/`). A plugin seen for the first time is turned
+    /// on; every bundled version gets its declared permissions, since it comes with the app. A user's
+    /// "off" stays off. Returns the ids it copied.
+    pub fn install_bundled_plugins(&self, src: &std::path::Path) -> Result<Vec<String>, CoreError> {
+        let Ok(rd) = std::fs::read_dir(src) else { return Ok(Vec::new()) };
+        let mut dirs: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        dirs.sort();
+        let mut copied = Vec::new();
+        for dir in dirs {
+            let Some(m) = install_bundled(&self.home, &dir)? else { continue };
+            let mut inner = self.inner.lock().unwrap();
+            let st = &mut inner.state.plugins;
+            if !st.bundled.contains(&m.id) {
+                st.bundled.push(m.id.clone());
+                st.bundled.sort();
+                if !st.enabled.contains(&m.id) {
+                    st.enabled.push(m.id.clone());
+                    st.enabled.sort();
+                }
+            }
+            st.grants.insert(m.id.clone(), m.permissions.clone());
+            inner.state.save()?;
+            copied.push(m.id);
+        }
+        if !copied.is_empty() {
+            self.plugins_changed();
+        }
+        Ok(copied)
+    }
+
+    /// Tells clients the plugin list may have changed (the watcher calls this).
+    pub fn plugins_changed(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        self.emit(&mut inner, EventKind::PluginsChanged {});
+    }
 }
