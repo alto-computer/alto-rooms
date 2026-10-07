@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type CSSProperties } from "react";
+import { Activity, lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -184,6 +184,23 @@ function TabView({ tab }: { tab: Tab }) {
 /** cmdk + dialog load on the first ⌘K, then stay mounted. */
 const QuickFind = lazy(() => import("@/views/QuickFind").then((m) => ({ default: m.QuickFind })));
 
+/** Doc tabs kept alive (hidden) after you leave them, so coming back is instant and keeps the doc's scroll. */
+const KEPT_DOC_TABS = 3;
+
+/**
+ * The tabs whose views stay mounted: the active one, plus the few doc tabs viewed last.
+ * A doc's iframe can't be reloaded to where it was (it's sandboxed), so these keep it
+ * in a hidden <Activity>; other views remount on arrival (their "new since" baselines rely on it).
+ */
+function useMountedTabs(tabs: Tab[], active: Tab | undefined): Tab[] {
+  const recent = useRef<string[]>([]);
+  if (active?.kind === "doc" && recent.current[0] !== active.id) {
+    recent.current = [active.id, ...recent.current.filter((id) => id !== active.id)].slice(0, KEPT_DOC_TABS + 1);
+  }
+  const kept = new Set(recent.current);
+  return tabs.filter((t) => t === active || (t.kind === "doc" && kept.has(t.id)));
+}
+
 const SIDEBAR_STYLE = { "--sidebar-width": "232px" } as CSSProperties;
 
 export function AppShell() {
@@ -206,6 +223,7 @@ export function AppShell() {
   useTabKeys(viewer);
 
   const active = tabs.find((t) => t.id === activeId);
+  const mounted = useMountedTabs(tabs, active);
 
   return (
     <TooltipProvider>
@@ -225,11 +243,13 @@ export function AppShell() {
             aria-labelledby={active ? tabDomId(active.id) : undefined}
             className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-[#ddd] bg-white"
           >
-            {active ? (
-              <CurrentTabContext.Provider value={active.id}>
-                <TabView key={viewer.navKey(active.id)} tab={active} />
-              </CurrentTabContext.Provider>
-            ) : null}
+            {mounted.map((tab) => (
+              <Activity key={viewer.navKey(tab.id)} mode={tab === active ? "visible" : "hidden"}>
+                <CurrentTabContext.Provider value={tab.id}>
+                  <TabView tab={tab} />
+                </CurrentTabContext.Provider>
+              </Activity>
+            ))}
           </main>
         </div>
         {findLoaded ? (

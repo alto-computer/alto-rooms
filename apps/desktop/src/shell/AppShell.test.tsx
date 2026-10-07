@@ -416,6 +416,50 @@ describe("AppShell: shortcuts while typing", () => {
   });
 });
 
+describe("AppShell: kept doc tabs", () => {
+  const doc = (id: string, title: string) => ({
+    id,
+    roomId: "r1",
+    relPath: `${id}.html`,
+    title,
+    createdAt: "2026-06-02T03:00:00Z",
+    updatedAt: "2026-06-02T03:00:00Z",
+    author: "agent" as const,
+    source: { agent: null, session: null, cwd: null, machine: null },
+    fileKey: `fk-${id}`,
+  });
+
+  it("a doc tab you leave stays loaded (hidden) and comes back with the same frame", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    const d1 = viewer.open({ kind: "doc", roomId: "r1", artifactId: "a" });
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [doc("a", "첫 문서"), doc("b", "둘째")] }, viewer });
+    const frame = await screen.findByTitle("첫 문서");
+    act(() => {
+      viewer.open({ kind: "room", roomId: "r2" });
+    });
+    // Still in the DOM, just not shown.
+    expect(screen.getByTitle("첫 문서")).toBe(frame);
+    expect(frame).not.toBeVisible();
+    act(() => viewer.activate(d1));
+    expect(screen.getByTitle("첫 문서")).toBe(frame);
+    expect(frame).toBeVisible();
+  });
+
+  it("keeps at most three doc tabs besides the active one", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    const ids = ["a", "b", "c", "d", "e"];
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: ids.map((id) => doc(id, `doc ${id}`)) }, viewer });
+    for (const id of ids) {
+      act(() => {
+        viewer.open({ kind: "doc", roomId: "r1", artifactId: id });
+      });
+      await screen.findByTitle(`doc ${id}`);
+    }
+    const frames = ids.filter((id) => screen.queryByTitle(`doc ${id}`) !== null);
+    expect(frames).toEqual(["b", "c", "d", "e"]);
+  });
+});
+
 describe("AppShell: gone rooms and docs, and before the first sync", () => {
   it("labels a tab whose room or doc is gone Missing room / Missing doc once synced", async () => {
     const viewer = new ViewerStore(memoryStorage());
