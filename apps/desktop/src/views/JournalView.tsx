@@ -222,7 +222,8 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
             name="Me"
             count={notes.length}
           />
-          <div className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto px-12 pt-2.5 pb-1">
+          {/* pb-6/-mb-5: room below the cards for the hover shadow, which the scroller would clip. */}
+          <div className="-mx-12 -mt-2.5 -mb-5 flex items-start gap-5 overflow-x-auto px-12 pt-2.5 pb-6">
             {readOnly ? null : <NewNoteCard date={date} notes={notes} viewer={viewer} />}
             {notes.map((n) => (
               <NoteCard key={n.name} note={n} now={now} onOpen={(newTab) => viewer.go({ kind: "note", date, name: n.name }, newTab)} />
