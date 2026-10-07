@@ -212,9 +212,13 @@ describe("AskBar", () => {
       turn({ id: "t0", question: "q0", status: "failed", error: "claude-code exited with an error (code 1)", endedAt: "2026-10-06T10:00:01+09:00" }),
       turn({ id: "t1", question: "q1", status: "cancelled", answer: "부분", endedAt: "2026-10-06T10:00:02+09:00" }),
     ] });
-    expect(await screen.findByText("claude-code exited with an error (code 1)")).toBeTruthy();
+    const error = await screen.findByText("claude-code exited with an error (code 1)");
+    expect(error.closest("p")).toHaveClass("text-[#c13515]");
+    expect(error.closest("p")!.querySelector("svg")).not.toBeNull();
     expect(screen.getByText("Stopped")).toBeTruthy();
-    fireEvent.click(screen.getByText("Retry"));
+    const retry = screen.getByRole("button", { name: "Retry" });
+    expect(retry).toHaveClass("min-h-7", "focus-visible:outline-ink");
+    fireEvent.click(retry);
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q0", model: null }));
   });
 

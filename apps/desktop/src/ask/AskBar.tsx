@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowUp, CircleAlert, Square } from "lucide-react";
 import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -60,6 +60,19 @@ function useAskTarget(artifact: Artifact, shown: boolean) {
   return { target, model: current?.model ?? null, pick };
 }
 
+/** Error copy in the app's muted red, with an icon so it reads as an error at a glance. */
+function ErrorText({ children }: { children: ReactNode }) {
+  return (
+    <p className="flex items-start gap-1.5 text-[12.5px] text-[#c13515]">
+      <CircleAlert size={14} aria-hidden className="mt-[2px] shrink-0" />
+      <span className="whitespace-pre-wrap">{children}</span>
+    </p>
+  );
+}
+
+/** A small text button with a full 28px hit area, pulled left so its label lines up with the text above. */
+const TEXT_BUTTON = "-ml-2 inline-flex min-h-7 items-center rounded-md px-2 text-[12.5px] font-medium text-ink hover:bg-[#f2f2f2] focus-visible:outline-2 focus-visible:outline-ink";
+
 function Turn({ t, onRetry }: { t: AskTurn; onRetry: () => void }) {
   return (
     <div data-turn-id={t.id} className="space-y-2">
@@ -77,9 +90,9 @@ function Turn({ t, onRetry }: { t: AskTurn; onRetry: () => void }) {
           ) : null}
           {t.status === "cancelled" ? <div className="text-[12.5px] text-ink-2">Stopped</div> : null}
           {t.status === "failed" ? (
-            <div className="text-[12.5px] whitespace-pre-wrap text-ink-2">
-              {t.error}{" "}
-              <button type="button" className="underline" onClick={onRetry}>Retry</button>
+            <div>
+              <ErrorText>{t.error || GENERIC_ERROR}</ErrorText>
+              <button type="button" className={TEXT_BUTTON} onClick={onRetry}>Retry</button>
             </div>
           ) : null}
           {t.answer ? (
@@ -226,9 +239,9 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
             <div className="mb-2 text-[11.5px] text-ink-2" title={head.title}>{head.text}</div>
           ) : null}
           {thread?.error ? (
-            <div className="text-[12.5px] text-ink-2">
-              Couldn't load the conversation{" "}
-              <button type="button" className="underline" onClick={() => void store.load(artifact.fileKey)}>Try again</button>
+            <div>
+              <ErrorText>Couldn't load the conversation</ErrorText>
+              <button type="button" className={TEXT_BUTTON} onClick={() => void store.load(artifact.fileKey)}>Try again</button>
             </div>
           ) : null}
           <div className="space-y-4">
@@ -238,7 +251,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           </div>
         </div>
       ) : null}
-      {sendError ? <div className="pointer-events-auto text-[12.5px] text-ink-2">{sendError}</div> : null}
+      {sendError ? <div className="pointer-events-auto"><ErrorText>{sendError}</ErrorText></div> : null}
       <div
         className={cn(
           "pointer-events-auto flex w-full max-w-[560px] gap-2.5 border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
