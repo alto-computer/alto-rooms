@@ -7,7 +7,7 @@
     },
     "apps/desktop": {
       "name": "@alto-rooms/desktop",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@alto-rooms/protocol-ts": "workspace:*",
         "@dnd-kit/core": "^6.3.1",
@@ -53,7 +53,7 @@
     },
     "packages/plugin-sdk": {
       "name": "@alto-rooms/plugin-sdk",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "jsdom": "^30.1.2",
         "typescript": "^7.0.2",

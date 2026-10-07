@@ -195,6 +195,38 @@ describe("AppShell: tabs", () => {
     expect(h.viewer.getState().tabs).toHaveLength(1);
   });
 
+  it("the logo takes the current tab home; ⌘-click opens home in a new tab", async () => {
+    await renderWithStores(<AppShell />, { rooms: twoRooms });
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
+    expect(tabNames()).toEqual(["벤치마크"]);
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    expect(tabNames()).toEqual(["New tab"]);
+    expect(screen.getByRole("button", { name: "Back (⌘[)" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
+    fireEvent.click(screen.getByRole("button", { name: "Home" }), { metaKey: true });
+    expect(tabNames()).toEqual(["벤치마크", "New tab"]);
+    expect(activeTab()).toHaveTextContent("New tab");
+  });
+
+  it("Space picks a tab up, arrows move it, Space drops it", async () => {
+    await renderWithStores(<AppShell />, { rooms: twoRooms });
+    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(tabNames()).toEqual(["New tab", "벤치마크", "디자인"]);
+    const tab = screen.getByRole("tab", { name: "디자인" });
+    tab.focus();
+    // jsdom has no layout; give each tab a box so the keyboard sensor can find neighbours.
+    screen.getAllByRole("tab").forEach((t, i) => {
+      t.parentElement!.getBoundingClientRect = () => ({ x: i * 120, y: 0, left: i * 120, top: 0, right: i * 120 + 112, bottom: 34, width: 112, height: 34, toJSON: () => ({}) });
+    });
+    await act(async () => void fireEvent.keyDown(tab, { code: "Space" }));
+    await act(async () => void fireEvent.keyDown(tab, { code: "ArrowLeft" }));
+    await act(async () => void fireEvent.keyDown(tab, { code: "Space" }));
+    await waitFor(() => expect(tabNames()).toEqual(["New tab", "디자인", "벤치마크"]));
+  });
+
   it("middle-click closes a tab", async () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });

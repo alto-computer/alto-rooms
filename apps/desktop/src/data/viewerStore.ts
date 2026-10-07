@@ -305,6 +305,18 @@ export class ViewerStore {
     this.set({ tabs });
   }
 
+  /** Moves tab `id` to position `to` (clamped), keeping the others in order. */
+  move(id: string, to: number): void {
+    const from = this.state.tabs.findIndex((t) => t.id === id);
+    if (from < 0) return;
+    const at = Math.min(Math.max(0, to), this.state.tabs.length - 1);
+    if (at === from) return;
+    const tabs = [...this.state.tabs];
+    const [tab] = tabs.splice(from, 1);
+    tabs.splice(at, 0, tab);
+    this.set({ tabs });
+  }
+
   activate(id: string): void {
     if (id === this.state.activeId || !this.state.tabs.some((t) => t.id === id)) return;
     this.set({ ...this.leaving(), activeId: id });

@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type Modifier } from "@dnd-kit/core";
+import { horizontalListSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { ArrowLeft, ArrowRight, Calendar, FileText, Folder, LayoutGrid, PanelLeft, Plus, Puzzle, X, type LucideIcon } from "lucide-react";
 import { useArtifacts, usePlugins, useRooms, useViewer, useViewerStore } from "@/data/hooks";
 import { pluginIcon } from "@/plugins/icons";
@@ -124,6 +127,16 @@ export function TabBar() {
   const { tabs, activeId, sidebarOpen } = useViewer();
   const viewer = useViewerStore();
   const { listRef, fade } = useTabOverflow(activeId, tabs.length);
+  const sensors = useSensors(
+    // A few pixels of movement before a drag starts, so a click still switches tabs.
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    // Space picks a tab up, ←/→ move it, Space drops; Enter keeps activating it.
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: KEYBOARD_CODES }),
+  );
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    viewer.move(String(active.id), tabs.findIndex((t) => t.id === over.id));
+  };
 
   return (
     <div className="flex min-w-0 items-center gap-1 px-1 pb-2">
@@ -150,15 +163,23 @@ export function TabBar() {
         aria-label="Tabs"
         className={cn("flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", fade)}
       >
-        {tabs.map((tab) => (
-          <TabItem
-            key={tab.id}
-            tab={tab}
-            active={tab.id === activeId}
-            onActivate={() => viewer.activate(tab.id)}
-            onClose={() => viewer.close(tab.id)}
-          />
-        ))}
+        <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[horizontalOnly]}
+          // Browser style: the tab you pick up is the one you're looking at.
+          onDragStart={({ active }) => viewer.activate(String(active.id))}
+          onDragEnd={onDragEnd}
+        >
+          <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
+            {tabs.map((tab) => (
+              <TabItem
+                key={tab.id}
+                tab={tab}
+                active={tab.id === activeId}
+                onActivate={() => viewer.activate(tab.id)}
+                onClose={() => viewer.close(tab.id)}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
       </div>
       <button type="button" aria-label="New tab" onClick={() => viewer.open({ kind: "new" })} className={ICON_BUTTON}>
         <Plus size={17} strokeWidth={1.75} aria-hidden />
@@ -167,9 +188,16 @@ export function TabBar() {
   );
 }
 
+const KEYBOARD_CODES = { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] };
+
+/** Tabs only move sideways. */
+const horizontalOnly: Modifier = ({ transform }) => ({ ...transform, y: 0 });
+
 function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boolean; onActivate: () => void; onClose: () => void }) {
   const { list } = usePlugins();
   const Icon = tab.kind === "plugin" ? pluginIcon(list.find((p) => p.id === tab.pluginId)?.slots.tab?.icon) : ICONS[tab.kind];
+  const sort = useSortable({ id: tab.id });
+  const style = { transform: CSS.Translate.toString(sort.transform), transition: sort.transition };
   const middle = (e: MouseEvent) => {
     if (e.button === 1) {
       e.preventDefault();
@@ -177,10 +205,14 @@ function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boole
     }
   };
   return (
-    <div role="presentation" className="group relative flex min-w-[112px] flex-[0_1_220px]">
+    <div
+      ref={sort.setNodeRef}
+      style={style}
+      role="presentation"
+      className={cn("group relative flex min-w-[112px] flex-[0_1_220px]", sort.isDragging && "z-10")}
+    >
       <button
         type="button"
-        role="tab"
         id={tabDomId(tab.id)}
         aria-selected={active}
         aria-controls={active ? TAB_PANEL_ID : undefined}
@@ -188,6 +220,10 @@ function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boole
         onAuxClick={middle}
         // Stop the middle-button autoscroll cursor.
         onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+        {...sort.attributes}
+        {...sort.listeners}
+        // dnd-kit's attributes would turn the tab into a "button"; it stays a tab.
+        role="tab"
         className={cn(
           // The active tab keeps room for its always-visible close button; the others never
           // change padding on hover (their close button fades in over the label's end instead).
@@ -195,6 +231,7 @@ function TabItem({ tab, active, onActivate, onClose }: { tab: Tab; active: boole
           "focus-visible:outline-2 focus-visible:outline-ink",
           active ? "pr-8" : "pr-3",
           active ? "border-[#ddd] bg-white text-[#222]" : "border-transparent text-[#6a6a6a] hover:text-[#222]",
+          sort.isDragging && "cursor-grabbing border-[#ddd] bg-white shadow-float",
         )}
       >
         <Icon size={15} strokeWidth={1.75} aria-hidden className="shrink-0" />

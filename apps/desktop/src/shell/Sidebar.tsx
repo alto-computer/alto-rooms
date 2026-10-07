@@ -115,8 +115,17 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
     >
       <div className="flex h-full min-h-0 flex-col px-[10px] py-4">
         <div className="flex items-center gap-2.5 pl-2.5">
-          <img src={logo} alt="" width={26} height={26} className="size-[26px] shrink-0" />
-          <span className="text-[17px] font-medium text-ink">Rooms</span>
+          <button
+            type="button"
+            aria-label="Home"
+            // Browser style: the home page replaces this tab; ⌘/middle click opens it in a new one.
+            onClick={(e) => viewer.go({ kind: "new" }, wantsNewTab(e))}
+            onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "new" })}
+            className="-my-1 -ml-1.5 flex items-center gap-2.5 rounded-lg py-1 pr-2 pl-1.5 hover:bg-[#f2f2f2] focus-visible:outline-2 focus-visible:outline-ink"
+          >
+            <img src={logo} alt="" width={26} height={26} className="size-[26px] shrink-0" />
+            <span className="text-[17px] font-medium text-ink">Rooms</span>
+          </button>
           <button
             type="button"
             aria-label="Hide sidebar (⌘B)"

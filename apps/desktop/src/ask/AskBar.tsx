@@ -58,7 +58,7 @@ function Turn({ t, onRetry }: { t: AskTurn; onRetry: () => void }) {
       <div className="ml-auto w-fit max-w-[80%] rounded-[10px] bg-[#f2f2f2] px-3 py-1.5 whitespace-pre-wrap">{t.question}</div>
       {t.status === "running" ? (
         <div className="flex items-center gap-2 text-[12.5px] text-ink-2">
-          <ThinkingLine startedAt={t.startedAt} />
+          <ThinkingLine />
         </div>
       ) : (
         <>

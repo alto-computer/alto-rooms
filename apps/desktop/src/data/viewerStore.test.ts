@@ -92,6 +92,18 @@ describe("ViewerStore", () => {
     expect(v.getState()).toBe(before);
   });
 
+  it("move reorders a tab, clamping the index and keeping the active tab", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const a = st.getState().tabs[0].id;
+    const b = st.open({ kind: "room", roomId: "r1" });
+    const c = st.open({ kind: "room", roomId: "r2" });
+    st.move(c, 0);
+    expect(st.getState().tabs.map((t) => t.id)).toEqual([c, a, b]);
+    st.move(c, 99);
+    expect(st.getState().tabs.map((t) => t.id)).toEqual([a, b, c]);
+    expect(st.getState().activeId).toBe(c);
+  });
+
   it("closing an inactive tab keeps the active one", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const n = st.getState().tabs[0].id;

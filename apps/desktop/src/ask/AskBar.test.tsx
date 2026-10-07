@@ -152,7 +152,7 @@ describe("AskBar", () => {
 
   it("while running the send button is a Stop button that cancels; there is no Stop text link", async () => {
     const { client } = await setup({ k1: [turn({})] });
-    expect(await screen.findByText(/esc to interrupt/)).toBeTruthy();
+    expect(await screen.findByText("Thinking")).toBeTruthy();
     expect(screen.queryByText("Stop")).toBeNull();
     expect(screen.queryByLabelText("Send")).toBeNull();
     const stop = screen.getByLabelText("Stop") as HTMLButtonElement;
