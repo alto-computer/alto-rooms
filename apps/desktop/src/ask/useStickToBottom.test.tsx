@@ -94,6 +94,15 @@ describe("useStickToBottom", () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it("scrolls the anchor into view without animation when the user prefers reduced motion", () => {
+    vi.spyOn(window, "matchMedia").mockImplementation((q) => ({ matches: q.includes("reduce") }) as MediaQueryList);
+    const question = document.createElement("div");
+    const scrollIntoView = vi.spyOn(question, "scrollIntoView").mockImplementation(() => {});
+    const { rerender } = render(<Sheet shown items={1} />);
+    rerender(<Sheet shown items={2} anchor={() => question} />);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "auto" });
+  });
+
   it("goes to the bottom as usual when the anchor has nothing", () => {
     const { rerender } = render(<Sheet shown items={1} />);
     scrollTo.mockClear();
