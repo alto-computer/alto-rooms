@@ -198,11 +198,21 @@ impl Index {
         })
     }
 
+    /// Starts a transaction. One left open by a panic (the lock is recovered after poisoning,
+    /// see `lock.rs`) is rolled back first, so it can't wedge every later write.
+    fn begin(&self) -> Result<(), CoreError> {
+        if !self.conn.is_autocommit() {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+        self.conn.execute_batch("BEGIN")?;
+        Ok(())
+    }
+
     /// Runs `f` in one transaction, collecting its changes; on error rolls back and forgets the
     /// days it touched.
     fn in_transaction(&mut self, f: impl FnOnce(&mut Self, &mut Vec<Change>) -> Result<(), CoreError>) -> Result<Vec<Change>, CoreError> {
         let mut changes = Vec::new();
-        self.conn.execute_batch("BEGIN")?;
+        self.begin()?;
         match f(self, &mut changes).and_then(|()| self.conn.execute_batch("COMMIT").map_err(CoreError::from)) {
             Ok(()) => Ok(changes),
             Err(e) => { let _ = self.conn.execute_batch("ROLLBACK"); self.touched_days.clear(); Err(e) }
@@ -320,7 +330,7 @@ impl Index {
     /// source row.
     pub fn reassign(&mut self, from_room: &str, from_rel: &str, to_room: &str, to_rel: &str, new_target: Option<&str>) -> Result<(Change, Change), CoreError> {
         let (old_id, new_id) = (artifact_id(from_room, from_rel), artifact_id(to_room, to_rel));
-        self.conn.execute_batch("BEGIN")?;
+        self.begin()?;
         let r = (|| -> Result<(Change, Change), CoreError> {
             let row: Option<(Artifact, String, String)> = self.conn.query_row(
                 "SELECT * FROM artifacts WHERE id = ?1 AND room_id = ?2", params![old_id, from_room],

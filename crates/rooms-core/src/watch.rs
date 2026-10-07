@@ -36,6 +36,9 @@ fn watch_dir(deb: &Mutex<Deb>, path: &Path) -> Result<(), notify::Error> {
 /// a later success clears the entry so a future failure logs again.
 #[derive(Clone, Default)]
 struct LinkedWatch {
+    /// One `ensure` at a time: the retry tick and the event follower both call it when a root
+    /// comes back, and a second watch() of the same root would restart the stream again.
+    ensuring: Arc<Mutex<()>>,
     watched: Arc<Mutex<HashSet<PathBuf>>>,
     failed: Arc<Mutex<HashSet<PathBuf>>>,
 }
@@ -44,6 +47,7 @@ impl LinkedWatch {
     /// Watches every available linked root not watched yet. Returns whether it touched the
     /// watcher at all: a failed watch() restarts the stream too.
     fn ensure(&self, core: &RoomsCore, deb: &Mutex<Deb>) -> bool {
+        let _one = lock(&self.ensuring);
         let mut touched = false;
         for p in core.linked_roots() {
             if lock(&self.watched).contains(&p) { continue; }
