@@ -22,8 +22,7 @@ test("AC-5: 새 방 creates the folder and opens an empty room tab", async ({ pa
   await openApp(page);
   await createRoomInUi(page, "연구 도구");
   expect(await daemon.exists("연구-도구")).toBe(true);
-  await expect(page.getByText("No artifacts yet")).toBeVisible();
-  await expect(page.getByText("No artifacts yet")).toBeVisible();
+  await expect(page.getByText("No docs yet")).toBeVisible();
 });
 
 test("AC-1: an HTML file written to the folder shows up as a new card within 2s", async ({ page, daemon }) => {

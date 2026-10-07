@@ -65,7 +65,7 @@ test("screens for visual review", async ({ page, daemon }) => {
 
   // Empty room.
   await rooms.getByRole("button", { name: "Research" }).click();
-  await expect(page.getByText("No artifacts yet")).toBeVisible();
+  await expect(page.getByText("No docs yet")).toBeVisible();
   await settle(page);
   await shot(page, "empty-room");
 
