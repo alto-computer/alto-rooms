@@ -20,27 +20,21 @@ describe("CopyAnswerButton", () => {
     vi.restoreAllMocks();
   });
 
-  it("copies, flips to a check, and toasts", async () => {
+  it("copies and flips to a check, without a success toast", async () => {
     const writeText = mockClipboard(() => Promise.resolve());
+    const success = vi.spyOn(toast, "success");
     const btn = setup();
     expect(btn.getAttribute("data-copied")).toBeNull();
     fireEvent.click(btn);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("the answer"));
     await waitFor(() => expect(btn.getAttribute("data-copied")).toBe("true"));
-    expect(await screen.findByText("Copied")).toBeTruthy();
-    const toaster = document.querySelector("[data-sonner-toaster]");
-    expect(toaster?.getAttribute("data-y-position")).toBe("top");
-    expect(toaster?.getAttribute("data-x-position")).toBe("center");
+    expect(success).not.toHaveBeenCalled();
+    expect(screen.queryByText("Copied")).toBeNull();
   });
 
-  it("toasts on every click, even while still showing the check", async () => {
-    mockClipboard(() => Promise.resolve());
-    const success = vi.spyOn(toast, "success");
+  it("shows a keyboard focus ring", () => {
     const btn = setup();
-    fireEvent.click(btn);
-    await waitFor(() => expect(success).toHaveBeenCalledTimes(1));
-    fireEvent.click(btn);
-    await waitFor(() => expect(success).toHaveBeenCalledTimes(2));
+    expect(btn).toHaveClass("focus-visible:outline-2", "focus-visible:outline-ink");
   });
 
   it("toasts when the clipboard refuses", async () => {
@@ -50,5 +44,8 @@ describe("CopyAnswerButton", () => {
     fireEvent.click(btn);
     expect(await screen.findByText("Couldn't copy")).toBeTruthy();
     expect(btn.getAttribute("data-copied")).toBeNull();
+    const toaster = document.querySelector("[data-sonner-toaster]");
+    expect(toaster?.getAttribute("data-y-position")).toBe("top");
+    expect(toaster?.getAttribute("data-x-position")).toBe("center");
   });
 });

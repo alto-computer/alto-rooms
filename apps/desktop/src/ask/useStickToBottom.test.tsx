@@ -7,9 +7,9 @@ import { useStickToBottom } from "./useStickToBottom";
 const box = { scrollHeight: 1000, clientHeight: 200 };
 const scrollTo = vi.fn();
 
-function Sheet({ shown, items }: { shown: boolean; items: number }) {
+function Sheet({ shown, items, anchor }: { shown: boolean; items: number; anchor?: () => Element | null }) {
   const ref = useRef<HTMLDivElement>(null);
-  useStickToBottom(ref, [shown, items]);
+  useStickToBottom(ref, [shown, items], anchor);
   return shown ? <div ref={ref} data-testid="sheet" /> : null;
 }
 
@@ -76,5 +76,28 @@ describe("useStickToBottom", () => {
     vi.spyOn(window, "matchMedia").mockImplementation((q) => ({ matches: q.includes("reduce") }) as MediaQueryList);
     render(<Sheet shown items={1} />);
     expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "auto" });
+  });
+
+  it("scrolls the anchor to the top instead of going to the bottom, only while pinned", () => {
+    const question = document.createElement("div");
+    const scrollIntoView = vi.spyOn(question, "scrollIntoView").mockImplementation(() => {});
+    const { rerender } = render(<Sheet shown items={1} />);
+    scrollTo.mockClear();
+    rerender(<Sheet shown items={2} anchor={() => question} />);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    scrollUserTo(800);
+    scrollUserTo(300);
+    scrollIntoView.mockClear();
+    rerender(<Sheet shown items={3} anchor={() => question} />);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("goes to the bottom as usual when the anchor has nothing", () => {
+    const { rerender } = render(<Sheet shown items={1} />);
+    scrollTo.mockClear();
+    rerender(<Sheet shown items={2} anchor={() => null} />);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
   });
 });

@@ -41,6 +41,17 @@ describe("DocView", () => {
     expect(screen.queryByTestId("doc-skeleton")).toBeNull();
   });
 
+  it("fades the document in, without the fade under reduced motion", async () => {
+    const { container } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+    });
+    const frame = container.querySelector("iframe")!;
+    expect(frame).toHaveClass("opacity-0", "transition-opacity", "motion-reduce:transition-none");
+    fireEvent.load(frame);
+    expect(frame).toHaveClass("opacity-100");
+  });
+
   it("says the document is gone once the room's artifacts no longer include it", async () => {
     const fake = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],

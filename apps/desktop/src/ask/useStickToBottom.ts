@@ -15,8 +15,14 @@ function prefersReducedMotion(): boolean {
  * Keeps the scroll container in `ref` at its bottom when `deps` change: always when the element
  * (re)mounts, otherwise only if the user was within STICK_PX of the bottom, so reading an older
  * turn is never interrupted. Scrolling up unpins; scrolling back near the bottom pins again.
+ * While pinned, an element from `anchor` (checked on each change) is scrolled to the top instead,
+ * e.g. a question whose long answer just landed. That is a downward move, so it stays pinned.
  */
-export function useStickToBottom(ref: RefObject<HTMLElement | null>, deps: DependencyList): void {
+export function useStickToBottom(
+  ref: RefObject<HTMLElement | null>,
+  deps: DependencyList,
+  anchor?: () => Element | null,
+): void {
   const element = useRef<HTMLElement | null>(null);
   const pinned = useRef(true);
   const lastTop = useRef(0);
@@ -26,7 +32,12 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, deps: Depen
     if (el !== element.current) pinned.current = true;
     element.current = el;
     if (!el) return;
-    if (pinned.current) el.scrollTo({ top: el.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    if (pinned.current) {
+      const behavior = prefersReducedMotion() ? "auto" : "smooth";
+      const top = anchor?.();
+      if (top) top.scrollIntoView({ block: "start", behavior });
+      else el.scrollTo({ top: el.scrollHeight, behavior });
+    }
     lastTop.current = el.scrollTop;
 
     // A smooth scroll toward the bottom only moves down, so only an upward move away from the bottom unpins.

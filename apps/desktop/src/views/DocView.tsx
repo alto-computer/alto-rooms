@@ -39,7 +39,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
           src={client.fileUrl(info, artifact)}
           sandbox="allow-scripts allow-popups"
           onLoad={() => setLoaded(true)}
-          className={cn("absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out", loaded ? "opacity-100" : "opacity-0")}
+          className={cn("absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out motion-reduce:transition-none", loaded ? "opacity-100" : "opacity-0")}
         />
         {loaded ? null : <DocSkeleton />}
         <AskBar artifact={artifact} />

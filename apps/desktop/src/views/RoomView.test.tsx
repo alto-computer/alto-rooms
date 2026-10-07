@@ -167,7 +167,7 @@ describe("RoomView", () => {
 
   it("an empty room shows the empty state with the path chip", async () => {
     await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [] } });
-    expect(screen.getByText("No artifacts yet")).toBeInTheDocument();
+    expect(screen.getByText("No docs yet")).toBeInTheDocument();
     expect(screen.getByAltText("Clew the otter, peeking out of the water")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\/h\/rooms\/r1/ })).toBeInTheDocument();
   });
@@ -210,7 +210,7 @@ describe("RoomView", () => {
       artifactErrors: { r1: new Error("boom") },
     });
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
-    expect(screen.queryByText("No artifacts yet")).toBeNull();
+    expect(screen.queryByText("No docs yet")).toBeNull();
   });
 
   it("an unavailable linked room says so under the subtitle and keeps its cards", async () => {
