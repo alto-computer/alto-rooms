@@ -234,7 +234,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   return (
     <div ref={container} className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-4 pb-4">
       {showSheet ? (
-        <div ref={sheetRef} className="pointer-events-auto max-h-[50vh] w-full max-w-[560px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
+        <div ref={sheetRef} className="pointer-events-auto max-h-[50vh] w-full max-w-[720px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
           {head ? (
             <div className="mb-2 text-[11.5px] text-ink-2" title={head.title}>{head.text}</div>
           ) : null}
@@ -254,7 +254,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       {sendError ? <div className="pointer-events-auto"><ErrorText>{sendError}</ErrorText></div> : null}
       <div
         className={cn(
-          "pointer-events-auto flex w-full max-w-[560px] gap-2.5 border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
+          "pointer-events-auto flex w-full max-w-[720px] gap-2.5 border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
           // A full pill only suits one line; taller, round the corners less and keep the buttons at the bottom.
           multiline ? "items-end rounded-[20px]" : "items-center rounded-full",
         )}
