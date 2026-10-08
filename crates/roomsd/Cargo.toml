@@ -13,6 +13,7 @@ tokio.workspace = true
 axum = "0.8"
 tower-http = { version = "0.6", features = ["set-header", "cors"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
 futures = "0.3"
 nanoid = "0.4"
 dirs = "5"

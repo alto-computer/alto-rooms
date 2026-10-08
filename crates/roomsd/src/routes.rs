@@ -1,4 +1,5 @@
 use crate::AppState;
+use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -188,9 +189,9 @@ pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String
             return Ok((StatusCode::NOT_MODIFIED, [("etag", tag.clone()), ("cache-control", HeaderValue::from_static("no-cache"))]).into_response());
         }
     }
-    let bytes = tokio::fs::read(&path).await.map_err(read_err)?;
+    let body = file_body(&path).await.map_err(read_err)?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    let mut res = ([("content-type", content_type(&ext)), ("x-content-type-options", "nosniff"), ("cache-control", "no-cache")], bytes).into_response();
+    let mut res = ([("content-type", content_type(&ext)), ("x-content-type-options", "nosniff"), ("cache-control", "no-cache")], body).into_response();
     if let Some(tag) = etag { res.headers_mut().insert("etag", tag); }
     Ok(res)
 }
@@ -247,7 +248,7 @@ pub async fn plugin_file(State(st): State<AppState>, Path((id, rel)): Path<(Stri
     let Ok(PluginAsset { path, permissions: perms }) = blocking(&st, move |c| c.resolve_plugin_file(&id2, &rel)).await else {
         return ApiErr(CoreError::NotFound).into_response();
     };
-    let Ok(bytes) = tokio::fs::read(&path).await else { return ApiErr(CoreError::NotFound).into_response() };
+    let Ok(body) = file_body(&path).await else { return ApiErr(CoreError::NotFound).into_response() };
     let src = format!("{}/_plugins/{}/", st.files_origin, id);
     let sandbox = if perms.iter().any(|p| p == "downloads") { "sandbox allow-scripts allow-downloads" } else { "sandbox allow-scripts" };
     let csp = format!(
@@ -258,11 +259,18 @@ pub async fn plugin_file(State(st): State<AppState>, Path((id, rel)): Path<(Stri
     // plugin code is served here; plugin data never is.
     let mut r = (
         [("content-type", content_type(&ext)), ("x-content-type-options", "nosniff"), ("access-control-allow-origin", "*")],
-        bytes,
+        body,
     )
         .into_response();
     if let Ok(v) = HeaderValue::from_str(&csp) { r.headers_mut().insert(axum::http::header::CONTENT_SECURITY_POLICY, v); }
     r
+}
+
+/// A file's bytes streamed from disk in small chunks: a document with megabytes of inlined images
+/// never sits whole in roomsd's memory, however many frames load it at once.
+async fn file_body(path: &std::path::Path) -> std::io::Result<Body> {
+    let f = tokio::fs::File::open(path).await?;
+    Ok(Body::from_stream(tokio_util::io::ReaderStream::new(f)))
 }
 
 fn content_type(ext: &str) -> &'static str {
