@@ -168,6 +168,20 @@ async fn files_content_types_and_forbidden_csp() {
 }
 
 #[tokio::test]
+async fn files_stream_a_big_document_whole() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    // Several read chunks' worth, with bytes that differ along the way.
+    let big: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(d.path().join("a/big.html"), &big).unwrap();
+    let files = build_files_router(st);
+    let r = files.oneshot(get(&format!("/{}/big.html", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(r.headers()["content-type"], "text/html; charset=utf-8");
+    assert_eq!(r.into_body().collect().await.unwrap().to_bytes().as_ref(), big.as_slice());
+}
+
+#[tokio::test]
 async fn files_revalidate_with_etag() {
     let (d, _app, st) = app(false, "127.0.0.1:5000");
     let room = st.core.create_room("a").unwrap();

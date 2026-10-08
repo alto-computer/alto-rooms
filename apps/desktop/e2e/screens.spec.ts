@@ -9,10 +9,19 @@ import { artifactHtml, expect, MOD, test, today } from "./fixtures";
 const SCREENS = path.join(import.meta.dirname, "__screens__");
 const shot = (page: Page, name: string) => page.screenshot({ path: path.join(SCREENS, `${name}.png`) });
 
-/** Moves the pointer off the cards and waits until every preview has loaded (no skeleton left) and faded in. */
+/** Skeletons inside the window: cards past the preload margin keep theirs until they scroll near. */
+const skeletonsOnScreen = (page: Page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll("[data-testid=doc-skeleton]")].filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight;
+    }).length,
+  );
+
+/** Moves the pointer off the cards and waits until every preview in the window has loaded (no skeleton left) and faded in. */
 async function settle(page: Page) {
   await page.mouse.move(110, 760); // an empty spot in the sidebar
-  await expect(page.getByTestId("doc-skeleton")).toHaveCount(0, { timeout: 15_000 });
+  await expect.poll(() => skeletonsOnScreen(page), { timeout: 15_000 }).toBe(0);
   await page.waitForTimeout(500);
 }
 

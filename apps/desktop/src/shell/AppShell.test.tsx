@@ -462,7 +462,7 @@ describe("AppShell: kept doc tabs", () => {
     expect(order()).toEqual(before);
   });
 
-  it("keeps at most three doc tabs besides the active one", async () => {
+  it("keeps one doc tab besides the active one", async () => {
     const viewer = new ViewerStore(memoryStorage());
     const ids = ["a", "b", "c", "d", "e"];
     await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: ids.map((id) => doc(id, `doc ${id}`)) }, viewer });
@@ -473,7 +473,7 @@ describe("AppShell: kept doc tabs", () => {
       await screen.findByTitle(`doc ${id}`);
     }
     const frames = ids.filter((id) => screen.queryByTitle(`doc ${id}`) !== null);
-    expect(frames).toEqual(["b", "c", "d", "e"]);
+    expect(frames).toEqual(["d", "e"]);
   });
 });
 

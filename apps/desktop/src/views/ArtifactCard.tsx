@@ -5,6 +5,7 @@ import { useClient } from "@/data/hooks";
 import { artifactDragSource } from "@/lib/drag";
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
+import { useLiveFrame } from "@/lib/liveFrames";
 import { useLoadSlot } from "@/lib/loadSlots";
 import { useLingering } from "@/lib/useLingering";
 import { DocSkeleton } from "./DocSkeleton";
@@ -48,7 +49,7 @@ export type ArtifactCardProps = {
   draggable?: boolean;
 };
 
-/** True while `el` is within half a viewport (each way, so the horizontal Journal row preloads too) of its scroll root (the nearest `[data-scroll-root]`, else the viewport). */
+/** True while `el` is within a quarter viewport (each way, so the horizontal Journal row preloads too) of its scroll root (the nearest `[data-scroll-root]`, else the viewport). */
 function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
   const [near, setNear] = useState(false);
   useEffect(() => {
@@ -61,7 +62,7 @@ function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
     const root = el.closest<HTMLElement>("[data-scroll-root]");
     const io = new IntersectionObserver((entries) => setNear(entries[entries.length - 1]?.isIntersecting ?? false), {
       root,
-      rootMargin: "50%",
+      rootMargin: "25%",
     });
     io.observe(el);
     return () => io.disconnect();
@@ -97,13 +98,14 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
   const client = useClient();
   const s = SIZES[size];
   const pageRef = useRef<HTMLDivElement>(null);
-  const near = useLingering(useNearViewport(pageRef), UNLOAD_DELAY_MS);
-  const slot = useLoadSlot(near);
-  // The preview unmounts when the card scrolls far away, so loading starts over then.
+  // Near the viewport, and within the live-preview budget.
+  const live = useLiveFrame(pageRef, useLingering(useNearViewport(pageRef), UNLOAD_DELAY_MS));
+  const slot = useLoadSlot(live);
+  // The preview unmounts when the card scrolls far away (or the budget drops it), so loading starts over then.
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    if (!near) setLoaded(false);
-  }, [near]);
+    if (!live) setLoaded(false);
+  }, [live]);
   const box = useBoxSize(pageRef, s.fallback);
   const scale = box.w / LAYOUT_WIDTH;
   const onOpen = (newTab: boolean) => open(artifact, newTab);
@@ -155,7 +157,7 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
               }}
             />
           ) : null}
-          {loaded && near ? null : <DocSkeleton compact={size === "journal"} />}
+          {loaded && live ? null : <DocSkeleton compact={size === "journal"} />}
         </div>
         <div className="flex min-w-0 items-center gap-2 px-0.5">
           <span data-testid="card-title" className="min-w-0 truncate text-[15px] font-medium text-ink">
