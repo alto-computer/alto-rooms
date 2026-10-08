@@ -14,7 +14,8 @@ export function useMountedTabs(tabs: Tab[], active: Tab | undefined): Tab[] {
   if (active?.kind === "doc" && recent.current[0] !== active.id) {
     recent.current = [active.id, ...recent.current.filter((id) => id !== active.id)].slice(0, KEPT_DOC_TABS + 1);
   }
-  const kept = new Set(recent.current);
+  // The active tab is mounted anyway: the kept ones are the doc tabs viewed last besides it.
+  const kept = new Set(recent.current.filter((id) => id !== active?.id).slice(0, KEPT_DOC_TABS));
   const mounted = tabs.filter((t) => t === active || (t.kind === "doc" && kept.has(t.id)));
   // Rendered in the order they were first mounted, never in tab order: moving an iframe's
   // DOM node reloads it, so reordering tabs (or switching between them) must not move any.

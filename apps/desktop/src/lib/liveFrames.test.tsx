@@ -85,7 +85,7 @@ describe("useLiveFrame", () => {
     expect(r.getByTestId("f1").textContent).toBe("off");
   });
 
-  it("frees its place when it leaves", () => {
+  it("frees its place when it leaves, and the preview dropped last takes it", () => {
     stubBoxes();
     const n = MAX_LIVE + 1;
     const ui = (gone: string) => (
@@ -96,8 +96,10 @@ describe("useLiveFrame", () => {
       </>
     );
     const r = render(ui(""));
+    expect(r.getByTestId("f0").textContent).toBe("off");
     r.rerender(ui("f5"));
-    // f0 stays dropped (nothing brings it back until it is on screen), but the count is under budget.
-    expect(states(n, r.getByTestId).filter((s) => s === "live")).toHaveLength(MAX_LIVE - 1);
+    expect(r.getByTestId("f0").textContent).toBe("live");
+    expect(r.getByTestId("f5").textContent).toBe("off");
+    expect(states(n, r.getByTestId).filter((s) => s === "live")).toHaveLength(MAX_LIVE);
   });
 });
