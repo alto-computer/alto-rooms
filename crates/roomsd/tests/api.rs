@@ -181,7 +181,7 @@ async fn files_stream_a_big_document_whole() {
     // No <head> anywhere, so the bridge Rooms splices into every HTML document goes first, then the whole file.
     let body = r.into_body().collect().await.unwrap().to_bytes();
     let head = std::str::from_utf8(&body[..body.len() - big.len()]).unwrap();
-    assert!(head.starts_with("<script data-rooms-bridge>") && head.contains("roomsSelection"), "{head}");
+    assert!(head.starts_with("<script data-rooms-bridge>") && head.contains("roomsSelection") && head.contains("roomsTone"), "{head}");
     assert_eq!(&body[body.len() - big.len()..], big.as_slice());
     assert_eq!(std::fs::read(d.path().join("a/big.html")).unwrap(), big, "the file on disk is unchanged");
 }

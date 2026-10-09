@@ -204,14 +204,15 @@ fn none_match_hits<'a>(if_none_match: impl Iterator<Item = &'a str>, tag: &str) 
     if_none_match.flat_map(|v| v.split(',')).any(|t| t.trim() == "*" || opaque(t) == opaque(tag))
 }
 
-/// Spliced into every HTML document Rooms shows, so "ask about this" works inside docs. The app
-/// frames a doc sandboxed with no origin of its own (agent-written HTML must not reach the app), so
-/// it can't read the doc's selection; this script, running inside, posts it out instead. It goes
+/// Spliced into every HTML document Rooms shows, so "ask about this" works inside docs and a light
+/// doc can be dimmed in dark mode. The app frames a doc sandboxed with no origin of its own
+/// (agent-written HTML must not reach the app), so it can't read the doc's selection or background;
+/// this script, running inside, posts them out instead. It goes
 /// right after `<head>`, before any `<meta>` policy the document declares, which would block a
 /// script after it (`inject`). The file on disk is untouched.
 const SELECTION_BRIDGE: &[u8] = include_bytes!("selection-bridge.html");
 /// Bumped when the bridge or its placement changes, so cached documents pick up the new one.
-const BRIDGE_VERSION: &str = "b3";
+const BRIDGE_VERSION: &str = "b4";
 
 /// `doc=1` asks for the doc-tab variant: the bridge plus the content scripts of enabled plugins.
 /// Card previews send nothing and get the bridge alone.
