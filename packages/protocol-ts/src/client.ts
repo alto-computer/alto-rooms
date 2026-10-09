@@ -9,6 +9,7 @@ import type { JournalDay } from "./generated/JournalDay";
 import type { Note } from "./generated/Note";
 import type { PluginInfo } from "./generated/PluginInfo";
 import type { Room } from "./generated/Room";
+import type { RoomColor } from "./generated/RoomColor";
 import type { RoomsEvent } from "./generated/RoomsEvent";
 import type { StartAsk } from "./generated/StartAsk";
 
@@ -78,9 +79,15 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     createRoom: (name: string) => write<Room>("POST", "/v1/rooms", JSON.stringify({ name })),
     linkFolder: (path: string, name?: string) => write<Room>("POST", "/v1/rooms/link", JSON.stringify({ path, name })),
     renameRoom: (id: string, name: string) => write<Room>("PATCH", `/v1/rooms/${encodeURIComponent(id)}`, JSON.stringify({ name })),
-    /** Moves a room to position `to` among the rooms other than the inbox (past the end = last); returns the new order
-     *  of all room ids. 400 `invalid_input` for the inbox, 404 `room_not_found`. Also emits `rooms.reordered`. */
+    /** Moves a room to position `to` among the rooms other than the inbox (past the end = last), kept within its
+     *  section: pinned rooms stay first, unpinned ones after them. Returns the new order of all room ids.
+     *  400 `invalid_input` for the inbox, 404 `room_not_found`. Also emits `rooms.reordered`. */
     moveRoom: (id: string, to: number) => write<string[]>("POST", `/v1/rooms/${encodeURIComponent(id)}/move`, JSON.stringify({ to })),
+    /** Pins a room with a colour, or unpins it (`null`), and returns it. Pinning moves it to the end of the pinned
+     *  rooms, unpinning to the top of the others, recolouring keeps its place. 400 `invalid_input` for the inbox,
+     *  404 `room_not_found`. Emits `room.updated`, then `rooms.reordered` if it moved. */
+    setRoomColor: (id: string, color: RoomColor | null) =>
+      write<Room>("PUT", `/v1/rooms/${encodeURIComponent(id)}/color`, JSON.stringify({ color })),
     saveNote: (date: string, name: string, body: string) =>
       write<Note>("PUT", `/v1/journal/${date}/notes/${encodeURIComponent(name)}`, body, "text/markdown"),
     /** Renames a note in place; 404 `not_found` if `from` is gone, 409 `note_exists` if `to` is taken (case-insensitively). */

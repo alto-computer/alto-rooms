@@ -1,4 +1,4 @@
-import type { Artifact, AskKind, AskScope, AskTarget, AskTurn, Info, JournalDay, PluginInfo, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskKind, AskScope, AskTarget, AskTurn, Info, JournalDay, PluginInfo, Room, RoomColor, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
@@ -151,13 +151,32 @@ export function fakeClient(
       if (day?.notes) day.notes = day.notes.map((n) => (n.name === noteFile(from) ? renamed : n));
       return renamed;
     }),
+    // Like roomsd: `to` counts the rooms other than the inbox and stays within the room's section (pinned first).
     moveRoom: vi.fn(async (id: string, to: number): Promise<string[]> => {
       const from = state.rooms.findIndex((r) => r.id === id);
       if (from < 0) throw new RoomsApiError(404, "room not found", "room_not_found");
       const [moved] = state.rooms.splice(from, 1);
       const others = state.rooms.flatMap((r, i) => (r.id === "inbox" ? [] : [i]));
-      state.rooms.splice(others[to] ?? state.rooms.length, 0, moved);
+      const pinned = others.filter((i) => state.rooms[i].color !== null).length;
+      const at = moved.color !== null ? Math.min(to, pinned) : Math.max(to, pinned);
+      state.rooms.splice(others[at] ?? state.rooms.length, 0, moved);
       return state.rooms.map((r) => r.id);
+    }),
+    // Like roomsd: pinning moves the room to the end of the pinned rooms, unpinning to the top of the others.
+    setRoomColor: vi.fn(async (id: string, color: RoomColor | null): Promise<Room> => {
+      if (id === "inbox") throw new RoomsApiError(400, "invalid input: the inbox can't be pinned", "invalid_input");
+      const from = state.rooms.findIndex((r) => r.id === id);
+      if (from < 0) throw new RoomsApiError(404, "room not found", "room_not_found");
+      const updated = { ...state.rooms[from], color };
+      if ((state.rooms[from].color !== null) === (color !== null)) {
+        state.rooms[from] = updated;
+        return updated;
+      }
+      state.rooms.splice(from, 1);
+      const others = state.rooms.flatMap((r, i) => (r.id === "inbox" ? [] : [i]));
+      const pinned = others.filter((i) => state.rooms[i].color !== null).length;
+      state.rooms.splice(others[pinned] ?? state.rooms.length, 0, updated);
+      return updated;
     }),
     moveArtifact: vi.fn(async (roomId: string, artifactId: string, toRoomId: string): Promise<Artifact> => {
       const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);

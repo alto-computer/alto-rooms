@@ -473,6 +473,20 @@ describe("RoomsStore rooms scope", () => {
     s.stop();
   });
 
+  it("a colour pin (room.updated, then rooms.reordered) shows the room pinned, after the inbox and earlier pins", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [room("inbox"), { ...room("r1"), color: "sage" }, room("r2"), room("r3")], seq: 1 };
+    const s = await liveStore(c);
+    c.emit({ seq: 2, type: "room.updated", room: { ...room("r3"), color: "rose" } });
+    c.emit({ seq: 3, type: "rooms.reordered", roomIds: ["inbox", "r1", "r3", "r2"] });
+    expect(s.getState().rooms.map((r) => `${r.id}:${r.color}`)).toEqual(["inbox:null", "r1:sage", "r3:rose", "r2:null"]);
+    // Unpinned: color goes back to null, not just away.
+    c.emit({ seq: 4, type: "room.updated", room: room("r1") });
+    c.emit({ seq: 5, type: "rooms.reordered", roomIds: ["inbox", "r3", "r1", "r2"] });
+    expect(s.getState().rooms.map((r) => `${r.id}:${r.color}`)).toEqual(["inbox:null", "r3:rose", "r1:null", "r2:null"]);
+    s.stop();
+  });
+
   it("room.removed removes the room and its artifacts", async () => {
     const c = new FakeClient();
     c.rooms = { data: [room("r1"), room("r2")], seq: 1 };
