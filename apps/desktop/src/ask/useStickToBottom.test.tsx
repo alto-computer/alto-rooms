@@ -9,8 +9,13 @@ const scrollTo = vi.fn();
 
 function Sheet({ shown, items, anchor }: { shown: boolean; items: number; anchor?: () => Element | null }) {
   const ref = useRef<HTMLDivElement>(null);
-  useStickToBottom(ref, [shown, items], anchor);
-  return shown ? <div ref={ref} data-testid="sheet" /> : null;
+  const { away, toBottom } = useStickToBottom(ref, [shown, items], anchor);
+  return shown ? (
+    <>
+      <div ref={ref} data-testid="sheet" />
+      {away ? <button onClick={toBottom}>Latest</button> : null}
+    </>
+  ) : null;
 }
 
 /** The user scrolls the sheet to `top`. */
@@ -108,5 +113,19 @@ describe("useStickToBottom", () => {
     scrollTo.mockClear();
     rerender(<Sheet shown items={2} anchor={() => null} />);
     expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
+  });
+
+  it("says when the reader is away from the bottom; the way back pins again", () => {
+    const { rerender } = render(<Sheet shown items={1} />);
+    expect(screen.queryByText("Latest")).toBeNull();
+    scrollUserTo(300);
+    fireEvent.click(screen.getByText("Latest"));
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000, behavior: "smooth" });
+    scrollTo.mockClear();
+    box.scrollHeight = 1400;
+    rerender(<Sheet shown items={2} />);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1400, behavior: "smooth" });
+    scrollUserTo(1200);
+    expect(screen.queryByText("Latest")).toBeNull();
   });
 });

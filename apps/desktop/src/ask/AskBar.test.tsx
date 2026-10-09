@@ -574,4 +574,32 @@ describe("AskBar", () => {
       expect(await screen.findByText("Nothing to clear yet")).toBeTruthy();
     });
   });
+
+  it("keeps an unsent draft per doc, across a remount", async () => {
+    const first = await setup();
+    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "쓰다 만 질문" } });
+    first.unmount();
+    await setup();
+    expect(((await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement).value).toBe("쓰다 만 질문");
+    expect(localStorage.getItem("alto-rooms.askDraft.k1")).toBe("쓰다 만 질문");
+    fireEvent.keyDown(screen.getByPlaceholderText("Ask about this doc…"), { key: "Enter" });
+    await waitFor(() => expect(localStorage.getItem("alto-rooms.askDraft.k1")).toBeNull());
+  });
+
+  it("shows the question at once, and puts it back in the input if roomsd refuses it", async () => {
+    const { client } = await setup();
+    let refuse: (e: Error) => void = () => {};
+    client.startAsk.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
+    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "바로 보여?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("바로 보여?")).toBeTruthy();
+    expect(screen.getByText("Thinking")).toBeTruthy();
+    expect(input.value).toBe("");
+    await act(async () => refuse(new RoomsApiError(409, "Waiting for an answer", "ask_busy")));
+    expect(await screen.findByText("Waiting for an answer")).toBeTruthy();
+    expect(screen.queryByText("Thinking")).toBeNull();
+    expect(input.value).toBe("바로 보여?");
+  });
 });

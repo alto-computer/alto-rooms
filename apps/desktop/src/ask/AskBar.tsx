@@ -1,12 +1,12 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, CircleAlert, CornerDownRight, ImagePlus, Pencil, Quote, Send, Square, X } from "lucide-react";
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowDown, ArrowUp, CircleAlert, CornerDownRight, ImagePlus, Pencil, Quote, Send, Square, X } from "lucide-react";
 import type { Artifact, AskKind, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { loadModel, modelLabel, saveModel } from "./askModel";
+import { loadDraft, loadModel, modelLabel, saveDraft, saveModel } from "./askModel";
 import { CopyAnswerButton } from "./CopyAnswerButton";
 import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThinkingLine } from "./ThinkingLine";
@@ -155,9 +155,13 @@ function QueueList({ items, running, onEdit, onSendNow, onRemove }: {
   );
 }
 
-function Turn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: () => void }) {
+/** Turns this far back skip layout and paint while off screen: a long thread stays quick. */
+const RECENT_TURNS = 4;
+
+/** Memoized: progress re-renders the bar ten times a second, and only the running turn changes. */
+const Turn = memo(function Turn({ t, live, old, onRetry }: { t: AskTurn; live?: Live; old: boolean; onRetry: (t: AskTurn) => void }) {
   return (
-    <div data-turn-id={t.id} className="space-y-2">
+    <div data-turn-id={t.id} className={cn("space-y-2", old && "[contain-intrinsic-size:auto_160px] [content-visibility:auto]")}>
       <TurnImages ids={t.images ?? []} />
       <QuestionBubble text={t.question} />
       {t.status === "running" ? (
@@ -183,7 +187,7 @@ function Turn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: () => vo
           {t.status === "failed" ? (
             <div>
               <ErrorText>{t.error || GENERIC_ERROR}</ErrorText>
-              <button type="button" className={TEXT_BUTTON} onClick={onRetry}>Retry</button>
+              <button type="button" className={TEXT_BUTTON} onClick={() => onRetry(t)}>Retry</button>
             </div>
           ) : null}
           {t.answer ? (
@@ -195,7 +199,7 @@ function Turn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: () => vo
       )}
     </div>
   );
-}
+});
 
 /** The round ask bar under a doc (⌘J), with this doc's thread above it. Hidden until toggled. */
 export function AskBar({ artifact }: { artifact: Artifact }) {
@@ -203,12 +207,22 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const { open, threads, live, quotes: allQuotes, queues } = useAsks();
   const readOnly = useReadOnly();
   const thread = threads[artifact.fileKey];
-  const [draft, setDraft] = useState("");
+  // The draft belongs to its doc: another doc in this bar brings back its own.
+  const [drafted, setDrafted] = useState(() => ({ key: artifact.fileKey, text: loadDraft(artifact.fileKey) }));
+  if (drafted.key !== artifact.fileKey) setDrafted({ key: artifact.fileKey, text: loadDraft(artifact.fileKey) });
+  const draft = drafted.key === artifact.fileKey ? drafted.text : "";
+  const setDraft = (v: string | ((d: string) => string)) =>
+    setDrafted((s) => ({ key: s.key, text: typeof v === "function" ? v(s.text) : v }));
+  useEffect(() => saveDraft(drafted.key, drafted.text), [drafted]);
   const [sheet, setSheet] = useState(true);
   const [sendError, setSendError] = useState<string | null>(null);
   const [multiline, setMultiline] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
+  /** What the live region last said once an answer ended. */
+  const [announce, setAnnounce] = useState("");
+  /** A question on its way to roomsd: shown at once, before roomsd answers with its turn. */
+  const [pending, setPending] = useState<{ question: string; images: string[] } | null>(null);
   const attachments = useAttachments((m) => setSendError(m));
   const filePicker = useRef<HTMLInputElement>(null);
   const quotes = allQuotes[artifact.fileKey] ?? [];
@@ -292,7 +306,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
     setMultiline(el.scrollHeight > ONE_LINE_PX);
   }, [draft, shown]);
   const turns = thread?.turns ?? [];
-  const showSheet = shown && sheet && (turns.length > 0 || !!thread?.error);
+  const showSheet = shown && sheet && (turns.length > 0 || !!thread?.error || !!pending);
   const running = turns.find((t) => t.status === "running");
   const runningId = running?.id;
   /** The turn that was running as of the last commit; cleared by the effect below once it ends. */
@@ -303,7 +317,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   if (runningId && streaming?.answer) streamed.current.add(runningId);
   // While thinking or streaming, stick to the bottom. When a whole answer lands at once, put its
   // question at the top of the sheet instead, so a long answer reads from its start rather than its end.
-  useStickToBottom(sheetRef, [showSheet, loaded, turns.length, turns.map((t) => t.status).join(), streaming?.answer.length, streaming?.activity], () => {
+  const { away, toBottom } = useStickToBottom(sheetRef, [showSheet, loaded, turns.length, turns.map((t) => t.status).join(), streaming?.answer.length, streaming?.activity], () => {
     const id = wasRunning.current;
     if (!id || streamed.current.has(id) || turns.find((t) => t.id === id)?.status !== "done") return null;
     return Array.from(sheetRef.current?.querySelectorAll<HTMLElement>("[data-turn-id]") ?? []).find((el) => el.dataset.turnId === id) ?? null;
@@ -312,6 +326,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   // else (body) or already in the bar. Never take it from the doc iframe or another input.
   useEffect(() => {
     if (wasRunning.current && !runningId && shown) {
+      setAnnounce("Answer ready");
       const active = document.activeElement;
       const idle = !active || active === document.body || !!container.current?.contains(active);
       if (idle) input.current?.focus();
@@ -338,6 +353,10 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       window.removeEventListener("blur", onBlur);
     };
   }, [shown]);
+
+  /** Stable for the memoized turns; always the latest `send`. */
+  const retryLatest = useRef<(t: AskTurn) => void>(() => {});
+  const retry = useCallback((t: AskTurn) => retryLatest.current(t), []);
 
   if (!shown) return null;
   /** While an answer runs, the button stops it; once you type, it queues what you typed (Esc still stops). */
@@ -398,19 +417,26 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       return;
     }
     sending.current = true;
+    const sent = withQuotes(quoted, q);
+    const ids = images ?? picked!.map((a) => a.id!);
+    // Optimistic: the question leaves the input and shows in the thread right away.
+    if (!images) setDraft((d) => (d.trim() === q ? "" : d));
+    setPending({ question: sent, images: ids });
+    setSheet(true);
     try {
-      await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, withQuotes(quoted, q), withModel, images ?? picked!.map((a) => a.id!));
-      // Only clear what was sent: the next question may have been typed in the meantime.
-      setDraft((d) => (d.trim() === q ? "" : d));
+      await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, sent, withModel, ids);
       if (picked) attachments.clear(picked.map((a) => a.key));
       if (quoted.length) store.clearQuotes(artifact.fileKey, quoted);
-      setSheet(true);
     } catch (e) {
+      // Not sent: the question goes back in the input (unless something new was typed there).
+      if (!images) setDraft((d) => d || q);
       setSendError(e instanceof RoomsApiError ? e.message : GENERIC_ERROR);
     } finally {
       sending.current = false;
+      setPending(null);
     }
   };
+  retryLatest.current = (t) => void send(t.question, retryModel(t), t.images ?? []);
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (commands.length > 0 && !e.nativeEvent.isComposing) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -483,7 +509,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       }}
     >
       {showSheet ? (
-        <div ref={sheetRef} className="pointer-events-auto max-h-[50vh] w-full max-w-[720px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
+        <div className="pointer-events-auto relative w-full max-w-[720px]">
+        <div ref={sheetRef} className="max-h-[50vh] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
           {head ? (
             <div className="mb-2 text-[11.5px] text-ink-2" title={head.title}>{head.text}</div>
           ) : null}
@@ -494,9 +521,9 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
             </div>
           ) : null}
           <div className="space-y-4">
-            {turns.map((t) =>
+            {turns.map((t, i) =>
               (t.kind ?? "question") === "question" ? (
-                <Turn key={t.id} t={t} live={live[t.id]} onRetry={() => void send(t.question, retryModel(t), t.images ?? [])} />
+                <Turn key={t.id} t={t} live={live[t.id]} old={i < turns.length - RECENT_TURNS} onRetry={retry} />
               ) : (
                 <CommandTurn
                   key={t.id}
@@ -516,6 +543,13 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
                 />
               ),
             )}
+            {pending ? (
+              <div className="space-y-2" data-pending>
+                <TurnImages ids={pending.images} />
+                <QuestionBubble text={pending.question} />
+                <div className="flex min-w-0 items-center gap-2 text-[12.5px] text-ink-2"><ThinkingLine /></div>
+              </div>
+            ) : null}
           </div>
           {last && (last.kind ?? "question") === "question" && last.leftOut > 0 ? (
             <p className="mt-3 flex flex-wrap items-center gap-x-1 text-[12px] text-ink-2">
@@ -524,7 +558,20 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
             </p>
           ) : null}
         </div>
+        {away ? (
+          <button
+            type="button"
+            aria-label="Scroll to the latest"
+            onClick={toBottom}
+            className="absolute bottom-3 left-1/2 flex size-7 -translate-x-1/2 items-center justify-center rounded-full border border-[#e3e3e3] bg-white text-ink-2 shadow-sm hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+          >
+            <ArrowDown className="size-3.5" />
+          </button>
+        ) : null}
+        </div>
       ) : null}
+      {/* For screen readers: when an answer starts and when it lands. */}
+      <div aria-live="polite" className="sr-only">{running ? "Waiting for the answer" : announce}</div>
       {picked ? (
         <SelectionAsk
           rect={picked.rect}
