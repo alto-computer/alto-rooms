@@ -1,3 +1,4 @@
+import type { Conversation } from "@alto-rooms/protocol-ts";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -31,6 +32,13 @@ export async function revealDoc(link: string): Promise<void> {
 
 export async function openDoc(link: string): Promise<void> {
   await invoke("open_doc", { link });
+}
+
+/** Resumes the conversation's session in Terminal, in the folder it started in. False when there is no Terminal to open (the web build). */
+export async function continueConversation(conversation: Conversation): Promise<boolean> {
+  if (!isTauri()) return false;
+  await invoke("continue_conversation", { id: conversation.id, cwd: conversation.cwd });
+  return true;
 }
 
 export async function viewerInitial(): Promise<string> {
