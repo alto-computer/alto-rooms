@@ -441,3 +441,54 @@ describe("ViewerStore: plugins", () => {
     expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });
   });
 });
+
+describe("ViewerStore: reveals", () => {
+  const doc = { kind: "doc", roomId: "r1", artifactId: "a" } as const;
+
+  it("holds an anchor for a doc tab until the doc takes it, and tells subscribers", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.open(doc);
+    const heard = vi.fn();
+    st.subscribe(heard);
+    st.reveal(id, { pluginId: "marker", anchor: { mark: "x" } });
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(st.pendingReveal(id)).toEqual({ pluginId: "marker", anchor: { mark: "x" } });
+    expect(st.takeReveal(id)).toEqual({ pluginId: "marker", anchor: { mark: "x" } });
+    expect(st.pendingReveal(id)).toBeUndefined();
+    expect(st.takeReveal(id)).toBeUndefined();
+  });
+
+  it("drops a waiting anchor when its tab closes or shows something else, so a reopened doc gets none", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.open(doc);
+    st.reveal(id, { pluginId: "marker", anchor: 1 });
+    st.close(id);
+    st.reopen();
+    const back = st.getState().activeId!;
+    expect(st.pendingReveal(id)).toBeUndefined();
+    expect(st.pendingReveal(back)).toBeUndefined();
+    st.reveal(back, { pluginId: "marker", anchor: 2 });
+    st.navigate({ kind: "doc", roomId: "r1", artifactId: "b" });
+    expect(st.pendingReveal(back)).toBeUndefined();
+  });
+
+  it("only queues for a doc tab that exists", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const room = st.open({ kind: "room", roomId: "r1" });
+    st.reveal(room, { pluginId: "marker", anchor: 1 });
+    st.reveal("gone", { pluginId: "marker", anchor: 1 });
+    expect(st.pendingReveal(room)).toBeUndefined();
+    expect(st.pendingReveal("gone")).toBeUndefined();
+  });
+
+  it("never writes an anchor to storage", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    const id = st.open(doc);
+    st.reveal(id, { pluginId: "marker", anchor: { mark: "secret-anchor" } });
+    st.setSidebarOpen(false);
+    st.flush();
+    expect(storage.map.get(VIEWER_STORAGE_KEY)).not.toContain("secret-anchor");
+    expect(new ViewerStore(storage, clock().now).pendingReveal(id)).toBeUndefined();
+  });
+});

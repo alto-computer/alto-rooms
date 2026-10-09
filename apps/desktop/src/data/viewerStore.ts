@@ -26,6 +26,9 @@ export type PluginPanel = { open: boolean; width: number; pluginId: string | nul
 
 export const DEFAULT_PLUGIN_PANEL: PluginPanel = { open: false, width: 360, pluginId: null };
 
+/** An anchor a plugin passed to `open`, on its way to that plugin's content script in a doc tab. Opaque to the app. */
+export type Reveal = { pluginId: string; anchor: unknown };
+
 export type ViewerState = {
   tabs: Tab[];
   pluginPanel: PluginPanel;
@@ -189,6 +192,8 @@ export class ViewerStore {
   private lastChild: { opener: string; id: string } | null = null;
   /** Transient: recently closed tabs, oldest first. */
   private closed: { tab: TabInput; index: number; history: TabHistory }[] = [];
+  /** Transient: tab id -> the anchor waiting for the doc it shows. Dropped once handed over, or when the tab closes or moves on. */
+  private reveals = new Map<string, Reveal>();
   private readonly storage: StorageLike | undefined;
   private readonly now: () => Date;
   private readonly timers: Clock;
@@ -260,6 +265,7 @@ export class ViewerStore {
     let tabs = this.state.tabs.filter((t) => t.id !== id);
     const { [id]: _dropped, ...history } = this.state.history;
     this.navCounts.delete(id);
+    this.reveals.delete(id);
     if (this.state.activeId !== id) {
       this.set({ tabs, history });
       return;
@@ -380,6 +386,24 @@ export class ViewerStore {
     this.set({ ...this.leaving(), activeId: id });
   }
 
+  /** Queues `r` for the doc that tab `id` shows, replacing one still waiting there. */
+  reveal(id: string, r: Reveal): void {
+    if (!this.state.tabs.some((t) => t.id === id && t.kind === "doc")) return;
+    this.reveals.set(id, r);
+    this.emit();
+  }
+
+  pendingReveal(id: string): Reveal | undefined {
+    return this.reveals.get(id);
+  }
+
+  /** The anchor waiting for tab `id`, which is forgotten: the doc hands it over once. */
+  takeReveal(id: string): Reveal | undefined {
+    const r = this.reveals.get(id);
+    this.reveals.delete(id);
+    return r;
+  }
+
   setPluginPanel(patch: Partial<PluginPanel>): void {
     const next = { ...this.state.pluginPanel, ...patch };
     next.width = Math.min(1200, Math.max(240, Math.round(next.width)));
@@ -425,6 +449,7 @@ export class ViewerStore {
   private moveTo(id: string, to: TabInput, h: TabHistory) {
     const tabs = this.state.tabs.map((t) => (t.id === id ? makeTab(id, to) : t));
     this.navCounts.set(id, (this.navCounts.get(id) ?? 0) + 1);
+    this.reveals.delete(id);
     this.set({ ...this.leaving(), tabs, history: { ...this.state.history, [id]: h } });
   }
 
@@ -438,6 +463,10 @@ export class ViewerStore {
   private set(p: Partial<ViewerState>) {
     this.state = { ...this.state, ...p };
     this.schedulePersist();
+    this.emit();
+  }
+
+  private emit() {
     for (const l of [...this.listeners]) l();
   }
 
