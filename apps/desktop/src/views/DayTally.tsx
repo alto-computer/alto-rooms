@@ -56,7 +56,9 @@ function Cell({ cell }: { cell: TallyCell }) {
         className="flex min-w-0 flex-col items-start px-4 pt-3.5 pb-3 text-left outline-none hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink data-[state=open]:bg-row-hover"
       >
         <span className="text-title font-medium text-ink tabular-nums">{items.length}</span>
-        <span className="text-body text-ink-2">{plural(items.length, cell.noun)}</span>
+        {/* A stat tile names its metric, so the word stays plural whatever the count (as in Stripe or
+            Linear tiles); the accessible name above still reads as a phrase, "1 note". */}
+        <span className="text-body text-ink-2">{cell.noun}s</span>
       </PopoverTrigger>
       <PopoverContent
         side="bottom"
