@@ -119,10 +119,12 @@ function useDocSelection(frame: RefObject<HTMLIFrameElement | null>) {
 /**
  * The content channel of this tab's doc frame: storage for the content scripts of the plugins
  * that are on, scoped to this document, and the selection actions they declared, in plugin id
- * order. A new plugin set or document makes a new channel; the frame reloads with it.
+ * order. A new plugin set, plugin rev or document makes a new channel, keyed like the frame URL,
+ * so a reloaded frame never keeps the old script's actions.
  */
 function useContentChannel(frame: RefObject<HTMLIFrameElement | null>, fileKey: string | undefined, list: HostPlugin[], client: ContentChannelDeps["client"]) {
   const ids = contentPlugins(list).map((p) => p.id).join(",");
+  const key = contentKey(list);
   const channel = useRef<ContentChannel | null>(null);
   const [declared, setDeclared] = useState<ReadonlyMap<string, ContentAction[]>>(new Map());
   useEffect(() => {
@@ -143,7 +145,7 @@ function useContentChannel(frame: RefObject<HTMLIFrameElement | null>, fileKey: 
       channel.current = null;
       setDeclared(new Map());
     };
-  }, [frame, fileKey, ids, client]);
+  }, [frame, fileKey, ids, key, client]);
   const actions = useMemo(
     () => [...declared].sort(([a], [b]) => (a < b ? -1 : 1)).flatMap(([plugin, items]) => items.map((it) => ({ plugin, ...it }))),
     [declared],

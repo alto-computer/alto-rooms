@@ -165,6 +165,20 @@ describe("DocView: content scripts", () => {
     expect(screen.queryByRole("toolbar")).toBeNull();
   });
 
+  it("forgets a plugin's actions when its script changes, so the reloaded frame shows only what the new script declares", async () => {
+    const { post, state, emit, container } = await open();
+    post({ rooms: "content", v: 1, plugin: "marker", type: "actions", items: [{ id: "mark", title: "Mark" }] });
+    post({ roomsSelection: 1, text: "p95", rect: { x: 100, y: 200, w: 80, h: 16 } });
+    await screen.findByRole("button", { name: "Mark" });
+    const before = container.querySelector("iframe")!.getAttribute("src");
+    state.plugins[0].rev = `${state.plugins[0].rev}-2`;
+    await act(async () => void emit({ type: "plugins.changed" }));
+    await waitFor(() => expect(container.querySelector("iframe")!.getAttribute("src")).not.toBe(before));
+    post({ roomsSelection: 1, text: "p95", rect: { x: 100, y: 200, w: 80, h: 16 } });
+    await screen.findByRole("button", { name: "Ask" });
+    expect(screen.queryByRole("button", { name: "Mark" })).toBeNull();
+  });
+
   it("keeps a document's writes in its own folder of the plugin's data", async () => {
     const { posted, post, state } = await open();
     post({ rooms: "content", v: 1, plugin: "marker", type: "storage.write", id: "1", path: "marks.json", text: "보고서" });
