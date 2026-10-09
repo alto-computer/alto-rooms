@@ -2,8 +2,9 @@ import type { MouseEvent } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Calendar, FileText, Folder, LayoutGrid, Puzzle, X, type LucideIcon } from "lucide-react";
+import { RoomDot } from "@/components/RoomDot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { usePlugins } from "@/data/hooks";
+import { usePlugins, useRoomList } from "@/data/hooks";
 import type { Tab } from "@/data/viewerStore";
 import { cn } from "@/lib/utils";
 import { pluginIcon } from "@/plugins/icons";
@@ -36,7 +37,10 @@ export function TabItem({
   onClose: (width?: number) => void;
 }) {
   const { list } = usePlugins();
+  const rooms = useRoomList();
   const Icon = tab.kind === "plugin" ? pluginIcon(list.find((p) => p.id === tab.pluginId)?.slots.tab?.icon) : ICONS[tab.kind];
+  // A pinned room's tab shows its colour dot in place of the folder.
+  const color = tab.kind === "room" ? (rooms.find((r) => r.id === tab.roomId)?.color ?? null) : null;
   const sort = useSortable({ id: tab.id });
   const style = {
     transform: CSS.Translate.toString(sort.transform),
@@ -94,7 +98,7 @@ export function TabItem({
               sort.isDragging && "cursor-grabbing border-hairline bg-sheet shadow-float",
             )}
           >
-            <Icon size={15} strokeWidth={1.75} aria-hidden className="shrink-0" />
+            {color ? <RoomDot color={color} /> : <Icon size={15} strokeWidth={1.75} aria-hidden className="shrink-0" />}
             {/* Chrome style: a long label fades out at the tab's end instead of an ellipsis, so more of it shows. */}
             <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_left,transparent,#000_20px)]">
               <TabLabel tab={tab} />

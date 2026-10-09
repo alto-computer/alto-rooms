@@ -351,6 +351,19 @@ describe("AppShell: tabs", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(2); // the tab stays until closed
   });
 
+  it("a pinned room's tab shows its colour dot instead of the folder, and loses it when unpinned", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "room", roomId: "r1" });
+    const h = await renderWithStores(<AppShell />, { rooms: twoRooms, viewer });
+    expect(activeTab()!.querySelector("[data-tint]")).toBeNull();
+    act(() => h.emit({ type: "room.updated", room: room("r1", "벤치마크", { color: "clay" }) }));
+    expect(activeTab()!.querySelector("[data-tint]")).toHaveAttribute("data-tint", "clay");
+    expect(activeTab()!.querySelector("svg")).toBeNull();
+    act(() => h.emit({ type: "room.updated", room: room("r1", "벤치마크", { color: null }) }));
+    expect(activeTab()!.querySelector("[data-tint]")).toBeNull();
+    expect(activeTab()!.querySelector("svg")).not.toBeNull();
+  });
+
   it("the room title is editable in place", async () => {
     const viewer = new ViewerStore(memoryStorage());
     viewer.open({ kind: "room", roomId: "r1" });
