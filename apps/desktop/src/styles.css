@@ -31,6 +31,10 @@
   /* Status, kept apart from the thread */
   --error:#c13515; --success:#008a05;
 
+  /* Room tints: a pinned room's colour is a hue (lib/roomTint.ts); the theme sets lightness and chroma for bands and dots. */
+  --band-l:.935; --band-c:.026; --dot-l:.72; --dot-c:.075;
+  --paper-band:#f1e9de; --dot-edge:rgb(0 0 0 / .08);
+
   /* Elevation: only floating layers and hovered cards cast shadows. */
   --elev-sheet:0 1px 1px rgb(70 45 20 / .05), 0 3px 10px -3px rgb(70 45 20 / .13);
   --elev-lift:0 2px 2px rgb(70 45 20 / .05), 0 10px 22px -6px rgb(70 45 20 / .2);
@@ -68,11 +72,22 @@
   --thread:#ff5a76; --thread-deep:#ff7088; --thread-deeper:#ff8a9e; --thread-soft:rgb(255 90 118 / .32);
   --on-thread:#1c1714;
   --error:#ff7a5c; --success:#4cc35a;
+  --band-l:.3; --band-c:.024; --dot-l:.70; --dot-c:.065; --paper-band:#2a241f;
   --elev-sheet:0 1px 1px rgb(0 0 0 / .25), 0 3px 10px -3px rgb(0 0 0 / .45);
   --elev-lift:0 2px 2px rgb(0 0 0 / .25), 0 12px 24px -6px rgb(0 0 0 / .55);
   --elev-float:0 0 0 .5px rgb(255 235 215 / .12), 0 2px 4px rgb(0 0 0 / .3), 0 18px 44px -10px rgb(0 0 0 / .7);
   color-scheme:dark;
 }
+
+/* `data-tint` (set by roomTint) gives an element and its children --room-band and --room-dot. */
+[data-tint]{
+  --tint-band-c:var(--band-c); --tint-dot-c:var(--dot-c);
+  --room-band:oklch(var(--band-l) var(--tint-band-c) var(--tint-h)); --room-dot:oklch(var(--dot-l) var(--tint-dot-c) var(--tint-h));
+}
+[data-tint="rose"]{--tint-h:356} [data-tint="clay"]{--tint-h:52} [data-tint="oat"]{--tint-h:88} [data-tint="sage"]{--tint-h:148}
+[data-tint="sea"]{--tint-h:196} [data-tint="dusk"]{--tint-h:256} [data-tint="lilac"]{--tint-h:308}
+[data-tint="stone"]{--tint-h:70; --tint-band-c:.008; --tint-dot-c:.014}
+[data-tint="none"]{ --room-band:var(--paper-band); --room-dot:transparent; }
 
 /* Tailwind v4: turns the variables into classes such as bg-pane, text-ink-2, border-hairline, shadow-float */
 @theme inline{
@@ -99,6 +114,7 @@
   --color-thread:var(--thread); --color-thread-deep:var(--thread-deep); --color-thread-deeper:var(--thread-deeper);
   --color-thread-soft:var(--thread-soft); --color-on-thread:var(--on-thread);
   --color-error:var(--error); --color-success:var(--success);
+  --color-room-band:var(--room-band); --color-room-dot:var(--room-dot); --color-dot-edge:var(--dot-edge);
 
   --radius-sm:4px; --radius-md:6px; --radius-lg:8px; --radius-menu:10px; --radius-xl:12px; --radius-pill:999px;
   --shadow-sheet:var(--elev-sheet); --shadow-lift:var(--elev-lift); --shadow-float:var(--elev-float);
