@@ -1,34 +1,36 @@
 /*
- * Ask threads by file key, kept in step with roomsd by `ask.started` / `ask.done`
- * events, plus whether the ask bar is open (global, starts open, not saved).
+ * Everything the ask bar shows that outlives one bar: each doc's thread (kept in step with roomsd
+ * by `ask.*` events), the answer streaming in, the quotes and queued questions waiting to go out,
+ * and whether the bar is open (global, starts open, not saved).
+ *
+ * Rooms only relays: a question goes to roomsd, which runs the agent CLI; nothing here reads or
+ * shapes an answer.
  */
 import type { AskImage, AskKind, AskTarget, AskTurn, RoomsEvent, StartAsk } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
+import { MAX_QUOTES, toQuote } from "./quotes";
+
+/** The doc a question is about: where roomsd finds it, and the file key its thread is kept under. */
+export type AskDoc = { roomId: string; artifactId: string; fileKey: string };
+/** What goes to roomsd: a question (its quotes already in `text`) or a command (`kind`). */
+export type Outgoing = { text: string; model: string | null; images: string[]; kind: AskKind };
+/** Waiting behind the running answer; sent by itself when that ends (Codex's queued follow-ups). */
+export type Queued = Outgoing & { id: string; doc: AskDoc; error: string | null };
 
 export type Thread = { turns: AskTurn[]; loaded: boolean; error: boolean };
 /** A running turn's answer so far and what the agent is doing, from `ask.progress`. */
 export type Live = { answer: string; activity: string | null };
-/** `quotes`: text picked with "Ask" in a doc or an answer, waiting to go out with the next question, by file key. */
-/** A question typed while an answer runs: it goes out by itself when that answer ends (Codex's queued follow-ups). */
-export type Queued = { id: string; roomId: string; artifactId: string; text: string; model: string | null; images: string[]; kind: AskKind; error: string | null };
+/** All by file key. */
 export type AsksState = {
   open: boolean;
   threads: Record<string, Thread>;
   live: Record<string, Live>;
+  /** Picked text waiting to go out with the next question. */
   quotes: Record<string, string[]>;
-  /** By file key, oldest first. */
+  /** Oldest first. */
   queues: Record<string, Queued[]>;
 };
 
-export const MAX_QUOTES = 5;
-/** A question is at most 8,000 characters; a few quotes plus the question must fit. */
-export const MAX_QUOTE_CHARS = 1500;
-
-/** The question as sent: each quote as a Markdown blockquote, then what was asked. */
-export function withQuotes(quotes: string[], question: string): string {
-  const blocks = quotes.map((q) => q.split("\n").map((l) => `> ${l}`.trimEnd()).join("\n"));
-  return [...blocks, question].join("\n\n");
-}
 type Progress = Extract<RoomsEvent, { type: "ask.progress" }>;
 
 type Client = {
@@ -67,8 +69,8 @@ const EMPTY: Thread = { turns: [], loaded: false, error: false };
 
 export class AsksStore {
   private state: AsksState = { open: true, threads: {}, live: {}, quotes: {}, queues: {} };
-  /** File keys whose head question is being sent, so one end-of-turn never sends two. */
-  private draining = new Set<string>();
+  /** File keys with a question on its way to roomsd: another one queues instead of racing it. */
+  private sending = new Set<string>();
   private queueSeq = 0;
   private listeners = new Set<() => void>();
   /** File keys an ask bar is showing, with a count per bar. */
@@ -113,8 +115,7 @@ export class AsksStore {
   private reloadStale(): void {
     const now = Date.now();
     for (const key of this.held.keys()) {
-      const running = this.state.threads[key]?.turns.some((t) => !finished(t));
-      if (running && now - (this.heard.get(key) ?? 0) >= STALE_MS) void this.load(key);
+        if (this.running(key) && now - (this.heard.get(key) ?? 0) >= STALE_MS) void this.load(key);
     }
   }
 
@@ -143,31 +144,58 @@ export class AsksStore {
   }
 
   /** Which agent an ask from this doc goes to, and its models; null when roomsd can't say. */
-  async target(a: { roomId: string; artifactId: string }): Promise<AskTarget | null> {
+  async target(doc: { roomId: string; artifactId: string }): Promise<AskTarget | null> {
     if (!this.client) return null;
     try {
-      return await this.client.askTarget(a.roomId, a.artifactId);
+      return await this.client.askTarget(doc.roomId, doc.artifactId);
     } catch (e) {
       console.warn("rooms: could not load the ask target", e);
       return null;
     }
   }
 
-  /** Throws the API error (e.g. ask_busy) for the bar to show. `model` null = the agent's default. */
-  async ask(a: { roomId: string; artifactId: string }, question: string, model: string | null = null, images: string[] = [], kind: AskKind = "question"): Promise<void> {
-    if (!this.client) return;
-    const t = await this.client.startAsk({
-      roomId: a.roomId, artifactId: a.artifactId, question, model, ...(images.length ? { images } : {}), ...(kind !== "question" ? { kind } : {}),
-    });
-    this.apply(t);
+  /**
+   * Sends `q` about `doc`, or queues it when that doc's thread is busy (an answer running, a
+   * question on its way, or others already waiting). `now` stops the running answer so `q` goes
+   * next. Throws roomsd's error when sending fails; a queued question keeps its error instead.
+   */
+  async submit(doc: AskDoc, q: Outgoing, now = false): Promise<"sent" | "queued"> {
+    if (this.busy(doc.fileKey)) {
+      const item: Queued = { ...q, id: `q${++this.queueSeq}`, doc, error: null };
+      this.setQueue(doc.fileKey, [...(this.state.queues[doc.fileKey] ?? []), item]);
+      if (now) this.sendNow(doc.fileKey, item.id);
+      else void this.drain(doc.fileKey); // e.g. only failed questions were waiting
+      return "queued";
+    }
+    try {
+      await this.send(doc, q);
+    } finally {
+      // Whatever queued behind it while it was on its way goes once it runs (or failed).
+      void this.drain(doc.fileKey);
+    }
+    return "sent";
   }
 
-  /** Queues a question behind the running answer for `a.fileKey`; it is sent when that answer ends. */
-  enqueue(a: { roomId: string; artifactId: string; fileKey: string }, text: string, model: string | null, images: string[] = [], kind: AskKind = "question"): string {
-    const item: Queued = { id: `q${++this.queueSeq}`, roomId: a.roomId, artifactId: a.artifactId, text, model, images, kind, error: null };
-    this.setQueue(a.fileKey, [...(this.state.queues[a.fileKey] ?? []), item]);
-    void this.drain(a.fileKey);
-    return item.id;
+  private busy(fileKey: string): boolean {
+    return this.sending.has(fileKey) || !!this.state.queues[fileKey]?.length || !!this.running(fileKey);
+  }
+
+  private running(fileKey: string): AskTurn | undefined {
+    return this.state.threads[fileKey]?.turns.find((t) => !finished(t));
+  }
+
+  private async send(doc: AskDoc, q: Outgoing): Promise<void> {
+    if (!this.client) return;
+    this.sending.add(doc.fileKey);
+    try {
+      const t = await this.client.startAsk({
+        roomId: doc.roomId, artifactId: doc.artifactId, question: q.text, model: q.model,
+        ...(q.images.length ? { images: q.images } : {}), ...(q.kind !== "question" ? { kind: q.kind } : {}),
+      });
+      this.apply(t);
+    } finally {
+      this.sending.delete(doc.fileKey);
+    }
   }
 
   /** Takes a queued question out (to edit it, or drop it). */
@@ -184,24 +212,21 @@ export class AsksStore {
     const item = queue.find((q) => q.id === id);
     if (!item) return;
     this.setQueue(fileKey, [{ ...item, error: null }, ...queue.filter((q) => q.id !== id)]);
-    const running = this.state.threads[fileKey]?.turns.find((t) => !finished(t));
+    const running = this.running(fileKey);
     if (running) this.cancel(running.id);
     else void this.drain(fileKey);
   }
 
-  /** Sends the head of `fileKey`'s queue if nothing runs there. A failure stays on the item, which waits for the next try. */
+  /** Sends the head of `fileKey`'s queue once nothing runs or is being sent there. A failure stays on the item until the next try. */
   private async drain(fileKey: string): Promise<void> {
     const head = this.state.queues[fileKey]?.[0];
-    if (!head || this.draining.has(fileKey) || this.state.threads[fileKey]?.turns.some((t) => !finished(t))) return;
-    this.draining.add(fileKey);
+    if (!head || this.sending.has(fileKey) || this.running(fileKey)) return;
     try {
-      await this.ask(head, head.text, head.model, head.images, head.kind);
+      await this.send(head.doc, head);
       this.setQueue(fileKey, (this.state.queues[fileKey] ?? []).filter((q) => q.id !== head.id));
     } catch (e) {
       const error = e instanceof Error && e.message ? e.message : "Couldn't send";
       this.setQueue(fileKey, (this.state.queues[fileKey] ?? []).map((q) => (q.id === head.id ? { ...q, error } : q)));
-    } finally {
-      this.draining.delete(fileKey);
     }
   }
 
@@ -211,9 +236,8 @@ export class AsksStore {
 
   /** Adds `text` as a quote for the next question about `fileKey`, and opens the bar. */
   addQuote(fileKey: string, text: string): void {
-    const t = text.trim();
-    if (!t) return;
-    const q = t.length > MAX_QUOTE_CHARS ? `${t.slice(0, MAX_QUOTE_CHARS - 1)}…` : t;
+    const q = toQuote(text);
+    if (!q) return;
     const current = this.state.quotes[fileKey] ?? [];
     const next = current.includes(q) ? current : [...current, q].slice(-MAX_QUOTES);
     this.set({ ...this.state, open: true, quotes: { ...this.state.quotes, [fileKey]: next } });

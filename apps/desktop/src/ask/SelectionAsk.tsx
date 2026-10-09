@@ -1,3 +1,4 @@
+import { useEffect, useState, type RefObject } from "react";
 import { MessageSquareQuote } from "lucide-react";
 
 /** Where the selection is, in px from the top-left of the box the button is placed in. */
@@ -35,4 +36,38 @@ export function readSelectionMessage(data: unknown): { text: string; rect: Selec
   const r = rect as Partial<Record<keyof SelectionRect, unknown>> | null;
   const ok = r && (["x", "y", "w", "h"] as const).every((k) => typeof r[k] === "number" && Number.isFinite(r[k]));
   return { text: text.slice(0, 4000), rect: ok ? (r as SelectionRect) : null };
+}
+
+/**
+ * Text selected inside `scope`, with where it is relative to `box`; null when nothing is. Read on
+ * release, not while dragging, so a button over it doesn't chase the pointer.
+ */
+export function useTextSelection(scope: RefObject<HTMLElement | null>, box: RefObject<HTMLElement | null>, enabled: boolean) {
+  const [picked, setPicked] = useState<{ text: string; rect: SelectionRect } | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const read = () => {
+      const s = document.getSelection();
+      const el = scope.current;
+      const b = box.current?.getBoundingClientRect();
+      const inside = !!s && !s.isCollapsed && !!el && !!s.anchorNode && el.contains(s.anchorNode) && el.contains(s.focusNode);
+      const text = inside ? s.toString().trim() : "";
+      if (!text || !b) return setPicked(null);
+      const r = s!.getRangeAt(0).getBoundingClientRect();
+      setPicked({ text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height } });
+    };
+    const onUp = () => setTimeout(read, 0);
+    const onChange = () => {
+      if (document.getSelection()?.isCollapsed) setPicked(null);
+    };
+    document.addEventListener("mouseup", onUp);
+    document.addEventListener("keyup", onUp);
+    document.addEventListener("selectionchange", onChange);
+    return () => {
+      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("keyup", onUp);
+      document.removeEventListener("selectionchange", onChange);
+    };
+  }, [scope, box, enabled]);
+  return { picked, dismiss: () => setPicked(null) };
 }

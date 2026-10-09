@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AskTarget, AskTurn, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
-import { AsksStore, MAX_THREADS, STALE_MS, STOP_CHECK_MS, upsert } from "./asksStore";
+import { AsksStore, MAX_THREADS, STALE_MS, STOP_CHECK_MS, upsert, type Outgoing } from "./asksStore";
 
 type EventInput = RoomsEvent extends infer T ? (T extends RoomsEvent ? Omit<T, "seq"> : never) : never;
 
@@ -9,6 +9,9 @@ const turn = (id: string, status: AskTurn["status"], extra: Partial<AskTurn> = {
   id, fileKey: "k1", question: "q", answer: "", agent: "claude-code", model: null, mode: "resume", status,
   error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, ...extra,
 });
+
+const doc = { roomId: "r", artifactId: "a", fileKey: "k1" };
+const q = (text: string, extra: Partial<Outgoing> = {}): Outgoing => ({ text, model: null, images: [], kind: "question", ...extra });
 
 function setup(thread: AskTurn[] = []) {
   let signal: (type: RoomsEvent["type"], e: RoomsEvent) => void = () => {};
@@ -71,10 +74,9 @@ describe("AsksStore", () => {
 
   it("queues questions behind a running answer and sends them one per finished answer", async () => {
     const { store, client, emit } = setup();
-    const a = { roomId: "r", artifactId: "a", fileKey: "k1" };
     emit({ type: "ask.started", turn: turn("t1", "running") });
-    store.enqueue(a, "second", null);
-    store.enqueue(a, "third", "opus", ["img.png"]);
+    expect(await store.submit(doc, q("second"))).toBe("queued");
+    expect(await store.submit(doc, q("third", { model: "opus", images: ["img.png"] }))).toBe("queued");
     expect(store.getState().queues.k1.map((q) => q.text)).toEqual(["second", "third"]);
     expect(client.startAsk).not.toHaveBeenCalled();
     client.startAsk.mockResolvedValueOnce(turn("t2", "running"));
@@ -90,10 +92,9 @@ describe("AsksStore", () => {
 
   it("send now moves a question to the front and stops the running answer; a failure stays on the item", async () => {
     const { store, client, emit } = setup();
-    const a = { roomId: "r", artifactId: "a", fileKey: "k1" };
     emit({ type: "ask.started", turn: turn("t1", "running") });
-    store.enqueue(a, "one", null);
-    store.enqueue(a, "two", null);
+    await store.submit(doc, q("one"));
+    await store.submit(doc, q("two"));
     const two = store.getState().queues.k1[1];
     store.sendNow("k1", two.id);
     expect(client.cancelAsk).toHaveBeenCalledWith("t1");
@@ -103,8 +104,8 @@ describe("AsksStore", () => {
     await vi.waitFor(() => expect(store.getState().queues.k1[0].error).toBe("Waiting for an answer"));
     expect(store.unqueue("k1", two.id)?.text).toBe("two");
     expect(store.getState().queues.k1.map((q) => q.text)).toEqual(["one"]);
-    // Nothing running: queuing sends at once.
-    store.enqueue(a, "three", null);
+    // Nothing running, only a failed question waiting: a new one queues behind it and both go.
+    expect(await store.submit(doc, q("three"))).toBe("queued");
     await vi.waitFor(() => expect(client.startAsk).toHaveBeenLastCalledWith(expect.objectContaining({ question: "one" })));
   });
 
@@ -130,7 +131,7 @@ describe("AsksStore", () => {
     const { store, client, emit } = setup();
     let resolve!: (t: AskTurn) => void;
     client.startAsk.mockImplementationOnce(() => new Promise<AskTurn>((r) => (resolve = r)));
-    const p = store.ask({ roomId: "r", artifactId: "a" }, "q");
+    const p = store.submit(doc, q("q"));
     emit({ type: "ask.done", turn: turn("t1", "failed", { error: "boom" }) });
     resolve(turn("t1", "running"));
     await p;
@@ -159,16 +160,31 @@ describe("AsksStore", () => {
     expect(client.askThread).toHaveBeenCalledTimes(2);
   });
 
-  it("ask() rethrows API errors for the bar to show", async () => {
+  it("submit() rethrows API errors for the bar to show", async () => {
     const { store, client } = setup();
     client.startAsk.mockRejectedValueOnce(new Error("busy"));
-    await expect(store.ask({ roomId: "r", artifactId: "a" }, "q")).rejects.toThrow("busy");
+    await expect(store.submit(doc, q("q"))).rejects.toThrow("busy");
   });
 
-  it("ask() sends the picked model; target() asks roomsd and swallows errors", async () => {
+  it("a question sent while another is on its way queues instead of racing it", async () => {
     const { store, client } = setup();
-    await store.ask({ roomId: "r", artifactId: "a" }, "q", "gpt-6-sol");
+    let resolve!: (t: AskTurn) => void;
+    client.startAsk.mockImplementationOnce(() => new Promise<AskTurn>((r) => (resolve = r)));
+    const first = store.submit(doc, q("one"));
+    expect(await store.submit(doc, q("two"))).toBe("queued");
+    expect(client.startAsk).toHaveBeenCalledTimes(1);
+    resolve(turn("t1", "running"));
+    expect(await first).toBe("sent");
+    expect(store.getState().queues.k1.map((x) => x.text)).toEqual(["two"]);
+  });
+
+  it("submit() sends the picked model and a command's kind; target() asks roomsd and swallows errors", async () => {
+    const { store, client } = setup();
+    expect(await store.submit(doc, q("q", { model: "gpt-6-sol" }))).toBe("sent");
     expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r", artifactId: "a", question: "q", model: "gpt-6-sol" });
+    client.startAsk.mockResolvedValueOnce(turn("c1", "done", { kind: "clear" }));
+    await store.submit({ ...doc, fileKey: "k2" }, q("/new", { kind: "clear" }));
+    expect(client.startAsk).toHaveBeenLastCalledWith({ roomId: "r", artifactId: "a", question: "/new", model: null, kind: "clear" });
     expect(await store.target({ roomId: "r", artifactId: "a" })).toEqual({ agent: "codex", mode: "new", models: ["gpt-6-sol"] });
     expect(client.askTarget).toHaveBeenCalledWith("r", "a");
     client.askTarget.mockRejectedValueOnce(new Error("x"));

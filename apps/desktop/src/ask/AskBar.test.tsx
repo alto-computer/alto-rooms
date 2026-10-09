@@ -4,7 +4,7 @@ import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
-import { AskBar, splitQuotes } from "./AskBar";
+import { AskBar } from "./AskBar";
 
 const doc: Artifact = {
   id: "a1", roomId: "r1", relPath: "doc.html", title: "Doc", createdAt: "2026-10-06T09:00:00+09:00",
@@ -256,12 +256,6 @@ describe("AskBar", () => {
     const bubbleQuote = await screen.findByText(/첫 인용/, { selector: "div.line-clamp-3" });
     expect(bubbleQuote.textContent).toBe("첫 인용\n둘째 줄");
     expect(screen.getByText("뭐야?")).toBeInTheDocument();
-  });
-
-  it("splits leading blockquotes off a question", () => {
-    expect(splitQuotes("> a\n> b\n\n> c\n\nq\n\nmore")).toEqual({ quotes: ["a\nb", "c"], text: "q\n\nmore" });
-    expect(splitQuotes("> only a quote")).toEqual({ quotes: [], text: "> only a quote" });
-    expect(splitQuotes("plain")).toEqual({ quotes: [], text: "plain" });
   });
 
   it("while an answer runs, Enter queues the question and it goes out when the answer ends", async () => {
