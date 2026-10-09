@@ -19,6 +19,7 @@ export type SubjectFraming = {
 };
 
 const agentAndModel = (t: AskTurn) => [t.agent, t.model ? modelLabel(t.model) : null];
+const agentHeader = (t: AskTurn): TurnHeader => ({ text: agentAndModel(t).filter(Boolean).join(" · ") });
 
 export function frameSubject(subject: AskSubject): SubjectFraming {
   switch (subject.kind) {
@@ -38,7 +39,7 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
       return {
         scope: { kind: "room", roomId: subject.roomId },
         placeholder: "Ask about this room…",
-        header: (t) => ({ text: agentAndModel(t).filter(Boolean).join(" · ") }),
+        header: agentHeader,
         agent: "Default agent",
         hint: (target) => (target?.scoped ? "Reads only this room's docs" : null),
       };
@@ -46,7 +47,7 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
       return {
         scope: { kind: "day", date: subject.date },
         placeholder: "Ask about this day…",
-        header: (t) => ({ text: agentAndModel(t).filter(Boolean).join(" · ") }),
+        header: agentHeader,
         agent: "Default agent",
         hint: (target) => (target?.scoped ? "Reads only this day's items" : null),
       };
