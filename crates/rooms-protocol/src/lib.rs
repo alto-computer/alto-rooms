@@ -168,11 +168,23 @@ pub enum AskKind {
     Compact,
 }
 
+/// What a conversation is about, and the one thread it keeps: a doc (by the file key its rooms
+/// share), a room, or a Journal day.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum AskScope {
+    #[serde(rename_all = "camelCase")] Doc { file_key: String },
+    #[serde(rename_all = "camelCase")] Room { room_id: RoomId },
+    Day { date: IsoDate },
+}
+
 wire!(
-/// One question and its answer, asked from a doc to the agent that made it (spec v2 ask).
+/// One question and its answer in a scope's thread (spec v2 ask). A doc's go to the agent that
+/// made it.
 pub struct AskTurn {
     pub id: String,
-    pub file_key: String,
+    pub scope: AskScope,
     pub question: String,
     /// The answer: the agent's stdout (ANSI stripped, trimmed), or what its profile's event rules
     /// read from it. Empty while running (`ask.progress` carries the answer so far).
@@ -219,8 +231,7 @@ pub struct ToolResult {
 });
 
 wire!(pub struct StartAsk {
-    pub room_id: RoomId,
-    pub artifact_id: ArtifactId,
+    pub scope: AskScope,
     pub question: String,
     /// One of `AskTarget::models`; `None` or empty = the agent's own default.
     pub model: Option<String>,
@@ -241,7 +252,7 @@ pub struct AskImage {
 });
 
 wire!(
-/// Which agent an ask from this doc would go to, and the models it can pick from (empty = no choice).
+/// Which agent an ask in this scope would go to, and the models it can pick from (empty = no choice).
 pub struct AskTarget {
     pub agent: String,
     pub mode: AskMode,
@@ -270,7 +281,7 @@ pub enum EventKind {
     #[serde(rename = "ask.started")] AskStarted { turn: AskTurn },
     /// The answer so far and what the agent is doing, while a turn runs (at most ~10 a second, only
     /// on change). Not recorded: a client that missed one just shows the next, or `ask.done`.
-    #[serde(rename = "ask.progress", rename_all = "camelCase")] AskProgress { id: String, file_key: String, answer: String, activity: Option<String> },
+    #[serde(rename = "ask.progress", rename_all = "camelCase")] AskProgress { id: String, scope: AskScope, answer: String, activity: Option<String> },
     /// Exactly once per started turn, after every `ask.progress` of it; `turn.answer` is the whole answer.
     #[serde(rename = "ask.done")] AskDone { turn: AskTurn },
     #[serde(rename = "resync", rename_all = "camelCase")] Resync { room_id: Option<RoomId> },

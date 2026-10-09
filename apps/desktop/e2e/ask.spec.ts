@@ -22,7 +22,7 @@ test("ask a doc and get the fake agent's answer", async ({ page, daemon }) => {
   mkdirSync(join(daemon.home, ".rooms"), { recursive: true });
   writeFileSync(join(daemon.home, ".rooms/agents.toml"), `[agents.claude-code]\nnew = ["${bin}", "{prompt}"]\n`);
 
-  await daemon.createRoom("harness");
+  const harness = await daemon.createRoom("harness");
   await daemon.write("harness/doc.html", "<html><head><title>Doc</title></head><body>hello</body></html>");
 
   await page.goto("/");
@@ -45,4 +45,10 @@ test("ask a doc and get the fake agent's answer", async ({ page, daemon }) => {
   await page.reload();
   await openDocTab(page, "harness", "Doc");
   await expect(page.getByText("Question: 왜 이렇게 했어?")).toBeVisible();
+
+  const [art] = (await (await fetch(`${daemon.baseUrl}/v1/rooms/${harness.id}/artifacts`)).json()) as { fileKey: string }[];
+  const thread = (await (await fetch(`${daemon.baseUrl}/v1/asks?scope=doc:${art.fileKey}`)).json()) as { scope: unknown; status: string }[];
+  expect(thread).toHaveLength(1);
+  expect(thread[0]).toMatchObject({ scope: { kind: "doc", fileKey: art.fileKey }, status: "done" });
+  expect(await daemon.exists(`.rooms/asks/${art.fileKey}.jsonl`)).toBe(true);
 });

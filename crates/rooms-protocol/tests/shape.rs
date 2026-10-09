@@ -47,6 +47,7 @@ fn export_typescript_bindings() {
     ToolCall::export_all().unwrap();
     ToolResult::export_all().unwrap();
     ApiError::export_all().unwrap();
+    AskScope::export_all().unwrap();
     AskTurn::export_all().unwrap();
     StartAsk::export_all().unwrap();
     AskTarget::export_all().unwrap();
@@ -59,36 +60,74 @@ fn export_typescript_bindings() {
 #[test]
 fn ask_events_are_camel_and_tagged() {
     let turn = AskTurn {
-        id: "a1".into(), file_key: "0123456789abcdef".into(), question: "q".into(), answer: "".into(),
+        id: "a1".into(), scope: AskScope::Doc { file_key: "0123456789abcdef".into() }, question: "q".into(), answer: "".into(),
         agent: "claude-code".into(), model: None, mode: AskMode::Resume, status: AskStatus::Running,
         error: None, started_at: "2026-10-06T10:00:00+09:00".into(), ended_at: None, images: vec![],
         kind: AskKind::Question, left_out: 0,
     };
     let v = serde_json::to_value(&RoomsEvent { seq: 3, kind: EventKind::AskStarted { turn: turn.clone() } }).unwrap();
     assert_eq!(v["type"], "ask.started");
-    assert_eq!(v["turn"]["fileKey"], "0123456789abcdef");
+    assert_eq!(v["turn"]["scope"], serde_json::json!({"kind": "doc", "fileKey": "0123456789abcdef"}));
     assert_eq!(v["turn"]["mode"], "resume");
     assert_eq!(v["turn"]["status"], "running");
     assert_eq!(v["turn"]["endedAt"], serde_json::Value::Null);
     let d = serde_json::to_value(&RoomsEvent { seq: 4, kind: EventKind::AskDone { turn } }).unwrap();
     assert_eq!(d["type"], "ask.done");
-    let s: StartAsk = serde_json::from_str(r#"{"roomId":"r","artifactId":"a","question":"hi"}"#).unwrap();
-    assert_eq!((s.room_id.as_str(), s.artifact_id.as_str(), s.question.as_str(), s.model), ("r", "a", "hi", None));
+    let s: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"doc","fileKey":"k"},"question":"hi"}"#).unwrap();
+    assert_eq!((&s.scope, s.question.as_str(), s.model), (&AskScope::Doc { file_key: "k".into() }, "hi", None));
     assert_eq!(v["turn"]["kind"], "question");
     assert_eq!(v["turn"]["leftOut"], 0);
-    let c: StartAsk = serde_json::from_str(r#"{"roomId":"r","artifactId":"a","question":"","kind":"compact"}"#).unwrap();
+    let c: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"doc","fileKey":"k"},"question":"","kind":"compact"}"#).unwrap();
     assert_eq!(c.kind, Some(AskKind::Compact));
     // records written before kinds existed read back as questions
-    let old: AskTurn = serde_json::from_value(serde_json::json!({"id":"a","fileKey":"k","question":"q","answer":"","agent":"x","model":null,"mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null})).unwrap();
+    let old: AskTurn = serde_json::from_value(serde_json::json!({"id":"a","scope":{"kind":"doc","fileKey":"k"},"question":"q","answer":"","agent":"x","model":null,"mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null})).unwrap();
     assert_eq!((old.kind, old.left_out), (AskKind::Question, 0));
 }
 
 #[test]
+fn ask_scope_is_tagged_by_kind_and_round_trips() {
+    let cases = [
+        (AskScope::Doc { file_key: "0123456789abcdef".into() }, serde_json::json!({"kind": "doc", "fileKey": "0123456789abcdef"})),
+        (AskScope::Room { room_id: "연구-도구".into() }, serde_json::json!({"kind": "room", "roomId": "연구-도구"})),
+        (AskScope::Day { date: "2026-10-09".into() }, serde_json::json!({"kind": "day", "date": "2026-10-09"})),
+    ];
+    for (scope, json) in cases {
+        assert_eq!(serde_json::to_value(&scope).unwrap(), json);
+        assert_eq!(serde_json::from_value::<AskScope>(json).unwrap(), scope);
+    }
+    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"doc","roomId":"r"}"#).is_err());
+    assert!(serde_json::from_str::<AskScope>(r#"{"fileKey":"k"}"#).is_err());
+    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"week","date":"2026-10-09"}"#).is_err());
+}
+
+#[test]
+fn start_ask_takes_any_scope_with_images_and_kind() {
+    let room: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"room","roomId":"r1"},"question":"q","model":"opus","images":["i1","i2"],"kind":"question"}"#).unwrap();
+    assert_eq!(room.scope, AskScope::Room { room_id: "r1".into() });
+    assert_eq!((room.model.as_deref(), room.images.as_deref(), room.kind), (Some("opus"), Some(&["i1".to_string(), "i2".to_string()][..]), Some(AskKind::Question)));
+    let day: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"day","date":"2026-10-09"},"question":"","model":null,"kind":"clear"}"#).unwrap();
+    assert_eq!((day.scope, day.images, day.kind), (AskScope::Day { date: "2026-10-09".into() }, None, Some(AskKind::Clear)));
+    // the old shape no longer parses: a client at the stack base gets 400, not a doc ask under some default
+    assert!(serde_json::from_str::<StartAsk>(r#"{"roomId":"r","artifactId":"a","question":"hi"}"#).is_err());
+}
+
+#[test]
+fn ask_progress_carries_the_scope_object() {
+    let e = RoomsEvent { seq: 5, kind: EventKind::AskProgress { id: "t1".into(), scope: AskScope::Room { room_id: "r1".into() }, answer: "so far".into(), activity: Some("Read · a.html".into()) } };
+    let v = serde_json::to_value(&e).unwrap();
+    assert_eq!(v["type"], "ask.progress");
+    assert_eq!(v["scope"], serde_json::json!({"kind": "room", "roomId": "r1"}));
+    assert_eq!(v["activity"], "Read · a.html");
+    let back: RoomsEvent = serde_json::from_value(v).unwrap();
+    assert_eq!(back, e);
+}
+
+#[test]
 fn ask_model_is_optional_on_the_wire() {
-    let s: StartAsk = serde_json::from_str(r#"{"roomId":"r","artifactId":"a","question":"hi","model":"sonnet"}"#).unwrap();
+    let s: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"doc","fileKey":"k"},"question":"hi","model":"sonnet"}"#).unwrap();
     assert_eq!(s.model.as_deref(), Some("sonnet"));
     // turns recorded before models existed still read back
-    let old = r#"{"id":"a1","fileKey":"k","question":"q","answer":"","agent":"codex","mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null}"#;
+    let old = r#"{"id":"a1","scope":{"kind":"doc","fileKey":"k"},"question":"q","answer":"","agent":"codex","mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null}"#;
     assert_eq!(serde_json::from_str::<AskTurn>(old).unwrap().model, None);
     let t = serde_json::to_value(AskTarget { agent: "codex".into(), mode: AskMode::New, models: vec!["m".into()] }).unwrap();
     assert_eq!(t, serde_json::json!({"agent": "codex", "mode": "new", "models": ["m"]}));

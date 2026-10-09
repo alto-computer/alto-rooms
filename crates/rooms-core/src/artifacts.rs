@@ -101,11 +101,16 @@ impl RoomsCore {
     /// The artifact holding the original with `file_key`: when several rooms link it, the first in
     /// sidebar order, then the journal. `None` if no artifact has that key.
     pub fn artifact_by_file_key(&self, file_key: &str) -> Option<Artifact> {
+        self.artifacts_by_file_key(file_key).into_iter().next()
+    }
+
+    /// Every artifact holding the original with `file_key`, in sidebar order, then the journal.
+    pub fn artifacts_by_file_key(&self, file_key: &str) -> Vec<Artifact> {
         let inner = lock(&self.inner);
-        let mut hits = inner.index.by_file_key(file_key).ok()?;
+        let mut hits = inner.index.by_file_key(file_key).unwrap_or_default();
         let rank = |room: &str| inner.state.rooms.iter().position(|r| r.id == room).unwrap_or(usize::MAX);
         hits.sort_by_key(|a| rank(&a.room_id));
-        hits.into_iter().next()
+        hits
     }
 
     /// Owned, existing room → its root. Journal and linked rooms are `InvalidInput` (never written

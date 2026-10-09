@@ -1,28 +1,29 @@
 import { useEffect, useState } from "react";
-import type { AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
+import type { AskScope, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
+import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { loadModel, saveModel } from "./askModel";
 
 /**
- * Where an ask from this doc goes (null until roomsd answers), the model picked for that agent,
+ * Where an ask in this scope goes (null until roomsd answers), the model picked for that agent,
  * and the model a retry of `t` uses: its own while the agent still offers it.
  */
-export function useAskTarget(doc: { roomId: string; artifactId: string }, shown: boolean) {
+export function useAskTarget(scope: AskScope, shown: boolean) {
   const store = useAsksStore();
-  const { roomId, artifactId } = doc;
-  const key = `${roomId}/${artifactId}`;
-  // Keyed by doc, so a newly shown doc never sends the previous doc's model.
+  const key = scopeKey(scope);
+  // Keyed by scope, so a newly shown scope never sends the previous one's model.
   const [state, setState] = useState<{ key: string; target: AskTarget | null; model: string | null } | null>(null);
+  // The scope object is rebuilt on every render; its key says when it really changed.
   useEffect(() => {
     if (!shown) return;
     let live = true;
-    void store.target({ roomId, artifactId }).then((target) => {
-      if (live) setState({ key: `${roomId}/${artifactId}`, target, model: target ? loadModel(target.agent, target.models) : null });
+    void store.target(scope).then((target) => {
+      if (live) setState({ key, target, model: target ? loadModel(target.agent, target.models) : null });
     });
     return () => {
       live = false;
     };
-  }, [shown, store, roomId, artifactId]);
+  }, [shown, store, key]);
   const current = state?.key === key ? state : null;
   const target = current?.target ?? null;
   const model = current?.model ?? null;

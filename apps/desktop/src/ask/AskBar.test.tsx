@@ -1,18 +1,19 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
 import { AskBar } from "./AskBar";
 
+const scope: AskScope = { kind: "doc", fileKey: "k1" };
 const doc: Artifact = {
   id: "a1", roomId: "r1", relPath: "doc.html", title: "Doc", createdAt: "2026-10-06T09:00:00+09:00",
   updatedAt: "2026-10-06T09:00:00+09:00", author: "agent", fileKey: "k1",
   source: { agent: "claude-code", session: "S1", cwd: null, machine: null },
 };
 const turn = (extra: Partial<AskTurn>): AskTurn => ({
-  id: "t1", fileKey: "k1", question: "왜?", answer: "", agent: "claude-code", model: null, mode: "resume", status: "running",
+  id: "t1", scope: { kind: "doc", fileKey: "k1" }, question: "왜?", answer: "", agent: "claude-code", model: null, mode: "resume", status: "running",
   error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, ...extra,
 });
 
@@ -20,7 +21,7 @@ let store: ReturnType<typeof useAsksStore>;
 function Grab() { store = useAsksStore(); return null; }
 
 async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false, target?: AskTarget) {
-  const askTargets = target ? { a1: target } : undefined;
+  const askTargets = target ? { k1: target } : undefined;
   return renderWithStores(<><Grab /><AskBar artifact={doc} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
 }
 
@@ -57,7 +58,7 @@ describe("AskBar", () => {
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     expect(client.startAsk).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?", model: null }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope, question: "왜?", model: null }));
     expect(await screen.findByText("Thinking")).toBeTruthy();
     expect((input as HTMLTextAreaElement).value).toBe("");
     // Writable while it runs: typing ahead is fine, sending waits.
@@ -155,11 +156,11 @@ describe("AskBar", () => {
     try {
       const { emit } = await setup({ k1: [turn({})] });
       await screen.findByText("Thinking");
-      act(() => emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "", activity: "Read · doc.html" }));
+      act(() => emit({ type: "ask.progress", id: "t1", scope, answer: "", activity: "Read · doc.html" }));
       expect(await screen.findByText("Read · doc.html")).toBeInTheDocument();
       expect(screen.queryByText("Thinking")).toBeNull();
       scrollTo.mockClear();
-      act(() => emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "| a | b |\n|---|---|\n| **1** | 2 |", activity: null }));
+      act(() => emit({ type: "ask.progress", id: "t1", scope, answer: "| a | b |\n|---|---|\n| **1** | 2 |", activity: null }));
       expect((await screen.findByText("1")).tagName).toBe("STRONG");
       expect(screen.getByText("Thinking")).toBeInTheDocument();
       expect(scrollTo).toHaveBeenCalled();
@@ -245,9 +246,9 @@ describe("AskBar", () => {
 
   it("shows quotes waiting above the input and on the asked question", async () => {
     const { emit } = await setup();
-    act(() => store.addQuote("k1", "첫 인용\n둘째 줄"));
-    act(() => store.addQuote("k1", "  다른 인용  "));
-    act(() => store.addQuote("k1", "다른 인용"));
+    act(() => store.addQuote({ kind: "doc", fileKey: "k1" }, "첫 인용\n둘째 줄"));
+    act(() => store.addQuote({ kind: "doc", fileKey: "k1" }, "  다른 인용  "));
+    act(() => store.addQuote({ kind: "doc", fileKey: "k1" }, "다른 인용"));
     const chips = await screen.findByRole("list", { name: "Quoted text" });
     expect(chips.querySelectorAll("li")).toHaveLength(2);
     fireEvent.click(screen.getAllByRole("button", { name: "Remove quote" })[1]);
@@ -332,7 +333,7 @@ describe("AskBar", () => {
     act(() => emit({ type: "ask.started", turn: turn({ id: "new", question: "다른 창 질문" }) }));
     expect(await screen.findByText("예전 답")).toBeTruthy();
     expect(screen.getByText("다른 창 질문")).toBeTruthy();
-    expect(client.askThread).toHaveBeenCalledWith("k1");
+    expect(client.askThread).toHaveBeenCalledWith(scope);
   });
 
   it("shows a loaded thread, failed turns with retry, and cancelled turns", async () => {
@@ -347,7 +348,7 @@ describe("AskBar", () => {
     const retry = screen.getByRole("button", { name: "Retry" });
     expect(retry).toHaveClass("min-h-7", "focus-visible:outline-ink");
     fireEvent.click(retry);
-    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q0", model: null }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope, question: "q0", model: null }));
   });
 
   it("while running the send button is a Stop button that cancels; there is no Stop text link", async () => {
@@ -418,7 +419,7 @@ describe("AskBar", () => {
   it("with no models shows just the agent the ask goes to, from roomsd, with no menu", async () => {
     const { client } = await setup({}, false, { agent: "codex", mode: "new", models: [] });
     expect(await screen.findByText("codex")).toBeTruthy();
-    expect(client.askTarget).toHaveBeenCalledWith("r1", "a1");
+    expect(client.askTarget).toHaveBeenCalledWith(scope);
     expect(screen.queryByLabelText(/^Model/)).toBeNull();
   });
 
@@ -426,7 +427,7 @@ describe("AskBar", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const noAgent = { ...doc, source: { ...doc.source, agent: null } };
-      await renderWithStores(<AskBar artifact={noAgent} />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { a1: new Error("down") } });
+      await renderWithStores(<AskBar artifact={noAgent} />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { k1: new Error("down") } });
       expect(await screen.findByText("Default agent")).toBeTruthy();
       await waitFor(() => expect(warn).toHaveBeenCalled());
       expect(screen.getByText("Default agent")).toBeTruthy();
@@ -449,7 +450,7 @@ describe("AskBar", () => {
     const input = screen.getByPlaceholderText("Ask about this doc…");
     fireEvent.change(input, { target: { value: "왜?" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "왜?", model: "sonnet" }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope, question: "왜?", model: "sonnet" }));
   });
 
   it("a pointerdown in the model menu keeps the sheet open", async () => {
@@ -482,11 +483,11 @@ describe("AskBar", () => {
     const { client, emit } = await setup({ k1: [failed("q-opus", "opus"), failed("q-gone", "retired")] }, false, claude);
     await screen.findByLabelText("Model: claude-code · Haiku");
     fireEvent.click((await screen.findAllByText("Retry"))[0]);
-    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q-opus", model: "opus" }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope, question: "q-opus", model: "opus" }));
     act(() => emit({ type: "ask.done", turn: turn({ id: "ask-q-opus", question: "q-opus", status: "done", answer: "ok", endedAt: "2026-10-06T10:00:02+09:00" }) }));
     await screen.findByText("ok");
     fireEvent.click(screen.getAllByText("Retry")[1]);
-    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ roomId: "r1", artifactId: "a1", question: "q-gone", model: "haiku" }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope, question: "q-gone", model: "haiku" }));
   });
 
   it("shows the turn's model in the sheet header", async () => {

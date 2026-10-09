@@ -1,11 +1,14 @@
 /*
  * E2E fixtures: a real roomsd per test, on its own temp home and test ports,
- * driven through the web build (Vite preview on 4173).
+ * driven through the web build (Vite preview).
  *
  * - roomsd is built once per run (`cargo build -p roomsd` at the repo root).
- * - Each test gets a fresh home, ROOMS_API_PORT=14317, ROOMS_FILES_PORT=14318
- *   and ROOMS_DEV_ORIGIN=http://localhost:4173; the daemon is killed and the
- *   home removed in teardown, even when the test fails.
+ * - Each test gets a fresh home, ROOMS_API_PORT, ROOMS_FILES_PORT and
+ *   ROOMS_DEV_ORIGIN from the ports below; the daemon is killed and the home
+ *   removed in teardown, even when the test fails.
+ * - The ports come from ROOMS_E2E_API_PORT, ROOMS_E2E_FILES_PORT and
+ *   ROOMS_E2E_APP_PORT (default 14317, 14318 and 4173), so several runs can
+ *   share one machine.
  * - The connection reaches the page through `page.addInitScript`, never the URL.
  */
 import { test as base, expect } from "@playwright/test";
@@ -15,9 +18,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-export const API_PORT = 14317;
-export const FILES_PORT = 14318;
-export const APP_ORIGIN = "http://localhost:4173";
+const envPort = (name: string, fallback: number) => Number(process.env[name] ?? fallback);
+export const API_PORT = envPort("ROOMS_E2E_API_PORT", 14317);
+export const FILES_PORT = envPort("ROOMS_E2E_FILES_PORT", 14318);
+export const APP_PORT = envPort("ROOMS_E2E_APP_PORT", 4173);
+export const APP_ORIGIN = `http://localhost:${APP_PORT}`;
 const BASE = `http://127.0.0.1:${API_PORT}`;
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");

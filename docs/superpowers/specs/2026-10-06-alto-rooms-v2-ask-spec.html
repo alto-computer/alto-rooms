@@ -288,7 +288,7 @@
   <tbody>
     <tr><td>D1</td><td>실행은 <strong>roomsd</strong>(rooms-core의 <code>Asks</code>)</td><td>프로토콜만 쓰는 다른 클라이언트도 같은 기능. Tauri에서 실행하면 데스크톱 전용이 된다.</td></tr>
     <tr><td>D2</td><td>에이전트 지식 = <code>agents.toml</code>의 argv 템플릿뿐</td><td>코드에 "claude" 문자열 없음(기본 프로필 상수 제외). 플러그인 슬롯으로 하자니 플러그인은 명령 실행 불가(v1 플러그인 스펙).</td></tr>
-    <tr><td>D3</td><td>stdout = 일반 텍스트, 파싱 안 함</td><td>stream-json 파싱은 에이전트마다 달라 결합. 대가: claude 텍스트 모드는 끝에 한 번에 나온다.</td></tr>
+    <tr><td>D3</td><td>stdout은 에이전트 프로필의 이벤트 규칙(<code>agents.toml</code>의 <code>[[agents.X.events]]</code>, 내장 claude-code·codex 규칙)이 데이터로 읽는다 — 에이전트별 코드 없음</td><td>스트리밍 답과 활동 줄(PR #12)을 보이려면 stdout을 읽어야 한다. 규칙은 JSON 포인터 매치로 delta·answer·activity를 고르는 데이터라 코드에 "claude" 분기가 없다. 규칙 없는 프로필(aside, 테스트용 가짜)은 stdout 전체가 답이고 활동은 없다. 처음 결정 "일반 텍스트, 파싱 안 함"을 대체.</td></tr>
     <tr><td>D4</td><td>이어 묻기 = 원 세션 resume(포크) + 이전 문답 프롬프트 첨부</td><td>새 session_id 파싱 불필요. 원 세션이 터미널에 열려 있어도 안전.</td></tr>
     <tr><td>D5</td><td>셸 없음, argv 배열 템플릿</td><td>셸 인용 파싱 불필요 + 주입 차단.</td></tr>
     <tr><td>D6</td><td>기록은 <code>.rooms/asks/&lt;fileKey&gt;.jsonl</code>, append-only</td><td>방 이동·심링크에도 같은 대화. SQLite 대신 파일 — v1 "파일이 진실" 원칙.</td></tr>

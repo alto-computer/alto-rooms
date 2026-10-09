@@ -1,6 +1,7 @@
 import type { ApiError } from "./generated/ApiError";
 import type { Artifact } from "./generated/Artifact";
 import type { AskImage } from "./generated/AskImage";
+import type { AskScope } from "./generated/AskScope";
 import type { AskTarget } from "./generated/AskTarget";
 import type { AskTurn } from "./generated/AskTurn";
 import type { Info } from "./generated/Info";
@@ -12,6 +13,18 @@ import type { RoomsEvent } from "./generated/RoomsEvent";
 import type { StartAsk } from "./generated/StartAsk";
 
 export type Snapshot<T> = { data: T; seq: number };
+
+/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`. */
+export function scopeKey(scope: AskScope): string {
+  switch (scope.kind) {
+    case "doc":
+      return `doc:${scope.fileKey}`;
+    case "room":
+      return `room:${scope.roomId}`;
+    case "day":
+      return `day:${scope.date}`;
+  }
+}
 
 export class RoomsApiError extends Error {
   status: number;
@@ -79,10 +92,9 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     moveArtifact: (roomId: string, artifactId: string, toRoomId: string) =>
       write<Artifact>("POST", "/v1/artifacts/move", JSON.stringify({ roomId, artifactId, toRoomId })),
     startAsk: (req: StartAsk) => write<AskTurn>("POST", "/v1/asks", JSON.stringify(req)),
-    /** Which agent an ask from this doc goes to, and the models it can pick from. */
-    askTarget: async (roomId: string, artifactId: string) =>
-      (await get<AskTarget>(`/v1/asks/target?roomId=${encodeURIComponent(roomId)}&artifactId=${encodeURIComponent(artifactId)}`)).data,
-    askThread: async (fileKey: string) => (await get<AskTurn[]>(`/v1/asks?fileKey=${encodeURIComponent(fileKey)}`)).data,
+    /** Which agent an ask in this scope goes to, and the models it can pick from. */
+    askTarget: async (scope: AskScope) => (await get<AskTarget>(`/v1/asks/target?scope=${encodeURIComponent(scopeKey(scope))}`)).data,
+    askThread: async (scope: AskScope) => (await get<AskTurn[]>(`/v1/asks?scope=${encodeURIComponent(scopeKey(scope))}`)).data,
     /** Stores an image to attach to a question; roomsd reads its type from the bytes. */
     uploadAskImage: async (image: Blob): Promise<AskImage> => {
       const r = await fetch(baseUrl + "/v1/asks/images", { method: "POST", headers: { "content-type": image.type || "application/octet-stream", ...auth() }, body: image });

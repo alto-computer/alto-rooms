@@ -59,7 +59,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
           <SelectionAsk
             rect={selection.current.rect}
             onAsk={() => {
-              asks.addQuote(artifact.fileKey, selection.current!.text);
+              asks.addQuote({ kind: "doc", fileKey: artifact.fileKey }, selection.current!.text);
               selection.dismiss();
             }}
           />
