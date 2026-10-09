@@ -371,6 +371,15 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
       fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
     });
     expect(h.client.setPluginEnabled).toHaveBeenCalledWith("marker", true, ["rooms.read", "artifact.content"]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Marker" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Marker" })).toBeNull();
+  });
+
+  it("an enabled content-only plugin adds no panel opener beside documents", async () => {
+    const marker = plugin({ id: "marker", name: "Marker", slots: { artifactSidePanel: null, tab: null }, permissions: ["artifact.content"], granted: ["artifact.content"] });
+    await openDoc([marker]);
+    expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
   });
 
   it("asks before a new plugin runs, in plain words; Turn on enables it", async () => {
