@@ -255,14 +255,15 @@ impl Asks {
     fn config_path(&self) -> PathBuf { self.0.core.home().join(".rooms/agents.toml") }
 
     /// Which doc, agent, template, session and cwd an ask in `scope` would use. A doc scope goes
-    /// through the artifact that holds its file (rooms linking one original share the file key, the
-    /// realpath and the source meta).
+    /// through the first artifact holding its file whose link still resolves (rooms linking one
+    /// original share the file key, the realpath and the source meta).
     fn resolve(&self, scope: &AskScope) -> Result<Resolved, AskError> {
         scope.validate()?;
         let AskScope::Doc { file_key } = scope else { return Err(AskError::BadRequest(NOT_YET.into())) };
         let core = &self.0.core;
-        let artifact = core.artifact_by_file_key(file_key).ok_or(AskError::NotFound)?;
-        let file_abs = core.resolve_file(&artifact.room_id, &artifact.rel_path).map_err(|_| AskError::NotFound)?;
+        let (artifact, file_abs) = core.artifacts_by_file_key(file_key).into_iter()
+            .find_map(|a| core.resolve_file(&a.room_id, &a.rel_path).ok().map(|p| (a, p)))
+            .ok_or(AskError::NotFound)?;
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
         // Meta wins. Otherwise the sidecar entry (agent, session, cwd) is used WHOLE: mixing the doc's
         // agent with another conversation's session would resume the wrong agent's thread.

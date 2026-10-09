@@ -454,3 +454,37 @@ async fn new_starts_over_and_compact_sends_the_agents_summary_instead() {
     let kinds: Vec<AskKind> = asks.thread(&t3.scope).unwrap().iter().map(|t| t.kind).collect();
     assert_eq!(kinds, [AskKind::Question, AskKind::Compact, AskKind::Question, AskKind::Clear, AskKind::Question]);
 }
+
+/// Two rooms link one original; the first room's link is gone (the index still lists it until a
+/// rescan). The ask goes through the second room's link.
+#[tokio::test]
+async fn doc_scope_skips_a_dangling_link_and_uses_the_next_room() {
+    let d = tempfile::tempdir().unwrap();
+    let core = RoomsCore::open(d.path()).unwrap();
+    let a = core.create_room("a").unwrap().id;
+    let b = core.create_room("b").unwrap().id;
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("o.html"), "<html><head><title>O</title></head><body>x</body></html>").unwrap();
+    std::os::unix::fs::symlink(outside.path().join("o.html"), d.path().join("a/o.html")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("o.html"), d.path().join("b/o.html")).unwrap();
+    core.backfill_all().unwrap();
+    std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\"]\n")).unwrap();
+    let key = core.list_artifacts(&a).unwrap().remove(0).file_key;
+    assert_eq!(core.artifacts_by_file_key(&key).iter().map(|x| x.room_id.as_str()).collect::<Vec<_>>(), [a.as_str(), b.as_str()]);
+    let doc = AskScope::Doc { file_key: key.clone() };
+    std::fs::remove_file(d.path().join("a/o.html")).unwrap();
+    assert_eq!(core.artifact_by_file_key(&key).unwrap().room_id, a, "the index still lists the dangling link first");
+
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    assert!(asks.target(&doc).is_ok());
+    let t = asks.start(&doc, "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert_eq!(done.status, AskStatus::Done);
+    assert!(done.answer.contains(&format!("Document: {}", outside.path().join("o.html").canonicalize().unwrap().display())), "{}", done.answer);
+    // both links gone: nothing resolves
+    std::fs::remove_file(d.path().join("b/o.html")).unwrap();
+    assert!(matches!(asks.target(&doc), Err(AskError::NotFound)));
+    asks.shutdown().await;
+}
