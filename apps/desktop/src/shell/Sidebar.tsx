@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { useBriefError } from "@/views/briefError";
 import { BrandRow } from "./BrandRow";
 import { NewRoomRow } from "./NewRoomRow";
-import { PluginItems } from "./PluginItems";
+import { PluginsRow } from "./PluginsRow";
 import { RoomList } from "./RoomList";
 import { RoomRow } from "./RoomRow";
 import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE, SECTION } from "./sidebarItem";
@@ -199,8 +199,8 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             {moveError}
           </p>
         ) : null}
-        <PluginItems />
         <div className="mt-2 flex flex-col gap-px">
+          <PluginsRow />
           <button
             type="button"
             onClick={() => openSettings(viewer)}

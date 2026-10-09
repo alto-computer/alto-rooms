@@ -1,6 +1,6 @@
 # Writing a Rooms plugin
 
-A plugin adds UI to Rooms: a panel beside documents, or a tab of its own with a sidebar item. It runs in a sandboxed iframe and talks to the app only through `@alto-rooms/plugin-sdk`. Rooms never imports plugin code.
+A plugin adds UI to Rooms: a panel beside documents, or a tab of its own (opened from the sidebar's **Plugins** flyout). It runs in a sandboxed iframe and talks to the app only through `@alto-rooms/plugin-sdk`. Rooms never imports plugin code.
 
 Plugins change what you **see**. To change what gets **made** (reports, reviews), use your agent and its skills; their output lands in Rooms as files.
 
@@ -47,7 +47,7 @@ Install a plugin by copying its built folder there. Rooms notices it and asks th
 Slots:
 
 - `artifact.sidePanel` `{ title, icon? }`: a panel beside an open document. The user opens it from an icon button on the document, `icon` or else `pencil`, with `title` as its tooltip.
-- `tab` `{ title, icon?, sidebar? }`: a tab of its own. With `sidebar: true` it gets an item under **Plugins** in the sidebar, and `icon` or else `puzzle` marks the tab.
+- `tab` `{ title, icon?, sidebar? }`: a tab of its own, opened from the sidebar's **Plugins** flyout. `icon` or else `puzzle` marks the tab.
 
 An `icon` is one of `target`, `pencil`, `list-checks`, `calendar`, `star`, `book`, `flag`, `layout-grid`, `sparkles`, `notebook`, `lightbulb`, `puzzle`, `palette`.
 
@@ -170,5 +170,5 @@ When the app starts, roomsd installs them into `~/rooms/.rooms/plugins/<id>/` an
 
 - The first time, the plugin is turned on with its permissions; no card asks, unless it declares `artifact.content`.
 - A new version replaces the code and keeps `data/`. Its permissions come with the app update, except `artifact.content`. A bundled plugin that declares it for the first time shows the "Updated plugin" card, like a plugin you installed yourself. Once approved, later versions keep it.
-- If the user turned it off, it stays off. A deleted folder comes back on the next start, on or off as it was; turn it off to stop using it.
+- If the user turned it off, it stays off. A deleted folder comes back on the next start, on or off as it was; turn it off in Settings › Plugins to stop using it.
 - A folder without the `.bundled` mark is the user's own and is never replaced.

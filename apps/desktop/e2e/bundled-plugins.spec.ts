@@ -32,7 +32,8 @@ async function openDoc(page: Page) {
 
 test("Goals comes with the app: no card, a goal links a document and opens it", async ({ page, daemon }) => {
   const { doc, csp } = await setup(page, daemon);
-  await page.getByRole("list", { name: "Plugins" }).getByRole("button", { name: "Goals" }).click();
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page.getByRole("menu", { name: "Plugins" }).getByRole("menuitem", { name: "Goals" }).click();
   await expect(page.getByRole("dialog", { name: /plugin/i })).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "Goals", selected: true })).toBeVisible();
 

@@ -3,7 +3,12 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test, type Daemon } from "./fixtures";
 
-const sidebarPlugins = (page: Page) => page.getByRole("list", { name: "Plugins" });
+/** Opens the sidebar's Plugins flyout and returns it. */
+async function flyout(page: Page) {
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  return page.getByRole("menu", { name: "Plugins" });
+}
+const pluginSwitch = (page: Page, name: string) => page.getByRole("region", { name: "Plugins" }).getByRole("switch", { name });
 const echoFrame = (page: Page) => page.frameLocator('iframe[title="Echo"]');
 
 async function api(daemon: Daemon, method: string, p: string, body?: unknown) {
@@ -52,7 +57,8 @@ test("a plugin is asked about, runs beside a document, keeps its notes across a 
   const { bench, other } = await setup(page, daemon);
   await expect(page.locator('iframe[title="Echo"]')).toHaveCount(0); // nothing runs before Turn on
   await turnOnFromCard(page);
-  await expect(sidebarPlugins(page).getByRole("button", { name: "Echo" })).toBeVisible();
+  await expect((await flyout(page)).getByRole("menuitem", { name: "Echo" })).toBeVisible();
+  await page.keyboard.press("Escape");
 
   type Doc = { id: string; fileKey: string };
   await expect.poll(async () => ((await api(daemon, "GET", `/v1/rooms/${bench.id}/artifacts`)) as Doc[]).length).toBe(1);
@@ -70,8 +76,8 @@ test("a plugin is asked about, runs beside a document, keeps its notes across a 
   await openDoc(page, "Other");
   await expect(echoFrame(page).locator("#ctx")).toHaveText(`doc ${doc.fileKey}`);
 
-  // The sidebar item opens the plugin as a tab; it can list rooms (rooms.read).
-  await sidebarPlugins(page).getByRole("button", { name: "Echo" }).click();
+  // The flyout opens the plugin as a tab; it can list rooms (rooms.read).
+  await (await flyout(page)).getByRole("menuitem", { name: "Echo" }).click();
   await expect(page.getByRole("tab", { name: "Echo", selected: true })).toBeVisible();
   await expect(echoFrame(page).locator("#ctx")).toHaveText("tab");
   await echoFrame(page).getByRole("button", { name: "List rooms" }).click();
@@ -88,24 +94,29 @@ test("a plugin is asked about, runs beside a document, keeps its notes across a 
 test("a plugin without rooms.read is refused when it lists rooms", async ({ page, daemon }) => {
   await setup(page, daemon, []);
   await turnOnFromCard(page, []);
-  await sidebarPlugins(page).getByRole("button", { name: "Echo" }).click();
+  await (await flyout(page)).getByRole("menuitem", { name: "Echo" }).click();
   await expect(echoFrame(page).locator("#ctx")).toHaveText("tab");
   await echoFrame(page).getByRole("button", { name: "List rooms" }).click();
   await expect(echoFrame(page).locator("#out")).toHaveText("error permission_denied");
 });
 
-test("right-click turns a plugin off and on; new permissions close it after it saves, and ask again", async ({ page, daemon }) => {
+test("Settings turns a plugin off and on; new permissions close it after it saves, and ask again", async ({ page, daemon }) => {
   await setup(page, daemon);
   await turnOnFromCard(page);
 
-  await sidebarPlugins(page).getByRole("button", { name: "Echo" }).click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Turn off" }).click();
-  // Off is the user's choice: no card, the row stays, dimmed.
-  await expect(sidebarPlugins(page).getByText("Off")).toBeVisible();
+  await (await flyout(page)).getByRole("menuitem", { name: "Plugin settings…" }).click();
+  await expect(page.getByRole("tab", { name: "Settings", selected: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Plugins" })).toBeInViewport();
+  await expect(page.getByRole("list", { name: "Echo: what it adds and can do" }).getByRole("listitem")).toHaveText(["Adds a tab", "Adds a panel beside artifacts", "Can see your rooms and artifacts"]);
+  await pluginSwitch(page, "Echo").click();
+  await expect(pluginSwitch(page, "Echo")).not.toBeChecked();
+  // Off is the user's choice: no card, and nothing beside documents.
   await expect(page.getByRole("dialog", { name: /Echo/ })).toHaveCount(0);
-  await sidebarPlugins(page).getByText("Echo").click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Turn on" }).click();
-  await expect(sidebarPlugins(page).getByRole("button", { name: "Echo" })).toBeVisible();
+  await openDoc(page, "Bench");
+  await expect(page.getByRole("button", { name: "Open Echo" })).toHaveCount(0);
+  await page.getByRole("button", { name: /^Settings/ }).click();
+  await pluginSwitch(page, "Echo").click();
+  await expect(pluginSwitch(page, "Echo")).toBeChecked();
 
   await openDoc(page, "Bench");
   await page.getByRole("button", { name: "Open Echo" }).click();
@@ -148,8 +159,10 @@ test("a content-script plugin says it reads documents, and turning it on adds no
   await card.getByRole("button", { name: "Turn on" }).click();
   await expect(card).toBeHidden();
 
-  await expect(sidebarPlugins(page).getByText("Marker")).toBeVisible();
-  await expect(sidebarPlugins(page).getByRole("button", { name: "Marker" })).toHaveCount(0);
+  // No tab to open: the flyout leaves it out, and Settings lists it.
+  await expect((await flyout(page)).getByRole("menuitem")).toHaveText(["Plugin settings…"]);
+  await page.getByRole("menuitem", { name: "Plugin settings…" }).click();
+  await expect(pluginSwitch(page, "Marker")).toBeChecked();
   await openDoc(page, "Bench");
   await expect(page.getByRole("button", { name: "Open Marker" })).toHaveCount(0);
   await expect(page.locator('iframe[title="Marker"]')).toHaveCount(0);

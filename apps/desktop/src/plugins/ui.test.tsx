@@ -1,5 +1,5 @@
 import type { Artifact, PluginInfo } from "@alto-rooms/protocol-ts";
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
 import { AppShell } from "@/shell/AppShell";
@@ -284,42 +284,124 @@ describe("artifact side panel", () => {
   });
 });
 
-describe("plugin tabs, sidebar items, and the enable card", () => {
-  it("a sidebar item opens the plugin in a tab; right-click turns it off", async () => {
-    const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
+describe("plugin tabs, the sidebar flyout, and the enable card", () => {
+  const flyout = () => screen.getByRole("menu", { name: "Plugins" });
+  const plugins = () => screen.getByRole("button", { name: "Plugins" });
+
+  it("the sidebar has one Plugins row, then Settings, and no plugin list or right-click menu", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
     await act(async () => {});
-    const plugins = screen.getByRole("list", { name: "Plugins" });
-    fireEvent.click(within(plugins).getByRole("button", { name: "Echo" }));
-    expect(screen.getByRole("tab", { name: "Echo", selected: true })).toBeInTheDocument();
-    expect(frame("Echo").getAttribute("src")).toBe("http://files.test/_plugins/echo/index.html");
-    fireEvent.contextMenu(within(plugins).getByRole("button", { name: "Echo" }));
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Turn off" }));
-    });
-    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", false, undefined);
-    // Off stays listed, dimmed, with no card asking again; right-click turns it back on.
-    const off = within(screen.getByRole("list", { name: "Plugins" }))
-      .getByText("Echo")
-      .closest("li")!;
-    expect(off).toHaveTextContent("Off");
-    expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.contextMenu(within(off).getByText("Echo"));
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Turn on" }));
-    });
-    expect(h.client.setPluginEnabled).toHaveBeenLastCalledWith("echo", true, []);
-    expect(within(screen.getByRole("list", { name: "Plugins" })).getByRole("button", { name: "Echo" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Plugins" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Echo" })).toBeNull();
+    expect(plugins().nextElementSibling).toBe(screen.getByRole("button", { name: /^Settings/ }));
+    expect(plugins()).toHaveAttribute("aria-haspopup", "menu");
+    fireEvent.contextMenu(plugins());
+    expect(screen.queryByRole("menuitem", { name: /Turn (on|off)/ })).toBeNull();
   });
 
-  it("a side-panel-only plugin can be turned off from the Plugins list too", async () => {
+  it("a click opens the flyout: openable plugins, then Plugin settings…; an item opens its tab, marked current", async () => {
+    await renderWithStores(<AppShell />, {
+      rooms: [room("r1", "Bench")],
+      plugins: [
+        echoTab(),
+        plugin({ id: "side", name: "Side" }),
+        echoTab({ id: "off", name: "Off", enabled: false, slots: { artifactSidePanel: null, tab: { title: "Off", icon: null, sidebar: true } } }),
+      ],
+    });
+    await act(async () => {});
+    fireEvent.click(plugins());
+    expect(within(flyout()).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Echo", "Plugin settings…"]);
+    expect(within(flyout()).getByRole("menuitem", { name: "Echo" })).toHaveFocus();
+    fireEvent.click(within(flyout()).getByRole("menuitem", { name: "Echo" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Echo", selected: true })).toBeInTheDocument();
+    expect(frame("Echo").getAttribute("src")).toBe("http://files.test/_plugins/echo/index.html");
+    fireEvent.click(plugins());
+    expect(within(flyout()).getByRole("menuitem", { name: "Echo" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("⌘-click on a flyout item opens the plugin in a new tab", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
+    await act(async () => {});
+    fireEvent.click(plugins());
+    fireEvent.click(within(flyout()).getByRole("menuitem", { name: "Echo" }), { metaKey: true });
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["journal", "plugin"]);
+  });
+
+  it("with nothing to open, the flyout holds only Plugin settings…, which opens Settings at Plugins", async () => {
+    const scrolled: string[] = [];
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
+      if (this.id.startsWith("settings-")) scrolled.push(this.id);
+    });
     const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [plugin()] });
     await act(async () => {});
-    const row = within(screen.getByRole("list", { name: "Plugins" })).getByText("Echo");
-    fireEvent.contextMenu(row);
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Turn off" }));
-    });
-    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", false, undefined);
+    fireEvent.click(plugins());
+    expect(within(flyout()).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Plugin settings…"]);
+    expect(within(flyout()).queryByRole("separator")).toBeNull();
+    fireEvent.click(within(flyout()).getByRole("menuitem", { name: "Plugin settings…" }));
+    const { tabs, activeId } = h.viewer.getState();
+    expect(tabs.find((t) => t.id === activeId)?.kind).toBe("settings");
+    expect(scrolled).toEqual(["settings-plugins"]);
+    // Already on Settings: it scrolls again without a second tab.
+    fireEvent.click(plugins());
+    fireEvent.click(within(flyout()).getByRole("menuitem", { name: "Plugin settings…" }));
+    expect(scrolled).toEqual(["settings-plugins", "settings-plugins"]);
+    expect(h.viewer.getState().tabs.filter((t) => t.kind === "settings")).toHaveLength(1);
+    spy.mockRestore();
+  });
+
+  it("keyboard: → opens at the first item, ↓/↑ move and wrap, ← and Esc go back to the row", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
+    await act(async () => {});
+    plugins().focus();
+    fireEvent.keyDown(plugins(), { key: "ArrowRight" });
+    const [echo, settings] = within(flyout()).getAllByRole("menuitem");
+    expect(echo).toHaveFocus();
+    fireEvent.keyDown(echo, { key: "ArrowDown" });
+    expect(settings).toHaveFocus();
+    fireEvent.keyDown(settings, { key: "ArrowDown" });
+    expect(echo).toHaveFocus();
+    fireEvent.keyDown(echo, { key: "ArrowUp" });
+    expect(settings).toHaveFocus();
+    fireEvent.keyDown(settings, { key: "ArrowLeft" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() => expect(plugins()).toHaveFocus()); // Radix hands focus back on the next tick
+    fireEvent.keyDown(plugins(), { key: "Enter" });
+    fireEvent.click(plugins()); // Enter on a button clicks it
+    expect(within(flyout()).getAllByRole("menuitem")[0]).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() => expect(plugins()).toHaveFocus());
+  });
+
+  it("hovering opens it after a short delay without taking focus, and it closes once the pointer has left", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
+    await act(async () => {});
+    const typing = document.createElement("textarea");
+    document.body.append(typing);
+    typing.focus();
+    vi.useFakeTimers();
+    const mouse = { pointerType: "mouse" };
+    fireEvent.pointerEnter(plugins(), mouse);
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.pointerLeave(plugins(), mouse); // passing by opens nothing
+    await act(async () => void vi.advanceTimersByTime(400));
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.pointerEnter(plugins(), mouse);
+    await act(async () => void vi.advanceTimersByTime(200));
+    expect(flyout()).toBeInTheDocument();
+    expect(typing).toHaveFocus();
+    // The pointer crosses to the flyout in time, so it stays; leaving it closes it.
+    fireEvent.pointerLeave(plugins(), mouse);
+    await act(async () => void vi.advanceTimersByTime(100));
+    fireEvent.pointerEnter(flyout(), mouse);
+    await act(async () => void vi.advanceTimersByTime(400));
+    expect(flyout()).toBeInTheDocument();
+    fireEvent.pointerLeave(flyout(), mouse);
+    await act(async () => void vi.advanceTimersByTime(400));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(typing).toHaveFocus();
+    typing.remove();
   });
 
   it("asks again with only the new permissions when an approved plugin wants more", async () => {
@@ -407,7 +489,8 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     });
     expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", true, ["rooms.read", "downloads"]);
     expect(screen.queryByRole("dialog", { name: "New plugin: Echo" })).toBeNull();
-    expect(within(screen.getByRole("list", { name: "Plugins" })).getByRole("button", { name: "Echo" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+    expect(within(screen.getByRole("menu", { name: "Plugins" })).getByRole("menuitem", { name: "Echo" })).toBeInTheDocument();
   });
 
   it("Not now hides the card for this run without enabling", async () => {

@@ -128,7 +128,7 @@ Two come with the app, on by default:
 - [Goals](https://github.com/alto-computer/rooms-plugin-goals): long-, mid- and short-term goals and a TODO list, with documents linked to each.
 - [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw): sketch beside any document; export as PNG.
 
-Right-click a plugin in the sidebar to turn it off. To add another, copy its folder into `~/rooms/.rooms/plugins/`; Rooms asks before it runs. To write one, see [docs/plugins.md](docs/plugins.md).
+Open a plugin's tab from **Plugins** at the bottom of the sidebar. Turn plugins on or off, and see what each one may do, in **Settings › Plugins**. To add another, copy its folder into `~/rooms/.rooms/plugins/`; Rooms asks before it runs. To write one, see [docs/plugins.md](docs/plugins.md).
 
 ## Shortcuts
 
