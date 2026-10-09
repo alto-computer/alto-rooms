@@ -34,7 +34,7 @@ async function setup(page: Page, daemon: Daemon, permissions?: string[]) {
   return { bench, other };
 }
 
-async function turnOnFromCard(page: Page, asks: string[] = ["Can see your rooms and documents"]) {
+async function turnOnFromCard(page: Page, asks: string[] = ["Can see your rooms and artifacts"]) {
   const card = page.getByRole("dialog", { name: "New plugin: Echo" });
   await expect(card).toBeVisible({ timeout: 5000 });
   for (const text of asks) await expect(card.getByText(text)).toBeVisible();
@@ -116,7 +116,7 @@ test("right-click turns a plugin off and on; new permissions close it after it s
   const card = page.getByRole("dialog", { name: "Updated plugin: Echo" });
   await expect(card).toBeVisible({ timeout: 5000 });
   await expect(card.getByText("Can copy and paste")).toBeVisible();
-  await expect(card.getByText("Can see your rooms and documents")).toHaveCount(0); // only what's new
+  await expect(card.getByText("Can see your rooms and artifacts")).toHaveCount(0); // only what's new
   await expect(page.locator('iframe[title="Echo"]')).toHaveCount(0);
   await expect.poll(() => daemon.exists(".rooms/plugins/echo/data/closed.txt")).toBe(true);
 
@@ -144,7 +144,7 @@ test("a content-script plugin says it reads documents, and turning it on adds no
 
   const card = page.getByRole("dialog", { name: "New plugin: Marker" });
   await expect(card).toBeVisible({ timeout: 5000 });
-  await expect(card.getByRole("listitem")).toHaveText(["Can read the text of documents and use the network inside them"]);
+  await expect(card.getByRole("listitem")).toHaveText(["Can read the text of artifacts and use the network inside them"]);
   await card.getByRole("button", { name: "Turn on" }).click();
   await expect(card).toBeHidden();
 

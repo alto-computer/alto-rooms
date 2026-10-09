@@ -35,24 +35,24 @@ describe("AskBar", () => {
 
   it("is open on mount without taking focus; toggling off hides it, toggling on focuses it", async () => {
     await setup();
-    const first = await screen.findByPlaceholderText("Ask about this doc…");
+    const first = await screen.findByPlaceholderText("Ask about this artifact…");
     expect(document.activeElement).not.toBe(first);
     expect(await screen.findByText("claude-code")).toBeTruthy();
     act(() => store.toggle());
-    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Ask about this artifact…")).toBeNull();
     act(() => store.toggle());
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     expect(document.activeElement).toBe(input);
   });
 
   it("renders nothing in read-only", async () => {
     await setup({}, true);
-    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Ask about this artifact…")).toBeNull();
   });
 
   it("sends on Enter (not Shift+Enter, not while composing), shows waiting, then the markdown answer", async () => {
     const { client, emit } = await setup();
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.change(input, { target: { value: "왜?" } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
@@ -76,7 +76,7 @@ describe("AskBar", () => {
   it("says so when a new conversation was started because the thread couldn't be found", async () => {
     await setup({ k1: [turn({ mode: "new", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
     const head = await screen.findByText("claude-code · New conversation");
-    expect(head.getAttribute("title")).toBe("Couldn't find the thread that made this doc");
+    expect(head.getAttribute("title")).toBe("Couldn't find the thread that made this artifact");
   });
 
   it("puts a copy button under each finished answer", async () => {
@@ -102,7 +102,7 @@ describe("AskBar", () => {
 
   it("when a turn ends, refocuses the input only if focus was on the body", async () => {
     const { emit } = await setup({ k1: [turn({})] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     input.blur();
     expect(document.activeElement).toBe(document.body);
     act(() => emit({ type: "ask.done", turn: turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" }) }));
@@ -178,7 +178,7 @@ describe("AskBar", () => {
     vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(() => height);
     try {
       await setup();
-      const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+      const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
       // The textarea's row sits in the bordered bar, under the attached images when there are any.
       const pill = input.parentElement!.parentElement!;
       expect(input.style.height).toBe("20px");
@@ -208,7 +208,7 @@ describe("AskBar", () => {
     const createObjectURL = vi.fn(() => "blob:preview");
     Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
     const { client } = await setup();
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     const shot = new File(["png"], "shot.png", { type: "image/png" });
     fireEvent.paste(input, { clipboardData: { files: [shot] } });
     await waitFor(() => expect(client.uploadAskImage).toHaveBeenCalledWith(shot));
@@ -232,7 +232,7 @@ describe("AskBar", () => {
     Object.assign(URL, { createObjectURL: vi.fn(() => "blob:p"), revokeObjectURL: vi.fn() });
     const { client } = await setup();
     client.uploadAskImage.mockRejectedValueOnce(new RoomsApiError(400, "Only PNG, JPEG, GIF and WebP images can be attached", "bad_request"));
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.paste(input, { clipboardData: { files: [new File(["x"], "bad.png", { type: "image/png" })] } });
     expect(await screen.findByLabelText("Only PNG, JPEG, GIF and WebP images can be attached")).toBeInTheDocument();
     fireEvent.change(input, { target: { value: "q" } });
@@ -261,7 +261,7 @@ describe("AskBar", () => {
 
   it("while an answer runs, Enter queues the question and it goes out when the answer ends", async () => {
     const { client, emit } = await setup({ k1: [turn({})] });
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     await screen.findByText("Thinking");
     expect(input.readOnly).toBe(false);
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
@@ -284,7 +284,7 @@ describe("AskBar", () => {
 
   it("⌘Enter stops the running answer and sends this question next", async () => {
     const { client, emit } = await setup({ k1: [turn({})] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     await screen.findByText("Thinking");
     fireEvent.change(input, { target: { value: "지금 바로" } });
     fireEvent.keyDown(input, { key: "Enter", metaKey: true });
@@ -295,7 +295,7 @@ describe("AskBar", () => {
 
   it("↑ in an empty input takes the last queued question back to edit; the row buttons send now or drop", async () => {
     const { client } = await setup({ k1: [turn({})] });
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     await screen.findByText("Thinking");
     for (const q of ["첫째", "둘째"]) {
       fireEvent.change(input, { target: { value: q } });
@@ -313,14 +313,14 @@ describe("AskBar", () => {
 
   it("↑ in an empty input with nothing queued brings back the last question", async () => {
     await setup({ k1: [turn({ status: "done", question: "> 인용\n\n지난 질문", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     fireEvent.keyDown(input, { key: "ArrowUp" });
     expect(input.value).toBe("지난 질문");
   });
 
   it("a fast double Enter sends once", async () => {
     const { client } = await setup();
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.change(input, { target: { value: "한 번만" } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -367,7 +367,7 @@ describe("AskBar", () => {
 
   it("Escape while running cancels the turn and does not fold the sheet", async () => {
     const { client } = await setup({ k1: [turn({ answer: "" })] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     expect(await screen.findByText("왜?")).toBeTruthy();
     fireEvent.keyDown(input, { key: "Escape" });
     expect(client.cancelAsk).toHaveBeenCalledWith("t1");
@@ -377,7 +377,7 @@ describe("AskBar", () => {
   it("shows the API error inline and keeps the draft", async () => {
     const { client } = await setup();
     client.startAsk.mockRejectedValueOnce(new RoomsApiError(409, "Waiting for an answer", "ask_busy"));
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.change(input, { target: { value: "또" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(await screen.findByText("Waiting for an answer")).toBeTruthy();
@@ -386,7 +386,7 @@ describe("AskBar", () => {
 
   it("Escape folds the sheet, focusing the input unfolds it", async () => {
     await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     expect(await screen.findByText("답")).toBeTruthy();
     fireEvent.keyDown(input, { key: "Escape" });
     expect(screen.queryByText("답")).toBeNull();
@@ -396,7 +396,7 @@ describe("AskBar", () => {
 
   it("an outside pointerdown or a click into the doc iframe folds the sheet; inside does not", async () => {
     await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.pointerDown(await screen.findByText("답"));
     expect(screen.getByText("답")).toBeTruthy();
     fireEvent.pointerDown(document.body);
@@ -447,7 +447,7 @@ describe("AskBar", () => {
     expect(items.map((i) => i.getAttribute("aria-checked"))).toEqual(["true", "false", "false", "false", "false"]);
     fireEvent.click(items[2]);
     expect(await screen.findByLabelText("Model: claude-code · Sonnet")).toBeTruthy();
-    const input = screen.getByPlaceholderText("Ask about this doc…");
+    const input = screen.getByPlaceholderText("Ask about this artifact…");
     fireEvent.change(input, { target: { value: "왜?" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope, question: "왜?", model: "sonnet" }));
@@ -498,7 +498,7 @@ describe("AskBar", () => {
   describe("commands", () => {
     it("typing / lists the commands; arrows pick one, Enter runs it", async () => {
       const { client } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
-      const input = await screen.findByPlaceholderText("Ask about this doc…");
+      const input = await screen.findByPlaceholderText("Ask about this artifact…");
       fireEvent.change(input, { target: { value: "/" } });
       const menu = screen.getByRole("listbox", { name: "Commands" });
       expect(Array.from(menu.querySelectorAll("[role=option]")).map((o) => o.textContent)).toEqual([
@@ -516,7 +516,7 @@ describe("AskBar", () => {
 
     it("/new sent as text starts over with a divider; Escape closes the menu", async () => {
       const { client } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
-      const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+      const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
       fireEvent.change(input, { target: { value: "/ne" } });
       fireEvent.keyDown(input, { key: "Escape" });
       expect(input.value).toBe("");
@@ -552,7 +552,7 @@ describe("AskBar", () => {
 
     it("a command typed while an answer runs waits in the queue", async () => {
       const { client } = await setup({ k1: [turn({})] });
-      const input = await screen.findByPlaceholderText("Ask about this doc…");
+      const input = await screen.findByPlaceholderText("Ask about this artifact…");
       await screen.findByText("Thinking");
       fireEvent.change(input, { target: { value: "/new" } });
       fireEvent.keyDown(input, { key: "Enter" });
@@ -563,7 +563,7 @@ describe("AskBar", () => {
     it("shows roomsd's refusal", async () => {
       const { client } = await setup();
       client.startAsk.mockRejectedValueOnce(new RoomsApiError(400, "Nothing to clear yet", "bad_request"));
-      const input = await screen.findByPlaceholderText("Ask about this doc…");
+      const input = await screen.findByPlaceholderText("Ask about this artifact…");
       fireEvent.change(input, { target: { value: "/clear" } });
       fireEvent.keyDown(input, { key: "Enter" });
       expect(await screen.findByText("Nothing to clear yet")).toBeTruthy();
@@ -572,13 +572,13 @@ describe("AskBar", () => {
 
   it("keeps an unsent draft per doc, across a remount", async () => {
     const first = await setup();
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: "쓰다 만 질문" } });
     first.unmount();
     await setup();
-    expect(((await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement).value).toBe("쓰다 만 질문");
+    expect(((await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement).value).toBe("쓰다 만 질문");
     expect(localStorage.getItem("alto-rooms.askDraft.k1")).toBe("쓰다 만 질문");
-    fireEvent.keyDown(screen.getByPlaceholderText("Ask about this doc…"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByPlaceholderText("Ask about this artifact…"), { key: "Enter" });
     await waitFor(() => expect(localStorage.getItem("alto-rooms.askDraft.k1")).toBeNull());
   });
 
@@ -586,7 +586,7 @@ describe("AskBar", () => {
     const { client } = await setup();
     let refuse: (e: Error) => void = () => {};
     client.startAsk.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: "바로 보여?" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(await screen.findByText("바로 보여?")).toBeTruthy();

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { count } from "@/lib/dates";
 import { ago, openKeyConsole, sortClearKey, sortSetKey, sortState, sortUndoLast, type SortState } from "@/lib/sort";
 
 const DISMISSED = "alto-rooms.sortbar.dismissed";
@@ -83,7 +84,7 @@ export function SortBar() {
         <Sparkles size={15} aria-hidden /> Auto-sort is on
       </span>
       {state.keyRejected ? (
-        <span className="text-error">TypeSafe refused TYPESAFE_API_KEY. Only docs named like a room move.</span>
+        <span className="text-error">TypeSafe refused TYPESAFE_API_KEY. Only artifacts named like a room move.</span>
       ) : s ? (
         <span>
           {s.movedToday} moved today, {s.keptToday} left here · {ago(s.lastRunAt)}
@@ -100,7 +101,7 @@ export function SortBar() {
             try {
               const lines = await sortUndoLast();
               const back = lines.filter((l) => l.startsWith("back to inbox")).length;
-              setNote(back ? `Moved ${back} doc${back === 1 ? "" : "s"} back. They stay here from now on.` : "Nothing to move back.");
+              setNote(back ? `Moved ${count(back, "artifact")} back. They stay here from now on.` : "Nothing to move back.");
             } catch (e) {
               setNote(errorText(e) === "nothing to undo" ? "Nothing to undo yet." : errorText(e));
             }
@@ -114,7 +115,7 @@ export function SortBar() {
             size="xs"
             onClick={async () => {
               await sortClearKey();
-              setNote("Key removed. Docs named like a room still move on their own.");
+              setNote("Key removed. Artifacts named like a room still move on their own.");
               await refresh();
             }}
           >
@@ -153,7 +154,7 @@ function KeyPanel({ rejected, onSaved, onDismiss }: { rejected: boolean; onSaved
         <Sparkles size={16} aria-hidden /> {rejected ? "TypeSafe stopped accepting your key" : "Sort the inbox automatically"}
       </h2>
       <p className="text-body text-ink-2">
-        Docs from a repo with a room of the same name already move on their own. Add a TypeSafe key and the rest go to the room that fits, or to a new
+        Artifacts from a repo with a room of the same name already move on their own. Add a TypeSafe key and the rest go to the room that fits, or to a new
         room named after their repo once three of them are waiting.
       </p>
       <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
@@ -188,7 +189,7 @@ function KeyPanel({ rejected, onSaved, onDismiss }: { rejected: boolean; onSaved
         </p>
       ) : null}
       <p className="text-body text-ink-3">
-        Each doc's title, its path inside the repo and its first 2,000 characters go to TypeSafe. A doc moves only when the answer is at least 70% sure.
+        Each artifact's title, its path inside the repo and its first 2,000 characters go to TypeSafe. An artifact moves only when the answer is at least 70% sure.
         The key stays in your Keychain.
       </p>
     </section>

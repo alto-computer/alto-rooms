@@ -54,13 +54,13 @@ describe("OnboardingCard full (welcome page)", () => {
     for (const name of ["Rooms", "Journal", "inbox"]) expect(screen.getByText(name, { selector: "p" })).toHaveClass("text-lead", "font-medium");
     expect(text("One folder per topic. Any HTML in ~/rooms/<room>/ becomes a card right away.")).toBeInTheDocument();
     expect(screen.getByText("~/rooms/<room>/")).toHaveClass("font-mono");
-    expect(screen.getByText("Each day's docs, next to your own plan and review notes.")).toBeInTheDocument();
-    expect(screen.getByText("Docs without a room wait here. Drag one onto a room on the left to move it.")).toBeInTheDocument();
+    expect(screen.getByText("Each day's artifacts, next to your own plan and review notes.")).toBeInTheDocument();
+    expect(screen.getByText("Artifacts without a room wait here. Drag one onto a room on the left to move it.")).toBeInTheDocument();
     expect(screen.getAllByTestId("example-card").map((c) => c.textContent)).toEqual(EXAMPLES);
     expect(EXAMPLE_PROMPTS.map((e) => e.text)).toEqual(EXAMPLES);
     expect(screen.getByText("Tip")).toBeInTheDocument();
     expect(
-      screen.getByText("⌘K finds rooms and docs. ⌘B hides the sidebar. Hover a card and press ↗ to open it in a new tab."),
+      screen.getByText("⌘K finds rooms and artifacts. ⌘B hides the sidebar. Hover a card and press ↗ to open it in a new tab."),
     ).toHaveClass("text-body", "text-ink");
   });
 

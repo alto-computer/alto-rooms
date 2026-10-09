@@ -36,7 +36,7 @@ afterEach(cleanup);
 async function openMenu(doc = artifact("r1", "sub/report.html")) {
   await renderWithStores(
     <>
-      <ToolbarGroup label="Document actions">
+      <ToolbarGroup label="Artifact actions">
         <ShareMenu artifact={doc} />
       </ToolbarGroup>
       <Toaster />

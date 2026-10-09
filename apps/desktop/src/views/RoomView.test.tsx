@@ -57,7 +57,7 @@ describe("RoomView", () => {
       },
     });
     expect(screen.getByRole("heading", { level: 1, name: "벤치마크" })).toBeInTheDocument();
-    expect(screen.getByText("3 docs")).toBeInTheDocument();
+    expect(screen.getByText("3 artifacts")).toBeInTheDocument();
     expect(cards().map((c) => within(c).getByTestId("card-title").textContent)).toEqual(["셋째", "둘째", "첫 문서"]);
   });
 
@@ -128,8 +128,8 @@ describe("RoomView", () => {
       viewer,
     });
     const [fresh, old] = cards();
-    expect(within(old).queryByLabelText("New doc")).toBeNull();
-    expect(within(fresh).getByLabelText("New doc")).toBeInTheDocument();
+    expect(within(old).queryByLabelText("New artifact")).toBeNull();
+    expect(within(fresh).getByLabelText("New artifact")).toBeInTheDocument();
   });
 
   it("keeps the dot while the tab stays active, even when lastVisit is written for it", async () => {
@@ -139,11 +139,11 @@ describe("RoomView", () => {
       artifacts: { r1: [artifact("new", "새 문서", "2026-06-01T00:00:00Z")] },
       viewer,
     });
-    expect(within(cards()[0]).getByLabelText("New doc")).toBeInTheDocument();
+    expect(within(cards()[0]).getByLabelText("New artifact")).toBeInTheDocument();
     // flush() records leaving the active room tab now, while RoomView stays mounted.
     act(() => viewer.flush());
     expect(Date.parse(viewer.getState().lastVisit.r1)).toBeGreaterThan(Date.parse("2026-06-01T00:00:00Z"));
-    expect(within(cards()[0]).getByLabelText("New doc")).toBeInTheDocument();
+    expect(within(cards()[0]).getByLabelText("New artifact")).toBeInTheDocument();
   });
 
   it("clears the dot after leaving the room tab and coming back", async () => {
@@ -154,7 +154,7 @@ describe("RoomView", () => {
       viewer,
     });
     const roomTab = viewer.getState().activeId!;
-    expect(within(cards()[0]).getByLabelText("New doc")).toBeInTheDocument();
+    expect(within(cards()[0]).getByLabelText("New artifact")).toBeInTheDocument();
     act(() => {
       viewer.open({ kind: "new" }); // leaves r1: records lastVisit, unmounts RoomView
     });
@@ -162,12 +162,12 @@ describe("RoomView", () => {
     // Coming back within the unwatch linger: the artifacts are still there, no reload.
     act(() => viewer.activate(roomTab));
     expect(cards()).toHaveLength(1);
-    expect(within(cards()[0]).queryByLabelText("New doc")).toBeNull();
+    expect(within(cards()[0]).queryByLabelText("New artifact")).toBeNull();
   });
 
   it("an empty room shows the empty state with the path chip", async () => {
     await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [] } });
-    expect(screen.getByText("No docs yet")).toBeInTheDocument();
+    expect(screen.getByText("No artifacts yet")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Clew the otter, peeking out of the water" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\/h\/rooms\/r1/ })).toBeInTheDocument();
   });
@@ -210,7 +210,7 @@ describe("RoomView", () => {
       artifactErrors: { r1: new Error("boom") },
     });
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
-    expect(screen.queryByText("No docs yet")).toBeNull();
+    expect(screen.queryByText("No artifacts yet")).toBeNull();
   });
 
   it("an unavailable linked room says so under the subtitle and keeps its cards", async () => {

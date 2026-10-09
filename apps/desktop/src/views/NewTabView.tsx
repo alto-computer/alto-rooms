@@ -105,10 +105,10 @@ export function NewTabView() {
         {settled ? (
           <p className="text-lead text-ink-2">
             {roomsWithNew > 0
-              ? `New docs in ${count(roomsWithNew, "room")}.`
+              ? `New artifacts in ${count(roomsWithNew, "room")}.`
               : neverVisited > 0
                 ? `${count(neverVisited, "newly sorted room")}.`
-                : "No new docs."}
+                : "No new artifacts."}
           </p>
         ) : null}
       </header>
@@ -127,7 +127,7 @@ export function NewTabView() {
               </span>
               {newCount > 0 ? <span className="text-body text-ink">{newCount} new</span> : null}
               <span className="text-body text-ink-2">
-                {room.status === "unavailable" ? "Folder not found" : count(room.artifactCount, "doc")}
+                {room.status === "unavailable" ? "Folder not found" : count(room.artifactCount, "artifact")}
               </span>
             </button>
           </li>

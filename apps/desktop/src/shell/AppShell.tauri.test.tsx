@@ -65,7 +65,7 @@ describe("AppShell in Tauri", () => {
     expect(keyOn(window, "b").defaultPrevented).toBe(false);
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     expect(keyOn(window, "k").defaultPrevented).toBe(false);
-    expect(screen.queryByPlaceholderText("Find a room or doc")).toBeNull();
+    expect(screen.queryByPlaceholderText("Find a room or artifact")).toBeNull();
   });
 
   it("menu://find and menu://toggle-sidebar open quick find and toggle the sidebar", async () => {
@@ -76,7 +76,7 @@ describe("AppShell in Tauri", () => {
     menu("menu://toggle-sidebar");
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     menu("menu://find");
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
   });
 
   it("from a text field the menu's ⌘K still finds, but its ⌘B does nothing", async () => {
@@ -88,7 +88,7 @@ describe("AppShell in Tauri", () => {
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     expect(screen.getByLabelText("New room name")).toBeInTheDocument();
     menu("menu://find");
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
   });
 
   it("menu://back and menu://forward walk the active tab's history; the page leaves ⌘[ to the menu", async () => {
@@ -159,11 +159,11 @@ describe("AppShell in Tauri", () => {
     });
     await act(async () => {}); // listeners register asynchronously
     // open by default
-    expect(await screen.findByPlaceholderText("Ask about this doc…")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Ask about this artifact…")).toBeInTheDocument();
     menu("menu://toggle-ask");
-    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Ask about this artifact…")).toBeNull();
     menu("menu://toggle-ask");
-    expect(await screen.findByPlaceholderText("Ask about this doc…")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Ask about this artifact…")).toBeInTheDocument();
     act(() => {
       h.viewer.open({ kind: "new" });
     });

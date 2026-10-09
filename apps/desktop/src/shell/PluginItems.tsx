@@ -65,7 +65,7 @@ export function PluginItems() {
               ) : (
                 <div
                   onContextMenu={onContextMenu}
-                  title={p.enabled && p.slots.artifactSidePanel ? `Opens beside documents: ${p.slots.artifactSidePanel.title}` : undefined}
+                  title={p.enabled && p.slots.artifactSidePanel ? `Opens beside artifacts: ${p.slots.artifactSidePanel.title}` : undefined}
                   className={cn(ITEM, !p.enabled && "text-ink-3")}
                 >
                   <Icon {...ICON} className="shrink-0 text-ink-2" />

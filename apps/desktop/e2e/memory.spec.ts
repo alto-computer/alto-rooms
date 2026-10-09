@@ -159,7 +159,7 @@ async function cycle(page: Page, daemon: Daemon, c: number) {
   log("find");
   for (let k = 0; k < 5; k++) {
     await page.keyboard.press(`${MOD}+k`);
-    const input = page.getByPlaceholder("Find a room or doc");
+    const input = page.getByPlaceholder("Find a room or artifact");
     await expect(input).toBeVisible();
     await input.fill(`Doc ${k}`);
     await page.waitForTimeout(100);

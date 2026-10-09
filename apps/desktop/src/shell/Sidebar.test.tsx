@@ -113,12 +113,12 @@ describe("Sidebar: drag to move", () => {
     h.client.moveArtifact.mockRejectedValueOnce(new RoomsApiError(400, "linked", "invalid_input"));
     const dt = stubTransfer({ [ARTIFACT_DRAG_TYPE]: JSON.stringify({ roomId: "inbox", artifactId: "x1" }) });
     await dropOn(sidebarRow("벤치마크"), dt);
-    const msg = screen.getByText("This doc can't be moved");
+    const msg = screen.getByText("This artifact can't be moved");
     const status = msg.closest("[role=status]")!;
     expect(status).toHaveClass("text-error");
     expect(status.querySelector("svg")).not.toBeNull();
     act(() => vi.advanceTimersByTime(3000));
-    expect(screen.queryByText("This doc can't be moved")).toBeNull();
+    expect(screen.queryByText("This artifact can't be moved")).toBeNull();
   });
 
   it("any other failure shows the generic copy", async () => {

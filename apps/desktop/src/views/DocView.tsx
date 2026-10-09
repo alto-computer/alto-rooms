@@ -35,12 +35,12 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
 
   // The store forgets a removed room's artifacts; its documents are gone too.
   const roomGone = info !== null && roomId !== info.journalRoomId && !rooms.some((r) => r.id === roomId);
-  if (roomGone) return <Centered>This doc is gone</Centered>;
+  if (roomGone) return <Centered>This artifact is gone</Centered>;
   if (artifacts === undefined) {
     return loadError ? <Centered>{GENERIC_ERROR}</Centered> : <div className="flex-1 bg-pane" />;
   }
   const artifact = artifacts.find((a) => a.id === artifactId);
-  if (!artifact) return <Centered>This doc is gone</Centered>;
+  if (!artifact) return <Centered>This artifact is gone</Centered>;
   if (!info) return <div className="flex-1 bg-pane" />;
 
   return (
@@ -68,7 +68,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
           />
         ) : null}
         <AskBar artifact={artifact} />
-        <ToolbarGroup label="Document actions">
+        <ToolbarGroup label="Artifact actions">
           <ShareMenu artifact={artifact} />
           {visible ? <SidePanelOpener /> : null}
         </ToolbarGroup>

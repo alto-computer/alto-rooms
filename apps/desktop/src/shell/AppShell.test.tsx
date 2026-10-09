@@ -152,11 +152,11 @@ describe("AppShell: sidebar", () => {
   it("찾기 and ⌘K open the quick find dialog", async () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
-    fireEvent.keyDown(screen.getByPlaceholderText("Find a room or doc"), { key: "Escape" });
-    await waitFor(() => expect(screen.queryByPlaceholderText("Find a room or doc")).toBeNull());
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByPlaceholderText("Find a room or artifact"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByPlaceholderText("Find a room or artifact")).toBeNull());
     key("k");
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
   });
 
   it("read-only hides every write affordance", async () => {
@@ -404,7 +404,7 @@ describe("AppShell: shortcuts while typing", () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "New room" }));
     expect(keyOn(screen.getByLabelText("New room name"), "k").defaultPrevented).toBe(true);
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
   });
 
   it("⌘W in the note body still closes the note tab", async () => {
@@ -490,7 +490,7 @@ describe("AppShell: gone rooms and docs, and before the first sync", () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [] }, viewer });
     await act(async () => {});
     const labels = screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(labels).toEqual(["New tab", "Missing room", "Missing doc", "Missing doc"]);
+    expect(labels).toEqual(["New tab", "Missing room", "Missing artifact", "Missing artifact"]);
   });
 
   it("before the first sync (no info): tabs show …, and nothing is writable", async () => {

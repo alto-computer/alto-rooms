@@ -74,7 +74,7 @@ test("screens for visual review", async ({ page, daemon }) => {
 
   // Empty room.
   await rooms.getByRole("button", { name: "Research" }).click();
-  await expect(page.getByText("No docs yet")).toBeVisible();
+  await expect(page.getByText("No artifacts yet")).toBeVisible();
   await settle(page);
   await shot(page, "empty-room");
 
@@ -109,7 +109,7 @@ test("screens for visual review", async ({ page, daemon }) => {
 
   // QuickFind open, with a query that hits a room and documents.
   await page.keyboard.press(`${MOD}+k`);
-  const input = page.getByPlaceholder("Find a room or doc");
+  const input = page.getByPlaceholder("Find a room or artifact");
   await expect(input).toBeVisible();
   await input.fill("report");
   await expect(page.getByRole("option", { name: /Weekly report/ })).toBeVisible();

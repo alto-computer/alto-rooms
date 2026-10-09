@@ -22,7 +22,7 @@ test("AC-5: 새 방 creates the folder and opens an empty room tab", async ({ pa
   await openApp(page);
   await createRoomInUi(page, "연구 도구");
   expect(await daemon.exists("연구-도구")).toBe(true);
-  await expect(page.getByText("No docs yet")).toBeVisible();
+  await expect(page.getByText("No artifacts yet")).toBeVisible();
 });
 
 test("AC-1: an HTML file written to the folder shows up as a new card within 2s", async ({ page, daemon }) => {
@@ -31,8 +31,8 @@ test("AC-1: an HTML file written to the folder shows up as a new card within 2s"
   await daemon.write("연구-도구/a.html", "<title>첫 문서</title>");
   const c = card(page, "첫 문서");
   await expect(c).toBeVisible({ timeout: 2000 });
-  await expect(c.getByRole("img", { name: "New doc" })).toBeVisible();
-  await expect(page.getByText("1 doc")).toBeVisible();
+  await expect(c.getByRole("img", { name: "New artifact" })).toBeVisible();
+  await expect(page.getByText("1 artifact")).toBeVisible();
 });
 
 test("AC-6: renaming the room from its title renames the folder, tab and sidebar", async ({ page, daemon }) => {

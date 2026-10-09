@@ -6,7 +6,7 @@ import { noteBase } from "@/lib/notes";
 /** Before the first sync we can't tell yet. */
 const PENDING = "…";
 const GONE_ROOM = "Missing room";
-const GONE_DOC = "Missing doc";
+const GONE_DOC = "Missing artifact";
 
 /** Room names come from RoomsState by id on every render; tabs never cache them. */
 function RoomLabel({ roomId }: { roomId: string }) {

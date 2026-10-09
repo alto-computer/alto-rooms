@@ -52,11 +52,11 @@ describe("NewTabView", () => {
         d: [],
       },
     });
-    expect(await screen.findByText("New docs in 2 rooms.")).toBeInTheDocument();
+    expect(await screen.findByText("New artifacts in 2 rooms.")).toBeInTheDocument();
     expect(cardNames()).toEqual(["나", "다", "가", "라"]);
     const [first, second, third] = screen.getAllByTestId("new-room-card");
     expect(within(first).getByText("2 new")).toBeInTheDocument();
-    expect(within(first).getByText("3 docs")).toBeInTheDocument();
+    expect(within(first).getByText("3 artifacts")).toBeInTheDocument();
     expect(within(second).getByText("1 new")).toBeInTheDocument();
     expect(within(third).queryByText(/ new$/)).toBeNull();
   });
@@ -67,7 +67,7 @@ describe("NewTabView", () => {
       rooms: [room("a", "가", { artifactCount: 1 })],
       artifacts: { a: [artifact("a1", "a", OLD)] },
     });
-    expect(await screen.findByText("No new docs.")).toBeInTheDocument();
+    expect(await screen.findByText("No new artifacts.")).toBeInTheDocument();
   });
 
   it("counts only the rooms that loaded when another room's load failed", async () => {
@@ -77,7 +77,7 @@ describe("NewTabView", () => {
       artifacts: { a: [artifact("a1", "a", NEW)] },
       artifactErrors: { b: new Error("boom") },
     });
-    expect(await screen.findByText("New docs in 1 room.")).toBeInTheDocument();
+    expect(await screen.findByText("New artifacts in 1 room.")).toBeInTheDocument();
   });
 
   it("lists unavailable rooms with the unavailable copy, and clicking a card opens the room", async () => {
@@ -89,7 +89,7 @@ describe("NewTabView", () => {
     });
     const card = (await screen.findAllByTestId("new-room-card"))[0];
     expect(within(card).getByText("Folder not found")).toBeInTheDocument();
-    expect(within(card).queryByText("4 docs")).toBeNull();
+    expect(within(card).queryByText("4 artifacts")).toBeNull();
     await act(async () => {
       fireEvent.click(card);
     });
@@ -110,7 +110,7 @@ describe("NewTabView: rooms organized since", () => {
       artifacts: { inbox: [artifact("i1", "inbox", OLD)], a: [artifact("a1", "a", OLD)] },
     });
     expect(await screen.findByText("2 newly sorted rooms.")).toBeInTheDocument();
-    expect(screen.queryByText("No new docs.")).toBeNull();
+    expect(screen.queryByText("No new artifacts.")).toBeNull();
   });
 
   it("new docs by createdAt still win the subtitle", async () => {
@@ -119,7 +119,7 @@ describe("NewTabView: rooms organized since", () => {
       rooms: [room("a", "가", { updatedAt: NEW }), room("b", "나")],
       artifacts: { a: [artifact("a1", "a", NEW)] },
     });
-    expect(await screen.findByText("New docs in 1 room.")).toBeInTheDocument();
+    expect(await screen.findByText("New artifacts in 1 room.")).toBeInTheDocument();
     expect(screen.queryByText(/newly sorted room/)).toBeNull();
   });
 
@@ -128,7 +128,7 @@ describe("NewTabView: rooms organized since", () => {
       viewer: viewer({ a: "2026-03-02T00:00:00Z" }),
       rooms: [room("inbox", "Inbox"), room("a", "가")],
     });
-    expect(await screen.findByText("No new docs.")).toBeInTheDocument();
+    expect(await screen.findByText("No new artifacts.")).toBeInTheDocument();
   });
 });
 
@@ -144,7 +144,7 @@ describe("NewTabView loading", () => {
       artifacts: { a: [artifact("a1", "a", OLD)], b: [artifact("b1", "b", NEW)] },
     });
     const spy = vi.spyOn(h.client, "listArtifacts");
-    expect(await screen.findByText("New docs in 1 room.")).toBeInTheDocument();
+    expect(await screen.findByText("New artifacts in 1 room.")).toBeInTheDocument();
     expect(h.rooms.getState().artifacts.a).toBeUndefined();
     expect(h.rooms.getState().artifacts.c).toBeUndefined();
     expect(cardNames()).toEqual(["나", "가", "다"]);
@@ -159,7 +159,7 @@ describe("NewTabView loading", () => {
       rooms: [room("a", "가", { updatedAt: NEW }), room("b", "나", { updatedAt: NEW })],
       artifacts: { a: [artifact("a1", "a", NEW)], b: [] },
     });
-    await screen.findByText("New docs in 1 room.");
+    await screen.findByText("New artifacts in 1 room.");
     const spy = vi.spyOn(h.client, "listArtifacts");
     h.unmount();
     act(() => linger.run()); // the 45 s linger ends

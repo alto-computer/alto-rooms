@@ -82,7 +82,7 @@ export function journalTitle(date: string): string {
   return `${WEEKDAYS[weekdayIndex(date)]}, ${monthDay(date)}`;
 }
 
-/** `1 doc`, `3 docs`: a count with its noun, singular for exactly one. */
+/** `1 artifact`, `3 artifacts`: a count with its noun, singular for exactly one. */
 export function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }

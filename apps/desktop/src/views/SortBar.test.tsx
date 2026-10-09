@@ -63,7 +63,7 @@ describe("SortBar", () => {
     await show({ keySource: "keychain", keyRejected: false, status });
     api.sortUndoLast.mockResolvedValueOnce(["back to inbox: a.html", "back to inbox: b.html", "removed empty room \"x\""]);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Undo last sort" })));
-    expect(screen.getByText("Moved 2 docs back. They stay here from now on.")).toBeInTheDocument();
+    expect(screen.getByText("Moved 2 artifacts back. They stay here from now on.")).toBeInTheDocument();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Remove key" })));
     expect(api.sortClearKey).toHaveBeenCalled();
     cleanup();

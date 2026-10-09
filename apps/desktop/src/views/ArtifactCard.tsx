@@ -163,7 +163,7 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
           <span data-testid="card-title" className="min-w-0 truncate text-lead font-medium text-ink">
             {artifact.title}
           </span>
-          {isNew ? <span role="img" aria-label="New doc" className="size-1.5 shrink-0 rounded-full bg-ink" /> : null}
+          {isNew ? <span role="img" aria-label="New artifact" className="size-1.5 shrink-0 rounded-full bg-ink" /> : null}
           <span className={cn("ml-auto shrink-0 whitespace-nowrap", s.label)}>{label}</span>
         </div>
       </div>

@@ -12,7 +12,7 @@ export function EmptyRoom({ room, home }: { room: Room; home: string }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
       <ClewPeek label="Clew the otter, peeking out of the water" className="mb-2 w-[220px]" />
-      <p className="font-display text-title text-ink">No docs yet</p>
+      <p className="font-display text-title text-ink">No artifacts yet</p>
       <CopyChip text={room.path} label={tildePath(room.path, home)} className="mt-2" />
     </div>
   );

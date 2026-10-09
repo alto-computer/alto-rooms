@@ -27,7 +27,7 @@ function Card({ plugin: p }: { plugin: HostPlugin }) {
     ? []
     : [
         p.slots.tab?.sidebar ? "Adds a sidebar item and a tab" : p.slots.tab ? "Adds a tab" : null,
-        p.slots.artifactSidePanel ? "Adds a panel beside documents" : null,
+        p.slots.artifactSidePanel ? "Adds a panel beside artifacts" : null,
       ].filter((x): x is string => x !== null);
   const asked = updated ? p.permissions.filter((x) => !p.granted!.includes(x)) : p.permissions;
   const can = asked.map(permissionLine);

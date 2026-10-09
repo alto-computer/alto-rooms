@@ -63,10 +63,10 @@ function Welcome({ home }: { home: string }) {
             One folder per topic. Any HTML in <code className="font-mono text-body">~/rooms/&lt;room&gt;/</code> becomes a card right away.
           </Concept>
           <Concept icon={Calendar} name="Journal">
-            Each day's docs, next to your own plan and review notes.
+            Each day's artifacts, next to your own plan and review notes.
           </Concept>
           <Concept icon={Inbox} name="inbox">
-            Docs without a room wait here. Drag one onto a room on the left to move it.
+            Artifacts without a room wait here. Drag one onto a room on the left to move it.
           </Concept>
         </ul>
       </section>
@@ -83,7 +83,7 @@ function Welcome({ home }: { home: string }) {
           <Lightbulb size={16} strokeWidth={1.75} aria-hidden />Tip
         </p>
         <p className="text-body text-ink">
-          ⌘K finds rooms and docs. ⌘B hides the sidebar. Hover a card and press ↗ to open it in a new tab.
+          ⌘K finds rooms and artifacts. ⌘B hides the sidebar. Hover a card and press ↗ to open it in a new tab.
         </p>
       </aside>
     </div>

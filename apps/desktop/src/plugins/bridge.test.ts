@@ -52,10 +52,10 @@ describe("frameAttrs", () => {
   });
   it("has plain words for every permission", () => {
     expect(PERMISSION_COPY).toEqual({
-      "rooms.read": "Can see your rooms and documents",
+      "rooms.read": "Can see your rooms and artifacts",
       clipboard: "Can copy and paste",
       downloads: "Can save files you export",
-      "artifact.content": "Can read the text of documents and use the network inside them",
+      "artifact.content": "Can read the text of artifacts and use the network inside them",
     });
   });
   it("has copy for exactly the permissions the core accepts", () => {

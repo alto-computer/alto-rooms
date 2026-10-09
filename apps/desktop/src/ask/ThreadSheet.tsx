@@ -16,7 +16,7 @@ const RECENT_TURNS = 4;
 function header(t: AskTurn): { text: string; title?: string } {
   const how = t.mode === "resume" ? "continuing the thread that made it" : "New conversation";
   const text = [t.agent, t.model ? modelLabel(t.model) : null, how].filter(Boolean).join(" · ");
-  return t.mode === "resume" ? { text } : { text, title: "Couldn't find the thread that made this doc" };
+  return t.mode === "resume" ? { text } : { text, title: "Couldn't find the thread that made this artifact" };
 }
 
 /** Said under the last question when earlier answers no longer fit in what goes along with it. */

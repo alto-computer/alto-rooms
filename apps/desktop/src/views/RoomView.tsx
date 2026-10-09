@@ -91,7 +91,7 @@ export function RoomView({ roomId }: { roomId: string }) {
           className="font-display text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink"
           inputClassName="-ml-2 w-full max-w-[560px] rounded-lg px-2 py-0.5 outline-2 outline-solid outline-ink"
         />
-        <p className="text-lead text-ink-2">{count(room.artifactCount, "doc")}</p>
+        <p className="text-lead text-ink-2">{count(room.artifactCount, "artifact")}</p>
         {room.status === "unavailable" ? (
           <p className="mt-1 flex items-center gap-1.5 text-body text-error">
             <CircleAlert size={16} aria-hidden />

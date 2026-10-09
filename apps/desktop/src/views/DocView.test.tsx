@@ -80,7 +80,7 @@ describe("DocView", () => {
     await act(async () => {
       fake.emit({ type: "artifact.removed", roomId: "r1", artifactId: "a1" });
     });
-    expect(screen.getByText("This doc is gone")).toBeInTheDocument();
+    expect(screen.getByText("This artifact is gone")).toBeInTheDocument();
     expect(document.querySelector("iframe")).toBeNull();
   });
 
@@ -102,7 +102,7 @@ describe("DocView: removed room", () => {
     await act(async () => {
       fake.emit({ type: "room.removed", roomId: "r1" });
     });
-    expect(screen.getByText("This doc is gone")).toBeInTheDocument();
+    expect(screen.getByText("This artifact is gone")).toBeInTheDocument();
   });
 
   it("offers Ask over text selected in its own frame and quotes it in the ask bar", async () => {
@@ -124,7 +124,7 @@ describe("DocView: removed room", () => {
     expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
     const quotes = await screen.findByRole("list", { name: "Quoted text" });
     expect(quotes.textContent).toContain("한도 초과 판정은 공통");
-    const input = screen.getByPlaceholderText("Ask about this doc…");
+    const input = screen.getByPlaceholderText("Ask about this artifact…");
     await waitFor(() => expect(input).toHaveFocus());
     fireEvent.change(input, { target: { value: "왜 공통이야?" } });
     fireEvent.keyDown(input, { key: "Enter" });

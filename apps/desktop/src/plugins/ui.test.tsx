@@ -113,13 +113,13 @@ describe("artifact side panel", () => {
   it("shows nothing without an enabled side-panel plugin", async () => {
     await openDoc([plugin({ enabled: false, needsApproval: true }), echoTab()]);
     expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
-    const group = screen.getByRole("group", { name: "Document actions" });
+    const group = screen.getByRole("group", { name: "Artifact actions" });
     expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share"]);
   });
 
   it("opens from an icon beside Share, drawn from the manifest's icon, else a pencil", async () => {
     await openDoc([plugin({ slots: { artifactSidePanel: { title: "Echo", icon: "palette" }, tab: null } })]);
-    const group = screen.getByRole("group", { name: "Document actions" });
+    const group = screen.getByRole("group", { name: "Artifact actions" });
     expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share", "Open Echo"]);
     const opener = within(group).getByRole("button", { name: "Open Echo" });
     expect(opener).toHaveTextContent("");
@@ -132,7 +132,7 @@ describe("artifact side panel", () => {
   it("an open panel leaves Share alone in the group", async () => {
     await openDoc();
     await openPanel();
-    const group = screen.getByRole("group", { name: "Document actions" });
+    const group = screen.getByRole("group", { name: "Artifact actions" });
     expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share"]);
   });
 
@@ -330,7 +330,7 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "Updated plugin: Echo" });
     expect(within(card).getByText("Can copy and paste")).toBeInTheDocument();
-    expect(within(card).queryByText("Can see your rooms and documents")).toBeNull();
+    expect(within(card).queryByText("Can see your rooms and artifacts")).toBeNull();
     await act(async () => {
       fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
     });
@@ -364,8 +364,8 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "New plugin: Marker" });
     expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "Can see your rooms and documents",
-      "Can read the text of documents and use the network inside them",
+      "Can see your rooms and artifacts",
+      "Can read the text of artifacts and use the network inside them",
     ]);
     await act(async () => {
       fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
@@ -398,7 +398,7 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "New plugin: Echo" });
     expect(within(card).getByText("Echoes things.")).toBeInTheDocument();
-    expect(within(card).getByText("Can see your rooms and documents")).toBeInTheDocument();
+    expect(within(card).getByText("Can see your rooms and artifacts")).toBeInTheDocument();
     expect(within(card).getByText("Can save files you export")).toBeInTheDocument();
     expect(screen.queryByTitle("Echo")).toBeNull();
     await act(async () => {
