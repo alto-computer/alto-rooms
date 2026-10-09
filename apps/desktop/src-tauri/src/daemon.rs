@@ -365,6 +365,10 @@ async fn ensure(app: &AppHandle) -> Result<Connection, String> {
     if cfg!(debug_assertions) {
         cmd = cmd.env("ROOMS_DEV_ORIGIN", "http://localhost:1420");
     }
+    // Where rooms-collect keeps collect.db (collector.rs passes the same folder), for conversations.
+    if let Ok(dir) = app.path().app_data_dir() {
+        cmd = cmd.env("ROOMS_COLLECT_DATA", dir);
+    }
     if let Ok(dir) = app.path().resolve("plugins", tauri::path::BaseDirectory::Resource) {
         if dir.is_dir() {
             cmd = cmd.env("ROOMS_BUNDLED_PLUGINS", dir);

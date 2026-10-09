@@ -139,9 +139,11 @@ export const test = base.extend<{ daemon: Daemon; bundledPlugins: string | undef
     }
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "rooms-e2e-"));
     let output = "";
+    // Never the real collect.db: a shell that exports ROOMS_COLLECT_DATA would hand it to roomsd.
+    const { ROOMS_COLLECT_DATA: _realCollectData, ...env } = process.env;
     const child = spawn(roomsdBinary, [], {
       env: {
-        ...process.env,
+        ...env,
         ROOMS_HOME: dir,
         ROOMS_API_PORT: String(API_PORT),
         ROOMS_FILES_PORT: String(FILES_PORT),
