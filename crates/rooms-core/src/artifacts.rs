@@ -1,10 +1,11 @@
 //! Artifacts: lookups, moving one between owned rooms, and resolving a room file to serve.
 
+use crate::asks::prompt::ContextEntry;
 use crate::core::{Inner, RoomsCore};
 use crate::error::CoreError;
 use crate::index::Change;
 use crate::lock::lock;
-use crate::rules::is_html;
+use crate::rules::{is_html, local_day};
 use rooms_protocol::*;
 use std::path::{Path, PathBuf};
 
@@ -180,6 +181,18 @@ impl RoomsCore {
                 Err(e)
             }
         }
+    }
+
+    /// What a room ask lists: the room's name and its artifacts, newest first, as realpaths (`rg`
+    /// skips symlinks). An artifact whose link no longer resolves is left out.
+    pub(crate) fn room_context(&self, room: &RoomId) -> Result<(String, Vec<ContextEntry>), CoreError> {
+        if room == JOURNAL_ROOM_ID { return Err(CoreError::InvalidInput("the Journal is asked by day".into())); }
+        let name = lock(&self.inner).state.find(room).ok_or(CoreError::RoomNotFound)?.name.clone();
+        let entries = self.list_artifacts(room)?.into_iter().rev().filter_map(|a| {
+            let path = self.resolve_file(room, &a.rel_path).ok()?;
+            Some(ContextEntry { label: name.clone(), day: local_day(&a.created_at).unwrap_or_default(), title: a.title, path })
+        }).collect();
+        Ok((name, entries))
     }
 
     pub fn resolve_file(&self, room: &RoomId, rel: &str) -> Result<PathBuf, CoreError> {

@@ -3,12 +3,13 @@
 //! Note IO runs without `Inner`, under `notes_lock` (lock order: notes_lock → Inner); `Inner` is
 //! taken only to emit.
 
+use crate::asks::prompt::ContextEntry;
 use crate::core::RoomsCore;
 use crate::error::CoreError;
 use crate::lock::lock;
 use crate::rules::{classify_path, slug_key, validate_iso_date, validate_note_name, PathClass};
 use rooms_protocol::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 const MAX_NOTE_BYTES: usize = 1_048_576;
@@ -36,6 +37,27 @@ impl RoomsCore {
         }
         notes.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(JournalDay { date: date.clone(), artifacts, notes })
+    }
+
+    /// What a day ask lists: every item `journal_day` shows, in its order, as realpaths. Each item
+    /// kind maps here and nowhere else, so a new `JournalDay` field stops compiling until it does.
+    pub(crate) fn day_context(&self, day: &IsoDate) -> Result<Vec<ContextEntry>, CoreError> {
+        let JournalDay { date, artifacts, notes } = self.journal_day(day)?;
+        let names: HashMap<RoomId, String> = lock(&self.inner).state.rooms.iter().map(|r| (r.id.clone(), r.name.clone())).collect();
+        let label = |a: &Artifact| match a.room_id.as_str() {
+            JOURNAL_ROOM_ID if Path::new(&a.rel_path).file_name().is_some_and(|n| n == "dream.html") => "Review".to_string(),
+            JOURNAL_ROOM_ID => "Journal".to_string(),
+            id => names.get(id).cloned().unwrap_or_else(|| id.to_string()),
+        };
+        let artifacts = artifacts.into_iter().rev().filter_map(|a| {
+            let path = self.resolve_file(&a.room_id, &a.rel_path).ok()?;
+            Some(ContextEntry { label: label(&a), title: a.title, path, day: date.clone() })
+        });
+        let notes = notes.into_iter().filter_map(|n| {
+            let path = std::fs::canonicalize(self.home.join("journal").join(&n.rel_path)).ok()?;
+            Some(ContextEntry { label: "Note".into(), title: n.name, path, day: date.clone() })
+        });
+        Ok(artifacts.chain(notes).collect())
     }
 
     pub fn save_note(&self, date: &IsoDate, name: &str, body: &str) -> Result<Note, CoreError> {

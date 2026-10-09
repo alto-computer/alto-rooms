@@ -744,17 +744,17 @@ async fn ask_routes_take_a_scope_key() {
             assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{path} {bad}");
             assert_eq!(body_json(r).await["error"], "bad_request");
         }
-        // a room scope until F1-2; room ids are nanoids, which can start with `-` or `_`
+        // room ids are nanoids, which can start with `-` or `_`; none of these rooms exists
         for id in ["-Ab3_xYz9Q-0", "_abc", "abc"] {
             let r = app.clone().oneshot(get(&format!("{path}?scope=room:{id}"), API_HOST)).await.unwrap();
-            assert_eq!(r.status(), if path == "/v1/asks" { StatusCode::OK } else { StatusCode::BAD_REQUEST }, "{path} room:{id}");
+            assert_eq!(r.status(), if path == "/v1/asks" { StatusCode::OK } else { StatusCode::NOT_FOUND }, "{path} room:{id}");
         }
         let r = app.clone().oneshot(get(&format!("{path}?fileKey={}", art.file_key), API_HOST)).await.unwrap();
         assert_eq!(r.status(), StatusCode::BAD_REQUEST, "the old query is gone");
     }
     for (scope, status) in [
-        (r#"{"kind":"room","roomId":"-Ab3_xYz9Q-0"}"#.to_string(), StatusCode::BAD_REQUEST),
-        (r#"{"kind":"day","date":"2026-10-09"}"#.to_string(), StatusCode::BAD_REQUEST),
+        (r#"{"kind":"room","roomId":"-Ab3_xYz9Q-0"}"#.to_string(), StatusCode::NOT_FOUND),
+        (r#"{"kind":"day","date":"2026-13-09"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"room","roomId":"journal"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"doc","fileKey":"../x"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"doc","fileKey":"0000000000000000"}"#.to_string(), StatusCode::NOT_FOUND),
@@ -764,6 +764,38 @@ async fn ask_routes_take_a_scope_key() {
         if status == StatusCode::BAD_REQUEST { assert_eq!(body_json(r).await["error"], "bad_request", "{scope}"); }
     }
     assert!(!d.path().join(".rooms/asks").exists(), "nothing was written for a refused scope");
+}
+
+#[tokio::test]
+async fn room_and_day_asks_list_their_documents() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let r = app.clone().oneshot(get("/v1/asks/target?scope=day:2026-10-09", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["opus", "sonnet", "haiku"]}));
+
+    let room = st.core.create_room("r").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let orig = std::fs::canonicalize(outside.path()).unwrap().join("orig.html");
+    std::fs::write(&orig, "<title>Original</title>").unwrap();
+    std::os::unix::fs::symlink(&orig, st.core.room_root(&room.id).unwrap().0.join("link.html")).unwrap();
+    st.core.backfill_all().unwrap();
+    std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"{prompt}\"]\n").unwrap();
+    let mut rx = st.core.subscribe();
+
+    let body = format!(r#"{{"scope":{{"kind":"room","roomId":"{}"}},"question":"q"}}"#, room.id);
+    let r = app.clone().oneshot(post("/v1/asks", &body, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::ACCEPTED);
+    let turn = body_json(r).await;
+    assert_eq!((turn["status"].as_str(), turn["mode"].as_str()), (Some("running"), Some("new")));
+    let answer = loop {
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+        if let rooms_protocol::EventKind::AskDone { turn: t } = ev.kind { break t.answer; }
+    };
+    assert!(answer.contains("Room: r\nDocuments (1):\n- Original (r, "), "{answer}");
+    assert!(answer.contains(&format!(") :: {}\n", orig.display())), "{answer}");
+    assert!(!answer.contains("link.html"), "{answer}");
+    assert!(d.path().join(format!(".rooms/asks/room-{}.jsonl", room.id)).exists());
 }
 
 #[tokio::test]

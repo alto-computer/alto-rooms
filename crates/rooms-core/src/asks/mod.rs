@@ -1,5 +1,5 @@
 //! v2 ask: send a question about a doc to the agent CLI that made it (spec 2026-10-06 v2 ask).
-//! Every thread belongs to an `AskScope`; a doc's is the only kind that runs so far.
+//! Every thread belongs to an `AskScope`: a doc, a room or a Journal day.
 //! `Asks` is the only entry point; templates, prompt, log and process stay inside this module.
 pub(crate) mod agents;
 pub mod images;
@@ -11,13 +11,14 @@ pub(crate) mod stream;
 
 pub use run::Limits;
 
+use crate::error::CoreError;
 use crate::lock::lock;
 use crate::rules::{slug_key, valid_room_id, validate_iso_date};
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
-use prompt::{build_prompt, context, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
-use rooms_protocol::{Artifact, AskKind, AskScope, AskStatus, AskTarget, AskTurn, EventKind, JOURNAL_ROOM_ID};
+use prompt::{build_prompt, build_scope_prompt, context, valid_file_key, valid_ident, with_image_paths, ContextEntry, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
+use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, EventKind, JOURNAL_ROOM_ID};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
 use std::collections::HashMap;
@@ -29,7 +30,6 @@ use std::time::Duration;
 pub const MAX_RUNNING: usize = 4;
 const MAX_QUESTION_CHARS: usize = 8_000;
 const RESTARTED: &str = "Stopped because Rooms restarted";
-const NOT_YET: &str = "Room and day asks are not available yet";
 /// JSON-lines output carries every streamed chunk and tool result around the answer, so a profile
 /// with event rules may print this many times `Limits::max_stdout` (16 MB by default).
 const JSON_STDOUT_FACTOR: usize = 16;
@@ -157,10 +157,15 @@ impl<'a> Request<'a> {
 
 struct Entry { scope: AskScope, killer: Killer }
 
+/// What a question is about: one doc, or the documents of a room or a Journal day.
+enum Subject {
+    Doc { file_key: String, file_abs: PathBuf },
+    Listing { heading: String, entries: Vec<ContextEntry> },
+}
+
 /// Where an ask in a scope goes: the one answer both `target` and `start` use.
 struct Resolved {
-    artifact: Artifact,
-    file_abs: PathBuf,
+    subject: Subject,
     profiles: AgentProfiles,
     plan: Plan,
     session: Option<String>,
@@ -254,12 +259,31 @@ impl Asks {
 
     fn config_path(&self) -> PathBuf { self.0.core.home().join(".rooms/agents.toml") }
 
-    /// Which doc, agent, template, session and cwd an ask in `scope` would use. A doc scope goes
-    /// through the first artifact holding its file whose link still resolves (rooms linking one
-    /// original share the file key, the realpath and the source meta).
+    /// Which subject, agent, template, session and cwd an ask in `scope` would use. A room or a day
+    /// has no source session: the default agent starts a new conversation in an empty folder, so a
+    /// search without a path finds nothing.
     fn resolve(&self, scope: &AskScope) -> Result<Resolved, AskError> {
         scope.validate()?;
-        let AskScope::Doc { file_key } = scope else { return Err(AskError::BadRequest(NOT_YET.into())) };
+        let core = &self.0.core;
+        let (heading, entries) = match scope {
+            AskScope::Doc { file_key } => return self.resolve_doc(file_key),
+            AskScope::Room { room_id } => {
+                let (name, entries) = core.room_context(room_id).map_err(|e| match e {
+                    CoreError::RoomNotFound => AskError::NotFound,
+                    e => AskError::Io(e.to_string()),
+                })?;
+                (format!("Room: {name}"), entries)
+            }
+            AskScope::Day { date } => (format!("Journal day: {date}"), core.day_context(date).map_err(|e| AskError::Io(e.to_string()))?),
+        };
+        let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
+        let plan = profiles.plan(None, None);
+        Ok(Resolved { subject: Subject::Listing { heading, entries }, profiles, plan, session: None, cwd: self.empty_cwd()? })
+    }
+
+    /// A doc scope goes through the first artifact holding its file whose link still resolves
+    /// (rooms linking one original share the file key, the realpath and the source meta).
+    fn resolve_doc(&self, file_key: &str) -> Result<Resolved, AskError> {
         let core = &self.0.core;
         let (artifact, file_abs) = core.artifacts_by_file_key(file_key).into_iter()
             .find_map(|a| core.resolve_file(&a.room_id, &a.rel_path).ok().map(|p| (a, p)))
@@ -276,7 +300,15 @@ impl Asks {
         let plan = profiles.plan(agent, session.as_deref());
         let cwd = src.cwd.as_deref().map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir())
             .unwrap_or_else(|| file_abs.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| core.home().to_path_buf()));
-        Ok(Resolved { artifact, file_abs, profiles, plan, session, cwd })
+        Ok(Resolved { subject: Subject::Doc { file_key: artifact.file_key, file_abs }, profiles, plan, session, cwd })
+    }
+
+    /// `<home>/.rooms/asks/cwd`, empty and private to the user.
+    fn empty_cwd(&self) -> Result<PathBuf, AskError> {
+        use std::os::unix::fs::DirBuilderExt;
+        let dir = self.0.core.home().join(".rooms/asks/cwd");
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).map_err(|e| AskError::Io(e.to_string()))?;
+        Ok(dir)
     }
 
     /// Blocking, like `start`: what the ask bar shows before the first question.
@@ -305,7 +337,7 @@ impl Asks {
         let _rt = self.0.rt.as_ref().map(|h| h.enter());
         let question = req.text()?;
         let image_paths = self.image_paths(req.images())?;
-        let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(scope)?;
+        let Resolved { subject, profiles, plan, session, cwd } = self.resolve(scope)?;
         let model = req.model.filter(|m| !m.is_empty());
         if let Some(m) = model.filter(|m| !plan.models.iter().any(|x| x == m)) {
             return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
@@ -324,9 +356,16 @@ impl Asks {
         };
         if req.kind == AskKind::Clear { return self.record_clear(running, turn); }
 
-        let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
         let asked = if req.kind == AskKind::Compact { COMPACT_ASK.to_string() } else { with_image_paths(question, &image_paths) };
-        let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, &ctx, &asked);
+        let (file_s, prompt) = match &subject {
+            Subject::Doc { file_key, file_abs } => {
+                let file_s = file_abs.to_string_lossy().into_owned();
+                let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, file_key, &ctx, &asked);
+                (file_s, prompt)
+            }
+            Subject::Listing { heading, entries } => (String::new(), build_scope_prompt(heading, entries, &ctx, &asked)),
+        };
+        let cwd_s = cwd.to_string_lossy().into_owned();
         let image_dir = if image_paths.is_empty() { String::new() } else { self.0.images.dir().to_string_lossy().into_owned() };
         // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
         let mcp = self.0.core.home().join(".rooms/mcp.json");
@@ -589,8 +628,8 @@ mod tests {
         assert!(asks.reserve(&AskScope::Day { date: "2026-10-09".into() }).is_ok());
         assert_eq!(asks.thread(&room_like).unwrap().len(), 0);
         assert_eq!(asks.thread(&doc).unwrap()[0].id, t.id);
-        assert!(matches!(asks.start(&room_like, "q", None), Err(AskError::BadRequest(m)) if m == NOT_YET));
-        assert!(matches!(asks.target(&room_like), Err(AskError::BadRequest(m)) if m == NOT_YET));
+        assert!(matches!(asks.start(&room_like, "q", None), Err(AskError::NotFound)));
+        assert!(matches!(asks.target(&room_like), Err(AskError::NotFound)));
         asks.shutdown().await;
     }
 

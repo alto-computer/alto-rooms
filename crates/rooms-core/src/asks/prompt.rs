@@ -1,5 +1,7 @@
 //! The only text Rooms writes into a question (spec §6.3), plus the R0 checks on doc meta.
-use rooms_protocol::{AskKind, AskMode, AskStatus, AskTurn};
+use super::agents::SCOPE_PREAMBLE;
+use rooms_protocol::{AskKind, AskMode, AskStatus, AskTurn, IsoDate};
+use std::path::PathBuf;
 
 /// How much earlier Q&A goes along with a question, in characters, summary included. A prompt on
 /// stdin has no OS limit; one passed as an argv element (a template with `{prompt}`) does: Linux
@@ -66,13 +68,43 @@ pub(crate) fn with_image_paths(question: &str, paths: &[String]) -> String {
 pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, file_key: &str, ctx: &Context, question: &str) -> String {
     let mut out = format!("{preamble}\n\nDocument: {file}\nRooms doc: {file_key}\n");
     if mode == AskMode::New { out.push_str("Read this file first.\n"); }
+    push_thread(&mut out, ctx, question);
+    out
+}
+
+/// One document a room or day ask lists. `path` is a realpath: `rg` skips symlinks.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ContextEntry {
+    /// Where it lives: the room name, "Journal", "Review" (the day's dream) or "Note".
+    pub label: String,
+    pub title: String,
+    pub path: PathBuf,
+    pub day: IsoDate,
+}
+
+/// The most documents a room or day prompt lists. A template with `{prompt}` passes the prompt as
+/// one argv element (macOS caps all of argv at 1 MiB); 400 lines stay far under that.
+pub(crate) const MAX_LISTED: usize = 400;
+
+/// A room or day ask: the documents (newest first, as given), then the thread and the question.
+pub(crate) fn build_scope_prompt(heading: &str, entries: &[ContextEntry], ctx: &Context, question: &str) -> String {
+    let mut out = format!("{SCOPE_PREAMBLE}\n\n{heading}\nDocuments ({}):\n", entries.len());
+    for e in entries.iter().take(MAX_LISTED) {
+        let title = e.title.split_whitespace().collect::<Vec<_>>().join(" ");
+        out.push_str(&format!("- {title} ({}, {}) :: {}\n", e.label, e.day, e.path.display()));
+    }
+    if entries.len() > MAX_LISTED { out.push_str(&format!("({} older documents not listed)\n", entries.len() - MAX_LISTED)); }
+    push_thread(&mut out, ctx, question);
+    out
+}
+
+fn push_thread(out: &mut String, ctx: &Context, question: &str) {
     if let Some(s) = ctx.summary { out.push_str(&format!("\nSummary of the earlier Q&A:\n{s}\n")); }
     if !ctx.turns.is_empty() {
         out.push_str("\nPrevious Q&A:\n");
         for t in &ctx.turns { out.push_str(&format!("Q: {}\nA: {}\n", t.question, t.answer)); }
     }
     out.push_str(&format!("\nQuestion: {question}"));
-    out
 }
 
 #[cfg(test)]
