@@ -20,7 +20,7 @@ test("ask a doc and get the fake agent's answer", async ({ page, daemon }) => {
   writeFileSync(bin, '#!/bin/sh\nfor a in "$@"; do last="$a"; done\nprintf "**Answer:** %s\\n" "$(printf %s "$last" | tail -n 1)"\n');
   chmodSync(bin, 0o755);
   mkdirSync(join(daemon.home, ".rooms"), { recursive: true });
-  writeFileSync(join(daemon.home, ".rooms/agents.toml"), `[agents.claude-code]\nnew = ["${bin}", "{prompt}"]\n`);
+  writeFileSync(join(daemon.home, ".rooms/agents.toml"), `[agents.claude-code]\nnew = ["${bin}", "{prompt}", "--settings", "{scope_settings}"]\n`);
 
   const harness = await daemon.createRoom("harness");
   await daemon.write("harness/doc.html", "<html><head><title>Doc</title></head><body>hello</body></html>");

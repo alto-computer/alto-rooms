@@ -680,7 +680,7 @@ async fn ask_routes() {
     std::fs::write(root.join("doc.html"), "<title>d</title>").unwrap();
     st.core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"hi\"]\n").unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"hi\", \"--settings\", \"{scope_settings}\"]\n").unwrap();
     let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
     let mut rx = st.core.subscribe();
 
@@ -733,7 +733,7 @@ async fn ask_routes_take_a_scope_key() {
     std::fs::write(st.core.room_root(&room.id).unwrap().0.join("doc.html"), "<title>d</title>").unwrap();
     st.core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"hi\"]\n").unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"hi\", \"--settings\", \"{scope_settings}\"]\n").unwrap();
     let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
 
     for path in ["/v1/asks", "/v1/asks/target"] {
@@ -771,7 +771,7 @@ async fn room_and_day_asks_list_their_documents() {
     let (d, app, st) = app(false, "127.0.0.1:5000");
     let r = app.clone().oneshot(get("/v1/asks/target?scope=day:2026-10-09", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
-    assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["opus", "sonnet", "haiku"]}));
+    assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["opus", "sonnet", "haiku"], "scoped": true}));
     assert!(!d.path().join(".rooms/asks").exists(), "a target lookup writes nothing");
 
     let room = st.core.create_room("r").unwrap();
@@ -781,7 +781,7 @@ async fn room_and_day_asks_list_their_documents() {
     std::os::unix::fs::symlink(&orig, st.core.room_root(&room.id).unwrap().0.join("link.html")).unwrap();
     st.core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"{prompt}\"]\n").unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"{prompt}\", \"--settings\", \"{scope_settings}\"]\n").unwrap();
     let mut rx = st.core.subscribe();
 
     let body = format!(r#"{{"scope":{{"kind":"room","roomId":"{}"}},"question":"q"}}"#, room.id);
@@ -818,13 +818,13 @@ async fn ask_target_route_and_model() {
     std::fs::write(st.core.room_root(&room.id).unwrap().0.join("doc.html"), "<title>d</title>").unwrap();
     st.core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"-m\", \"{model}\"]\nmodels = [\"m1\"]\n").unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"-m\", \"{model}\", \"--settings\", \"{scope_settings}\"]\nmodels = [\"m1\"]\n").unwrap();
     let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
 
     let uri = format!("/v1/asks/target?scope=doc:{}", art.file_key);
     let r = app.clone().oneshot(get(&uri, API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
-    assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["m1"]}));
+    assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["m1"], "scoped": false}));
     let r = app.clone().oneshot(get("/v1/asks/target?scope=doc:0000000000000000", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
     let r = app.clone().oneshot(get("/v1/asks/target", API_HOST)).await.unwrap();
@@ -848,6 +848,12 @@ async fn ask_target_route_and_model() {
     let r = app.clone().oneshot(get(&uri, API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body_json(r).await["error"], "agent_config");
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\"]\n").unwrap();
+    let r = app.clone().oneshot(get("/v1/asks/target?scope=day:2026-10-09", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let e = body_json(r).await;
+    assert_eq!(e["error"], "agent_config");
+    assert!(e["message"].as_str().unwrap().contains("agents.claude-code.new: add \"--settings\", \"{scope_settings}\""), "{e}");
 }
 
 // ---- plugin tools ----

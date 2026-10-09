@@ -25,7 +25,7 @@ async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false, tar
   return renderWithStores(<><Grab /><AskBar artifact={doc} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
 }
 
-const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"] };
+const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"], scoped: false };
 
 describe("AskBar", () => {
   afterEach(() => {
@@ -417,7 +417,7 @@ describe("AskBar", () => {
   });
 
   it("with no models shows just the agent the ask goes to, from roomsd, with no menu", async () => {
-    const { client } = await setup({}, false, { agent: "codex", mode: "new", models: [] });
+    const { client } = await setup({}, false, { agent: "codex", mode: "new", models: [], scoped: false });
     expect(await screen.findByText("codex")).toBeTruthy();
     expect(client.askTarget).toHaveBeenCalledWith(scope);
     expect(screen.queryByLabelText(/^Model/)).toBeNull();

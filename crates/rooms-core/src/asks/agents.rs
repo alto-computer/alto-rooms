@@ -16,8 +16,8 @@ pub(crate) const DEFAULT_AGENT: &str = "claude-code";
 pub(crate) const DEFAULT_PREAMBLE: &str =
     "[Rooms] The user is reading the HTML document below in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 /// For a room or a Journal day. The `preamble` key in agents.toml replaces only the doc preamble.
-/// The built-in claude-code profile also enforces the list (`claude_read_scope`); other agents
-/// get only these words.
+/// The claude-code profile also enforces the list (`claude_read_scope`; `load` refuses one without
+/// `{scope_settings}`); other agents get only these words.
 pub(crate) const SCOPE_PREAMBLE: &str =
     "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder, not even the folder a listed file is in, and never search without a path. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
@@ -56,6 +56,9 @@ pub(crate) struct Plan {
     /// The profile's models, or none when this template takes no `{model}`.
     pub models: Vec<String>,
     pub events: Vec<EventRule>,
+    /// A room or day ask whose argv carries `{scope_settings}`, so the agent itself denies reads
+    /// outside the listed files. False for a doc ask and for an agent told the list only in words.
+    pub scoped: bool,
     template: Vec<String>,
 }
 
@@ -189,6 +192,8 @@ pub(crate) fn valid_model(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '/' | '-'))
 }
 
+fn carries_scope(t: &[String]) -> bool { t.iter().any(|a| a.contains("{scope_settings}")) }
+
 fn check(name: &str, which: &str, t: &[String]) -> Result<(), String> {
     match t.first() {
         None => Err(format!("agents.{name}.{which}: empty")),
@@ -221,6 +226,9 @@ impl AgentProfiles {
             if !p.models.is_empty() && partial {
                 return Err(format!("agents.{name}: with models, {{model}} must be a whole element (e.g. \"--model\", \"{{model}}\")"));
             }
+            if name == "claude-code" && !carries_scope(&p.new) {
+                return Err(format!("agents.{name}.new: add \"--settings\", \"{{scope_settings}}\" so room and Journal-day asks can read only their listed files"));
+            }
         }
         let default = cfg.default.unwrap_or_else(|| DEFAULT_AGENT.to_string());
         if !agents.contains_key(&default) {
@@ -239,7 +247,13 @@ impl AgentProfiles {
             _ => (AskMode::New, p.new.clone()),
         };
         let models = if template.iter().any(|a| a == "{model}") { p.models.clone() } else { Vec::new() };
-        Plan { agent: name, mode, models, events: p.events.clone(), template }
+        Plan { agent: name, mode, models, events: p.events.clone(), scoped: false, template }
+    }
+
+    /// A room or day ask: always the default agent, always new.
+    pub fn plan_listing(&self) -> Plan {
+        let plan = self.plan(None, None);
+        Plan { scoped: carries_scope(&plan.template), ..plan }
     }
 
     pub fn preamble(&self) -> &str { self.preamble.as_deref().unwrap_or(DEFAULT_PREAMBLE) }
@@ -464,11 +478,26 @@ new = ["codex2", "{prompt}"]
             ("[agents.x]\nnew = [\"a\"]\n[[agents.x.events]]\ndelta = \"text\"", "agents.x.events[0]"),
             ("[agents.x]\nnew = [\"a\"]\n[[agents.x.events]]\nmatch = { \"/t\" = \"x\" }", "agents.x.events[0]"),
             ("[agents.x]\nnew = [\"a\", \"-m\", \"{model}\"]\nresume = [\"a\", \"-m{model}\"]\nmodels = [\"m\"]", "whole element"),
+            ("[agents.claude-code]\nnew = [\"claude\", \"-p\"]", "agents.claude-code.new: add \"--settings\", \"{scope_settings}\""),
         ] {
             let (_d, p) = tmp(Some(text));
             let e = AgentProfiles::load(&p).err().unwrap_or_else(|| panic!("accepted: {text}"));
             assert!(e.contains(needle), "{text} -> {e}");
         }
+    }
+
+    /// Only a room or day plan whose template takes `{scope_settings}` enforces the list.
+    #[test]
+    fn a_listing_plan_is_scoped_only_when_its_argv_carries_the_settings() {
+        let (_d, p) = tmp(None);
+        let a = AgentProfiles::load(&p).unwrap();
+        assert!(a.plan_listing().scoped);
+        assert!(!a.plan(Some("claude-code"), None).scoped, "a doc ask is never scoped");
+        let (_d, p) = tmp(Some("default = \"codex\""));
+        let codex = AgentProfiles::load(&p).unwrap().plan_listing();
+        assert_eq!((codex.agent.as_str(), codex.scoped), ("codex", false));
+        let (_d, p) = tmp(Some("[agents.claude-code]\nnew = [\"claude\", \"--settings={scope_settings}\"]"));
+        assert!(AgentProfiles::load(&p).unwrap().plan_listing().scoped);
     }
 
     fn with_model<'a>(model: &'a str) -> Vars<'a> { Vars { model, ..vars("Q") } }

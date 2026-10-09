@@ -276,7 +276,7 @@ impl Asks {
             AskScope::Day { date } => (Listing::Day(date.clone()), core.day_context(date).map_err(listing_error)?),
         };
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
-        let plan = profiles.plan(None, None);
+        let plan = profiles.plan_listing();
         let cwd = self.0.core.home().join(".rooms/asks/cwd");
         Ok(Resolved { subject: Subject::Listing { listing, entries }, profiles, plan, session: None, cwd })
     }
@@ -306,7 +306,7 @@ impl Asks {
     /// Blocking, like `start`: what the ask bar shows before the first question.
     pub fn target(&self, scope: &AskScope) -> Result<AskTarget, AskError> {
         let r = self.resolve(scope)?;
-        Ok(AskTarget { agent: r.plan.agent, mode: r.plan.mode, models: r.plan.models })
+        Ok(AskTarget { agent: r.plan.agent, mode: r.plan.mode, models: r.plan.models, scoped: r.plan.scoped })
     }
 
     /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
@@ -635,7 +635,7 @@ mod tests {
         std::fs::write(core.room_root(&room.id).unwrap().0.join("doc.html"), "<title>d</title>").unwrap();
         core.backfill_all().unwrap();
         std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-        std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{fake}\", \"{{prompt}}\"]\n")).unwrap();
+        std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{fake}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
         let asks = Asks::new(core.clone(), None);
         let file_key = core.list_artifacts(&room.id).unwrap().remove(0).file_key;
         let doc = AskScope::Doc { file_key: file_key.clone() };
@@ -665,11 +665,11 @@ mod tests {
         std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
             "default = \"mine\"\npreamble = \"DOC ONLY\"\n",
             "[agents.mine]\nresume = [\"{f}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{f}\", \"new\", \"{{file}}\", \"{{cwd}}\", \"{{prompt}}\"]\n",
-            "[agents.claude-code]\nresume = [\"{f}\", \"cc-resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{f}\", \"cc\", \"{{prompt}}\"]\n",
+            "[agents.claude-code]\nresume = [\"{f}\", \"cc-resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{f}\", \"cc\", \"--settings\", \"{{scope_settings}}\", \"{{prompt}}\"]\n",
         ), f = fake)).unwrap();
         let asks = Asks::new(core.clone(), None);
         let scope = AskScope::Room { room_id: room.id.clone() };
-        assert_eq!(asks.target(&scope).unwrap(), AskTarget { agent: "mine".into(), mode: AskMode::New, models: vec![] });
+        assert_eq!(asks.target(&scope).unwrap(), AskTarget { agent: "mine".into(), mode: AskMode::New, models: vec![], scoped: false });
         assert_eq!(asks.target(&AskScope::Day { date: "2026-10-09".into() }).unwrap().agent, "mine");
         assert!(!d.path().join(".rooms/asks").exists(), "target writes nothing");
         let mut rx = core.subscribe();
