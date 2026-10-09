@@ -135,8 +135,6 @@ A plugin can let agents write into its data by declaring tools in `manifest.json
 
 A plugin that declares `artifact.content` can list scripts under `contentScripts`, like a browser extension's content scripts.
 
-> This release checks and records content scripts and shows the permission on the enable card. Rooms does not load them into documents yet. Loading starts in the next release (F2-3).
-
 ```json
 "permissions": ["artifact.content"],
 "contentScripts": ["content.js"]
@@ -144,7 +142,9 @@ A plugin that declares `artifact.content` can list scripts under `contentScripts
 
 Scripts load in the listed order, so each path may appear once; a repeated path makes the manifest invalid. A plugin with content scripts needs no slot. The user sees "Can read the text of documents and use the network inside them" before it runs, and a changed content script changes the plugin's `rev`.
 
-Once loading ships, a content script runs inside the document's sandbox with the document's own powers, not the plugin frame's:
+Rooms loads content scripts into the document a doc tab shows, as `<script src>` tags spliced in right after `<head>`, after its own selection bridge and before anything the document declares, including a `<meta http-equiv="Content-Security-Policy">`. Card previews in a room grid get no content scripts. Turning the plugin on or off, or changing a script, reloads open doc tabs.
+
+A content script runs inside the document's sandbox with the document's own powers, not the plugin frame's:
 
 - It can read and change the page, including its text.
 - It can use the network the way the document can, for example `no-cors` requests.
