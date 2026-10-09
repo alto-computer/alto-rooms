@@ -124,3 +124,33 @@ test("right-click turns a plugin off and on; new permissions close it after it s
   await expect(card).toBeHidden();
   await expect(echoFrame(page).locator("#ctx")).toContainText("doc ");
 });
+
+test("a content-script plugin says it reads documents, and turning it on adds no tab or panel", async ({ page, daemon }) => {
+  await daemon.createRoom("Bench");
+  await daemon.write("Bench/latency.html", "<title>Latency report</title><p>p95 118 ms</p>");
+  await daemon.write(
+    ".rooms/plugins/marker/manifest.json",
+    JSON.stringify({
+      id: "marker",
+      name: "Marker",
+      version: "0.1.0",
+      minAppVersion: "0.3.0",
+      permissions: ["artifact.content"],
+      contentScripts: ["content.js"],
+    }),
+  );
+  await daemon.write(".rooms/plugins/marker/content.js", "document.documentElement.dataset.marker = '1';");
+  await page.goto("/");
+
+  const card = page.getByRole("dialog", { name: "New plugin: Marker" });
+  await expect(card).toBeVisible({ timeout: 5000 });
+  await expect(card.getByRole("listitem")).toHaveText(["Can read the text of documents and use the network inside them"]);
+  await card.getByRole("button", { name: "Turn on" }).click();
+  await expect(card).toBeHidden();
+
+  await expect(sidebarPlugins(page).getByText("Marker")).toBeVisible();
+  await expect(sidebarPlugins(page).getByRole("button", { name: "Marker" })).toHaveCount(0);
+  await openDoc(page, "Bench");
+  await expect(page.getByRole("button", { name: "Open Marker" })).toHaveCount(0);
+  await expect(page.locator('iframe[title="Marker"]')).toHaveCount(0);
+});
