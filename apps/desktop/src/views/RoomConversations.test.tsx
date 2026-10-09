@@ -48,6 +48,19 @@ describe("Room: conversations", () => {
     expect(screen.getByTestId("artifact-card")).toBeInTheDocument();
   });
 
+  it("a card opens its session in a tab, ⌘-click in a new one", async () => {
+    const h = await renderWithStores(<RoomView roomId="p" />, {
+      rooms: [room("p", "벤치마크")],
+      artifacts: { p: [] },
+      conversations: [conversation("s1", { title: "Cold start", roomId: "p" }), conversation("s2", { title: "Report", roomId: "p" })],
+    });
+    const [first, second] = await screen.findAllByTestId("conversation-card");
+    fireEvent.click(first);
+    fireEvent.click(second, { metaKey: true });
+    const sessions = h.viewer.getState().tabs.filter((t) => t.kind === "conversation");
+    expect(sessions.map((t) => (t.kind === "conversation" ? t.session : null)).sort()).toEqual(["s1", "s2"]);
+  });
+
   it("has no filter and no conversations section when the room has none", async () => {
     const h = await renderWithStores(<RoomView roomId="p" />, { rooms: [room("p", "벤치마크", { artifactCount: 1 })], artifacts: { p: [artifact("a1")] } });
     await waitFor(() => expect(h.client.listRoomConversations).toHaveBeenCalledWith("p"));

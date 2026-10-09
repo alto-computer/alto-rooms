@@ -50,6 +50,19 @@ describe("Doc: written in", () => {
     expect(continueConversation).toHaveBeenCalledWith(c);
   });
 
+  it("opens the session's tab from the card's title", async () => {
+    const c = conversation("s7", { title: "Why is cold start slow?" });
+    const h = await renderWithStores(<DocView roomId="p" artifactId="a1" />, {
+      rooms: [room("p", "벤치마크", { artifactCount: 1 })],
+      artifacts: { p: [artifact("a1", { source: { agent: "claude-code", session: "s7", cwd: null, machine: null } })] },
+      days: { [today]: { conversations: [{ at: `${today}T01:00:00Z`, conversation: c }] } },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /^Written in/ }));
+    const card = within(await screen.findByRole("dialog", { name: "Written in" }));
+    fireEvent.click(card.getByRole("button", { name: "Why is cold start slow?" }));
+    expect(h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId)).toMatchObject({ kind: "conversation", agent: "claude-code", session: "s7" });
+  });
+
   it("stays out of the toolbar when the artifact names no session", async () => {
     const h = await renderWithStores(<DocView roomId="p" artifactId="a1" />, { rooms: [room("p", "벤치마크", { artifactCount: 1 })], artifacts: { p: [artifact("a1")] } });
     await screen.findByRole("navigation", { name: "Breadcrumb" });

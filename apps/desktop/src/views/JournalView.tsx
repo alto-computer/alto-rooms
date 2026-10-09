@@ -4,7 +4,7 @@ import { CircleAlert, Plus } from "lucide-react";
 import { useClient, useJournalDay, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { AGENT_NAMES } from "@/lib/agents";
-import { conversationTitle } from "@/lib/conversations";
+import { conversationTab, conversationTitle } from "@/lib/conversations";
 import { daybookTitle, isoWeek, localDate, monthDay } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { useScrollMemory } from "@/lib/scrollMemory";
@@ -95,19 +95,6 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const readOnly = useReadOnly();
   const firstRun = useFirstRun();
-  // The selected conversation's entry key, for this date only.
-  const [selection, setSelection] = useState<{ date: string; key: string } | null>(null);
-  const selected = selection?.date === date ? selection.key : null;
-  const select = (key: string) => setSelection({ date, key });
-  /** Selects a conversation's row and brings it into view (from the tally). */
-  const reveal = (key: string) => {
-    select(key);
-    requestAnimationFrame(() => {
-      const row = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-entry-key]") ?? [])].find((el) => el.dataset.entryKey === key);
-      row?.scrollIntoView({ block: "center" });
-      row?.focus({ preventScroll: true });
-    });
-  };
 
   const setDate = (next: string) => {
     const id = tabId ?? viewer.getState().tabs.find((t) => t.kind === "journal")?.id;
@@ -131,7 +118,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
           title: conversationTitle(e.conversation),
           at: e.at,
           meta: [AGENT_NAMES[e.conversation.id.agent], e.room?.name].filter(Boolean).join(" · "),
-          open: () => reveal(e.key),
+          open: (newTab) => viewer.go(conversationTab(e.conversation.id), newTab),
         };
     }
   };
@@ -164,7 +151,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
             {entries.length ? writeNote : null}
           </div>
           {entries.length ? (
-            <Daybook entries={entries} info={info} selected={selected} onSelect={select} />
+            <Daybook entries={entries} info={info} />
           ) : (
             <EmptyDay date={date} rooms={rooms} writeNote={writeNote} onPick={setDate} />
           )}

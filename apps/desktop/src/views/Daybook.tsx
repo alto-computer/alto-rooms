@@ -164,20 +164,9 @@ const TIME = "pr-4 text-right text-small font-medium text-ink-3 tabular-nums";
 
 /**
  * The day as a daybook: times in the left margin against a thin rule, your notes in serif, agents'
- * artifacts as compact sheets, conversations as one line each. `selected` is the selected
- * conversation's entry key.
+ * artifacts as compact sheets, conversations as one line each.
  */
-export function Daybook({
-  entries,
-  info,
-  selected,
-  onSelect,
-}: {
-  entries: DayEntry[];
-  info: Info;
-  selected: string | null;
-  onSelect: (key: string) => void;
-}) {
+export function Daybook({ entries, info }: { entries: DayEntry[]; info: Info }) {
   return (
     <ol
       aria-label="Your day"
@@ -191,7 +180,7 @@ export function Daybook({
                 <time dateTime={e.at} className={`${TIME} leading-[30px]`}>
                   {clockTime(e.at)}
                 </time>
-                <ConversationRow conversation={e.conversation} room={e.room} entryKey={e.key} selected={selected === e.key} onSelect={() => onSelect(e.key)} />
+                <ConversationRow conversation={e.conversation} room={e.room} entryKey={e.key} />
               </div>
             ))}
           </li>

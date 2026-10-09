@@ -66,10 +66,17 @@ describe("Journal: conversations", () => {
     expect(screen.getByRole("button", { name: "2 sessions" })).toBeInTheDocument();
   });
 
-  it("a click selects the row and never continues it", async () => {
-    await renderWithStores(<Journal />, day([conversation("s1")]));
+  it("a click opens the session in this tab, ⌘-click and Enter with ⌘ in a new one, and none continues it", async () => {
+    const h = await renderWithStores(<Journal />, day([conversation("s1"), conversation("s2", { id: { agent: "codex", session: "s2" } })]));
+    const conversations = () => h.viewer.getState().tabs.filter((t) => t.kind === "conversation");
+    fireEvent.click(rows()[1], { metaKey: true });
+    expect(conversations()).toEqual([expect.objectContaining({ agent: "codex", session: "s2" })]);
+    expect(h.viewer.getState().tabs.some((t) => t.kind === "journal")).toBe(true);
+    fireEvent.keyDown(rows()[0], { key: "Enter", metaKey: true });
+    expect(conversations()).toHaveLength(2);
     fireEvent.click(rows()[0]);
-    expect(rows()[0]).toHaveAttribute("data-selected");
+    const active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
+    expect(active).toMatchObject({ kind: "conversation", agent: "claude-code", session: "s1" });
     expect(continueConversation).not.toHaveBeenCalled();
   });
 
@@ -106,18 +113,15 @@ describe("Journal: conversations", () => {
     await waitFor(() => expect(rows()[0]).not.toHaveTextContent("벤치마크"));
   });
 
-  it("the tally lists the day's conversations newest first, and one selects its row", async () => {
-    await renderWithStores(<Journal />, day([conversation("s1", { title: "아침" }), conversation("s2", { title: "점심", roomId: "p" })]));
+  it("the tally lists the day's conversations newest first, and one opens its session", async () => {
+    const h = await renderWithStores(<Journal />, day([conversation("s1", { title: "아침" }), conversation("s2", { title: "점심", roomId: "p" })]));
     const cell = within(screen.getByRole("region", { name: "Today" })).getByRole("button", { name: "2 sessions" });
     fireEvent.pointerEnter(cell, { pointerType: "mouse" });
     const list = within(await screen.findByRole("dialog", { name: "2 sessions" }));
     const items = list.getAllByRole("button");
     expect(items.map((b) => b.textContent)).toEqual([`${clockTime(`${today}T02:00:00Z`)}점심Claude Code · 벤치마크`, `${clockTime(`${today}T01:00:00Z`)}아침Claude Code`]);
-    await act(async () => {
-      fireEvent.click(items[1]);
-      await new Promise((r) => requestAnimationFrame(r));
-    });
-    expect(screen.getByRole("group", { name: "아침" })).toHaveAttribute("data-selected");
-    expect(screen.getByRole("group", { name: "아침" })).toHaveFocus();
+    await act(async () => void fireEvent.click(items[1]));
+    const active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
+    expect(active).toMatchObject({ kind: "conversation", agent: "claude-code", session: "s1" });
   });
 });

@@ -4,10 +4,12 @@ import { ChevronDown } from "lucide-react";
 import { AgentMark } from "@/components/AgentMark";
 import { Dotted } from "@/components/Dotted";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useClient, useInfo } from "@/data/hooks";
+import { useClient, useInfo, useViewerStore } from "@/data/hooks";
 import { AGENT_NAMES, isAgent } from "@/lib/agents";
-import { conversationKey, conversationTitle, sameConversation } from "@/lib/conversations";
+import { conversationKey, conversationTab, conversationTitle, sameConversation } from "@/lib/conversations";
 import { count, localDate, shortAge } from "@/lib/dates";
+import { wantsNewTab } from "@/lib/nav";
+import { tildePath } from "@/lib/paths";
 import { ContinueButton } from "./ContinueButton";
 
 /**
@@ -36,13 +38,11 @@ function useWritingConversation(artifact: Artifact): Conversation | null {
   return found?.key === key ? found.conversation : null;
 }
 
-/** `~/code/rooms` for a folder under the home. */
-const tilde = (path: string, home: string | undefined) => (home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path);
-
-/** A quiet "Written in <title>" in the artifact's toolbar; it opens a small card with the continue pill. */
+/** A quiet "Written in <title>" in the artifact's toolbar; it opens a small card with the continue pill, whose title opens the session's tab. */
 export function WrittenIn({ artifact }: { artifact: Artifact }) {
   const conversation = useWritingConversation(artifact);
   const home = useInfo()?.home;
+  const viewer = useViewerStore();
   if (!conversation) return null;
   const title = conversationTitle(conversation);
   const agent = AGENT_NAMES[conversation.id.agent];
@@ -55,7 +55,16 @@ export function WrittenIn({ artifact }: { artifact: Artifact }) {
         <ChevronDown size={12} aria-hidden className="shrink-0" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6} aria-label="Written in" className="w-[320px] px-4 py-3.5">
-        <h4 className="line-clamp-2 text-body font-semibold text-ink">{title}</h4>
+        <h4 className="line-clamp-2 text-body font-semibold text-ink">
+          <button
+            type="button"
+            onClick={(e) => viewer.go(conversationTab(conversation.id), wantsNewTab(e))}
+            onAuxClick={(e) => e.button === 1 && viewer.go(conversationTab(conversation.id), true)}
+            className="rounded-sm text-left outline-none hover:underline focus-visible:outline-2 focus-visible:outline-ink"
+          >
+            {title}
+          </button>
+        </h4>
         {conversation.lastReply ? <p className="mt-0.5 truncate text-small leading-[18px] text-ink-2">{conversation.lastReply}</p> : null}
         <p className="mt-1.5 flex items-center gap-1.5 text-small whitespace-nowrap text-ink-3">
           <AgentMark agent={conversation.id.agent} className="size-[13px]" />
@@ -64,7 +73,7 @@ export function WrittenIn({ artifact }: { artifact: Artifact }) {
         <ContinueButton conversation={conversation} className="mt-3.5 h-7 px-2.5" />
         {conversation.cwd ? (
           <p className="mt-2 text-caption text-ink-3">
-            Resumes in Terminal, in <span className="font-mono text-ink-2">{tilde(conversation.cwd, home)}</span>
+            Resumes in Terminal, in <span className="font-mono text-ink-2">{home ? tildePath(conversation.cwd, home) : conversation.cwd}</span>
           </p>
         ) : null}
       </PopoverContent>
