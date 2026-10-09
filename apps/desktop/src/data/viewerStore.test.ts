@@ -441,3 +441,67 @@ describe("ViewerStore: plugins", () => {
     expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });
   });
 });
+
+describe("ViewerStore: reveals", () => {
+  const doc = { kind: "doc", roomId: "r1", artifactId: "a" } as const;
+  /** What `takeReveal` offers, accepted or not. */
+  const offered = (st: ViewerStore, id: string, accept = true) => {
+    const got: unknown[] = [];
+    st.takeReveal(id, (r) => (got.push(r), accept));
+    return got;
+  };
+
+  it("holds an anchor for a doc tab until the doc accepts it, and tells subscribers", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.open(doc);
+    const heard = vi.fn();
+    st.subscribe(heard);
+    st.reveal(id, { pluginId: "marker", anchor: { mark: "x" } });
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(offered(st, id, false), "a script not ready yet leaves it waiting").toEqual([{ pluginId: "marker", anchor: { mark: "x" } }]);
+    expect(offered(st, id)).toEqual([{ pluginId: "marker", anchor: { mark: "x" } }]);
+    expect(offered(st, id), "handed over once").toEqual([]);
+  });
+
+  it("keeps only the last of two quick anchors for one tab", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.open(doc);
+    st.reveal(id, { pluginId: "marker", anchor: 1 });
+    st.reveal(id, { pluginId: "marker", anchor: 2 });
+    expect(offered(st, id)).toEqual([{ pluginId: "marker", anchor: 2 }]);
+  });
+
+  it("drops a waiting anchor when its tab closes or shows something else, so a reopened doc gets none", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.open(doc);
+    st.reveal(id, { pluginId: "marker", anchor: 1 });
+    st.close(id);
+    st.reopen();
+    const back = st.getState().activeId!;
+    expect(offered(st, id)).toEqual([]);
+    expect(offered(st, back)).toEqual([]);
+    st.reveal(back, { pluginId: "marker", anchor: 2 });
+    st.navigate({ kind: "doc", roomId: "r1", artifactId: "b" });
+    expect(offered(st, back)).toEqual([]);
+  });
+
+  it("only queues for a doc tab that exists", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const room = st.open({ kind: "room", roomId: "r1" });
+    st.reveal(room, { pluginId: "marker", anchor: 1 });
+    st.reveal("gone", { pluginId: "marker", anchor: 1 });
+    expect(offered(st, room)).toEqual([]);
+    expect(offered(st, "gone")).toEqual([]);
+  });
+
+  it("never writes an anchor to storage", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    const id = st.open(doc);
+    st.reveal(id, { pluginId: "marker", anchor: { mark: "secret-anchor" } });
+    st.setSidebarOpen(false);
+    st.flush();
+    expect(storage.map.get(VIEWER_STORAGE_KEY)).not.toContain("secret-anchor");
+    expect(offered(new ViewerStore(storage, clock().now), id)).toEqual([]);
+  });
+});

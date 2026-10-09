@@ -1,12 +1,13 @@
+import type { Artifact } from "@alto-rooms/protocol-ts";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { useArtifacts, useAsksStore, useClient, useInfo, usePlugins, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
+import { useArtifacts, useAsksStore, useClient, useInfo, usePlugins, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { PluginSlot, SidePanelOpener } from "@/plugins/PluginSlot";
 import { createContentChannel, type ContentAction, type ContentChannel, type ContentChannelDeps } from "@/plugins/contentChannel";
 import { contentKey, contentPlugins, type HostPlugin } from "@/plugins/pluginsStore";
 import { ToolbarGroup } from "@/components/ToolbarGroup";
-import { useTabVisible } from "@/shell/currentTab";
+import { useCurrentTabId, useTabVisible } from "@/shell/currentTab";
 import { AskBar } from "@/ask/AskBar";
 import { askAction, SelectionBar, type SelectionAction } from "@/selection/SelectionBar";
 import { readSelectionMessage, type SelectionRect } from "@/selection/useTextSelection";
@@ -34,8 +35,9 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
   const asks = useAsksStore();
   const readOnly = useReadOnly();
   const plugins = usePlugins();
-  const fileKey = artifacts?.find((a) => a.id === artifactId)?.fileKey;
-  const content = useContentChannel(frame, fileKey, plugins.list, client);
+  const artifact = artifacts?.find((a) => a.id === artifactId);
+  const src = info && artifact ? client.fileUrl(info, artifact, { contentKey: contentKey(plugins.list) }) : undefined;
+  const content = useContentChannel(frame, artifact, plugins.list, client);
 
   // The store forgets a removed room's artifacts; its documents are gone too.
   const roomGone = info !== null && roomId !== info.journalRoomId && !rooms.some((r) => r.id === roomId);
@@ -43,7 +45,6 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
   if (artifacts === undefined) {
     return loadError ? <Centered>{GENERIC_ERROR}</Centered> : <div className="flex-1 bg-white" />;
   }
-  const artifact = artifacts.find((a) => a.id === artifactId);
   if (!artifact) return <Centered>This doc is gone</Centered>;
   if (!info) return <div className="flex-1 bg-white" />;
 
@@ -56,9 +57,12 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
         <iframe
           title={artifact.title}
           ref={frame}
-          src={client.fileUrl(info, artifact, { contentKey: contentKey(plugins.list) })}
+          src={src}
           sandbox="allow-scripts allow-popups"
-          onLoad={() => setLoaded(true)}
+          onLoad={(e) => {
+            setLoaded(true);
+            content.frameLoaded(e.currentTarget.src);
+          }}
           className={cn("absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out motion-reduce:transition-none", loaded ? "opacity-100" : "opacity-0")}
         />
         {loaded ? null : <DocSkeleton />}
@@ -118,37 +122,69 @@ function useDocSelection(frame: RefObject<HTMLIFrameElement | null>) {
 
 /**
  * The content channel of this tab's doc frame: storage for the content scripts of the plugins
- * that are on, scoped to this document, and the selection actions they declared, in plugin id
- * order. A new plugin set, plugin rev or document makes a new channel, keyed like the frame URL,
- * so a reloaded frame never keeps the old script's actions.
+ * that are on, scoped to this document, the selection actions they declared, in plugin id order,
+ * and the anchors a plugin's `open` queued for this tab. A new channel per frame load and each
+ * time the tab comes back from the background; the frame tells each one what its scripts said.
+ * Call `frameLoaded` with the frame's URL from its load event, which also fires in the background.
  */
-function useContentChannel(frame: RefObject<HTMLIFrameElement | null>, fileKey: string | undefined, list: HostPlugin[], client: ContentChannelDeps["client"]) {
+function useContentChannel(
+  frame: RefObject<HTMLIFrameElement | null>,
+  artifact: Artifact | undefined,
+  list: HostPlugin[],
+  client: ContentChannelDeps["client"],
+) {
   const ids = contentPlugins(list).map((p) => p.id).join(",");
   const key = contentKey(list);
+  const viewer = useViewerStore();
+  const tabId = useCurrentTabId();
   const channel = useRef<ContentChannel | null>(null);
+  // The URL the frame last finished loading. A channel made while the frame loads a new URL asks on
+  // that load instead, so the page on its way out cannot answer for the one coming in.
+  const loadedUrl = useRef<string | null>(null);
   const [declared, setDeclared] = useState<ReadonlyMap<string, ContentAction[]>>(new Map());
+  const fileKey = artifact?.fileKey;
+  // With `key` it names the frame's URL: a change means the frame loads again.
+  const version = artifact?.updatedAt;
   useEffect(() => {
-    if (!fileKey || !ids) return;
-    const ch = createContentChannel({
-      fileKey,
-      plugins: new Set(ids.split(",")),
-      frame: () => frame.current?.contentWindow ?? null,
-      client,
-      onActions: setDeclared,
-    });
+    setDeclared(new Map());
+    if (!fileKey) return;
+    const ch = ids
+      ? createContentChannel({
+          fileKey,
+          plugins: new Set(ids.split(",")),
+          frame: () => frame.current?.contentWindow ?? null,
+          client,
+          onActions: setDeclared,
+          onReady: () => deliver(),
+        })
+      : null;
+    // Without a channel no script in this frame could ever take it, so it is dropped.
+    const deliver = () => viewer.takeReveal(tabId, (r) => !ch || ch.reveal(r.pluginId, r.anchor));
     channel.current = ch;
+    if (ch && frame.current?.src === loadedUrl.current) ch.sync();
+    deliver();
+    const stopReveals = viewer.subscribe(deliver);
+    if (!ch) return stopReveals;
     const onMessage = (e: MessageEvent) => ch.receive(e);
     window.addEventListener("message", onMessage);
     return () => {
+      stopReveals();
       window.removeEventListener("message", onMessage);
       ch.dispose();
       channel.current = null;
-      setDeclared(new Map());
     };
-  }, [frame, fileKey, ids, key, client]);
+  }, [frame, fileKey, version, key, ids, client, viewer, tabId]);
   const actions = useMemo(
     () => [...declared].sort(([a], [b]) => (a < b ? -1 : 1)).flatMap(([plugin, items]) => items.map((it) => ({ plugin, ...it }))),
     [declared],
   );
-  return { actions, run: (plugin: string, actionId: string) => channel.current?.runAction(plugin, actionId) };
+  return {
+    actions,
+    run: (plugin: string, actionId: string) => channel.current?.runAction(plugin, actionId),
+    // Not from `frame`: React detaches the ref while the tab is in the background.
+    frameLoaded: (url: string) => {
+      loadedUrl.current = url;
+      channel.current?.sync();
+    },
+  };
 }

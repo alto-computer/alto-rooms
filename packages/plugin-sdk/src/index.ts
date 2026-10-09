@@ -48,8 +48,12 @@ export interface RoomsPlugin {
   rooms: { list(): Promise<PluginRoom[]> };
   /** Needs the `rooms.read` permission. Newest first. */
   artifacts: { list(roomId: string): Promise<PluginArtifact[]> };
-  /** Opens a room or a document in the current tab. */
-  open(target: { roomId: string } | { fileKey: string }): Promise<void>;
+  /**
+   * Opens a room or a document. From a tab, a document opens in a tab next to yours, or its open
+   * tab comes forward; a room, or anything opened from a side panel, replaces the current tab.
+   * `anchor`, any JSON value up to 4 KiB, goes to your content script's `onReveal` in that document.
+   */
+  open(target: { roomId: string } | { fileKey: string; anchor?: unknown }): Promise<void>;
 }
 
 type Inbound =

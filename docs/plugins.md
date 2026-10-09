@@ -106,9 +106,9 @@ rooms.onBeforeClose(async () => {
 | `storage.onChange(cb)` | Calls `cb(path)` when one of your files changes from outside the frame: an agent called one of your tools, or another frame of your plugin (a tab, a panel, a content script) wrote it. Never for this frame's own writes. Returns an unsubscribe function |
 | `rooms.list()` | Rooms in sidebar order (`rooms.read`) |
 | `artifacts.list(roomId)` | Documents in a room, newest first (`rooms.read`) |
-| `open({ roomId } \| { fileKey })` | Opens a room or document in the current tab |
+| `open({ roomId } \| { fileKey, anchor? })` | Opens a room or document. From a tab, a document opens in a tab next to yours, or its open tab comes forward. A room, or anything opened from a side panel, replaces the current tab. `anchor` is any JSON value up to 4 KiB; your content script gets it in that document through `onReveal` (SDK 0.4.0) |
 
-Errors are `PluginError` with a `code`: `permission_denied`, `invalid_path`, `too_large`, `not_found`, `write_failed`, `unknown_method`, `rate_limited`, `timeout`.
+Errors are `PluginError` with a `code`: `permission_denied`, `invalid_path`, `too_large`, `not_found`, `write_failed`, `unknown_method`, `rate_limited`, `bad_request` (an anchor over 4 KiB or not JSON), `timeout`.
 
 The context is `{ slot: "artifact.sidePanel", artifact }` or `{ slot: "tab" }`. `artifact.fileKey` identifies the original file: it stays the same when Rooms moves the document, and every room that links the same original gets the same key. Key your per-document data by it.
 
@@ -174,9 +174,12 @@ rooms.ready();
 | `setActions(items)` | Replaces your buttons in the selection bar, shown after Ask: up to 6 `{ id, title, color? }`, titles cut to 24 characters with control and bidi formatting characters removed, `color` any CSS color |
 | `onAction(cb)` | Calls `cb(id, selection)` when one of your buttons is clicked. `selection` is the last `{ text, range }` selected in the document, since the click can clear the live selection |
 | `onDataChanged(cb)` | Calls `cb(path)` when another frame of your plugin changed a file in this document's folder |
+| `onReveal(cb)` | Calls `cb(anchor)` with the anchor your plugin passed to `open({ fileKey, anchor })` for this document, once per open, after `ready()` (SDK 0.4.0). When a second `open` for the same document arrives before your script is ready, the script gets only the later anchor. The document can read it and post a fake one, so treat it as untrusted |
 | `ready()` | Tells the app the script is listening |
 
 Messages are `{ rooms: "content", v: 1, plugin, type, … }` posted to `window.parent`, and the SDK trusts only messages whose source is `window.parent`.
+
+The app can stop listening while your script keeps running, for example while the document's tab is in the background. When it listens again, it posts `sync`, and SDK 0.4.0 answers by repeating your last `setActions` and `ready()`. A script built with SDK 0.3 ignores `sync`, so after such a gap its buttons stay missing and anchors wait until the document reloads.
 
 ### What a hostile document can do
 

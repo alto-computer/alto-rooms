@@ -5,9 +5,9 @@
  */
 import type { Artifact, PluginInfo, Room } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
-import type { TabInput } from "@/data/viewerStore";
+import type { ViewerStore } from "@/data/viewerStore";
 
-export type BridgeErrorCode = "permission_denied" | "invalid_path" | "too_large" | "not_found" | "write_failed" | "unknown_method" | "rate_limited";
+export type BridgeErrorCode = "permission_denied" | "invalid_path" | "too_large" | "not_found" | "write_failed" | "unknown_method" | "rate_limited" | "bad_request";
 
 export class BridgeError extends Error {
   code: BridgeErrorCode;
@@ -30,14 +30,18 @@ export type BridgeDeps = {
   };
   /** A write or delete of `path` in the plugin's data went through. */
   changed(path: string): void;
-  /** Opens a room or doc in the current tab. */
-  navigate(tab: TabInput): void;
+  /** The slot the calling frame fills: a tab opens docs in a tab of their own, a side panel in its doc's tab. */
+  slot: "tab" | "artifact.sidePanel";
+  viewer: Pick<ViewerStore, "navigate" | "open" | "reveal">;
   /** The rooms in sidebar order. */
   rooms(): Room[];
 };
 
 /** Largest text a plugin may store in one file (UTF-8 bytes); matches roomsd. */
 export const MAX_DATA_BYTES = 10 * 1024 * 1024;
+
+/** Largest anchor `open` passes on to a content script (UTF-8 bytes of its JSON). */
+export const MAX_ANCHOR_BYTES = 4096;
 
 /** The core's data path rule: 1–200 chars, `/`-joined `[A-Za-z0-9._-]` segments, no `.`/`..`/empty, ≤ 8 deep. */
 export function validPath(path: unknown): path is string {
@@ -53,6 +57,28 @@ function pathOf(params: unknown): string {
   const p = field(params, "path");
   if (!validPath(p)) throw new BridgeError("invalid_path");
   return p;
+}
+
+/** `open`'s anchor as a fresh copy of its JSON, or undefined when there is none. */
+function anchorOf(params: unknown): unknown {
+  const anchor = field(params, "anchor");
+  if (anchor === undefined) return undefined;
+  const refused = new BridgeError("bad_request", `anchor must be JSON of at most ${MAX_ANCHOR_BYTES} bytes`);
+  // Counts at least one byte per key and value, and a string's length (UTF-8 never takes fewer bytes), so a
+  // multi-megabyte anchor stops after a few thousand steps instead of being serialized whole.
+  let budget = MAX_ANCHOR_BYTES;
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(anchor, (key, value: unknown) => {
+      budget -= 1 + key.length + (typeof value === "string" ? value.length : 0);
+      if (budget < 0) throw refused;
+      return value;
+    });
+  } catch {
+    throw refused;
+  }
+  if (json === undefined || new TextEncoder().encode(json).length > MAX_ANCHOR_BYTES) throw refused;
+  return JSON.parse(json);
 }
 
 function needs(p: PluginInfo, permission: string) {
@@ -108,15 +134,19 @@ export async function handleBridgeCall(p: PluginInfo, call: BridgeCall, deps: Br
     case "open": {
       const roomId = field(call.params, "roomId");
       const fileKey = field(call.params, "fileKey");
+      const anchor = anchorOf(call.params);
+      const { viewer } = deps;
       if (typeof roomId === "string") {
         if (!deps.rooms().some((r) => r.id === roomId)) throw new BridgeError("not_found");
-        deps.navigate({ kind: "room", roomId });
+        viewer.navigate({ kind: "room", roomId });
         return null;
       }
       if (typeof fileKey === "string") {
         const a = await relay(client.findArtifactByFileKey(fileKey));
         if (!a) throw new BridgeError("not_found");
-        deps.navigate({ kind: "doc", roomId: a.roomId, artifactId: a.id });
+        const doc = { kind: "doc", roomId: a.roomId, artifactId: a.id } as const;
+        const tabId = deps.slot === "tab" ? viewer.open(doc, { nextToActive: true }) : viewer.navigate(doc);
+        if (anchor !== undefined) viewer.reveal(tabId, { pluginId: p.id, anchor });
         return null;
       }
       throw new BridgeError("not_found");

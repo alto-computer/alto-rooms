@@ -26,6 +26,7 @@ function setup(over: Partial<ContentChannelDeps> = {}) {
     frame: () => doc.win,
     client,
     onActions: (a) => actions.push(a),
+    onReady: () => {},
     now: () => t,
     validColor: (v) => /^#[0-9a-f]{3,8}$|^[a-z]+$/i.test(v),
     ...over,
@@ -244,5 +245,38 @@ describe("contentChannel", () => {
     s.ch.runAction("marker", "other");
     s.ch.runAction("marker", "mark");
     expect(s.doc.got).toEqual([{ rooms: "content", v: 1, type: "selection.action", plugin: "marker", actionId: "mark" }]);
+  });
+});
+
+describe("contentChannel reveal", () => {
+  const reveals = (got: Record<string, unknown>[]) => got.filter((m) => m.type === "reveal");
+
+  it("asks each plugin's script in the frame to repeat itself", () => {
+    const s = track(setup());
+    s.ch.sync();
+    expect(s.doc.got).toEqual([
+      { rooms: "content", v: 1, type: "sync", plugin: "marker" },
+      { rooms: "content", v: 1, type: "sync", plugin: "second" },
+    ]);
+  });
+
+  it("refuses an anchor until the plugin says ready, then posts it and reports ready", () => {
+    const onReady = vi.fn();
+    const s = track(setup({ onReady }));
+    expect(s.ch.reveal("marker", { mark: "x" }), "kept by the caller until ready").toBe(false);
+    s.send({ plugin: "second", type: "ready" });
+    expect(s.ch.reveal("marker", { mark: "x" })).toBe(false);
+    s.send({ plugin: "marker", type: "ready" });
+    expect(onReady).toHaveBeenCalledTimes(2);
+    expect(s.ch.reveal("marker", { mark: "x" })).toBe(true);
+    expect(reveals(s.doc.got)).toEqual([{ rooms: "content", v: 1, type: "reveal", plugin: "marker", anchor: { mark: "x" } }]);
+  });
+
+  it("uses up an anchor for a plugin outside the set at once, and posts nothing", () => {
+    const s = track(setup());
+    expect(s.ch.reveal("goals", 2)).toBe(true);
+    s.send({ plugin: "goals", type: "ready" });
+    expect(s.ch.reveal("goals", 2)).toBe(true);
+    expect(reveals(s.doc.got)).toEqual([]);
   });
 });

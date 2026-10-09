@@ -45,6 +45,11 @@ export interface RoomsContent {
   onAction(cb: (actionId: string, selection: ContentSelection | null) => void): () => void;
   /** Called with the path (relative to this document) when another frame of your plugin changed it. */
   onDataChanged(cb: (path: string) => void): () => void;
+  /**
+   * Called with the `anchor` your plugin passed to `open({ fileKey, anchor })` for this document,
+   * once per open, after `ready()`. The document's own script can read it, and can post a fake one.
+   */
+  onReveal(cb: (anchor: unknown) => void): () => void;
   /** Tells the app this script is listening. */
   ready(): void;
 }
@@ -52,7 +57,9 @@ export interface RoomsContent {
 type Inbound =
   | { type: "reply"; id: string; result?: unknown; error?: { code: PluginErrorCode; message?: string } }
   | { type: "dataChanged"; path: string }
-  | { type: "selection.action"; actionId: string };
+  | { type: "selection.action"; actionId: string }
+  | { type: "reveal"; anchor: unknown }
+  | { type: "sync" };
 
 const TIMEOUT_MS = 10_000;
 
@@ -63,8 +70,11 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
   const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: PluginError) => void; timer: ReturnType<typeof setTimeout> }>();
   const actionListeners = new Set<(id: string, s: ContentSelection | null) => void>();
   const changeListeners = new Set<(path: string) => void>();
+  const revealListeners = new Set<(anchor: unknown) => void>();
   let nextId = 0;
   let last: Range | null = null;
+  let isReady = false;
+  let actions: ContentAction[] | null = null;
 
   document.addEventListener("selectionchange", () => {
     const s = document.getSelection();
@@ -98,6 +108,12 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
     } else if (d.type === "selection.action") {
       const sel = last ? { text: last.toString(), range: last } : null;
       for (const l of [...actionListeners]) l(d.actionId, sel);
+    } else if (d.type === "reveal") {
+      for (const l of [...revealListeners]) l(d.anchor);
+    } else if (d.type === "sync") {
+      // The app made a new channel for this frame and missed what was said before it.
+      if (actions) post({ type: "actions", items: actions });
+      if (isReady) post({ type: "ready" });
     }
   });
 
@@ -109,7 +125,10 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
       list: (prefix = "") => request<string[]>("storage.list", { prefix }),
       delete: (path) => request<void>("storage.delete", { path }),
     },
-    setActions: (items) => post({ type: "actions", items }),
+    setActions(items) {
+      actions = items;
+      post({ type: "actions", items });
+    },
     onAction(cb) {
       actionListeners.add(cb);
       return () => void actionListeners.delete(cb);
@@ -118,6 +137,13 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
       changeListeners.add(cb);
       return () => void changeListeners.delete(cb);
     },
-    ready: () => post({ type: "ready" }),
+    onReveal(cb) {
+      revealListeners.add(cb);
+      return () => void revealListeners.delete(cb);
+    },
+    ready() {
+      isReady = true;
+      post({ type: "ready" });
+    },
   };
 }
