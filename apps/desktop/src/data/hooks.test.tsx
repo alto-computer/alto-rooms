@@ -31,7 +31,7 @@ function client() {
       if (failArtifacts) throw new Error("boom");
       return { data: [a1], seq: 1 };
     },
-    journalDay: async (date) => ({ data: { date, artifacts: [], notes: [] }, seq: 1 }),
+    journalDay: async (date) => ({ data: { date, artifacts: [], notes: [], conversations: [] }, seq: 1 }),
     subscribe: (onEvent) => {
       emit = onEvent;
       return () => {};

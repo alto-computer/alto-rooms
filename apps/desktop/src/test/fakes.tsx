@@ -116,7 +116,7 @@ export function fakeClient(
     journalDay: async (date: string) => {
       const err = opts.dayErrors?.[date];
       if (err) throw err;
-      return { data: { date, artifacts: [], notes: [], ...state.days[date] } as JournalDay, seq };
+      return { data: { date, artifacts: [], notes: [], conversations: [], ...state.days[date] } as JournalDay, seq };
     },
     // Like roomsd: the file is the name with exactly one trailing ".md" stripped, plus ".md".
     getNote: vi.fn(async (date: string, name: string): Promise<string> => {

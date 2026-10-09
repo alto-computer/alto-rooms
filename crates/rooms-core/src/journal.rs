@@ -35,7 +35,7 @@ impl RoomsCore {
             }
         }
         notes.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(JournalDay { date: date.clone(), artifacts, notes })
+        Ok(JournalDay { date: date.clone(), artifacts, notes, conversations: self.day_conversations(date) })
     }
 
     pub fn save_note(&self, date: &IsoDate, name: &str, body: &str) -> Result<Note, CoreError> {

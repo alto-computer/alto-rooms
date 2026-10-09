@@ -30,7 +30,7 @@ pub struct Opts {
 }
 
 impl Opts {
-    pub fn db_path(&self) -> PathBuf { self.data.join("collect.db") }
+    pub fn db_path(&self) -> PathBuf { store::path_in(&self.data) }
     pub fn archive_dir(&self) -> PathBuf { self.data.join("archive") }
 }
 

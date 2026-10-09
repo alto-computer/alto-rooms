@@ -1382,6 +1382,7 @@ dependencies = [
  "nanoid",
  "notify",
  "notify-debouncer-full",
+ "rooms-collect",
  "rooms-protocol",
  "rusqlite",
  "serde",

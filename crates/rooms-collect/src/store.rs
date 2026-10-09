@@ -44,6 +44,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   tokenize="unicode61 tokenchars '_.-/+'");
 "#;
 
+/// The store in the collector's data folder.
+pub fn path_in(data: &Path) -> std::path::PathBuf { data.join("collect.db") }
+
 /// Opens (creating, or rebuilding when stale or broken) the store at `path`.
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     if let Some(d) = path.parent() { let _ = std::fs::create_dir_all(d); }

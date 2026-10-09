@@ -91,6 +91,7 @@ wire!(pub struct JournalDay {
     pub date: IsoDate,
     pub artifacts: Vec<Artifact>,
     pub notes: Vec<Note>,
+    pub conversations: Vec<JournalConversation>,
 });
 
 /// A coding agent whose conversations Rooms reads from its own logs.

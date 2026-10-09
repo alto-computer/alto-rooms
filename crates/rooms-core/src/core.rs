@@ -24,6 +24,8 @@ pub(crate) struct Inner {
     /// Rooms whose root was missing/unreadable at the last rescan (drives one room.updated per transition).
     pub(crate) unavailable: HashSet<RoomId>,
     pub(crate) dangling: DanglingLinks,
+    /// rooms-collect's store, read for conversations; `None` unless roomsd was given its folder.
+    pub(crate) collect_db: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -103,7 +105,7 @@ impl RoomsCore {
         if let Err(e) = crate::onboarding::ensure(&home) { eprintln!("rooms-core: onboarding files not written: {e}"); }
         let (tx, _) = broadcast::channel(EVENT_BUFFER);
         Ok(RoomsCore {
-            inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new(), dangling: DanglingLinks::default() })),
+            inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new(), dangling: DanglingLinks::default(), collect_db: None })),
             seq: Arc::new(AtomicU64::new(0)),
             scan_locks: Arc::new(Mutex::new(HashMap::new())),
             notes_lock: Arc::new(Mutex::new(())),

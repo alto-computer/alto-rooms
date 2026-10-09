@@ -28,7 +28,7 @@ function art(id: string, roomId = "r1", createdAt = `2026-10-05T00:00:0${id.slic
 }
 
 function day(date: string, n = 0): JournalDay {
-  return { date, artifacts: [], notes: Array.from({ length: n }, (_, i) => ({ date, name: `n${i}`, relPath: `n${i}.md`, updatedAt: date, author: "me" })) };
+  return { date, artifacts: [], notes: Array.from({ length: n }, (_, i) => ({ date, name: `n${i}`, relPath: `n${i}.md`, updatedAt: date, author: "me" })), conversations: [] };
 }
 
 /** Scripted roomsd: snapshot results are captured at call time; `hold()` delays responses until `release*()`. */

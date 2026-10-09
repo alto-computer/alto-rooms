@@ -1,5 +1,6 @@
 mod artifacts;
 pub mod asks;
+mod conversations;
 pub mod core;
 mod dangling;
 pub mod error;
