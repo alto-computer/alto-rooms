@@ -4,6 +4,7 @@ import { RadioGroup } from "radix-ui";
 import { useViewer, useViewerStore } from "@/data/hooks";
 import { isAppearance, type Appearance } from "@/lib/appearance";
 import { onSettingsSection, settingsSectionId, takeSettingsSection } from "@/lib/settings";
+import { AutoSortSettings } from "./AutoSortSettings";
 import { Row, Section } from "./settingsUi";
 
 /** The Settings tab: Appearance, Auto-sort and Plugins in one column. */
@@ -25,6 +26,7 @@ export function SettingsView() {
       <div className="mx-auto flex w-full max-w-[640px] flex-col gap-8 px-8 pt-12 pb-16">
         <h1 className="px-1 font-display text-display font-medium tracking-[-0.015em] text-ink">Settings</h1>
         <AppearanceSection />
+        <AutoSortSettings />
       </div>
     </div>
   );

@@ -95,7 +95,7 @@ aside = true
 | R4 | yes | nowhere yet: a vote for its repo; at 3 votes a room named after the repo is made and they move in |
 | R5 | | stays in `inbox` |
 
-To turn on R3 and R4, paste a [TypeSafe key](https://console.typesafe.ai/keys) into the panel above the inbox. The key is kept in the macOS Keychain; `TYPESAFE_API_KEY` in the app's environment wins over it. For each doc, Jev gets its title, its path inside the repo and its first 2,000 characters, plus each room's name and five recent titles.
+To turn on R3 and R4, paste a [TypeSafe key](https://console.typesafe.ai/keys) into **Settings › Auto-sort** (`⌘,`), which also shows the last run and undoes it. The key is kept in the macOS Keychain; `TYPESAFE_API_KEY` in the app's environment wins over it. For each doc, Jev gets its title, its path inside the repo and its first 2,000 characters, plus each room's name and five recent titles.
 
 ```sh
 rooms-sort log            # every decision with its rule and reason
