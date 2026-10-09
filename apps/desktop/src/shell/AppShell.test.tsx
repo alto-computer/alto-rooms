@@ -130,15 +130,23 @@ describe("AppShell: sidebar", () => {
     expect(screen.queryByRole("textbox", { name: "Room name" })).toBeNull();
   });
 
-  it("Journal opens a single journal tab for today", async () => {
+  it("Journal activates the tab already on today, else turns a journal tab to today", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
+    const home = h.viewer.getState().activeId!;
+    let other = "";
+    act(() => {
+      other = h.viewer.open({ kind: "journal", date: "2026-01-02" });
+      h.viewer.move(other, 0); // the other day's tab comes first
+    });
     fireEvent.click(screen.getByRole("button", { name: "Journal" }));
-    fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+    expect(h.viewer.getState().activeId).toBe(home);
+    expect(activeTab()).toHaveTextContent(HOME);
+    expect(h.viewer.getState().tabs.find((t) => t.id === other)).toMatchObject({ date: "2026-01-02" });
+
+    act(() => h.viewer.close(home));
     fireEvent.click(screen.getByRole("button", { name: "Journal" }));
-    const journals = h.viewer.getState().tabs.filter((t) => t.kind === "journal");
-    expect(journals).toHaveLength(1);
-    const now = new Date();
-    expect(activeTab()).toHaveTextContent(`Journal · ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][now.getMonth()]} ${now.getDate()}`);
+    expect(h.viewer.getState().tabs.filter((t) => t.kind === "journal").map((t) => t.id)).toEqual([other]);
+    expect(activeTab()).toHaveTextContent(HOME);
   });
 
   it("a note tab's label strips one .md (any case) from the file name", async () => {

@@ -19,10 +19,11 @@ import { RoomList } from "./RoomList";
 import { RoomRow } from "./RoomRow";
 import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE, SECTION } from "./sidebarItem";
 
-/** Opens (or activates) the single journal tab, pointed at today's local date. */
+/** Activates a journal tab pointed at today's local date: one already on today, else the first journal tab, else a new one. */
 export function openJournal(viewer: ViewerStore) {
   const today = localDate();
-  const existing = viewer.getState().tabs.find((t) => t.kind === "journal");
+  const { tabs } = viewer.getState();
+  const existing = tabs.find((t) => t.kind === "journal" && t.date === today) ?? tabs.find((t) => t.kind === "journal");
   if (!existing) {
     viewer.open({ kind: "journal", date: today });
     return;
