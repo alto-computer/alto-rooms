@@ -10,7 +10,9 @@ export type Tab =
   | { id: string; kind: "journal"; date: string }
   | { id: string; kind: "note"; date: string; name: string }
   | { id: string; kind: "plugin"; pluginId: string }
-  | { id: string; kind: "conversation"; agent: Agent; session: string };
+  | { id: string; kind: "conversation"; agent: Agent; session: string }
+  /** One per window: opening it again shows the one already open. */
+  | { id: string; kind: "settings" };
 
 /** `Omit` distributed over the union, so each kind keeps its own id fields. */
 export type TabInput = Tab extends infer T ? (T extends Tab ? Omit<T, "id"> : never) : never;
@@ -83,6 +85,8 @@ function parseTab(v: unknown, today: string): Tab | null {
       return isStr(t.pluginId) ? { id: t.id, kind: "plugin", pluginId: t.pluginId } : null;
     case "conversation":
       return isAgent(t.agent) && isSession(t.session) ? { id: t.id, kind: "conversation", agent: t.agent, session: t.session } : null;
+    case "settings":
+      return { id: t.id, kind: "settings" };
     default:
       return null;
   }
@@ -163,6 +167,8 @@ function sameTab(a: TabInput | Tab, b: TabInput | Tab): boolean {
       return b.kind === "plugin" && a.pluginId === b.pluginId;
     case "conversation":
       return b.kind === "conversation" && a.agent === b.agent && a.session === b.session;
+    case "settings":
+      return b.kind === "settings";
   }
 }
 
@@ -187,6 +193,8 @@ function makeTab(id: string, t: TabInput): Tab {
       return { id, kind: "plugin", pluginId: t.pluginId };
     case "conversation":
       return { id, kind: "conversation", agent: t.agent, session: t.session };
+    case "settings":
+      return { id, kind: "settings" };
   }
 }
 

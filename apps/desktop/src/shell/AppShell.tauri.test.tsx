@@ -132,6 +132,22 @@ describe("AppShell in Tauri", () => {
     expect(activeKind(h)).toBe("room");
   });
 
+  it("menu://settings opens Settings once, and the page leaves ⌘, to the menu", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms });
+    await act(async () => {}); // listeners register asynchronously
+    const comma = new KeyboardEvent("keydown", { key: ",", code: "Comma", metaKey: true, cancelable: true, bubbles: true });
+    act(() => {
+      window.dispatchEvent(comma);
+    });
+    expect(comma.defaultPrevented).toBe(false);
+    expect(activeKind(h)).toBe("journal");
+    menu("menu://settings");
+    expect(activeKind(h)).toBe("settings");
+    expect(screen.getByRole("heading", { level: 1, name: "Settings" })).toBeInTheDocument();
+    menu("menu://settings");
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["journal", "settings"]);
+  });
+
   it("the menu's ⌘W follows the text-field rule", async () => {
     const h = await renderWithStores(<AppShell />, { rooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));

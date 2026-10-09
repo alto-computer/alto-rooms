@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Room } from "@alto-rooms/protocol-ts";
-import { BookOpen, CircleAlert, Inbox, PanelLeft, Plus, Search } from "lucide-react";
+import { BookOpen, CircleAlert, Inbox, PanelLeft, Plus, Search, Settings } from "lucide-react";
 import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
 import { useClient, useReadOnly, useRoomList, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
@@ -8,11 +8,12 @@ import { isNewSince, localDate } from "@/lib/dates";
 import { INBOX_ID, type ArtifactDragPayload, type ConversationDragPayload } from "@/lib/drag";
 import { errorCopy, moveErrorCopy } from "@/lib/errors";
 import { moveWithinSection } from "@/lib/roomOrder";
+import { openSettings } from "@/lib/settings";
 import { wantsNewTab } from "@/lib/nav";
 import { IconTip } from "@/components/IconTip";
 import { cn } from "@/lib/utils";
 import { useBriefError } from "@/views/briefError";
-import { BrandMenu } from "./BrandMenu";
+import { BrandRow } from "./BrandRow";
 import { NewRoomRow } from "./NewRoomRow";
 import { PluginItems } from "./PluginItems";
 import { RoomList } from "./RoomList";
@@ -121,7 +122,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
       {/* App chrome: labels don't select on drag or double click (the rename field still does). */}
       <div className="flex h-full min-h-0 flex-col bg-linear-to-b from-(--sidebar-sheen-top) to-(--sidebar-sheen-bottom) px-2.5 pt-3 pb-2.5 select-none [&_input]:select-text">
         <div className="mb-2.5 flex items-center">
-          <BrandMenu />
+          <BrandRow />
           <IconTip label="Hide sidebar" shortcut="⌘B">
             <button
               type="button"
@@ -192,13 +193,25 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
           </RoomList>
         </div>
-        <PluginItems />
         {moveFailed.shown ? (
           <p role="status" className="mt-2 flex items-center gap-1.5 px-2 text-small text-error">
             <CircleAlert size={14} aria-hidden className="shrink-0" />
             {moveError}
           </p>
         ) : null}
+        <PluginItems />
+        <div className="mt-2 flex flex-col gap-px">
+          <button
+            type="button"
+            onClick={() => openSettings(viewer)}
+            aria-current={active?.kind === "settings" ? "page" : undefined}
+            className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "settings" && ITEM_CURRENT)}
+          >
+            <Settings {...ICON} className={cn("shrink-0", active?.kind === "settings" ? "text-ink" : "text-ink-2")} />
+            <span className="truncate">Settings</span>
+            <kbd aria-hidden className="ml-auto pl-2 font-sans text-caption text-ink-3">⌘,</kbd>
+          </button>
+        </div>
       </div>
     </ShadcnSidebar>
   );

@@ -10,9 +10,11 @@ import {
   MENU_NEXT_TAB,
   MENU_PREV_TAB,
   MENU_REOPEN_TAB,
+  MENU_SETTINGS,
   MENU_TOGGLE_ASK,
   MENU_TOGGLE_SIDEBAR,
 } from "@/lib/appEvents";
+import { openSettings } from "@/lib/settings";
 import { isTauri } from "@/lib/tauri";
 import { allowedWithFocus, historyKey, isMenuHistoryKey, isMenuTabKey, isTextField, keyAction, tabKey, type ShortcutAction, type TabKey } from "./shortcuts";
 
@@ -42,12 +44,15 @@ function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => 
     case "toggle-ask":
       toggleAsk();
       break;
+    case "settings":
+      openSettings(viewer);
+      break;
   }
 }
 
 /**
- * ⌘B sidebar, ⌘W close tab, ⌘T new tab (home: today's Journal), ⌘K quick find, ⌘J ask bar. Bound on window.
- * In Tauri all five belong to the native menu (which emits `menu://…`), so the
+ * ⌘B sidebar, ⌘W close tab, ⌘T new tab (home: today's Journal), ⌘K quick find, ⌘J ask bar, ⌘, Settings.
+ * Bound on window. In Tauri all six belong to the native menu (which emits `menu://…`), so the
  * page leaves them alone and they never fire twice. Either way the same focus
  * rule applies: ⌘K and ⌘J work from a text field, the others don't (except ⌘W from
  * the note body).
@@ -78,6 +83,7 @@ function useShortcuts(viewer: ViewerStore, openFind: () => void, toggleAsk: () =
       [MENU_FIND]: fromMenu("find"),
       [MENU_TOGGLE_SIDEBAR]: fromMenu("toggle-sidebar"),
       [MENU_TOGGLE_ASK]: fromMenu("toggle-ask"),
+      [MENU_SETTINGS]: fromMenu("settings"),
     });
   }, [viewer, openFind, toggleAsk]);
 }

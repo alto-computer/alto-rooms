@@ -1,7 +1,7 @@
 import type { MouseEvent } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Calendar, FileText, Folder, MessageSquare, Puzzle, X, type LucideIcon } from "lucide-react";
+import { Calendar, FileText, Folder, MessageSquare, Puzzle, Settings, X, type LucideIcon } from "lucide-react";
 import { AgentMark } from "@/components/AgentMark";
 import { RoomDot } from "@/components/RoomDot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -21,6 +21,7 @@ const ICONS: Record<Tab["kind"], LucideIcon> = {
   plugin: Puzzle,
   // Drawn as its agent's mark instead.
   conversation: MessageSquare,
+  settings: Settings,
 };
 
 /** One tab in the strip: activates on click, sorts by drag, closes from its button or a middle click. */

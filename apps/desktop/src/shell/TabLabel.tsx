@@ -45,6 +45,8 @@ export function TabLabel({ tab }: { tab: Tab }) {
       return <PluginLabel pluginId={tab.pluginId} />;
     case "conversation":
       return <ConversationLabel agent={tab.agent} session={tab.session} />;
+    case "settings":
+      return <>Settings</>;
   }
 }
 

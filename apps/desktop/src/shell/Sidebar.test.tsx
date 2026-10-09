@@ -462,28 +462,42 @@ describe("Sidebar: unread rooms", () => {
   });
 });
 
-describe("Sidebar: Rooms menu", () => {
-  const openMenu = () => fireEvent.keyDown(screen.getByRole("button", { name: "Rooms" }), { key: "Enter" });
+describe("Sidebar: brand row and Settings", () => {
+  it("the brand row is a plain button that takes this tab home; ⌘-click opens home in a new tab", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.navigate({ kind: "room", roomId: "a" });
+    await renderWithStores(<AppShell />, { rooms: [room("a", "A")], viewer });
+    const brand = screen.getByRole("button", { name: "Rooms" });
+    expect(brand).not.toHaveAttribute("aria-haspopup");
+    fireEvent.click(brand);
+    expect(viewer.getState().tabs).toEqual([expect.objectContaining({ kind: "journal", date: localDate() })]);
+    expect(screen.queryByRole("menu")).toBeNull();
+    viewer.navigate({ kind: "room", roomId: "a" });
+    fireEvent.click(brand, { metaKey: true });
+    expect(viewer.getState().tabs.map((t) => t.kind)).toEqual(["room", "journal"]);
+  });
 
-  it("offers System, Light and Dark, defaulting to System, and nothing else", async () => {
-    await renderWithStores(<AppShell />, { rooms: [room("a", "A")] });
-    openMenu();
-    const group = await screen.findByRole("group", { name: "Appearance" });
-    expect(within(group).getAllByRole("menuitemradio").map((r) => [r.textContent, r.getAttribute("aria-checked")])).toEqual([
+  it("the Settings row opens the Settings tab, marked current, where Dark is saved", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    await renderWithStores(<AppShell />, { rooms: [room("a", "A")], viewer });
+    fireEvent.click(screen.getByRole("button", { name: /^Settings/ }));
+    expect(screen.getByRole("button", { name: /^Settings/ })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("tab", { name: "Settings", selected: true })).toBeInTheDocument();
+    const group = screen.getByRole("radiogroup", { name: "Appearance" });
+    expect(within(group).getAllByRole("radio").map((r) => [r.textContent, r.getAttribute("aria-checked")])).toEqual([
       ["System", "true"],
       ["Light", "false"],
       ["Dark", "false"],
     ]);
-    expect(screen.queryByText(/Follows macOS/)).toBeNull();
-    expect(screen.queryByRole("menuitem")).toBeNull();
+    fireEvent.click(within(group).getByRole("radio", { name: "Dark" }));
+    expect(viewer.getState().appearance).toBe("dark");
+    expect(within(group).getByRole("radio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
   });
 
-  it("picking Dark saves it and keeps the menu open", async () => {
+  it("⌘, opens Settings outside the app too", async () => {
     const viewer = new ViewerStore(memoryStorage());
     await renderWithStores(<AppShell />, { rooms: [room("a", "A")], viewer });
-    openMenu();
-    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Dark" }));
-    expect(viewer.getState().appearance).toBe("dark");
-    expect(screen.getByRole("menuitemradio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.keyDown(window, { key: ",", code: "Comma", metaKey: true });
+    expect(viewer.getState().tabs.map((t) => t.kind)).toEqual(["journal", "settings"]);
   });
 });

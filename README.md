@@ -137,6 +137,7 @@ Right-click a plugin in the sidebar to turn it off. To add another, copy its fol
 | `⌘T` / `⌘W` | New tab (today's Journal) / close tab |
 | `⌘K` | Find a room or document |
 | `⌘B` | Toggle the sidebar |
+| `⌘,` | Settings |
 | `⌘[` / `⌘]`, `⌘←` / `⌘→` | Back / forward |
 | `⌘`-click | Open in a new tab |
 

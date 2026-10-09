@@ -5,9 +5,8 @@ const isDark = (page: Page) => page.evaluate(() => document.documentElement.clas
 const desk = (page: Page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
 async function pick(page: Page, appearance: "System" | "Light" | "Dark") {
-  await page.getByRole("button", { name: "Rooms", exact: true }).click();
-  await page.getByRole("menuitemradio", { name: appearance }).click();
-  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /^Settings/ }).click();
+  await page.getByRole("radiogroup", { name: "Appearance" }).getByRole("radio", { name: appearance }).click();
 }
 
 test("System follows the OS scheme live, and paints the dark desk", async ({ page, daemon }) => {

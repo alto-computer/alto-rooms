@@ -523,3 +523,17 @@ describe("ViewerStore: conversations", () => {
     expect(new ViewerStore(storage, clock().now).getState().tabs.map((t) => t.id)).toEqual(["ok"]);
   });
 });
+
+describe("ViewerStore: settings", () => {
+  it("there is one Settings tab: opening it again shows that one, and it persists", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    const id = st.open({ kind: "settings" });
+    st.open(HOME);
+    expect(st.open({ kind: "settings" })).toBe(id);
+    expect(st.getState().activeId).toBe(id);
+    expect(st.getState().tabs.filter((t) => t.kind === "settings")).toHaveLength(1);
+    st.flush();
+    expect(new ViewerStore(storage, clock().now).getState().tabs).toContainEqual({ id, kind: "settings" });
+  });
+});

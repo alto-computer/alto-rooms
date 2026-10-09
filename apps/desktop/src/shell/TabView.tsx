@@ -5,6 +5,7 @@ import { DocView } from "@/views/DocView";
 import { JournalView } from "@/views/JournalView";
 import { NoteView } from "@/views/NoteView";
 import { RoomView } from "@/views/RoomView";
+import { SettingsView } from "@/views/SettingsView";
 
 /** The active tab's view. Mounted per tab id and in-tab navigation, so mount = arriving. */
 export function TabView({ tab }: { tab: Tab }) {
@@ -21,5 +22,7 @@ export function TabView({ tab }: { tab: Tab }) {
       return <PluginSlot slot="tab" pluginId={tab.pluginId} context={{}} />;
     case "conversation":
       return <ConversationView id={{ agent: tab.agent, session: tab.session }} />;
+    case "settings":
+      return <SettingsView />;
   }
 }
