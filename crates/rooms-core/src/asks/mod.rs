@@ -96,6 +96,7 @@ pub enum AskError {
     #[error("Too many questions running — try again when one finishes")] Capacity,
     #[error("Couldn't read agent settings: {0}")] AgentConfig(String),
     #[error("Couldn't save the conversation: {0}")] Io(String),
+    #[error("Couldn't list the documents: {0}")] Listing(String),
 }
 
 impl AskError {
@@ -106,7 +107,7 @@ impl AskError {
             AskError::Busy => "ask_busy",
             AskError::Capacity => "ask_capacity",
             AskError::AgentConfig(_) => "agent_config",
-            AskError::Io(_) => "io",
+            AskError::Io(_) | AskError::Listing(_) => "io",
         }
     }
 
@@ -116,7 +117,7 @@ impl AskError {
             AskError::NotFound | AskError::RoomNotFound => 404,
             AskError::Busy | AskError::Capacity => 409,
             AskError::AgentConfig(_) => 422,
-            AskError::Io(_) => 500,
+            AskError::Io(_) | AskError::Listing(_) => 500,
         }
     }
 }
@@ -269,13 +270,10 @@ impl Asks {
         let (listing, entries) = match scope {
             AskScope::Doc { file_key } => return self.resolve_doc(file_key),
             AskScope::Room { room_id } => {
-                let (name, entries) = core.room_context(room_id).map_err(|e| match e {
-                    CoreError::RoomNotFound => AskError::RoomNotFound,
-                    e => AskError::Io(e.to_string()),
-                })?;
+                let (name, entries) = core.room_context(room_id).map_err(listing_error)?;
                 (Listing::Room(name), entries)
             }
-            AskScope::Day { date } => (Listing::Day(date.clone()), core.day_context(date).map_err(|e| AskError::Io(e.to_string()))?),
+            AskScope::Day { date } => (Listing::Day(date.clone()), core.day_context(date).map_err(listing_error)?),
         };
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
         let plan = profiles.plan(None, None);
@@ -540,6 +538,19 @@ impl Asks {
     }
 }
 
+/// A room or day listing that failed: a missing room is the user's to see, a bad scope theirs to
+/// fix, and anything else (the index, the disk) is reported as what it is.
+fn listing_error(e: CoreError) -> AskError {
+    match e {
+        CoreError::RoomNotFound => AskError::RoomNotFound,
+        CoreError::InvalidInput(m) | CoreError::BadRequest(m) => AskError::BadRequest(m),
+        // Their own text says "write failed", which a listing never does.
+        CoreError::Io(e) => AskError::Listing(e.to_string()),
+        CoreError::Db(e) => AskError::Listing(e.to_string()),
+        e => AskError::Listing(e.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,6 +565,7 @@ mod tests {
         assert_eq!(wire(AskError::Capacity), (409, "ask_capacity", "Too many questions running — try again when one finishes".into()));
         assert_eq!(wire(AskError::AgentConfig("x".into())), (422, "agent_config", "Couldn't read agent settings: x".into()));
         assert_eq!(wire(AskError::Io("x".into())), (500, "io", "Couldn't save the conversation: x".into()));
+        assert_eq!(wire(AskError::Listing("x".into())), (500, "io", "Couldn't list the documents: x".into()));
     }
 
     fn exited(code: i32, stdout: &str, stderr_tail: &str) -> Outcome {
@@ -668,6 +680,17 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(std::fs::metadata(&cwd).unwrap().permissions().mode() & 0o777, 0o700);
         assert_eq!(std::fs::read_dir(&cwd).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn listing_errors_say_what_failed() {
+        assert!(matches!(listing_error(CoreError::RoomNotFound), AskError::RoomNotFound));
+        assert!(matches!(listing_error(CoreError::InvalidInput("journal".into())), AskError::BadRequest(m) if m == "journal"));
+        let db = listing_error(CoreError::Db(rusqlite::Error::InvalidQuery));
+        assert!(matches!(db, AskError::Listing(_)), "{db:?}");
+        assert!(db.to_string().starts_with("Couldn't list the documents: "), "{db}");
+        let io = listing_error(CoreError::Io(std::io::Error::other("disk")));
+        assert_eq!(io.to_string(), "Couldn't list the documents: disk");
     }
 
     /// `cargo test -p rooms-core --release context_timing -- --ignored --nocapture`
