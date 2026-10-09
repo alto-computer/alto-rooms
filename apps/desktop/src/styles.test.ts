@@ -50,7 +50,8 @@ describe("app code", () => {
     files.flatMap(({ name, lines }) => (allow(name) ? [] : lines.flatMap((l, i) => (re.test(l) ? [`${name}:${i + 1}: ${l.trim()}`] : []))));
 
   it("uses colour tokens, not raw hex (black in a mask gradient aside)", () => {
-    expect(offending(/#(?!000\b)[0-9a-fA-F]{3,8}\b/)).toEqual([]);
+    // An underscore ends a hex in a Tailwind arbitrary value (`[scrollbar-color:#ddd_transparent]`), so it counts as a boundary.
+    expect(offending(/#(?!000(?![0-9a-fA-F]))[0-9a-fA-F]{3,8}(?![0-9a-zA-Z])/)).toEqual([]);
     expect(offending(/\b(text|border|ring|outline)-(white|black)\b|\bbg-black\b/)).toEqual([]);
     expect(offending(/\bbg-white\b/, (name) => WHITE_PAGE_FILES.includes(name))).toEqual([]);
   });
