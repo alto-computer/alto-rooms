@@ -255,6 +255,7 @@ test("a plugin tab opens a doc next to it at an anchor; an open doc comes forwar
   const doc = docFrame(page, "Report");
   await expect(doc.locator("html")).toHaveAttribute("data-marker-reveal", '{"mark":"x"}');
   await expect(doc.locator("html")).toHaveAttribute("data-marker-reveals", "1");
+  await expect.poll(() => daemon.read(`.rooms/plugins/marker/data/docs/${key}/reveal.json`).catch(() => ""), "the script can store what it got").toBe('{"anchor":{"mark":"x"},"count":1}');
 
   await tabNamed(page, "Marker").click();
   await openFromMarker(page, key, '{"mark":"y"}');
