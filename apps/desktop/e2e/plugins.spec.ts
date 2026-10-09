@@ -58,6 +58,7 @@ test("a plugin is asked about, runs beside a document, keeps its notes across a 
   await expect.poll(async () => ((await api(daemon, "GET", `/v1/rooms/${bench.id}/artifacts`)) as Doc[]).length).toBe(1);
   const [doc] = (await api(daemon, "GET", `/v1/rooms/${bench.id}/artifacts`)) as Doc[];
   await openDoc(page, "Bench");
+  await expect(page.getByRole("button", { name: "Open Echo" }).locator("svg.lucide-palette")).toBeVisible();
   await page.getByRole("button", { name: "Open Echo" }).click();
   await expect(echoFrame(page).locator("#ctx")).toHaveText(`doc ${doc.fileKey}`);
   await echoFrame(page).getByRole("button", { name: "Save" }).click();

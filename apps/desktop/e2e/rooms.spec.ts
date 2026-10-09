@@ -64,6 +64,22 @@ test("AC-9: Open in new tab opens a doc tab with the files-origin iframe", async
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts allow-popups");
 });
 
+test("the doc tab's Share menu copies the doc's path; the app-only actions stay out of the web build", async ({ page, context, daemon }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await openApp(page);
+  await createRoomInUi(page, "연구 도구");
+  await daemon.write("연구-도구/a.html", "<title>첫 문서</title>");
+  const c = card(page, "첫 문서");
+  await c.hover();
+  await c.getByRole("button", { name: "Open in new tab" }).click();
+  await expect(page.getByRole("tab", { name: "첫 문서", selected: true })).toBeVisible();
+  await page.getByRole("button", { name: "Share" }).click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Copy file path"]);
+  await page.getByRole("menuitem", { name: "Copy file path" }).click();
+  await expect(page.getByText("Copied file path")).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(path.join(daemon.home, "연구-도구", "a.html"));
+});
+
 test("an open doc reloads when its file is rewritten", async ({ page, daemon }) => {
   await openApp(page);
   await createRoomInUi(page, "연구 도구");

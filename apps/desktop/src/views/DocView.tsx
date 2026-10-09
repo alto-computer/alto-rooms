@@ -2,10 +2,12 @@ import { useState, type ReactNode } from "react";
 import { useArtifacts, useClient, useInfo, useRoomList, useScopeError } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { PluginSlot } from "@/plugins/PluginSlot";
+import { PluginSlot, SidePanelOpener } from "@/plugins/PluginSlot";
+import { ToolbarGroup } from "@/components/ToolbarGroup";
 import { useTabVisible } from "@/shell/currentTab";
 import { AskBar } from "@/ask/AskBar";
 import { DocSkeleton } from "./DocSkeleton";
+import { ShareMenu } from "./ShareMenu";
 
 function Centered({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center bg-white p-12 text-center text-[17px] text-ink-2">{children}</div>;
@@ -46,6 +48,10 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
         />
         {loaded ? null : <DocSkeleton />}
         <AskBar artifact={artifact} />
+        <ToolbarGroup label="Document actions">
+          <ShareMenu artifact={artifact} />
+          {visible ? <SidePanelOpener /> : null}
+        </ToolbarGroup>
       </div>
       {/* A plugin frame treats a hidden tab as closed (its effects end), so it only lives in the visible one. */}
       {visible ? <PluginSlot slot="artifact.sidePanel" context={{ artifact }} /> : null}

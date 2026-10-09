@@ -113,6 +113,27 @@ describe("artifact side panel", () => {
   it("shows nothing without an enabled side-panel plugin", async () => {
     await openDoc([plugin({ enabled: false, needsApproval: true }), echoTab()]);
     expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
+    const group = screen.getByRole("group", { name: "Document actions" });
+    expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share"]);
+  });
+
+  it("opens from an icon beside Share, drawn from the manifest's icon, else a pencil", async () => {
+    await openDoc([plugin({ slots: { artifactSidePanel: { title: "Echo", icon: "palette" }, tab: null } })]);
+    const group = screen.getByRole("group", { name: "Document actions" });
+    expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share", "Open Echo"]);
+    const opener = within(group).getByRole("button", { name: "Open Echo" });
+    expect(opener).toHaveTextContent("");
+    expect(opener.querySelector("svg.lucide-palette")).not.toBeNull();
+    cleanup();
+    await openDoc();
+    expect(screen.getByRole("button", { name: "Open Echo" }).querySelector("svg.lucide-pencil")).not.toBeNull();
+  });
+
+  it("an open panel leaves Share alone in the group", async () => {
+    await openDoc();
+    await openPanel();
+    const group = screen.getByRole("group", { name: "Document actions" });
+    expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share"]);
   });
 
   it("opens a sandboxed frame from the plugin's folder and remembers it is open", async () => {
