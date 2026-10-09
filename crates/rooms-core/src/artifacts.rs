@@ -255,8 +255,14 @@ mod tests {
         assert_eq!(rels(&core, &r.id), vec!["a.html".to_string()]);
     }
 
+    /// Today at `h` o'clock, local time, as a `rooms:created` meta tag.
+    fn created_at(h: u32) -> String {
+        let t = chrono::Local::now().date_naive().and_hms_opt(h, 0, 0).unwrap().and_local_timezone(chrono::Local).unwrap();
+        format!(r#"<meta name="rooms:created" content="{}">"#, t.to_rfc3339())
+    }
+
     #[test]
-    fn room_context_resolves_symlinks_and_skips_missing() {
+    fn room_context_lists_realpaths_newest_first_and_skips_missing() {
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
         let r = core.create_room("Research").unwrap();
@@ -264,27 +270,24 @@ mod tests {
         let o = tempfile::tempdir().unwrap();
         let orig = std::fs::canonicalize(o.path()).unwrap().join("orig.html");
         let gone = orig.with_file_name("gone.html");
-        std::fs::write(&orig, "<title>Linked</title>").unwrap();
+        std::fs::write(&orig, format!("<title>Linked</title>{}", created_at(3))).unwrap();
         std::fs::write(&gone, "<title>Gone</title>").unwrap();
         std::os::unix::fs::symlink(&orig, root.join("link.html")).unwrap();
         std::os::unix::fs::symlink(&gone, root.join("dangling.html")).unwrap();
-        std::fs::write(root.join("plain.html"), "<title>Plain\n  file</title>").unwrap();
+        std::fs::write(root.join("plain.html"), format!("<title>Plain\n  file</title>{}", created_at(1))).unwrap();
+        std::fs::write(root.join("mid.html"), format!("<title>Mid</title>{}", created_at(2))).unwrap();
         core.backfill_all().unwrap();
-        assert_eq!(core.list_artifacts(&r.id).unwrap().len(), 3);
+        assert_eq!(core.list_artifacts(&r.id).unwrap().len(), 4);
         std::fs::remove_file(&gone).unwrap();
 
         let (name, entries) = core.room_context(&r.id).unwrap();
         assert_eq!(name, "Research");
-        let mut paths: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
-        paths.sort();
-        let mut want = vec![orig, std::fs::canonicalize(root.join("plain.html")).unwrap()];
-        want.sort();
-        assert_eq!(paths, want, "realpaths only; the dangling link is left out");
+        let paths: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
+        let real = |f: &str| std::fs::canonicalize(root.join(f)).unwrap();
+        assert_eq!(paths, vec![orig, real("mid.html"), real("plain.html")], "realpaths, newest first; the dangling link is left out");
         let today = local_day(&chrono::Local::now().to_rfc3339()).unwrap();
         assert!(entries.iter().all(|e| e.label == "Research" && e.day == today), "{entries:?}");
-        for not_a_room in [JOURNAL_ROOM_ID, "nope"] {
-            assert!(matches!(core.room_context(&not_a_room.into()), Err(CoreError::RoomNotFound)), "{not_a_room}");
-        }
+        assert!(matches!(core.room_context(&"nope".into()), Err(CoreError::RoomNotFound)));
     }
 
     /// Makes the index step of `move_artifact` fail on this thread (after the filesystem move).

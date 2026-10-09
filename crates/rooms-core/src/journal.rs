@@ -135,31 +135,35 @@ mod tests {
     use super::*;
     use crate::rules::local_day;
 
+    /// Today at `h` o'clock, local time, as a `rooms:created` meta tag.
+    fn created_at(h: u32) -> String {
+        let t = chrono::Local::now().date_naive().and_hms_opt(h, 0, 0).unwrap().and_local_timezone(chrono::Local).unwrap();
+        format!(r#"<meta name="rooms:created" content="{}">"#, t.to_rfc3339())
+    }
+
     #[test]
-    fn day_context_maps_every_journal_day_item() {
+    fn day_context_maps_every_journal_day_item_newest_first() {
         let d = tempfile::tempdir().unwrap();
         let core = RoomsCore::open(d.path()).unwrap();
         let day = local_day(&chrono::Local::now().to_rfc3339()).unwrap();
         let room = core.create_room("Research").unwrap();
         let outside = tempfile::tempdir().unwrap();
         let orig = std::fs::canonicalize(outside.path()).unwrap().join("orig.html");
-        std::fs::write(&orig, "<title>Room doc</title>").unwrap();
+        std::fs::write(&orig, format!("<title>Room doc</title>{}", created_at(3))).unwrap();
         std::os::unix::fs::symlink(&orig, core.room_root(&room.id).unwrap().0.join("a.html")).unwrap();
         let jdir = d.path().join("journal").join(&day);
         std::fs::create_dir_all(&jdir).unwrap();
-        std::fs::write(jdir.join("dream.html"), "<title>Dream</title>").unwrap();
-        std::fs::write(jdir.join("other.html"), "<title>Other</title>").unwrap();
+        std::fs::write(jdir.join("dream.html"), format!("<title>Dream</title>{}", created_at(1))).unwrap();
+        std::fs::write(jdir.join("other.html"), format!("<title>Other</title>{}", created_at(2))).unwrap();
         core.backfill_all().unwrap();
         core.save_note(&day, "회고.md", "x").unwrap();
 
         let entries = core.day_context(&day).unwrap();
         let JournalDay { artifacts, notes, .. } = core.journal_day(&day).unwrap();
         assert_eq!(entries.len(), artifacts.len() + notes.len());
-        let mut got: Vec<(&str, &str)> = entries.iter().map(|e| (e.label.as_str(), e.title.as_str())).collect();
-        got.sort();
-        assert_eq!(got, vec![("Journal", "Other"), ("Note", "회고.md"), ("Research", "Room doc"), ("Review", "Dream")]);
+        let got: Vec<(&str, &str)> = entries.iter().map(|e| (e.label.as_str(), e.title.as_str())).collect();
+        assert_eq!(got, vec![("Research", "Room doc"), ("Journal", "Other"), ("Review", "Dream"), ("Note", "회고.md")], "artifacts newest first, then notes");
         assert!(entries.iter().all(|e| e.day == day && e.path == std::fs::canonicalize(&e.path).unwrap()), "{entries:?}");
-        assert_eq!(entries.last().unwrap().label, "Note", "artifacts first, notes last");
-        assert!(entries.iter().any(|e| e.path == orig), "a linked doc is listed by its original's path: {entries:?}");
+        assert_eq!(entries[0].path, orig, "a linked doc is listed by its original's path");
     }
 }
