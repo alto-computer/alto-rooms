@@ -1,6 +1,10 @@
 import type { Page } from "@playwright/test";
 import { artifactHtml, expect, test, today } from "./fixtures";
 
+/** An artifact stamped as written `minutesAgo` (but still today), so order doesn't hang on file times. */
+const stamped = (title: string, minutesAgo: number) =>
+  artifactHtml(title).replace("<head>", `<head><meta name="rooms:created" content="${new Date(Math.max(Date.now() - minutesAgo * 60_000, new Date().setHours(0, 0, minutesAgo))).toISOString()}">`);
+
 async function openJournal(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Journal", exact: true }).click();
@@ -10,8 +14,8 @@ async function openJournal(page: Page) {
 test("AC-10: the Journal lists the day in time order, the Dream as Review and room artifacts with their room", async ({ page, daemon }) => {
   const date = today();
   await daemon.createRoom("벤치마크");
-  await daemon.write("벤치마크/report.html", artifactHtml("주간 리포트"));
-  await daemon.write(`journal/${date}/dream.html`, artifactHtml("어젯밤 복습"));
+  await daemon.write("벤치마크/report.html", stamped("주간 리포트", 2));
+  await daemon.write(`journal/${date}/dream.html`, stamped("어젯밤 복습", 1));
 
   await openJournal(page);
   const rows = page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact");
@@ -25,9 +29,7 @@ test("AC-10: the Journal lists the day in time order, the Dream as Review and ro
 test("the Today tally lists every room's artifacts newest first on hover, and one opens on click", async ({ page, daemon }) => {
   await daemon.createRoom("벤치마크");
   await daemon.createRoom("리서치");
-  // Stamped a minute apart (but still today), so newest-first is not just write order.
-  const stamped = (title: string, minutesAgo: number) =>
-    artifactHtml(title).replace("<head>", `<head><meta name="rooms:created" content="${new Date(Math.max(Date.now() - minutesAgo * 60_000, new Date().setHours(0, 0, 1))).toISOString()}">`);
+  // A minute apart, written out of order, so newest-first is not just write order.
   await daemon.write("리서치/second.html", stamped("둘째 메모", 2));
   await daemon.write("inbox/third.html", stamped("셋째 초안", 1));
   await daemon.write("벤치마크/first.html", stamped("첫 보고서", 3));
@@ -40,6 +42,22 @@ test("the Today tally lists every room's artifacts newest first on hover, and on
   await expect(list.getByRole("button")).toHaveText([/셋째 초안/, /둘째 메모/, /첫 보고서/]);
   await list.getByRole("button", { name: /둘째 메모/ }).click();
   await expect(page.getByRole("tab", { name: "둘째 메모", selected: true })).toBeVisible();
+});
+
+test("the tally's list opens above its cell when there is no room below, and scrolls when long", async ({ page, daemon }) => {
+  await daemon.createRoom("벤치마크");
+  for (let i = 0; i < 12; i++) await daemon.write(`벤치마크/r${i}.html`, artifactHtml(`보고서 ${i}`));
+  await page.setViewportSize({ width: 1440, height: 440 });
+  await openJournal(page);
+  const cell = page.getByRole("region", { name: "Today" }).getByRole("button", { name: "12 artifacts" });
+  await cell.scrollIntoViewIfNeeded();
+  await cell.hover();
+  const list = page.getByRole("dialog", { name: "12 artifacts" });
+  await expect(list).toBeVisible();
+  const [c, l] = [await cell.boundingBox(), await list.boundingBox()];
+  expect(l!.y + l!.height).toBeLessThanOrEqual(c!.y + 1);
+  const rows = list.getByRole("list");
+  expect(await rows.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
 });
 
 test("AC-11: Write a note opens New Note with the cursor in the body; typing autosaves to journal/<today>/New Note.md", async ({ page, daemon }) => {

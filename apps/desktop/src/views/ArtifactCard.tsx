@@ -18,7 +18,7 @@ export type ArtifactCardProps = {
 };
 
 /** "New" in the thread colour, one of the few places red appears. */
-export function NewMark() {
+function NewMark() {
   return (
     <span role="img" aria-label="New artifact" className="inline-flex items-center gap-1.5 font-medium text-thread-deep">
       <span aria-hidden className="size-1.5 rounded-full bg-thread" />

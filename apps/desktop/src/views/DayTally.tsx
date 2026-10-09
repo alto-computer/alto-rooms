@@ -23,6 +23,7 @@ const plural = (n: number, noun: string) => (n === 1 ? noun : `${noun}s`);
 function Cell({ cell }: { cell: TallyCell }) {
   const [open, setOpen] = useState(false);
   const byClick = useRef(false);
+  const list = useRef<HTMLUListElement>(null);
   const closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(closing.current), []);
   const stay = () => clearTimeout(closing.current);
@@ -50,7 +51,7 @@ function Cell({ cell }: { cell: TallyCell }) {
           if (!open) return;
           e.preventDefault();
           show(true);
-          requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-tally-list="${cell.noun}"] button`)?.focus());
+          list.current?.querySelector("button")?.focus();
         }}
         className="flex min-w-0 flex-col items-start px-5 pt-3.5 pb-3 text-left outline-none hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink data-[state=open]:bg-row-hover"
       >
@@ -63,7 +64,6 @@ function Cell({ cell }: { cell: TallyCell }) {
         sideOffset={6}
         collisionPadding={12}
         aria-label={label}
-        data-tally-list={cell.noun}
         onOpenAutoFocus={(e) => {
           if (!byClick.current) e.preventDefault();
         }}
@@ -78,7 +78,7 @@ function Cell({ cell }: { cell: TallyCell }) {
         {items.length === 0 ? (
           <p className="px-2 pb-2 text-body text-ink-3">None this day</p>
         ) : (
-          <ul className="min-h-0 overflow-y-auto">
+          <ul ref={list} className="min-h-0 overflow-y-auto">
             {items.map((it) => (
               <li key={it.key}>
                 <button

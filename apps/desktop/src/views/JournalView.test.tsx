@@ -206,10 +206,14 @@ describe("JournalView: the day's tally", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("opens on keyboard focus too, and the notes list opens a note", async () => {
+  it("opens on keyboard focus without taking the caret, Enter moves into it, and the notes list opens a note", async () => {
     const { viewer } = await renderWithStores(<Host />, busyDay());
-    act(() => within(tally()).getByRole("button", { name: "1 note" }).focus());
+    const cell = within(tally()).getByRole("button", { name: "1 note" });
+    act(() => cell.focus());
     const list = await screen.findByRole("dialog", { name: "1 note" });
+    expect(cell).toHaveFocus();
+    fireEvent.click(cell);
+    expect(within(list).getByRole("button", { name: /계획/ })).toHaveFocus();
     fireEvent.click(within(list).getByRole("button", { name: /계획/ }));
     expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "note", date: today, name: "계획.md" });
   });
