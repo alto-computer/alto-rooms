@@ -522,13 +522,13 @@ describe("AppShell: gone rooms and docs, and before the first sync", () => {
 });
 
 describe("AppShell: a new note, then its name", () => {
-  it("New note opens New Note in a new tab with the cursor in the body; renaming it updates the tab and the Journal card", async () => {
+  it("Write a note opens New Note in a new tab with the cursor in the body; renaming it updates the tab and the Journal", async () => {
     const date = "2026-10-05";
     const viewer = new ViewerStore(memoryStorage());
     const journalId = viewer.open({ kind: "journal", date });
     const h = await renderWithStores(<AppShell />, { viewer, days: { [date]: { notes: [] } } });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New note" }));
+      fireEvent.click(screen.getByRole("button", { name: "Write a note" }));
     });
     expect(activeTab()).toHaveTextContent("New Note");
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Note" })).toHaveFocus());
@@ -553,8 +553,8 @@ describe("AppShell: a new note, then its name", () => {
     });
 
     act(() => viewer.activate(journalId));
-    const me = screen.getByRole("region", { name: "From me" });
-    await waitFor(() => expect(within(me).getByRole("button", { name: "회고" })).toBeInTheDocument());
-    expect(within(me).queryByRole("button", { name: "New Note" })).not.toBeInTheDocument();
+    const day = () => screen.getByRole("list", { name: "Your day" });
+    await waitFor(() => expect(within(day()).getByRole("button", { name: "회고" })).toBeInTheDocument());
+    expect(within(day()).queryByRole("button", { name: "New Note" })).not.toBeInTheDocument();
   });
 });

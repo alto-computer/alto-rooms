@@ -89,10 +89,19 @@ export function count(n: number, noun: string): string {
 
 const MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
 
+/** `Friday`. */
+export const weekdayName = (date: string): string => WEEKDAYS[weekdayIndex(date)];
+
+/** `October 4`. */
+export function longMonthDay(date: string): string {
+  const [, m, d] = parts(date);
+  return `${MONTHS_LONG[m - 1]} ${d}`;
+}
+
 /** The Journal's day heading: `Friday, 9 October`. */
 export function daybookTitle(date: string): string {
   const [, m, d] = parts(date);
-  return `${WEEKDAYS[weekdayIndex(date)]}, ${d} ${MONTHS_LONG[m - 1]}`;
+  return `${weekdayName(date)}, ${d} ${MONTHS_LONG[m - 1]}`;
 }
 
 /** ISO 8601 week number (weeks start on Monday; week 1 holds the year's first Thursday). */

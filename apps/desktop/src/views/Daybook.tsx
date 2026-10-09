@@ -1,0 +1,142 @@
+import { useEffect, useState } from "react";
+import type { Artifact, Info, JournalDay, Note, Room } from "@alto-rooms/protocol-ts";
+import { useClient, useOpenDoc, useViewerStore } from "@/data/hooks";
+import { clockTime } from "@/lib/dates";
+import { INBOX_ID } from "@/lib/drag";
+import { noteBase } from "@/lib/notes";
+import { wantsNewTab } from "@/lib/nav";
+import { ArtifactThumb } from "./ArtifactThumb";
+
+/** One line of a day, at the time it happened: a note of yours, or an artifact an agent wrote. */
+export type DayEntry =
+  | { kind: "note"; at: string; key: string; note: Note }
+  | { kind: "artifact"; at: string; key: string; artifact: Artifact; label: string };
+
+/** The day's entries, oldest first. An artifact is labelled with its room; the Dream (the day's dream.html in the Journal) is "Review". */
+export function dayEntries(day: JournalDay, info: Info, rooms: readonly Room[]): DayEntry[] {
+  const label = (a: Artifact) => {
+    if (a.roomId === INBOX_ID) return "Inbox";
+    if (a.roomId === info.journalRoomId) return a.relPath === `${day.date}/dream.html` ? "Review" : "Journal";
+    return rooms.find((r) => r.id === a.roomId)?.name ?? "Room";
+  };
+  const entries: DayEntry[] = [
+    ...day.notes.map((note): DayEntry => ({ kind: "note", at: note.updatedAt, key: `note:${note.name}`, note })),
+    ...day.artifacts.map((artifact): DayEntry => ({ kind: "artifact", at: artifact.createdAt, key: `artifact:${artifact.id}`, artifact, label: label(artifact) })),
+  ];
+  return entries.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/** A note's text, fetched again whenever the note changes; null until it arrives or if it can't be read. */
+function useNoteText(note: Note): string | null {
+  const client = useClient();
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    client.getNote(note.date, note.name).then(
+      (t) => live && setText(t),
+      () => live && setText(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, note.date, note.name, note.updatedAt]);
+  return text;
+}
+
+/** The first few lines of a note as they read: bullets as a list, the rest as paragraphs. */
+function NoteText({ text }: { text: string }) {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 6);
+  const blocks: ({ list: string[] } | { para: string })[] = [];
+  for (const l of lines) {
+    const item = /^[-*+]\s+(.*)$/.exec(l)?.[1];
+    const last = blocks[blocks.length - 1];
+    if (item === undefined) blocks.push({ para: l.replace(/^#+\s*/, "") });
+    else if (last && "list" in last) last.list.push(item);
+    else blocks.push({ list: [item] });
+  }
+  return blocks.map((b, i) =>
+    "list" in b ? (
+      <ul key={i} className="mt-1.5 list-disc pl-[18px] marker:text-ink-3">
+        {b.list.map((t, j) => (
+          <li key={j} className="my-0.5">
+            {t}
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <p key={i} className="mt-1">
+        {b.para}
+      </p>
+    ),
+  );
+}
+
+function NoteEntry({ note }: { note: Note }) {
+  const viewer = useViewerStore();
+  const text = useNoteText(note);
+  const name = noteBase(note.name);
+  const open = (newTab: boolean) => viewer.go({ kind: "note", date: note.date, name: note.name }, newTab);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={name}
+      onClick={(e) => open(wantsNewTab(e))}
+      onAuxClick={(e) => e.button === 1 && open(true)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+        e.preventDefault();
+        open(wantsNewTab(e));
+      }}
+      className="-mx-3 -my-1.5 min-w-0 cursor-pointer rounded-lg px-3 py-1.5 outline-none hover:bg-row-hover focus-visible:outline-2 focus-visible:outline-ink"
+    >
+      <h3 className="font-serif text-heading leading-6 font-semibold text-ink">{name}</h3>
+      {text ? (
+        <div className="max-w-[60ch] font-serif text-lead leading-[1.6] text-ink-2">
+          <NoteText text={text} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ArtifactEntry({ artifact, label, info }: { artifact: Artifact; label: string; info: Info }) {
+  const openDoc = useOpenDoc();
+  return (
+    <button
+      type="button"
+      data-testid="day-artifact"
+      aria-label={artifact.title}
+      onClick={(e) => openDoc(artifact, wantsNewTab(e))}
+      onAuxClick={(e) => e.button === 1 && openDoc(artifact, true)}
+      className="flex w-full max-w-[440px] min-w-0 items-center gap-3.5 rounded-xl bg-sheet p-1.5 pr-4 text-left shadow-sheet outline-none transition-[box-shadow] duration-150 hover:shadow-lift focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+    >
+      <ArtifactThumb artifact={artifact} info={info} variant="row" className="w-[104px] shrink-0 rounded-md" />
+      <span className="flex min-w-0 flex-col gap-1">
+        <span data-testid="card-title" className="truncate text-body font-semibold text-ink">
+          {artifact.title}
+        </span>
+        <span className="truncate text-small text-ink-3">{[label, artifact.source.agent].filter(Boolean).join(" · ")}</span>
+      </span>
+    </button>
+  );
+}
+
+/** The day as a daybook: times in the left margin against a thin rule, your notes in serif, agents' artifacts as compact sheets. */
+export function Daybook({ entries, info }: { entries: DayEntry[]; info: Info }) {
+  return (
+    <ol
+      aria-label="Your day"
+      className="relative flex flex-col gap-7 before:absolute before:top-[-4px] before:bottom-[-4px] before:left-[63px] before:w-[1.5px] before:rounded-full before:bg-thread-soft"
+    >
+      {entries.map((e) => (
+        <li key={e.key} className="grid grid-cols-[64px_minmax(0,1fr)] items-start gap-x-6">
+          <time dateTime={e.at} className="pr-4 text-right text-small leading-6 font-medium text-ink-3 tabular-nums">
+            {clockTime(e.at)}
+          </time>
+          {e.kind === "note" ? <NoteEntry note={e.note} /> : <ArtifactEntry artifact={e.artifact} label={e.label} info={info} />}
+        </li>
+      ))}
+    </ol>
+  );
+}

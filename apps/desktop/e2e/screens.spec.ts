@@ -80,13 +80,13 @@ test("screens for visual review", async ({ page, daemon }) => {
 
   // Journal: dream, a room artifact, two notes.
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await expect(page.getByRole("region", { name: "From agents" }).getByTestId("artifact-card")).toHaveCount(8);
-  await expect(page.getByRole("region", { name: "From me" }).getByRole("button", { name: "Review" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact")).toHaveCount(8);
+  await expect(page.getByRole("list", { name: "Your day" }).getByRole("button", { name: "Review", exact: true })).toBeVisible();
   await settle(page);
   await shot(page, "journal");
 
   // Note tab.
-  await page.getByRole("region", { name: "From me" }).getByRole("button", { name: "Plan" }).click();
+  await page.getByRole("list", { name: "Your day" }).getByRole("button", { name: "Plan" }).click();
   await expect(page.getByRole("textbox", { name: "Note" })).toHaveValue(/weekly benchmark report/);
   await settle(page);
   await shot(page, "note-tab");

@@ -142,6 +142,10 @@
   /* ask bar waiting text: a highlight sweeping left to right (no built-in Tailwind shimmer) */
   --animate-shimmer:shimmer 1.6s linear infinite;
   @keyframes shimmer { from { background-position:100% 0 } to { background-position:-100% 0 } }
+
+  /* Clew asleep: one slow breath every five seconds, nothing else moves (off under reduced motion) */
+  --animate-breathe:breathe 5.2s ease-in-out infinite;
+  @keyframes breathe { 0%,100% { transform:scale(1,1) } 50% { transform:scale(1.008,1.022) } }
 }
 
 @custom-variant dark (&:is(.dark *));
