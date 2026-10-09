@@ -8,6 +8,7 @@ import { GENERIC_ERROR } from "@/lib/errors";
 import { ArtifactCard } from "./ArtifactCard";
 import { EditableTitle } from "./EditableTitle";
 import { EmptyRoom } from "./EmptyRoom";
+import { SortBar } from "./SortBar";
 import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { INBOX_ID } from "@/lib/drag";
 
@@ -96,6 +97,11 @@ export function RoomView({ roomId }: { roomId: string }) {
             <CircleAlert size={16} aria-hidden />
             Folder not found
           </p>
+        ) : null}
+        {roomId === INBOX_ID && !readOnly ? (
+          <div className="mt-3">
+            <SortBar />
+          </div>
         ) : null}
       </header>
       {body}

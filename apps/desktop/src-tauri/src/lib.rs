@@ -3,6 +3,7 @@ mod daemon;
 mod drafts;
 mod flush;
 mod share;
+mod sorter;
 #[cfg(target_os = "macos")]
 mod terminate;
 
@@ -98,7 +99,11 @@ fn invoke_handler() -> InvokeHandler {
         drafts::delete_note_draft,
         share::doc_original,
         share::reveal_doc,
-        share::open_doc
+        share::open_doc,
+        sorter::sort_state,
+        sorter::sort_set_key,
+        sorter::sort_clear_key,
+        sorter::sort_undo_last
     ])
 }
 
@@ -115,6 +120,10 @@ fn invoke_handler() -> InvokeHandler {
         share::doc_original,
         share::reveal_doc,
         share::open_doc,
+        sorter::sort_state,
+        sorter::sort_set_key,
+        sorter::sort_clear_key,
+        sorter::sort_undo_last,
         flush::flush_probe,
         flush::flush_probe_armed
     ])
@@ -128,6 +137,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(daemon::Daemon::default())
         .manage(collector::Collector::default())
+        .manage(sorter::Sorter::default())
         .manage(flush::Flush::default())
         .menu(build_menu)
         .setup(|app| {
@@ -197,6 +207,7 @@ pub fn run() {
         RunEvent::Exit => {
             eprintln!("flush: exiting");
             handle.state::<collector::Collector>().kill();
+            handle.state::<sorter::Sorter>().close();
             handle.state::<daemon::Daemon>().kill_spawned();
         }
         _ => {}
