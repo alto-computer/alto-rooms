@@ -16,8 +16,8 @@
 #   5. Re-runs find_html.py: every candidate must be linked: true.
 #   6. Links a folder room "site" through the API, writes one original inside it
 #      and one inside a git worktree of the demo repo, and re-runs find_html.py:
-#      in_linked_room / in_worktree must be set. Also runs SKILL.md's habit
-#      duplicate check (find + realpath) against an already-linked original.
+#      in_linked_room / in_worktree must be set. Also runs the find + realpath
+#      duplicate check against an already-linked original.
 #
 # Never touches ~/rooms, ~/.claude or ~/.codex, and never uses 4317/4318.
 # Usage: bash dry_run.sh   (from anywhere; builds roomsd with cargo first)
@@ -236,7 +236,7 @@ for p, x in by.items():
         assert x["linked"] and x["in_linked_room"] is None and x["in_worktree"] is False, x
 PY
 
-# SKILL.md "Every time you write one" duplicate check, verbatim apart from the placeholders.
+# The find + realpath duplicate check (from the v7 SKILL.md; still a handy manual check).
 dup_check() {
   find "$HOME_DIR" -path "$HOME_DIR/.rooms" -prune -o -type l -exec sh -c '[ "$(realpath "$1")" = "$(realpath "$2")" ] && echo "$1"' _ {} "$1" \;
 }

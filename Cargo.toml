@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/rooms-protocol", "crates/rooms-core", "crates/roomsd", "crates/rooms-mcp"]
+members = ["crates/rooms-protocol", "crates/rooms-core", "crates/roomsd", "crates/rooms-mcp", "crates/rooms-collect"]
 # The desktop app is its own Cargo workspace (Tauri); keep it out of root builds and tests.
 exclude = ["apps/desktop/src-tauri"]
 
 [workspace.package]
 edition = "2021"
-version = "0.5.0"
+version = "0.6.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

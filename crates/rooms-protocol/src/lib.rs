@@ -98,6 +98,7 @@ pub enum PluginStatus { Ok, Invalid }
 
 wire!(pub struct SidePanelSlot {
     pub title: String,
+    pub icon: Option<String>,
 });
 
 wire!(pub struct TabSlot {

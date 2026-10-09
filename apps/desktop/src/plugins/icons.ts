@@ -6,6 +6,7 @@ import {
   Lightbulb,
   ListChecks,
   Notebook,
+  Palette,
   Pencil,
   Puzzle,
   Sparkles,
@@ -14,7 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-/** The icons a manifest may name for its tab (roomsd rejects others); anything missing shows Puzzle. */
+/** The icons a manifest may name for a slot (roomsd rejects others). */
 const ICONS: Record<string, LucideIcon> = {
   target: Target,
   pencil: Pencil,
@@ -28,6 +29,7 @@ const ICONS: Record<string, LucideIcon> = {
   notebook: Notebook,
   lightbulb: Lightbulb,
   puzzle: Puzzle,
+  palette: Palette,
 };
 
-export const pluginIcon = (name: string | null | undefined): LucideIcon => (name && ICONS[name]) || Puzzle;
+export const pluginIcon = (name: string | null | undefined, fallback: LucideIcon = Puzzle): LucideIcon => (name && ICONS[name]) || fallback;

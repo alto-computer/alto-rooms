@@ -1,0 +1,22 @@
+[package]
+name = "rooms-collect"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+rooms-protocol = { path = "../rooms-protocol" }
+rooms-core = { path = "../rooms-core" }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
+notify = "8"
+regex = "1"
+sha2 = "0.10"
+hex = "0.4"
+toml = "0.8"
+zstd = "0.13"
+dirs = "5"
+
+[dev-dependencies]
+tempfile = "3"

@@ -45,8 +45,10 @@ Install a plugin by copying its built folder there. Rooms notices it and asks th
 
 Slots:
 
-- `artifact.sidePanel` `{ title }`: a panel beside an open document. The user opens it from a button on the document.
-- `tab` `{ title, icon?, sidebar? }`: a tab of its own. With `sidebar: true` it gets an item under **Plugins** in the sidebar. `icon` is one of `target`, `pencil`, `list-checks`, `calendar`, `star`, `book`, `flag`, `layout-grid`, `sparkles`, `notebook`, `lightbulb`, `puzzle`.
+- `artifact.sidePanel` `{ title, icon? }`: a panel beside an open document. The user opens it from an icon button on the document, `icon` or else `pencil`, with `title` as its tooltip.
+- `tab` `{ title, icon?, sidebar? }`: a tab of its own. With `sidebar: true` it gets an item under **Plugins** in the sidebar, and `icon` or else `puzzle` marks the tab.
+
+An `icon` is one of `target`, `pencil`, `list-checks`, `calendar`, `star`, `book`, `flag`, `layout-grid`, `sparkles`, `notebook`, `lightbulb`, `puzzle`, `palette`.
 
 Titles are 1–24 characters.
 

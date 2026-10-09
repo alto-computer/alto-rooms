@@ -1,6 +1,8 @@
+mod collector;
 mod daemon;
 mod drafts;
 mod flush;
+mod share;
 #[cfg(target_os = "macos")]
 mod terminate;
 
@@ -93,7 +95,10 @@ fn invoke_handler() -> InvokeHandler {
         flush::flush_done,
         drafts::save_note_draft,
         drafts::load_note_draft,
-        drafts::delete_note_draft
+        drafts::delete_note_draft,
+        share::doc_original,
+        share::reveal_doc,
+        share::open_doc
     ])
 }
 
@@ -107,6 +112,9 @@ fn invoke_handler() -> InvokeHandler {
         drafts::save_note_draft,
         drafts::load_note_draft,
         drafts::delete_note_draft,
+        share::doc_original,
+        share::reveal_doc,
+        share::open_doc,
         flush::flush_probe,
         flush::flush_probe_armed
     ])
@@ -119,6 +127,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(daemon::Daemon::default())
+        .manage(collector::Collector::default())
         .manage(flush::Flush::default())
         .menu(build_menu)
         .setup(|app| {
@@ -175,7 +184,7 @@ pub fn run() {
     // - a code-less ExitRequested before any round      — below
     // - SIGINT/SIGTERM                                   — ctrlc handler above
     // Only SIGKILL skips the flush. Every exit except SIGKILL reaches RunEvent::Exit, which
-    // stops the sidecar (SIGTERM, 1 s grace, then SIGKILL).
+    // stops the sidecars (roomsd: SIGTERM, 1 s grace, then SIGKILL; rooms-collect: killed).
     app.run(|handle, event| match event {
         // A code-less exit request (e.g. the last window was destroyed) is held until a round
         // has run; our own app.exit(n) (code Some) and the exit after a completed round pass.
@@ -187,6 +196,7 @@ pub fn run() {
         // Every way out except SIGKILL ends here, flushed or not: the sidecar always stops.
         RunEvent::Exit => {
             eprintln!("flush: exiting");
+            handle.state::<collector::Collector>().kill();
             handle.state::<daemon::Daemon>().kill_spawned();
         }
         _ => {}

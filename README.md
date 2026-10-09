@@ -22,10 +22,11 @@ Agents like Claude Code and Codex write specs, reports, and reviews as HTML. The
 ## How it works
 
 - Write an `.html` file into a room folder. It shows up in the app within two seconds.
+- While the app is open, HTML your agents (Claude Code, Codex, Aside) write anywhere is linked in on its own: into the room named like its repo, otherwise into `inbox`. See [Collecting](#collecting).
 - Rooms never moves your files, and never writes into a folder you linked.
 - Drag rooms in the sidebar to reorder them.
 
-Rooms does not run agents or call any AI model. It only reads folders.
+Rooms does not run agents or call any AI model. It reads folders and your agents' own conversation logs.
 
 ## Install
 
@@ -38,7 +39,7 @@ git clone https://github.com/alto-computer/alto-rooms.git
 cd alto-rooms
 bun install
 cd apps/desktop
-bun run sidecar        # build the roomsd daemon
+bun run sidecar        # build roomsd, rooms-mcp and rooms-collect
 bun run tauri build    # build the app
 ```
 
@@ -53,6 +54,34 @@ Read ~/rooms/ONBOARD.md and follow it.
 ```
 
 The agent installs a small `rooms` skill. It then finds the HTML files you wrote in the last 14 days and links each one into a room. Your original files stay where they are.
+
+After that, new files are linked on their own while the app is open. Ask your agent to "sort my inbox" now and then.
+
+## Collecting
+
+`rooms-collect` runs beside the app (and stops with it). It reads the logs Claude Code (`~/.claude/projects`), Codex (`~/.codex/sessions`) and Aside (`~/.aside/u`) already keep, read-only, and:
+
+- links each new `.html` an agent writes into the room whose folder is named like the file's repo, or into `inbox`. It never creates rooms, never writes into linked rooms, and never re-adds a link you deleted;
+- records which conversation wrote each file in `~/rooms/.rooms/sources.json`, so asking about a document continues that conversation;
+- keeps a copy of the logs in `~/Library/Application Support/computer.alto.rooms/archive` (agents delete old logs; Claude Code after 30 days);
+- indexes the last 30 days of conversations for search:
+
+```sh
+rooms-collect search "pricing page" --since 7d
+```
+
+Settings live in `~/rooms/.rooms/collect.toml` (all optional):
+
+```toml
+enabled = true        # false: read nothing, link nothing
+history_days = 30     # how far back search reaches; 0 turns the index off
+archive = true        # keep copies of the logs
+
+[agents]
+claude-code = true
+codex = true
+aside = true
+```
 
 ## For agents
 
@@ -92,12 +121,14 @@ Right-click a plugin in the sidebar to turn it off. To add another, copy its fol
 ## Architecture
 
 - **roomsd** (Rust) watches `~/rooms` and serves a local HTTP API on `127.0.0.1:4317`.
+- **rooms-collect** (Rust) reads agent logs and talks to Rooms only through folders: the symlinks it makes in `~/rooms` reach roomsd through its usual file watching.
 - **The desktop app** (Tauri + React) is one client of that API. You can build your own.
 - `GET /v1/rooms` lists rooms. `GET /v1/events` streams changes. Write requests need the token in `~/rooms/.rooms/token`.
 
 ```text
 crates/rooms-core       indexing, file watching, rooms, notes
 crates/roomsd           HTTP API and event stream
+crates/rooms-collect    agent-log collector: links, sources, archive, search
 crates/rooms-protocol   API types
 packages/protocol-ts    TypeScript client
 apps/desktop            Tauri app
@@ -115,7 +146,7 @@ cargo test             # Rust tests (from the repo root)
 
 ## Status
 
-This is an early version (0.3). It has been tested on macOS only.
+This is an early version (0.6). It has been tested on macOS only.
 
 ## License
 
