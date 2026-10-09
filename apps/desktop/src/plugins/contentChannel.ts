@@ -17,7 +17,6 @@ export const MAX_WRITES_PER_SECOND = 20;
 export const MAX_ACTIONS = 6;
 export const MAX_ACTION_TITLE = 24;
 
-/** A button a content script adds to the selection bar. */
 export type ContentAction = { id: string; title: string; color?: string };
 
 type StorageMethod = "storage.read" | "storage.write" | "storage.list" | "storage.delete";

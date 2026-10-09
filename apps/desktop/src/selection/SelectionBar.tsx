@@ -31,8 +31,8 @@ function Label({ action }: { action: SelectionAction }) {
 
 /**
  * The floating bar over selected text. `onMouseDown` is prevented so a click doesn't clear the
- * selection first. A lone action renders as one pill button, as PR #12's Ask did; more share a
- * pill. The bar stays centered over the selection unless that would push it past the box's sides.
+ * selection first. A lone action is one pill button; more share a pill. The bar stays centered
+ * over the selection unless that would push it past the box's sides.
  */
 export function SelectionBar({ rect, actions }: { rect: SelectionRect; actions: SelectionAction[] }) {
   const root = useRef<HTMLElement | null>(null);
