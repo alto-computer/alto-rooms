@@ -1360,7 +1360,6 @@ dependencies = [
  "hex",
  "notify",
  "regex",
- "rooms-core",
  "rooms-protocol",
  "rusqlite",
  "serde",

@@ -5,7 +5,6 @@ version.workspace = true
 
 [dependencies]
 rooms-protocol = { path = "../rooms-protocol" }
-rooms-core = { path = "../rooms-core" }
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
