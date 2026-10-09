@@ -4,7 +4,7 @@ import type { AskTurn } from "@alto-rooms/protocol-ts";
 import { askAction, SelectionBar } from "@/selection/SelectionBar";
 import { useTextSelection } from "@/selection/useTextSelection";
 import type { Live } from "./asksStore";
-import type { TurnHeader } from "./askSubjects";
+import type { NoteTargetOf, TurnHeader } from "./askSubjects";
 import { PendingTurn, Turn } from "./Turn";
 import { ErrorText, TextButton } from "./ui";
 import type { Pending } from "./useComposer";
@@ -50,9 +50,11 @@ function useFollow(sheet: RefObject<HTMLDivElement | null>, turns: AskTurn[], li
  * A thread above the ask bar: its turns, a question on its way, and an "Ask" button over text
  * selected in an answer (it becomes a quote).
  */
-export function ThreadSheet({ turns, header, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
+export function ThreadSheet({ turns, header, noteTarget, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
   turns: AskTurn[];
   header: (t: AskTurn) => TurnHeader;
+  /** Where "Save as note" files a finished answer; null shows no save button. Keep it stable: turns are memoized. */
+  noteTarget: NoteTargetOf | null;
   live: Record<string, Live>;
   loadError: boolean;
   pending: Pending | null;
@@ -81,7 +83,7 @@ export function ThreadSheet({ turns, header, live, loadError, pending, onRetry, 
         ) : null}
         <div className="space-y-4">
           {turns.map((t, i) => (
-            <Turn key={t.id} t={t} live={live[t.id]} old={i < turns.length - RECENT_TURNS} onRetry={onRetry} />
+            <Turn key={t.id} t={t} live={live[t.id]} old={i < turns.length - RECENT_TURNS} noteTarget={noteTarget} onRetry={onRetry} />
           ))}
           {/* Until its turn shows up; a question that waits behind a running one shows in the queue instead. */}
           {pending && !turns.some((t) => t.status === "running") ? <PendingTurn pending={pending} /> : null}
