@@ -13,6 +13,10 @@ rooms.onAction((id, selection) => {
 rooms.onDataChanged((path) => {
   root.dataset.markerChanged = path;
 });
+rooms.onReveal((anchor) => {
+  root.dataset.markerReveal = JSON.stringify(anchor);
+  root.dataset.markerReveals = String(Number(root.dataset.markerReveals ?? 0) + 1);
+});
 rooms.ready();
 
 async function roundTrip() {

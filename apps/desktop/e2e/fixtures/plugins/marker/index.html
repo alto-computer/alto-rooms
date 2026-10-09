@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Marker</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; margin: 12px; }
+      input, textarea { display: block; width: 100%; margin: 4px 0; box-sizing: border-box; }
+    </style>
+  </head>
+  <body>
+    <label>File key <input id="fileKey" /></label>
+    <label>Anchor (JSON) <textarea id="anchor" rows="3">{"mark":"x"}</textarea></label>
+    <button id="open">Open at anchor</button>
+    <p id="out"></p>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

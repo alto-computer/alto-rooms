@@ -220,3 +220,82 @@ setTimeout(() => { for (let i = 0; i < 500; i++) send({ plugin: "marker", type: 
   await page.getByRole("button", { name: "Back (⌘[)" }).click();
   await expect(page.getByRole("tab", { name: "Bench", selected: true }), "the app stays responsive").toBeVisible({ timeout: 1000 });
 });
+
+const tabs = (page: Page) => page.getByRole("tablist", { name: "Tabs" }).getByRole("tab");
+const tabNamed = (page: Page, name: string) => page.getByRole("tablist", { name: "Tabs" }).getByRole("tab", { name, exact: true });
+const pluginFrame = (page: Page, title: string) => page.frameLocator(`iframe[title="${title}"]`);
+
+async function writeDocs(daemon: Daemon) {
+  await daemon.createRoom("Bench");
+  for (const [file, title] of [["report.html", "Report"], ["second.html", "Second"]]) {
+    await daemon.write(`Bench/${file}`, `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><p id="text">${title} body</p></body></html>`);
+  }
+}
+
+/** Types into the marker tab and clicks "Open at anchor". */
+async function openFromMarker(page: Page, fileKey: string, anchor: string) {
+  const tab = pluginFrame(page, "Marker");
+  await tab.locator("#fileKey").fill(fileKey);
+  await tab.locator("#anchor").fill(anchor);
+  await tab.getByRole("button", { name: "Open at anchor" }).click();
+}
+
+test("a plugin tab opens a doc next to it at an anchor; an open doc comes forward and gets the next one; a reopened doc gets none", async ({ page, daemon }) => {
+  await writeDocs(daemon);
+  await daemon.installPlugin("marker");
+  await page.goto("/");
+  await turnOnMarker(page);
+  const key = await fileKeyOf(daemon, "Bench", "Report");
+
+  await page.getByRole("list", { name: "Plugins" }).getByRole("button", { name: "Marker" }).click();
+  await expect(tabNamed(page, "Marker")).toHaveAttribute("aria-selected", "true");
+  await openFromMarker(page, key, '{"mark":"x"}');
+  await expect(tabNamed(page, "Report"), "the doc opens in its own tab").toHaveAttribute("aria-selected", "true");
+  await expect(tabs(page), "the plugin tab stays, with the doc right after it").toHaveText(["Marker", "Report"]);
+  const doc = docFrame(page, "Report");
+  await expect(doc.locator("html")).toHaveAttribute("data-marker-reveal", '{"mark":"x"}');
+  await expect(doc.locator("html")).toHaveAttribute("data-marker-reveals", "1");
+
+  await tabNamed(page, "Marker").click();
+  await openFromMarker(page, key, '{"mark":"y"}');
+  await expect(tabNamed(page, "Report")).toHaveAttribute("aria-selected", "true");
+  await expect(tabs(page), "no second tab for the same doc").toHaveCount(2);
+  await expect(doc.locator("html"), "the doc kept in the background gets the new anchor").toHaveAttribute("data-marker-reveal", '{"mark":"y"}');
+  await expect(doc.locator("html")).toHaveAttribute("data-marker-reveals", "2");
+  await selectText(doc);
+  await expect(page.getByRole("toolbar", { name: "Selection actions" }).getByRole("button"), "its plugin actions survive the trip to the background").toHaveText(["Ask", "Mark"]);
+  await page.keyboard.press("Escape");
+
+  await tabNamed(page, "Marker").click();
+  await openFromMarker(page, key, JSON.stringify({ pad: "x".repeat(5 * 1024) }));
+  await expect(pluginFrame(page, "Marker").locator("#out")).toHaveText("error bad_request");
+  await expect(tabNamed(page, "Marker"), "a refused anchor opens nothing").toHaveAttribute("aria-selected", "true");
+
+  await page.getByRole("tablist", { name: "Tabs" }).locator("[role=presentation]", { has: page.getByRole("tab", { name: "Report", exact: true }) }).getByRole("button", { name: "Close tab" }).click();
+  await expect(tabs(page)).toHaveCount(1);
+  await openDoc(page, "Report");
+  await expect(doc.locator("html"), "the reopened doc's script ran").toHaveAttribute("data-marker-read", "Report");
+  await expect(doc.locator("html"), "and got no stale anchor").not.toHaveAttribute("data-marker-reveal");
+});
+
+test("open from a side panel replaces its doc tab; from a plugin tab it opens a new tab and keeps the plugin tab", async ({ page, daemon }) => {
+  await writeDocs(daemon);
+  await daemon.installPlugin("echo");
+  await api(daemon, "PATCH", "/v1/plugins/echo", { enabled: true, permissions: ["rooms.read"] });
+  await page.goto("/");
+  const echo = pluginFrame(page, "Echo");
+
+  await openDoc(page, "Report");
+  await page.getByRole("button", { name: "Open Echo" }).click();
+  await echo.locator("#fileKey").fill(await fileKeyOf(daemon, "Bench", "Second"));
+  await echo.getByRole("button", { name: "Open doc" }).click();
+  await expect(tabNamed(page, "Second")).toHaveAttribute("aria-selected", "true");
+  await expect(tabs(page), "the side panel navigated its own tab").toHaveText(["Second"]);
+
+  await page.getByRole("list", { name: "Plugins" }).getByRole("button", { name: "Echo" }).click();
+  await expect(tabNamed(page, "Echo")).toHaveAttribute("aria-selected", "true");
+  await echo.locator("#fileKey").fill(await fileKeyOf(daemon, "Bench", "Report"));
+  await echo.getByRole("button", { name: "Open doc" }).click();
+  await expect(tabNamed(page, "Report")).toHaveAttribute("aria-selected", "true");
+  await expect(tabs(page)).toHaveText(["Echo", "Report"]);
+});
