@@ -6,7 +6,7 @@ import { Folder } from "lucide-react";
 import { RoomDot } from "@/components/RoomDot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useClient, useViewerStore } from "@/data/hooks";
-import { carriesArtifact, draggingFromRoom, endArtifactDrag, readArtifactPayload, type ArtifactDragPayload } from "@/lib/drag";
+import { carriesArtifact, draggingFromRoom, endDrag, readArtifactPayload, type ArtifactDragPayload } from "@/lib/drag";
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { EditableTitle } from "@/views/EditableTitle";
@@ -38,7 +38,7 @@ function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomI
         const p = readArtifactPayload(e.dataTransfer);
         if (!p) return;
         e.preventDefault();
-        endArtifactDrag();
+        endDrag();
         if (p.roomId === roomId) return;
         onMove(p, roomId);
       },

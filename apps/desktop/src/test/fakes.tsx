@@ -1,4 +1,18 @@
-import type { Artifact, AskKind, AskScope, AskTarget, AskTurn, Info, JournalDay, PluginInfo, Room, RoomColor, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type {
+  Artifact,
+  AskKind,
+  AskScope,
+  AskTarget,
+  AskTurn,
+  Conversation,
+  ConversationId,
+  Info,
+  JournalDay,
+  PluginInfo,
+  Room,
+  RoomColor,
+  RoomsEvent,
+} from "@alto-rooms/protocol-ts";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
@@ -22,6 +36,19 @@ export const room = (id: string, name: string, extra: Partial<Room> = {}): Room 
   artifactCount: 0,
   updatedAt: null,
   color: null,
+  ...extra,
+});
+
+export const conversation = (session: string, extra: Partial<Conversation> = {}): Conversation => ({
+  id: { agent: "claude-code", session },
+  title: `Conversation ${session}`,
+  cwd: "/h/code",
+  startedAt: "2026-10-05T01:00:00Z",
+  endedAt: "2026-10-05T02:00:00Z",
+  messages: 6,
+  lastReply: "Done.",
+  artifactsWritten: [],
+  roomId: null,
   ...extra,
 });
 
@@ -56,6 +83,8 @@ export function fakeClient(
     asks?: Record<string, AskTurn[]>;
     /** What `askTarget` answers (or throws), by file key; default: the doc's own agent with no models. */
     askTargets?: Record<string, AskTarget | Error>;
+    /** Conversations roomsd knows, each in the room its `roomId` names. */
+    conversations?: Conversation[];
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -68,6 +97,7 @@ export function fakeClient(
     plugins: opts.plugins ?? [],
     pluginData: opts.pluginData ?? {},
     asks: opts.asks ?? {},
+    conversations: opts.conversations ?? [],
   };
   const info: Info = {
     version: "0",
@@ -113,11 +143,11 @@ export function fakeClient(
       if (err) throw err;
       return { data: state.artifacts[roomId] ?? [], seq };
     },
-    journalDay: async (date: string) => {
+    journalDay: vi.fn(async (date: string) => {
       const err = opts.dayErrors?.[date];
       if (err) throw err;
       return { data: { date, artifacts: [], notes: [], conversations: [], ...state.days[date] } as JournalDay, seq };
-    },
+    }),
     // Like roomsd: the file is the name with exactly one trailing ".md" stripped, plus ".md".
     getNote: vi.fn(async (date: string, name: string): Promise<string> => {
       const v = state.notes[`${date}/${noteFile(name)}`];
@@ -177,6 +207,14 @@ export function fakeClient(
       const pinned = others.filter((i) => state.rooms[i].color !== null).length;
       state.rooms.splice(others[pinned] ?? state.rooms.length, 0, updated);
       return updated;
+    }),
+    listRoomConversations: vi.fn(async (roomId: string) => ({ data: state.conversations.filter((c) => c.roomId === roomId), seq })),
+    // Like roomsd, minus the conversation.moved event (tests emit it).
+    setConversationRoom: vi.fn(async (id: ConversationId, roomId: string | null): Promise<Conversation> => {
+      const i = state.conversations.findIndex((c) => c.id.agent === id.agent && c.id.session === id.session);
+      if (i < 0) throw new RoomsApiError(404, "not found", "not_found");
+      state.conversations[i] = { ...state.conversations[i], roomId };
+      return state.conversations[i];
     }),
     moveArtifact: vi.fn(async (roomId: string, artifactId: string, toRoomId: string): Promise<Artifact> => {
       const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);
