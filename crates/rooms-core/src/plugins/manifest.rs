@@ -6,7 +6,7 @@ use rooms_protocol::{PluginSlots, SidePanelSlot, TabSlot};
 use serde_json::Value;
 use std::path::Path;
 
-pub const PERMISSIONS: [&str; 3] = ["rooms.read", "clipboard", "downloads"];
+pub const PERMISSIONS: [&str; 4] = ["rooms.read", "clipboard", "downloads", "artifact.content"];
 pub const ICONS: [&str; 13] = [
     "target", "pencil", "list-checks", "calendar", "star", "book", "flag", "layout-grid", "sparkles", "notebook", "lightbulb", "puzzle", "palette",
 ];
@@ -22,6 +22,7 @@ pub struct Manifest {
     pub permissions: Vec<String>,
     pub slots: PluginSlots,
     pub(crate) tools: Vec<ManifestTool>,
+    pub content_scripts: Vec<String>,
 }
 
 /// A tool declared in `manifest.json`: `input` is a JSON Schema for the agent (stored, not enforced);
@@ -35,6 +36,7 @@ pub(crate) struct ManifestTool {
 }
 
 const MAX_TOOLS: usize = 16;
+const MAX_CONTENT_SCRIPTS: usize = 4;
 const MAX_TOOL_INPUT_BYTES: usize = 16 * 1024;
 
 fn valid_id(id: &str) -> bool {
@@ -74,6 +76,18 @@ fn tools(v: Option<&Value>) -> Result<Vec<ManifestTool>, String> {
         out.push(ManifestTool { name: name.clone(), description: description.to_string(), input: input.clone(), append_to: append_to.to_string() });
     }
     Ok(out)
+}
+
+fn content_scripts(v: Option<&Value>) -> Result<Vec<String>, String> {
+    let Some(v) = v else { return Ok(Vec::new()) };
+    let list = v.as_array().ok_or("contentScripts must be an array")?;
+    if list.len() > MAX_CONTENT_SCRIPTS { return Err(format!("at most {MAX_CONTENT_SCRIPTS} content scripts")); }
+    list.iter()
+        .map(|p| match p.as_str() {
+            Some(p) if valid_path(p) && p.ends_with(".js") && p.split('/').next() != Some(DATA) => Ok(p.to_string()),
+            _ => Err(format!("content script must be a .js file in the plugin folder, outside data/: {p}")),
+        })
+        .collect()
 }
 
 fn title(v: &Value) -> Result<String, String> {
@@ -119,17 +133,26 @@ pub fn load_manifest(dir: &Path) -> Result<Manifest, String> {
             }
         }
     }
-    if slots.artifact_side_panel.is_none() && slots.tab.is_none() { return Err("declare at least one slot".into()); }
+    let content_scripts = content_scripts(v.get("contentScripts"))?;
+    match (content_scripts.is_empty(), permissions.iter().any(|p| p == "artifact.content")) {
+        (false, false) => return Err("contentScripts needs the artifact.content permission".into()),
+        (true, true) => return Err("artifact.content needs contentScripts".into()),
+        _ => {}
+    }
+    if slots.artifact_side_panel.is_none() && slots.tab.is_none() && content_scripts.is_empty() {
+        return Err("declare at least one slot or content script".into());
+    }
     let tools = tools(v.get("tools"))?;
-    Ok(Manifest { id, name, version, min_app_version, description, entry, permissions, slots, tools })
+    Ok(Manifest { id, name, version, min_app_version, description, entry, permissions, slots, tools, content_scripts })
 }
 
-/// Changes when the manifest or the entry file changes (first 12 hex of a sha256).
+/// Changes when the manifest, the entry file or a content script changes (first 12 hex of a sha256).
 pub fn rev(dir: &Path, m: &Manifest) -> String {
     use sha2::Digest;
     let mut h = sha2::Sha256::new();
     h.update(std::fs::read(dir.join("manifest.json")).unwrap_or_default());
-    if let Ok(meta) = std::fs::metadata(dir.join(&m.entry)) {
+    for file in std::iter::once(&m.entry).chain(&m.content_scripts) {
+        let Ok(meta) = std::fs::metadata(dir.join(file)) else { continue };
         h.update(meta.len().to_le_bytes());
         let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0);
         h.update(mtime.to_le_bytes());
@@ -252,6 +275,66 @@ mod tests {
         assert!(load_manifest(&plugin(d.path(), "echo", &m)).is_ok());
     }
 
+
+    fn content(folder: &str, permissions: &str, scripts: &str, slots: &str) -> String {
+        format!(r#"{{"id":"{folder}","name":"Marker","version":"0.1.0","minAppVersion":"0.3.0","permissions":{permissions},"contentScripts":{scripts},"slots":{slots}}}"#)
+    }
+
+    #[test]
+    fn content_scripts_are_parsed() {
+        let d = tempfile::tempdir().unwrap();
+        let m = content("marker", r#"["artifact.content"]"#, r#"["content.js","lib/more.js"]"#, r#"{"tab":{"title":"Marker"}}"#);
+        let m = load_manifest(&plugin(d.path(), "marker", &m)).unwrap();
+        assert_eq!(m.content_scripts, vec!["content.js".to_string(), "lib/more.js".to_string()]);
+        assert_eq!(m.permissions, vec!["artifact.content".to_string()]);
+        assert!(load_manifest(&plugin(d.path(), "echo", OK)).unwrap().content_scripts.is_empty());
+    }
+
+    #[test]
+    fn content_scripts_need_the_permission_and_back() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path();
+        let tab = r#"{"tab":{"title":"Marker"}}"#;
+        assert!(reason(h, "aa", &content("aa", r#"["rooms.read"]"#, r#"["content.js"]"#, tab)).contains("artifact.content"));
+        assert!(reason(h, "bb", &content("bb", r#"["artifact.content"]"#, "[]", tab)).contains("contentScripts"));
+        let without = OK.replacen(r#""id":"echo""#, r#""id":"cc""#, 1).replace(r#"["rooms.read"]"#, r#"["artifact.content"]"#);
+        assert!(reason(h, "cc", &without).contains("contentScripts"));
+    }
+
+    #[test]
+    fn content_script_paths_are_checked() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path();
+        let perm = r#"["artifact.content"]"#;
+        for (i, bad) in [r#"["../x.js"]"#, r#"["data/x.js"]"#, r#"["x.css"]"#, r#"["/x.js"]"#, "[3]", r#""x.js""#].iter().enumerate() {
+            let f = format!("p{i}");
+            assert!(reason(h, &f, &content(&f, perm, bad, "{}")).to_lowercase().contains("content"), "{bad}");
+        }
+        assert!(reason(h, "five", &content("five", perm, r#"["a.js","b.js","c.js","d.js","e.js"]"#, "{}")).contains("at most 4"));
+        assert_eq!(load_manifest(&plugin(h, "four", &content("four", perm, r#"["a.js","b.js","c.js","d.js"]"#, "{}"))).unwrap().content_scripts.len(), 4);
+    }
+
+    #[test]
+    fn a_content_script_only_manifest_is_valid() {
+        let d = tempfile::tempdir().unwrap();
+        let m = load_manifest(&plugin(d.path(), "marker", &content("marker", r#"["artifact.content"]"#, r#"["content.js"]"#, "{}"))).unwrap();
+        assert_eq!(m.slots, PluginSlots::default());
+        assert_eq!(m.content_scripts, vec!["content.js".to_string()]);
+        let none = content("none", r#"["artifact.content"]"#, r#"["content.js"]"#, "{}").replace(r#""permissions":["artifact.content"],"contentScripts":["content.js"],"#, "");
+        assert!(reason(d.path(), "none", &none).contains("slot or content script"));
+    }
+
+    #[test]
+    fn rev_changes_with_a_content_script() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = plugin(d.path(), "marker", &content("marker", r#"["artifact.content"]"#, r#"["content.js"]"#, "{}"));
+        fs::write(dir.join("content.js"), "mark()").unwrap();
+        let m = load_manifest(&dir).unwrap();
+        let r1 = rev(&dir, &m);
+        assert_eq!(r1, rev(&dir, &m));
+        fs::write(dir.join("content.js"), "mark(); mark()").unwrap();
+        assert_ne!(rev(&dir, &m), r1);
+    }
 
     #[test]
     fn rev_changes_with_manifest_or_entry() {

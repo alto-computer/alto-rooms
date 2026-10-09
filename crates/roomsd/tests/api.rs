@@ -540,6 +540,28 @@ async fn plugins_list_and_enable() {
 }
 
 #[tokio::test]
+async fn plugin_list_reports_content_script_manifests() {
+    let (d, app, _) = app(false, "127.0.0.1:5000");
+    let write = |id: &str, permissions: &str| {
+        let dir = d.path().join(".rooms/plugins").join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("manifest.json"), format!(
+            r#"{{"id":"{id}","name":"{id}","version":"0.1.0","minAppVersion":"0.3.0","permissions":{permissions},"contentScripts":["content.js"]}}"#)).unwrap();
+        std::fs::write(dir.join("content.js"), "").unwrap();
+    };
+    write("marker", r#"["artifact.content"]"#);
+    write("sneaky", r#"["rooms.read"]"#);
+    let v = body_json(app.oneshot(get("/v1/plugins", API_HOST)).await.unwrap()).await;
+    assert_eq!(v[0]["id"], "marker");
+    assert_eq!((v[0]["status"].clone(), v[0]["needsApproval"].clone()), (serde_json::json!("ok"), serde_json::json!(true)));
+    assert_eq!(v[0]["permissions"], serde_json::json!(["artifact.content"]));
+    assert_eq!(v[0]["slots"], serde_json::json!({"artifactSidePanel": null, "tab": null}));
+    assert_eq!(v[1]["id"], "sneaky");
+    assert_eq!(v[1]["status"], "invalid");
+    assert_eq!(v[1]["reason"], "contentScripts needs the artifact.content permission");
+}
+
+#[tokio::test]
 async fn plugin_data_round_trip_errors_and_privacy() {
     let (d, app, st) = app(false, "127.0.0.1:5000");
     install_echo(d.path(), "[]");
