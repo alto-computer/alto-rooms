@@ -16,6 +16,7 @@ import { AskBar } from "@/ask/AskBar";
 import { readSelectionMessage, SelectionAsk, type SelectionRect } from "@/ask/SelectionAsk";
 import { DocSkeleton } from "./DocSkeleton";
 import { ShareMenu } from "./ShareMenu";
+import { WrittenIn } from "./WrittenIn";
 
 function Centered({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center bg-pane p-12 text-center text-heading text-ink-2">{children}</div>;
@@ -90,6 +91,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
     <div className="flex min-h-0 flex-1 flex-col bg-pane">
       <header className="flex h-[52px] shrink-0 items-center gap-3 pr-4 pl-5">
         <Breadcrumb artifact={artifact} room={rooms.find((r) => r.id === roomId)} info={info} />
+        <WrittenIn artifact={artifact} />
         <ToolbarGroup label="Artifact actions">
           <ShareMenu artifact={artifact} />
           {visible ? <SidePanelOpener /> : null}
