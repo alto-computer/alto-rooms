@@ -162,6 +162,37 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_writes_each_succeed_and_leave_one_whole_value() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = plugin(d.path(), "echo", OK);
+        let values: Vec<String> = (0..16).map(|i| format!("{i:02}").repeat(4096)).collect();
+        for round in 0..50 {
+            let barrier = std::sync::Barrier::new(values.len());
+            let errors: Vec<String> = std::thread::scope(|s| {
+                let handles: Vec<_> = values.iter().enumerate().map(|(i, v)| {
+                    let (dir, barrier) = (&dir, &barrier);
+                    s.spawn(move || {
+                        barrier.wait();
+                        let shared = write_data(dir, "same.txt", v).err().map(|e| format!("same.txt: {e}"));
+                        let own = write_data(dir, &format!("own/{i}.txt"), v).err().map(|e| format!("own/{i}.txt: {e}"));
+                        shared.into_iter().chain(own)
+                    })
+                }).collect();
+                handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+            });
+            assert!(errors.is_empty(), "round {round}: {errors:?}");
+            let last = read_data(&dir, "same.txt").unwrap().unwrap();
+            assert!(values.contains(&last), "round {round}: same.txt holds a torn value of {} bytes", last.len());
+            for (i, v) in values.iter().enumerate() {
+                assert_eq!(read_data(&dir, &format!("own/{i}.txt")).unwrap().as_ref(), Some(v), "round {round}");
+            }
+        }
+        let leftovers: Vec<_> = fs::read_dir(dir.join("data")).unwrap().flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.starts_with('.')).collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
     fn data_rejects_bad_paths_size_and_symlink_escape() {
         let d = tempfile::tempdir().unwrap();
         let dir = plugin(d.path(), "echo", OK);
