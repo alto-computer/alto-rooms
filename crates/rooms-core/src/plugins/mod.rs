@@ -89,6 +89,11 @@ fn copy_code(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
 /// A file of a valid, enabled plugin to serve, with the permissions its manifest declares.
 pub struct PluginAsset { pub path: PathBuf, pub permissions: Vec<String> }
 
+/// One script a plugin runs inside documents: its plugin, that plugin's `rev`, and the script's
+/// path in the plugin folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentScript { pub plugin_id: String, pub rev: String, pub path: String }
+
 impl RoomsCore {
     fn plugin_info(&self, state: &PluginState, folder: String, loaded: Result<Manifest, String>) -> PluginInfo {
         match loaded {
@@ -179,6 +184,21 @@ impl RoomsCore {
             for t in &m.tools {
                 out.push(ToolInfo { plugin_id: m.id.clone(), name: t.name.clone(), description: t.description.clone(), input: t.input.clone() });
             }
+        }
+        out
+    }
+
+    /// The content scripts to load into a document: those of valid, enabled plugins whose grant
+    /// holds `artifact.content`, in plugin-id order and then manifest order.
+    pub fn content_scripts(&self) -> Vec<ContentScript> {
+        let state = self.plugin_state();
+        let mut out = Vec::new();
+        for (folder, r) in scan(&self.home) {
+            let Ok(m) = r else { continue };
+            let granted = state.grants.get(&m.id).is_some_and(|g| g.iter().any(|p| p == "artifact.content"));
+            if !state.enabled.contains(&m.id) || !granted { continue; }
+            let rev = rev(&plugins_dir(&self.home).join(&folder), &m);
+            out.extend(m.content_scripts.iter().map(|p| ContentScript { plugin_id: m.id.clone(), rev: rev.clone(), path: p.clone() }));
         }
         out
     }
@@ -294,6 +314,33 @@ mod tests {
         std::fs::write(plugins_dir(d.path()).join("stray.txt"), "").unwrap();
         let found: Vec<(String, bool)> = scan(d.path()).into_iter().map(|(f, r)| (f, r.is_ok())).collect();
         assert_eq!(found, vec![("broken".into(), false), ("echo".into(), true), ("zed".into(), true)]);
+    }
+
+    #[test]
+    fn content_scripts_come_from_enabled_plugins_granted_artifact_content() {
+        let d = tempfile::tempdir().unwrap();
+        let content = |id: &str| format!(r#"{{"id":"{id}","name":"{id}","version":"0.1.0","minAppVersion":"0.3.0","permissions":["artifact.content"],"contentScripts":["lib/b.js","a.js"]}}"#);
+        for id in ["zed", "marker", "off", "unapproved"] {
+            let dir = plugin(d.path(), id, &content(id));
+            std::fs::write(dir.join("a.js"), "a").unwrap();
+        }
+        plugin(d.path(), "echo", OK);
+        let core = RoomsCore::open(d.path()).unwrap();
+        assert!(core.content_scripts().is_empty(), "nothing is on yet");
+        core.set_plugin_enabled("zed", true, None).unwrap();
+        core.set_plugin_enabled("marker", true, None).unwrap();
+        core.set_plugin_enabled("echo", true, None).unwrap();
+        core.set_plugin_enabled("unapproved", true, Some(Vec::new())).unwrap();
+        core.set_plugin_enabled("off", true, None).unwrap();
+        core.set_plugin_enabled("off", false, None).unwrap();
+        let rev_of = |id: &str| core.plugins().into_iter().find(|p| p.id == id).unwrap().rev;
+        let found: Vec<(String, String, String)> = core.content_scripts().into_iter().map(|s| (s.plugin_id, s.rev, s.path)).collect();
+        assert_eq!(found, vec![
+            ("marker".into(), rev_of("marker"), "lib/b.js".into()),
+            ("marker".into(), rev_of("marker"), "a.js".into()),
+            ("zed".into(), rev_of("zed"), "lib/b.js".into()),
+            ("zed".into(), rev_of("zed"), "a.js".into()),
+        ]);
     }
 
     #[test]
