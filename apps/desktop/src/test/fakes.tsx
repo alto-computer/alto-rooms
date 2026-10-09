@@ -208,6 +208,11 @@ export function fakeClient(
       state.rooms.splice(others[pinned] ?? state.rooms.length, 0, updated);
       return updated;
     }),
+    getConversation: vi.fn(async (id: ConversationId) => {
+      const c = state.conversations.find((x) => x.id.agent === id.agent && x.id.session === id.session);
+      if (!c) throw new RoomsApiError(404, "not found", "not_found");
+      return { data: c, seq };
+    }),
     listRoomConversations: vi.fn(async (roomId: string) => ({ data: state.conversations.filter((c) => c.roomId === roomId), seq })),
     // Like roomsd, minus the conversation.moved event (tests emit it).
     setConversationRoom: vi.fn(async (id: ConversationId, roomId: string | null): Promise<Conversation> => {

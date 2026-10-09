@@ -75,6 +75,9 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     journalDay: (date: string) => get<JournalDay>(`/v1/journal/${date}`),
     /** The conversations added to a room, last active first; empty for the Journal. 404 `room_not_found`. */
     listRoomConversations: (roomId: string) => get<Conversation[]>(`/v1/rooms/${encodeURIComponent(roomId)}/conversations`),
+    /** One conversation with its room, fresh from the agents' logs or as its room kept it. 404 `not_found`. */
+    getConversation: (id: ConversationId) =>
+      get<Conversation>(`/v1/conversations/${encodeURIComponent(id.agent)}/${encodeURIComponent(id.session)}`),
     /** Puts a conversation in a room (out of any other), or out of every room with `null`. 400 `invalid_input` for an
      *  unknown agent or a bad session id, 404 `not_found` / `room_not_found`. Emits `conversation.moved` when it moves. */
     setConversationRoom: (id: ConversationId, roomId: string | null) =>

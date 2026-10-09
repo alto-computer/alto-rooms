@@ -138,7 +138,9 @@ async fn without_collect_data_there_are_no_conversations() {
     assert_eq!(body_json(r).await, serde_json::json!([]));
     let r = app.clone().oneshot(get("/v1/journal/2026-10-05", API_HOST)).await.unwrap();
     assert_eq!(body_json(r).await["conversations"], serde_json::json!([]));
-    let r = app.oneshot(put_json("/v1/conversations/claude-code/s1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    let r = app.clone().oneshot(put_json("/v1/conversations/claude-code/s1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let r = app.oneshot(get("/v1/conversations/claude-code/s1", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
 }
 
@@ -158,6 +160,11 @@ async fn conversations_join_and_leave_a_room() {
     assert_eq!((&v["roomId"], &v["title"], &v["id"]), (&serde_json::json!("inbox"), &serde_json::json!("tidy the report"), &serde_json::json!({"agent": "codex", "session": "s-1"})));
     let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
     assert_eq!(body_json(r).await.as_array().map(Vec::len), Some(1));
+    let r = app.clone().oneshot(get("/v1/conversations/codex/s-1", API_HOST)).await.unwrap();
+    assert!(r.headers().get("x-rooms-seq").is_some());
+    assert_eq!(body_json(r).await["roomId"], serde_json::json!("inbox"));
+    let r = app.clone().oneshot(get("/v1/conversations/codex/s%3B1", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
     let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", "null", Some("t0k"))).await.unwrap();
     assert_eq!(body_json(r).await["roomId"], serde_json::Value::Null);
     let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();

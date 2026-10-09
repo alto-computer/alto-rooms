@@ -122,6 +122,18 @@ impl RoomsCore {
         }).collect()
     }
 
+    /// One conversation with its room: fresh from collect.db when it has it, else as its room
+    /// last saw it. `NotFound` when neither knows it.
+    pub fn conversation(&self, id: &ConversationId) -> Result<Conversation, CoreError> {
+        let member = load(&self.home, &self.room_id_set()).remove(id);
+        let room_id = member.as_ref().map(|m| m.room_id.clone());
+        match (self.collect_db().and_then(|db| collect::get(&db, id).ok().flatten()), member) {
+            (Some(fresh), _) => Ok(Conversation { room_id, ..fresh }),
+            (None, Some(m)) => Ok(m.snapshot.conversation(id.clone(), room_id)),
+            (None, None) => Err(CoreError::NotFound),
+        }
+    }
+
     /// The conversations added to `room`, last active first. Their snapshots are refreshed from
     /// collect.db when it still has them.
     pub fn room_conversations(&self, room: &RoomId) -> Result<Vec<Conversation>, CoreError> {
@@ -241,7 +253,9 @@ mod tests {
         assert_eq!(moves, [(None, Some(a.clone())), (Some(a), Some(b.clone()))]);
         f.core.set_conversation_room(&id("s1"), Some(b.clone())).unwrap();
         assert!(rx.try_recv().is_err(), "no event when nothing moved");
+        assert_eq!(f.core.conversation(&id("s1")).unwrap().room_id, Some(b.clone()));
         f.core.set_conversation_room(&id("s1"), None).unwrap();
+        assert_eq!(f.core.conversation(&id("s1")).unwrap().room_id, None);
         assert!(f.core.room_conversations(&b).unwrap().is_empty());
         assert!(matches!(f.core.set_conversation_room(&id("nope"), Some(b.clone())), Err(CoreError::NotFound)));
         assert!(matches!(f.core.set_conversation_room(&id("s1"), Some("gone".into())), Err(CoreError::RoomNotFound)));
@@ -256,11 +270,14 @@ mod tests {
         message(&f.data, "s1", "assistant", &local(1, 11, 0), "report written");
         let seen = f.core.room_conversations(&room).unwrap();
         assert_eq!((seen[0].messages, seen[0].last_reply.as_deref()), (2, Some("report written")), "refreshed from collect.db");
+        assert_eq!(f.core.conversation(&id("s1")).unwrap(), seen[0]);
         rooms_collect::store::remove(&rooms_collect::store::path_in(&f.data));
         rooms_collect::store::open(&rooms_collect::store::path_in(&f.data)).unwrap();
         assert_eq!(f.core.room_conversations(&room).unwrap(), seen);
         let reopened = RoomsCore::open(f.core.home()).unwrap();
         assert_eq!(reopened.room_conversations(&room).unwrap(), seen, "no collect.db at all");
+        assert_eq!(reopened.conversation(&id("s1")).unwrap(), seen[0], "kept by its room");
+        assert!(matches!(reopened.conversation(&id("s2")), Err(CoreError::NotFound)));
         assert!(reopened.journal_day(&"2026-10-01".into()).unwrap().conversations.is_empty());
     }
 
