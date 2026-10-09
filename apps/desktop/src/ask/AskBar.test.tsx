@@ -730,4 +730,18 @@ describe("AskBar for a day", () => {
     expect(client.startAsk).toHaveBeenCalledWith({ scope: monday, question: "월요일?", model: null });
     expect(client.cancelAsk).not.toHaveBeenCalled();
   });
+
+  it("a question roomsd refuses after the day changed comes back in its own day's input", async () => {
+    const { client } = await setupDays();
+    let refuse: (e: Error) => void = () => {};
+    client.startAsk.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
+    fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일?" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(input().value).toBe("");
+    act(() => show("2026-10-06"));
+    await act(async () => refuse(new RoomsApiError(409, "Waiting for an answer", "ask_busy")));
+    expect(input().value).toBe("");
+    act(() => show("2026-10-05"));
+    expect(input().value).toBe("월요일?");
+  });
 });
