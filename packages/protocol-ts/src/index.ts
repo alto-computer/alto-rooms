@@ -4,6 +4,7 @@ export * from "./generated/Artifact";
 export * from "./generated/AskImage";
 export * from "./generated/AskKind";
 export * from "./generated/AskMode";
+export * from "./generated/AskScope";
 export * from "./generated/AskStatus";
 export * from "./generated/AskTarget";
 export * from "./generated/AskTurn";

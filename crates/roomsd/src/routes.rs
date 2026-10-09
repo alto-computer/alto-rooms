@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use rooms_core::asks::{AskError, Request};
+use rooms_core::asks::{AskError, Request, ScopeKey};
 use rooms_core::plugins::PluginAsset;
 use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
@@ -34,7 +34,7 @@ pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, Jso
     let turn = ask_blocking(&st, move |a| {
         let images = b.images.unwrap_or_default();
         let req = Request { question: &b.question, model: b.model.as_deref(), images: &images, kind: b.kind.unwrap_or_default() };
-        a.start_with(&b.room_id, &b.artifact_id, req)
+        a.start_with(&b.scope, req)
     }).await?;
     Ok((StatusCode::ACCEPTED, Json(turn)))
 }
@@ -49,22 +49,23 @@ where
     tokio::task::spawn_blocking(move || f(&asks)).await.map_err(|e| AskError::Io(e.to_string()))?.map_err(AskErr)
 }
 
+/// `?scope=<key>`: `doc:<fileKey>`, `room:<roomId>` or `day:<YYYY-MM-DD>`.
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AskQuery { file_key: String }
+pub struct ScopeQuery { scope: String }
 
-pub async fn ask_thread(State(st): State<AppState>, q: Result<Query<AskQuery>, QueryRejection>) -> Result<Json<Vec<AskTurn>>, AskErr> {
+fn scope_of(q: Result<Query<ScopeQuery>, QueryRejection>) -> Result<AskScope, AskError> {
     let Query(q) = q.map_err(|e| AskError::BadRequest(e.body_text()))?;
-    Ok(Json(ask_blocking(&st, move |a| a.thread(&q.file_key)).await?))
+    AskScope::parse_key(&q.scope)
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TargetQuery { room_id: String, artifact_id: String }
+pub async fn ask_thread(State(st): State<AppState>, q: Result<Query<ScopeQuery>, QueryRejection>) -> Result<Json<Vec<AskTurn>>, AskErr> {
+    let scope = scope_of(q)?;
+    Ok(Json(ask_blocking(&st, move |a| a.thread(&scope)).await?))
+}
 
-pub async fn ask_target(State(st): State<AppState>, q: Result<Query<TargetQuery>, QueryRejection>) -> Result<Json<AskTarget>, AskErr> {
-    let Query(q) = q.map_err(|e| AskError::BadRequest(e.body_text()))?;
-    Ok(Json(ask_blocking(&st, move |a| a.target(&q.room_id, &q.artifact_id)).await?))
+pub async fn ask_target(State(st): State<AppState>, q: Result<Query<ScopeQuery>, QueryRejection>) -> Result<Json<AskTarget>, AskErr> {
+    let scope = scope_of(q)?;
+    Ok(Json(ask_blocking(&st, move |a| a.target(&scope)).await?))
 }
 
 /// The raw image bytes; the type is read from them, not from content-type.

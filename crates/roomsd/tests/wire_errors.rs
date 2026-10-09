@@ -146,17 +146,18 @@ async fn tool_errors() {
 #[tokio::test]
 async fn ask_errors() {
     let (d, app, st) = app();
-    assert_eq!(wire(&app, req("GET", "/v1/asks?fileKey=..%2Fx", "")).await, w(400, "bad_request", "bad file key"));
-    assert_eq!(wire(&app, req("GET", "/v1/asks/target?roomId=inbox&artifactId=nope", "")).await, w(404, "not_found", "Can't find this doc"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks?scope=doc:..%2Fx", "")).await, w(400, "bad_request", "bad scope key"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=doc:0000000000000000", "")).await, w(404, "not_found", "Can't find this doc"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=room:inbox", "")).await, w(400, "bad_request", "Room and day asks are not available yet"));
     let (status, code, _) = wire(&app, req("GET", "/v1/asks", "")).await;
     assert_eq!((status, code.as_str()), (400, "bad_request"));
     std::fs::write(d.path().join("inbox/x.html"), "<title>x</title>").unwrap();
     st.core.backfill_all().unwrap();
     let art = st.core.list_artifacts(&"inbox".to_string()).unwrap().remove(0);
-    let body = format!(r#"{{"roomId":"inbox","artifactId":"{}","question":" "}}"#, art.id);
+    let body = format!(r#"{{"scope":{{"kind":"doc","fileKey":"{}"}},"question":" "}}"#, art.file_key);
     assert_eq!(wire(&app, req("POST", "/v1/asks", &body)).await, w(400, "bad_request", "A question must be 1–8000 characters"));
     std::fs::write(d.path().join(".rooms/agents.toml"), "not = [toml").unwrap();
-    let uri = format!("/v1/asks/target?roomId=inbox&artifactId={}", art.id);
+    let uri = format!("/v1/asks/target?scope=doc:{}", art.file_key);
     let (status, code, message) = wire(&app, req("GET", &uri, "")).await;
     assert_eq!((status, code.as_str()), (422, "agent_config"));
     assert!(message.starts_with("Couldn't read agent settings: "), "{message}");

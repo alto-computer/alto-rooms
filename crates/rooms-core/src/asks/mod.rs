@@ -1,4 +1,5 @@
 //! v2 ask: send a question about a doc to the agent CLI that made it (spec 2026-10-06 v2 ask).
+//! Every thread belongs to an `AskScope`; a doc's is the only kind that runs so far.
 //! `Asks` is the only entry point; templates, prompt, log and process stay inside this module.
 pub(crate) mod agents;
 pub mod images;
@@ -11,11 +12,12 @@ pub(crate) mod stream;
 pub use run::Limits;
 
 use crate::lock::lock;
+use crate::rules::validate_iso_date;
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
 use prompt::{build_prompt, context, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
-use rooms_protocol::{Artifact, AskKind, AskStatus, AskTarget, AskTurn, EventKind};
+use rooms_protocol::{Artifact, AskKind, AskScope, AskStatus, AskTarget, AskTurn, EventKind, JOURNAL_ROOM_ID};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
 use std::collections::HashMap;
@@ -27,6 +29,7 @@ use std::time::Duration;
 pub const MAX_RUNNING: usize = 4;
 const MAX_QUESTION_CHARS: usize = 8_000;
 const RESTARTED: &str = "Stopped because Rooms restarted";
+const NOT_YET: &str = "Room and day asks are not available yet";
 /// JSON-lines output carries every streamed chunk and tool result around the answer, so a profile
 /// with event rules may print this many times `Limits::max_stdout` (16 MB by default).
 const JSON_STDOUT_FACTOR: usize = 16;
@@ -41,6 +44,45 @@ fn read_answer(rules: &[EventRule], stdout: &[u8]) -> String {
     r.push(stdout);
     r.finish();
     if r.saw_json() { run::clean_output(r.text().as_bytes()) } else { run::clean_output(stdout) }
+}
+
+/// A scope as one string, `doc:<fileKey>`, `room:<roomId>` or `day:<YYYY-MM-DD>`: what
+/// `GET /v1/asks?scope=` takes and what the app keys its threads by.
+pub trait ScopeKey: Sized {
+    fn key(&self) -> String;
+    /// The only parser; routes call it at the boundary. A scope that arrives as JSON gets `validate`.
+    fn parse_key(key: &str) -> Result<Self, AskError>;
+    fn validate(&self) -> Result<(), AskError>;
+}
+
+impl ScopeKey for AskScope {
+    fn key(&self) -> String {
+        match self {
+            AskScope::Doc { file_key } => format!("doc:{file_key}"),
+            AskScope::Room { room_id } => format!("room:{room_id}"),
+            AskScope::Day { date } => format!("day:{date}"),
+        }
+    }
+
+    fn parse_key(key: &str) -> Result<Self, AskError> {
+        let scope = match key.split_once(':') {
+            Some(("doc", k)) => AskScope::Doc { file_key: k.into() },
+            Some(("room", r)) => AskScope::Room { room_id: r.into() },
+            Some(("day", d)) => AskScope::Day { date: d.into() },
+            _ => return Err(AskError::BadRequest("bad scope key".into())),
+        };
+        scope.validate()?;
+        Ok(scope)
+    }
+
+    fn validate(&self) -> Result<(), AskError> {
+        let ok = match self {
+            AskScope::Doc { file_key } => valid_file_key(file_key),
+            AskScope::Room { room_id } => valid_ident(room_id) && room_id != JOURNAL_ROOM_ID,
+            AskScope::Day { date } => validate_iso_date(date).is_ok(),
+        };
+        if ok { Ok(()) } else { Err(AskError::BadRequest("bad scope key".into())) }
+    }
 }
 
 /// Why an ask call failed, with the wire `code()` and HTTP `status()` roomsd answers with (the
@@ -113,9 +155,9 @@ impl<'a> Request<'a> {
     fn images(&self) -> &'a [String] { if self.kind == AskKind::Question { self.images } else { &[] } }
 }
 
-struct Entry { file_key: String, killer: Killer }
+struct Entry { scope: AskScope, killer: Killer }
 
-/// Where an ask from a doc goes: the one answer both `target` and `start` use.
+/// Where an ask in a scope goes: the one answer both `target` and `start` use.
 struct Resolved {
     artifact: Artifact,
     file_abs: PathBuf,
@@ -212,12 +254,15 @@ impl Asks {
 
     fn config_path(&self) -> PathBuf { self.0.core.home().join(".rooms/agents.toml") }
 
-    /// Which doc, agent, template, session and cwd an ask from `artifact_id` would use.
-    fn resolve(&self, room: &str, artifact_id: &str) -> Result<Resolved, AskError> {
+    /// Which doc, agent, template, session and cwd an ask in `scope` would use. A doc scope goes
+    /// through the artifact that holds its file (rooms linking one original share the file key, the
+    /// realpath and the source meta).
+    fn resolve(&self, scope: &AskScope) -> Result<Resolved, AskError> {
+        scope.validate()?;
+        let AskScope::Doc { file_key } = scope else { return Err(AskError::BadRequest(NOT_YET.into())) };
         let core = &self.0.core;
-        let artifact = core.artifact(&room.to_string(), artifact_id).ok().flatten().ok_or(AskError::NotFound)?;
-        if !valid_file_key(&artifact.file_key) { return Err(AskError::BadRequest("bad file key".into())); }
-        let file_abs = core.resolve_file(&room.to_string(), &artifact.rel_path).map_err(|_| AskError::NotFound)?;
+        let artifact = core.artifact_by_file_key(file_key).ok_or(AskError::NotFound)?;
+        let file_abs = core.resolve_file(&artifact.room_id, &artifact.rel_path).map_err(|_| AskError::NotFound)?;
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
         // Meta wins. Otherwise the sidecar entry (agent, session, cwd) is used WHOLE: mixing the doc's
         // agent with another conversation's session would resume the wrong agent's thread.
@@ -234,15 +279,15 @@ impl Asks {
     }
 
     /// Blocking, like `start`: what the ask bar shows before the first question.
-    pub fn target(&self, room: &str, artifact_id: &str) -> Result<AskTarget, AskError> {
-        let r = self.resolve(room, artifact_id)?;
+    pub fn target(&self, scope: &AskScope) -> Result<AskTarget, AskError> {
+        let r = self.resolve(scope)?;
         Ok(AskTarget { agent: r.plan.agent, mode: r.plan.mode, models: r.plan.models })
     }
 
     /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
     /// `model` must be one of the target's models; `None` or "" leaves the agent's default.
-    pub fn start(&self, room: &str, artifact_id: &str, question: &str, model: Option<&str>) -> Result<AskTurn, AskError> {
-        self.start_with(room, artifact_id, Request { model, ..Request::question(question) })
+    pub fn start(&self, scope: &AskScope, question: &str, model: Option<&str>) -> Result<AskTurn, AskError> {
+        self.start_with(scope, Request { model, ..Request::question(question) })
     }
 
     /// Stores an attached image; the id goes in `Request::images`. Blocking (file IO).
@@ -255,24 +300,24 @@ impl Asks {
 
     /// Starts a turn: a question goes to the agent; `/new` is recorded at once (nothing runs);
     /// `/compact` asks the agent to summarize the conversation so far. Blocking, like `start`.
-    pub fn start_with(&self, room: &str, artifact_id: &str, req: Request) -> Result<AskTurn, AskError> {
+    pub fn start_with(&self, scope: &AskScope, req: Request) -> Result<AskTurn, AskError> {
         let _rt = self.0.rt.as_ref().map(|h| h.enter());
         let question = req.text()?;
         let image_paths = self.image_paths(req.images())?;
-        let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(room, artifact_id)?;
+        let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(scope)?;
         let model = req.model.filter(|m| !m.is_empty());
         if let Some(m) = model.filter(|m| !plan.models.iter().any(|x| x == m)) {
             return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
         }
 
-        let running = self.reserve(&artifact.file_key)?;
-        let prior = self.read_thread(&running, &artifact.file_key)?;
+        let running = self.reserve(scope)?;
+        let prior = self.read_thread(&running, scope)?;
         let ctx = context(&prior, if plan.prompt_on_stdin() { PRIOR_CHARS_STDIN } else { PRIOR_CHARS_ARGV });
         if req.kind != AskKind::Question && ctx.is_empty() {
             return Err(AskError::BadRequest(if req.kind == AskKind::Clear { "Nothing to clear yet" } else { "Nothing to summarize yet" }.into()));
         }
         let turn = AskTurn {
-            id: nanoid::nanoid!(16), file_key: artifact.file_key.clone(), question: question.to_string(), answer: String::new(),
+            id: nanoid::nanoid!(16), scope: scope.clone(), question: question.to_string(), answer: String::new(),
             agent: plan.agent.clone(), model: model.map(str::to_string), mode: plan.mode, status: AskStatus::Running, error: None,
             started_at: now(), ended_at: None, images: req.images().to_vec(), kind: req.kind, left_out: ctx.left_out as u32,
         };
@@ -304,11 +349,11 @@ impl Asks {
             .ok_or_else(|| AskError::BadRequest("An attached image is missing — attach it again".into()))
     }
 
-    /// The running map, locked, once there's room for one more turn about `file_key`.
-    fn reserve(&self, file_key: &str) -> Result<MutexGuard<'_, HashMap<String, Entry>>, AskError> {
+    /// The running map, locked, once there's room for one more turn in `scope`.
+    fn reserve(&self, scope: &AskScope) -> Result<MutexGuard<'_, HashMap<String, Entry>>, AskError> {
         let running = lock(&self.0.running);
         if self.0.shutting_down.load(Ordering::SeqCst) { return Err(AskError::Capacity); }
-        if running.values().any(|e| e.file_key == file_key) { return Err(AskError::Busy); }
+        if running.values().any(|e| e.scope == *scope) { return Err(AskError::Busy); }
         if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
         Ok(running)
     }
@@ -342,7 +387,7 @@ impl Asks {
                 self.finish(turn.clone(), AskStatus::Failed, String::new(), Some(msg));
             }
             Ok(Running { killer, done }) => {
-                running.insert(turn.id.clone(), Entry { file_key: turn.file_key.clone(), killer });
+                running.insert(turn.id.clone(), Entry { scope: turn.scope.clone(), killer });
                 drop(running);
                 self.relay_progress(&turn, rules.clone(), chunks);
                 let (me, t) = (self.clone(), turn.clone());
@@ -362,7 +407,7 @@ impl Asks {
     /// once per PROGRESS_EVERY and only on change. Ends when the run's stdout tap closes.
     fn relay_progress(&self, turn: &AskTurn, rules: Vec<EventRule>, mut chunks: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>) {
         let me = self.clone();
-        let (id, file_key) = (turn.id.clone(), turn.file_key.clone());
+        let (id, scope) = (turn.id.clone(), turn.scope.clone());
         tokio::spawn(async move {
             let mut reader = Reader::new(&rules);
             let mut raw: Vec<u8> = Vec::new();
@@ -393,7 +438,7 @@ impl Asks {
                         // so no progress can follow the done event.
                         let running = lock(&me.0.running);
                         if !running.contains_key(&id) { break; }
-                        me.0.core.emit_ask(EventKind::AskProgress { id: id.clone(), file_key: file_key.clone(), answer: now.0.clone(), activity: now.1.clone() });
+                        me.0.core.emit_ask(EventKind::AskProgress { id: id.clone(), scope: scope.clone(), answer: now.0.clone(), activity: now.1.clone() });
                         drop(running);
                         sent = now;
                     }
@@ -413,8 +458,8 @@ impl Asks {
         self.0.core.emit_ask(EventKind::AskDone { turn });
     }
 
-    fn read_thread(&self, running: &HashMap<String, Entry>, file_key: &str) -> Result<Vec<AskTurn>, AskError> {
-        let mut turns = self.0.log.read(file_key).map_err(|e| AskError::Io(e.to_string()))?;
+    fn read_thread(&self, running: &HashMap<String, Entry>, scope: &AskScope) -> Result<Vec<AskTurn>, AskError> {
+        let mut turns = self.0.log.read(scope).map_err(|e| AskError::Io(e.to_string()))?;
         for t in &mut turns {
             if t.status == AskStatus::Running && !running.contains_key(&t.id) {
                 t.status = AskStatus::Failed;
@@ -424,10 +469,10 @@ impl Asks {
         Ok(turns)
     }
 
-    pub fn thread(&self, file_key: &str) -> Result<Vec<AskTurn>, AskError> {
-        if !valid_file_key(file_key) { return Err(AskError::BadRequest("bad file key".into())); }
+    pub fn thread(&self, scope: &AskScope) -> Result<Vec<AskTurn>, AskError> {
+        scope.validate()?;
         let running = lock(&self.0.running);
-        self.read_thread(&running, file_key)
+        self.read_thread(&running, scope)
     }
 
     /// Stops a running turn; false when it isn't running here (it already ended, or roomsd restarted).
@@ -498,6 +543,50 @@ mod tests {
         assert_eq!(read_answer(&[], json.as_bytes()), json.trim());
         assert_eq!(turn_end("claude-code", &rules, exited(0, json, "")), (AskStatus::Done, "**Done**".into(), None));
         assert_eq!(turn_end("claude-code", &rules, killed(Reason::Cancelled, "{\"type\":\"x\"}")), (AskStatus::Cancelled, String::new(), None));
+    }
+
+    #[test]
+    fn scope_keys_round_trip_and_reject_bad_input() {
+        let good = [
+            (AskScope::Doc { file_key: "0123456789abcdef".into() }, "doc:0123456789abcdef"),
+            (AskScope::Room { room_id: "my-room.2".into() }, "room:my-room.2"),
+            (AskScope::Day { date: "2026-10-09".into() }, "day:2026-10-09"),
+        ];
+        for (scope, key) in good {
+            assert_eq!(scope.key(), key);
+            assert_eq!(AskScope::parse_key(key).unwrap(), scope);
+        }
+        let long_doc = format!("doc:{}", "a".repeat(65));
+        for bad in ["../x", "doc:../x", "room:journal", "room:-flag", "room:a b", "day:2026-13-01", "day:2026-1-1", long_doc.as_str(), "doc:", "room:", "0123456789abcdef", "week:2026-10-09", ""] {
+            assert!(matches!(AskScope::parse_key(bad), Err(AskError::BadRequest(_))), "{bad}");
+        }
+        assert!(AskScope::Room { room_id: JOURNAL_ROOM_ID.into() }.validate().is_err());
+        assert!(AskScope::Doc { file_key: "a.b".into() }.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn busy_is_per_scope() {
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-agent.sh");
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let room = core.create_room("r").unwrap();
+        std::fs::write(core.room_root(&room.id).unwrap().0.join("doc.html"), "<title>d</title>").unwrap();
+        core.backfill_all().unwrap();
+        std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+        std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{fake}\", \"{{prompt}}\"]\n")).unwrap();
+        let asks = Asks::new(core.clone(), None);
+        let file_key = core.list_artifacts(&room.id).unwrap().remove(0).file_key;
+        let doc = AskScope::Doc { file_key: file_key.clone() };
+        let t = asks.start(&doc, "SLEEP", None).unwrap();
+        assert!(matches!(asks.reserve(&doc), Err(AskError::Busy)));
+        let room_like = AskScope::Room { room_id: file_key.clone() };
+        assert!(asks.reserve(&room_like).is_ok());
+        assert!(asks.reserve(&AskScope::Day { date: "2026-10-09".into() }).is_ok());
+        assert_eq!(asks.thread(&room_like).unwrap().len(), 0);
+        assert_eq!(asks.thread(&doc).unwrap()[0].id, t.id);
+        assert!(matches!(asks.start(&room_like, "q", None), Err(AskError::BadRequest(m)) if m == NOT_YET));
+        assert!(matches!(asks.target(&room_like), Err(AskError::BadRequest(m)) if m == NOT_YET));
+        asks.shutdown().await;
     }
 
     #[test]

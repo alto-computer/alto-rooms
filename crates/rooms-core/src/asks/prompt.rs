@@ -78,10 +78,10 @@ pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, file_key: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rooms_protocol::AskStatus;
+    use rooms_protocol::{AskScope, AskStatus};
 
     fn turn(q: &str, a: &str, status: AskStatus) -> AskTurn {
-        AskTurn { id: q.into(), file_key: "k".into(), question: q.into(), answer: a.into(), agent: "x".into(), model: None,
+        AskTurn { id: q.into(), scope: AskScope::Doc { file_key: "k".into() }, question: q.into(), answer: a.into(), agent: "x".into(), model: None,
             mode: AskMode::New, status, error: None, started_at: "t".into(), ended_at: None, images: vec![], kind: AskKind::Question, left_out: 0 }
     }
 
