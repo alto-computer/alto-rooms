@@ -33,7 +33,17 @@ export type HostMessage =
   | { type: "reply"; plugin: string; id: string; result: unknown }
   | { type: "reply"; plugin: string; id: string; error: { code: BridgeErrorCode; message: string } }
   | { type: "dataChanged"; plugin: string; path: string }
-  | { type: "selection.action"; plugin: string; actionId: string };
+  | { type: "selection.action"; plugin: string; actionId: string }
+  | { type: "reveal"; plugin: string; anchor: unknown };
+
+/**
+ * What one load of the doc frame told the host: the scripts that are ready and the actions each
+ * declared. It outlives a channel, because a doc tab in the background drops its channel and makes
+ * a new one when it comes back, while its frame keeps running and never says either again.
+ */
+export type FrameSession = { ready: Set<string>; actions: Map<string, ContentAction[]> };
+
+export const newFrameSession = (): FrameSession => ({ ready: new Set(), actions: new Map() });
 
 const STORAGE = new Set<string>(["storage.read", "storage.write", "storage.list", "storage.delete"]);
 
@@ -79,6 +89,8 @@ export type ContentChannelDeps = {
   plugins: ReadonlySet<string>;
   /** The doc frame's window: the only source the channel listens to and the only target it posts to. */
   frame: () => Window | null;
+  /** The frame's current load, shared by every channel made for it. */
+  session: FrameSession;
   client: Pick<BridgeDeps["client"], "getPluginData" | "putPluginData" | "listPluginData" | "deletePluginData">;
   /** Every plugin's declared actions, after each change. */
   onActions: (actions: ReadonlyMap<string, ContentAction[]>) => void;
@@ -91,6 +103,11 @@ export type ContentChannel = {
   receive(e: MessageEvent): void;
   /** Tells `plugin`'s content script that its action was clicked; only an action it declared. */
   runAction(plugin: string, actionId: string): void;
+  /**
+   * Hands `anchor` to `plugin`'s content script: now if it is ready, else once it says so. A later
+   * anchor replaces one still waiting. A plugin outside the set gets nothing.
+   */
+  reveal(plugin: string, anchor: unknown): void;
   /** Messages from the doc frame that were malformed or named a plugin outside the set. */
   readonly dropped: number;
   dispose(): void;
@@ -98,10 +115,11 @@ export type ContentChannel = {
 
 export function createContentChannel(deps: ContentChannelDeps): ContentChannel {
   const { fileKey, plugins, frame, client } = deps;
+  const { ready, actions } = deps.session;
   const now = deps.now ?? (() => performance.now());
   const validColor = deps.validColor ?? isColor;
   const base = `docs/${fileKey}/`;
-  const actions = new Map<string, ContentAction[]>();
+  const waiting = new Map<string, unknown>();
   let dropped = 0;
 
   const post = (m: HostMessage) => frame()?.postMessage({ rooms: "content", v: 1, ...m }, "*");
@@ -176,7 +194,14 @@ export function createContentChannel(deps: ContentChannelDeps): ContentChannel {
         dropped++;
         return;
       }
-      if (m.type === "ready") return;
+      if (m.type === "ready") {
+        ready.add(m.plugin);
+        if (waiting.has(m.plugin)) {
+          post({ type: "reveal", plugin: m.plugin, anchor: waiting.get(m.plugin) });
+          waiting.delete(m.plugin);
+        }
+        return;
+      }
       if (m.type === "actions") {
         actions.set(m.plugin, m.items);
         deps.onActions(new Map(actions));
@@ -199,6 +224,10 @@ export function createContentChannel(deps: ContentChannelDeps): ContentChannel {
     },
     runAction(plugin, actionId) {
       if (actions.get(plugin)?.some((a) => a.id === actionId)) post({ type: "selection.action", plugin, actionId });
+    },
+    reveal(plugin, anchor) {
+      if (ready.has(plugin)) post({ type: "reveal", plugin, anchor });
+      else waiting.set(plugin, anchor);
     },
     get dropped() {
       return dropped;
