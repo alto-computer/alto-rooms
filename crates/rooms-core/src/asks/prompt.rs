@@ -1,5 +1,5 @@
 //! The only text Rooms writes into a question (spec §6.3), plus the R0 checks on doc meta.
-use rooms_protocol::{AskKind, AskMode, AskStatus, AskTurn};
+use rooms_protocol::{AskKind, AskMode, AskStatus, AskTurn, Conversation};
 
 /// How much earlier Q&A goes along with a question, in characters, summary included. A prompt on
 /// stdin has no OS limit; one passed as an argv element (a template with `{prompt}`) does: Linux
@@ -63,9 +63,26 @@ pub(crate) fn with_image_paths(question: &str, paths: &[String]) -> String {
     format!("{question}\n\nAttached images (open each one to see it):\n{}", list.join("\n"))
 }
 
-pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, file_key: &str, ctx: &Context, question: &str) -> String {
-    let mut out = format!("{preamble}\n\nDocument: {file}\nRooms doc: {file_key}\n");
+/// What a doc ask is about: the file, and in a new session the ask to read it first.
+pub(crate) fn doc_about(mode: AskMode, file: &str, file_key: &str) -> String {
+    let mut out = format!("Document: {file}\nRooms doc: {file_key}\n");
     if mode == AskMode::New { out.push_str("Read this file first.\n"); }
+    out
+}
+
+/// What a conversation ask is about. Resumed, the agent has the conversation itself; in a new
+/// session these lines are all it knows of it.
+pub(crate) fn conversation_about(c: &Conversation) -> String {
+    let mut out = String::new();
+    if let Some(t) = &c.title { out.push_str(&format!("Conversation: {t}\n")); }
+    out.push_str(&format!("Agent: {}, session {}\n", c.id.agent.as_str(), c.id.session));
+    if let Some(cwd) = &c.cwd { out.push_str(&format!("Folder: {cwd}\n")); }
+    out
+}
+
+/// The preamble, what the ask is about, the earlier Q&A that fits, then the question.
+pub(crate) fn build_prompt(preamble: &str, about: &str, ctx: &Context, question: &str) -> String {
+    let mut out = format!("{preamble}\n\n{about}");
     if let Some(s) = ctx.summary { out.push_str(&format!("\nSummary of the earlier Q&A:\n{s}\n")); }
     if !ctx.turns.is_empty() {
         out.push_str("\nPrevious Q&A:\n");
@@ -87,18 +104,20 @@ mod tests {
 
     fn of(kind: AskKind, a: &str) -> AskTurn { AskTurn { kind, ..turn("", a, AskStatus::Done) } }
 
-    fn prompt(prior: &[AskTurn], q: &str) -> String { build_prompt("P", AskMode::Resume, "/f", "k", &context(prior, PRIOR_CHARS_ARGV), q) }
+    fn build(mode: AskMode, file: &str, key: &str, ctx: &Context, q: &str) -> String { build_prompt("P", &doc_about(mode, file, key), ctx, q) }
+
+    fn prompt(prior: &[AskTurn], q: &str) -> String { build(AskMode::Resume, "/f", "k", &context(prior, PRIOR_CHARS_ARGV), q) }
 
     #[test]
     fn resume_without_prior() {
-        assert_eq!(build_prompt("P", AskMode::Resume, "/d/a.html", "0123abcd", &context(&[], PRIOR_CHARS_ARGV), "왜?"), "P\n\nDocument: /d/a.html\nRooms doc: 0123abcd\n\nQuestion: 왜?");
+        assert_eq!(build(AskMode::Resume, "/d/a.html", "0123abcd", &context(&[], PRIOR_CHARS_ARGV), "왜?"), "P\n\nDocument: /d/a.html\nRooms doc: 0123abcd\n\nQuestion: 왜?");
     }
 
     #[test]
     fn new_mode_asks_to_read_and_includes_done_prior_only() {
         let prior = [turn("q1", "a1", AskStatus::Done), turn("q2", "", AskStatus::Failed), turn("q3", "a3", AskStatus::Done)];
         assert_eq!(
-            build_prompt("P", AskMode::New, "/d/a.html", "0123abcd", &context(&prior, PRIOR_CHARS_ARGV), "q4"),
+            build(AskMode::New, "/d/a.html", "0123abcd", &context(&prior, PRIOR_CHARS_ARGV), "q4"),
             "P\n\nDocument: /d/a.html\nRooms doc: 0123abcd\nRead this file first.\n\nPrevious Q&A:\nQ: q1\nA: a1\nQ: q3\nA: a3\n\nQuestion: q4"
         );
     }
@@ -139,6 +158,16 @@ mod tests {
         let c = [of(AskKind::Compact, &big), turn("q", "0123456789ab", AskStatus::Done)];
         let ctx = context(&c, PRIOR_CHARS_ARGV);
         assert_eq!((ctx.turns.len(), ctx.left_out), (0, 1));
+    }
+
+    #[test]
+    fn a_conversation_ask_names_the_conversation() {
+        let c = Conversation { id: rooms_protocol::ConversationId::parse_key("codex:s-1").unwrap(), title: Some("Fix the build".into()),
+            cwd: Some("/w".into()), started_at: "a".into(), ended_at: "b".into(), messages: 3, last_reply: None, artifacts_written: vec![], room_id: None };
+        assert_eq!(build_prompt("P", &conversation_about(&c), &context(&[], PRIOR_CHARS_ARGV), "summary?"),
+            "P\n\nConversation: Fix the build\nAgent: codex, session s-1\nFolder: /w\n\nQuestion: summary?");
+        let bare = Conversation { title: None, cwd: None, ..c };
+        assert_eq!(conversation_about(&bare), "Agent: codex, session s-1\n");
     }
 
     #[test]

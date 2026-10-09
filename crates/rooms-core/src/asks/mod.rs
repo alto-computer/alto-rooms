@@ -1,5 +1,5 @@
 //! v2 ask: send a question about a doc to the agent CLI that made it (spec 2026-10-06 v2 ask).
-//! Every thread belongs to an `AskScope`; a doc's is the only kind that runs so far.
+//! Every thread belongs to an `AskScope`; a doc's and a conversation's run so far.
 //! `Asks` is the only entry point; templates, prompt, log and process stay inside this module.
 pub(crate) mod agents;
 pub mod images;
@@ -14,10 +14,10 @@ pub use run::Limits;
 use crate::lock::lock;
 use crate::rules::{slug_key, valid_room_id, validate_iso_date};
 use crate::RoomsCore;
-use agents::{AgentProfiles, Plan, Vars};
+use agents::{AgentProfiles, Plan, Vars, CONVERSATION_PREAMBLE};
 use log::AskLog;
-use prompt::{build_prompt, context, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
-use rooms_protocol::{Artifact, AskKind, AskScope, AskStatus, AskTarget, AskTurn, EventKind, JOURNAL_ROOM_ID};
+use prompt::{build_prompt, context, conversation_about, doc_about, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
+use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, ConversationId, EventKind, JOURNAL_ROOM_ID};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
 use std::collections::HashMap;
@@ -46,7 +46,8 @@ fn read_answer(rules: &[EventRule], stdout: &[u8]) -> String {
     if r.saw_json() { run::clean_output(r.text().as_bytes()) } else { run::clean_output(stdout) }
 }
 
-/// A scope as one string, `doc:<fileKey>`, `room:<roomId>` or `day:<YYYY-MM-DD>`: what
+/// A scope as one string, `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>` or
+/// `conversation:<agent>:<session>`: what
 /// `GET /v1/asks?scope=` takes and what the app keys its threads by.
 pub trait ScopeKey: Sized {
     fn key(&self) -> String;
@@ -61,6 +62,7 @@ impl ScopeKey for AskScope {
             AskScope::Doc { file_key } => format!("doc:{file_key}"),
             AskScope::Room { room_id } => format!("room:{room_id}"),
             AskScope::Day { date } => format!("day:{date}"),
+            AskScope::Conversation { agent, session } => format!("conversation:{}:{session}", agent.as_str()),
         }
     }
 
@@ -69,6 +71,10 @@ impl ScopeKey for AskScope {
             Some(("doc", k)) => AskScope::Doc { file_key: k.into() },
             Some(("room", r)) => AskScope::Room { room_id: r.into() },
             Some(("day", d)) => AskScope::Day { date: d.into() },
+            Some(("conversation", c)) => match ConversationId::parse_key(c) {
+                Some(ConversationId { agent, session }) => AskScope::Conversation { agent, session },
+                None => return Err(AskError::BadRequest("bad scope key".into())),
+            },
             _ => return Err(AskError::BadRequest("bad scope key".into())),
         };
         scope.validate()?;
@@ -80,6 +86,8 @@ impl ScopeKey for AskScope {
             AskScope::Doc { file_key } => valid_file_key(file_key),
             AskScope::Room { room_id } => valid_room_id(room_id) && slug_key(room_id) != JOURNAL_ROOM_ID,
             AskScope::Day { date } => validate_iso_date(date).is_ok(),
+            // Its agent and session id were checked when it was parsed.
+            AskScope::Conversation { .. } => true,
         };
         if ok { Ok(()) } else { Err(AskError::BadRequest("bad scope key".into())) }
     }
@@ -90,7 +98,8 @@ impl ScopeKey for AskScope {
 #[derive(Debug, thiserror::Error)]
 pub enum AskError {
     #[error("{0}")] BadRequest(String),
-    #[error("Can't find this doc")] NotFound,
+    #[error("Can't find this artifact")] NotFound,
+    #[error("Can't find this session")] ConversationNotFound,
     #[error("Waiting for an answer")] Busy,
     #[error("Too many questions running — try again when one finishes")] Capacity,
     #[error("Couldn't read agent settings: {0}")] AgentConfig(String),
@@ -101,7 +110,7 @@ impl AskError {
     pub fn code(&self) -> &'static str {
         match self {
             AskError::BadRequest(_) => "bad_request",
-            AskError::NotFound => "not_found",
+            AskError::NotFound | AskError::ConversationNotFound => "not_found",
             AskError::Busy => "ask_busy",
             AskError::Capacity => "ask_capacity",
             AskError::AgentConfig(_) => "agent_config",
@@ -112,7 +121,7 @@ impl AskError {
     pub fn status(&self) -> u16 {
         match self {
             AskError::BadRequest(_) => 400,
-            AskError::NotFound => 404,
+            AskError::NotFound | AskError::ConversationNotFound => 404,
             AskError::Busy | AskError::Capacity => 409,
             AskError::AgentConfig(_) => 422,
             AskError::Io(_) => 500,
@@ -159,12 +168,14 @@ struct Entry { scope: AskScope, killer: Killer }
 
 /// Where an ask in a scope goes: the one answer both `target` and `start` use.
 struct Resolved {
-    artifact: Artifact,
-    file_abs: PathBuf,
-    profiles: AgentProfiles,
     plan: Plan,
     session: Option<String>,
     cwd: PathBuf,
+    preamble: String,
+    /// What the prompt says the ask is about (`prompt::doc_about`, `prompt::conversation_about`).
+    about: String,
+    /// The doc's file for a template's `{file}`; "" for a conversation.
+    file: String,
 }
 
 struct Inner {
@@ -254,12 +265,20 @@ impl Asks {
 
     fn config_path(&self) -> PathBuf { self.0.core.home().join(".rooms/agents.toml") }
 
-    /// Which doc, agent, template, session and cwd an ask in `scope` would use. A doc scope goes
-    /// through the first artifact holding its file whose link still resolves (rooms linking one
-    /// original share the file key, the realpath and the source meta).
+    /// Which agent, template, session and cwd an ask in `scope` would use, and what its prompt
+    /// says it is about.
     fn resolve(&self, scope: &AskScope) -> Result<Resolved, AskError> {
         scope.validate()?;
-        let AskScope::Doc { file_key } = scope else { return Err(AskError::BadRequest(NOT_YET.into())) };
+        match scope {
+            AskScope::Doc { file_key } => self.resolve_doc(file_key),
+            AskScope::Conversation { agent, session } => self.resolve_conversation(ConversationId { agent: *agent, session: session.clone() }),
+            AskScope::Room { .. } | AskScope::Day { .. } => Err(AskError::BadRequest(NOT_YET.into())),
+        }
+    }
+
+    /// A doc ask goes through the first artifact holding its file whose link still resolves (rooms
+    /// linking one original share the file key, the realpath and the source meta).
+    fn resolve_doc(&self, file_key: &str) -> Result<Resolved, AskError> {
         let core = &self.0.core;
         let (artifact, file_abs) = core.artifacts_by_file_key(file_key).into_iter()
             .find_map(|a| core.resolve_file(&a.room_id, &a.rel_path).ok().map(|p| (a, p)))
@@ -276,7 +295,20 @@ impl Asks {
         let plan = profiles.plan(agent, session.as_deref());
         let cwd = src.cwd.as_deref().map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir())
             .unwrap_or_else(|| file_abs.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| core.home().to_path_buf()));
-        Ok(Resolved { artifact, file_abs, profiles, plan, session, cwd })
+        let file = file_abs.to_string_lossy().into_owned();
+        Ok(Resolved { about: doc_about(plan.mode, &file, &artifact.file_key), preamble: profiles.preamble().to_string(), plan, session, cwd, file })
+    }
+
+    /// A conversation ask resumes the conversation's own session the way a doc ask resumes the one
+    /// that wrote it: through the agent's `resume` template, which forks it where the agent can.
+    fn resolve_conversation(&self, id: ConversationId) -> Result<Resolved, AskError> {
+        let core = &self.0.core;
+        let c = core.conversation(&id).map_err(|_| AskError::ConversationNotFound)?;
+        let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
+        let session = Some(id.session.to_string()).filter(|s| valid_ident(s));
+        let plan = profiles.plan(Some(id.agent.as_str()), session.as_deref());
+        let cwd = c.cwd.as_deref().map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir()).unwrap_or_else(|| core.home().to_path_buf());
+        Ok(Resolved { about: conversation_about(&c), preamble: CONVERSATION_PREAMBLE.to_string(), plan, session, cwd, file: String::new() })
     }
 
     /// Blocking, like `start`: what the ask bar shows before the first question.
@@ -305,7 +337,7 @@ impl Asks {
         let _rt = self.0.rt.as_ref().map(|h| h.enter());
         let question = req.text()?;
         let image_paths = self.image_paths(req.images())?;
-        let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(scope)?;
+        let Resolved { plan, session, cwd, preamble, about, file } = self.resolve(scope)?;
         let model = req.model.filter(|m| !m.is_empty());
         if let Some(m) = model.filter(|m| !plan.models.iter().any(|x| x == m)) {
             return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
@@ -324,16 +356,16 @@ impl Asks {
         };
         if req.kind == AskKind::Clear { return self.record_clear(running, turn); }
 
-        let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
+        let cwd_s = cwd.to_string_lossy().into_owned();
         let asked = if req.kind == AskKind::Compact { COMPACT_ASK.to_string() } else { with_image_paths(question, &image_paths) };
-        let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, &ctx, &asked);
+        let prompt = build_prompt(&preamble, &about, &ctx, &asked);
         let image_dir = if image_paths.is_empty() { String::new() } else { self.0.images.dir().to_string_lossy().into_owned() };
         // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
         let mcp = self.0.core.home().join(".rooms/mcp.json");
         let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
         let stdin = plan.prompt_on_stdin();
         let argv = plan.render(&Vars {
-            prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
+            prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file, cwd: &cwd_s, mcp_config: &mcp_s,
             model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir,
         });
         self.launch(running, turn, argv, stdin.then_some(prompt), cwd, plan.events)
@@ -508,7 +540,8 @@ mod tests {
     fn ask_errors_wire_codes_and_statuses() {
         let wire = |e: AskError| (e.status(), e.code(), e.to_string());
         assert_eq!(wire(AskError::BadRequest("why".into())), (400, "bad_request", "why".into()));
-        assert_eq!(wire(AskError::NotFound), (404, "not_found", "Can't find this doc".into()));
+        assert_eq!(wire(AskError::NotFound), (404, "not_found", "Can't find this artifact".into()));
+        assert_eq!(wire(AskError::ConversationNotFound), (404, "not_found", "Can't find this session".into()));
         assert_eq!(wire(AskError::Busy), (409, "ask_busy", "Waiting for an answer".into()));
         assert_eq!(wire(AskError::Capacity), (409, "ask_capacity", "Too many questions running — try again when one finishes".into()));
         assert_eq!(wire(AskError::AgentConfig("x".into())), (422, "agent_config", "Couldn't read agent settings: x".into()));
@@ -555,6 +588,7 @@ mod tests {
             (AskScope::Room { room_id: "-abc".into() }, "room:-abc"),
             (AskScope::Room { room_id: "_abc".into() }, "room:_abc"),
             (AskScope::Day { date: "2026-10-09".into() }, "day:2026-10-09"),
+            (AskScope::Conversation { agent: rooms_protocol::Agent::ClaudeCode, session: rooms_protocol::SessionId::parse("7f3a-b_2").unwrap() }, "conversation:claude-code:7f3a-b_2"),
         ];
         for (scope, key) in good {
             assert_eq!(scope.key(), key);
@@ -562,7 +596,7 @@ mod tests {
         }
         let long_doc = format!("doc:{}", "a".repeat(65));
         let long_room = format!("room:{}", "a".repeat(65));
-        for bad in ["../x", "doc:../x", "room:journal", "room:Journal", "room:JOURNAL", "room:a b", "room:a.b", "room:a/b", "day:2026-13-01", "day:2026-1-1", long_doc.as_str(), long_room.as_str(), "doc:", "room:", "0123456789abcdef", "week:2026-10-09", ""] {
+        for bad in ["../x", "doc:../x", "room:journal", "room:Journal", "room:JOURNAL", "room:a b", "room:a.b", "room:a/b", "day:2026-13-01", "day:2026-1-1", long_doc.as_str(), long_room.as_str(), "doc:", "room:", "0123456789abcdef", "week:2026-10-09", "conversation:claude-code", "conversation:cursor:s1", "conversation:codex:s;1", "conversation:codex:", ""] {
             assert!(matches!(AskScope::parse_key(bad), Err(AskError::BadRequest(_))), "{bad}");
         }
         assert!(AskScope::Room { room_id: JOURNAL_ROOM_ID.into() }.validate().is_err());

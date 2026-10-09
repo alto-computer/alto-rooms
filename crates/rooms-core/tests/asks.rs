@@ -488,3 +488,34 @@ async fn doc_scope_skips_a_dangling_link_and_uses_the_next_room() {
     assert!(matches!(asks.target(&doc), Err(AskError::NotFound)));
     asks.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_conversation_ask_resumes_that_conversation_in_its_folder() {
+    let (d, core, _doc, _room) = setup("");
+    let data = d.path().join("collect");
+    let work = tempfile::tempdir().unwrap();
+    let work_dir = std::fs::canonicalize(work.path()).unwrap();
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    db.execute("INSERT INTO events(id, kind, agent, session, ts, cwd, role, src_path, file_key, src_offset, src_len, preview)
+                VALUES('e1', 'message', 'claude-code', 'C-7', '2026-10-05T01:00:00Z', ?1, 'user', '/log', 'k', 0, 0, 'why is cold start slow')",
+        [work_dir.to_string_lossy()]).unwrap();
+    core.set_collect_data(&data);
+    let asks = Asks::new(core.clone(), None);
+    let scope = AskScope::Conversation { agent: rooms_protocol::Agent::ClaudeCode, session: rooms_protocol::SessionId::parse("C-7").unwrap() };
+    assert_eq!(asks.target(&scope).unwrap().mode, AskMode::Resume);
+    let mut rx = core.subscribe();
+    let t = asks.start(&scope, "three lines?", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [resume] [C-7] ["), "{}", done.answer);
+    assert!(done.answer.contains("Conversation: why is cold start slow\nAgent: claude-code, session C-7\n"), "{}", done.answer);
+    assert!(done.answer.contains(&format!("CWD: {}", work_dir.display())), "{}", done.answer);
+    assert_eq!(asks.thread(&scope).unwrap()[0].id, t.id);
+
+    let gone = AskScope::Conversation { agent: rooms_protocol::Agent::Codex, session: rooms_protocol::SessionId::parse("nope").unwrap() };
+    assert!(matches!(asks.start(&gone, "q", None), Err(AskError::ConversationNotFound)));
+    let flag_shaped = AskScope::Conversation { agent: rooms_protocol::Agent::ClaudeCode, session: rooms_protocol::SessionId::parse("-x").unwrap() };
+    db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
+                VALUES('e2', 'message', 'claude-code', '-x', '2026-10-05T01:00:00Z', 'user', '/log', 'k', 0, 0, 'hi')", []).unwrap();
+    assert_eq!(asks.target(&flag_shaped).unwrap().mode, AskMode::New, "a session id that reads as a flag is never resumed");
+    asks.shutdown().await;
+}

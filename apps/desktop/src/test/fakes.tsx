@@ -81,7 +81,7 @@ export function fakeClient(
     home?: string;
     /** Ask threads by file key (a doc scope). */
     asks?: Record<string, AskTurn[]>;
-    /** What `askTarget` answers (or throws), by file key; default: the doc's own agent with no models. */
+    /** What `askTarget` answers (or throws), by file key (or a conversation's scope key); default: the doc's own agent with no models. */
     askTargets?: Record<string, AskTarget | Error>;
     /** Conversations roomsd knows, each in the room its `roomId` names. */
     conversations?: Conversation[];
@@ -109,6 +109,15 @@ export function fakeClient(
   // Like roomsd before F1-2: only a doc scope resolves, through the artifact holding its file.
   const docOf = (scope: AskScope) =>
     scope.kind === "doc" ? Object.values(state.artifacts).flat().find((a) => a.fileKey === scope.fileKey) : undefined;
+  /** Who an ask in `scope` goes to, like roomsd: a doc's own agent, or the conversation's, resumed. */
+  const sourceOf = (scope: AskScope): { key: string; agent: string; mode: "resume" | "new" } | undefined => {
+    if (scope.kind === "conversation") {
+      const known = state.conversations.some((c) => c.id.agent === scope.agent && c.id.session === scope.session);
+      return known ? { key: scopeKey(scope), agent: scope.agent, mode: "resume" } : undefined;
+    }
+    const a = docOf(scope);
+    return a && { key: a.fileKey, agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new" };
+  };
   const client = {
     info: async () => info,
     listPlugins: vi.fn(async () => state.plugins.map((p) => ({ ...p }))),
@@ -227,13 +236,13 @@ export function fakeClient(
       return { ...a, roomId: toRoomId };
     }),
     startAsk: vi.fn(async (req: { scope: AskScope; question: string; model: string | null; images?: string[]; kind?: AskKind }): Promise<AskTurn> => {
-      const a = docOf(req.scope);
-      if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
+      const s = sourceOf(req.scope);
+      if (!s) throw new RoomsApiError(404, "not found", "not_found");
       const kind = req.kind ?? "question";
       const question = kind === "clear" ? "/new" : kind === "compact" ? "/compact" : req.question;
       return {
-        id: `ask-${question}`, scope: req.scope, question, answer: "", agent: a.source.agent ?? "claude-code",
-        model: req.model, mode: a.source.session ? "resume" : "new", status: kind === "clear" ? "done" : "running", error: null,
+        id: `ask-${question}`, scope: req.scope, question, answer: "", agent: s.agent,
+        model: req.model, mode: s.mode, status: kind === "clear" ? "done" : "running", error: null,
         startedAt: "2026-10-06T10:00:00+09:00", endedAt: kind === "clear" ? "2026-10-06T10:00:00+09:00" : null,
         images: kind === "question" ? (req.images ?? []) : [], kind, leftOut: 0,
       };
@@ -241,11 +250,11 @@ export function fakeClient(
     uploadAskImage: vi.fn(async (image: Blob) => ({ id: `img-${(image as File).name ?? "blob"}` })),
     askImageUrl: (i: Info, id: string) => `${i.filesOrigin}/_asks/images/${id}`,
     askTarget: vi.fn(async (scope: AskScope): Promise<AskTarget> => {
-      const a = docOf(scope);
-      if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
-      const t = opts.askTargets?.[a.fileKey];
+      const s = sourceOf(scope);
+      if (!s) throw new RoomsApiError(404, "not found", "not_found");
+      const t = opts.askTargets?.[s.key];
       if (t instanceof Error) throw t;
-      return t ?? { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new", models: [] };
+      return t ?? { agent: s.agent, mode: s.mode, models: [] };
     }),
     askThread: vi.fn(async (scope: AskScope) => (scope.kind === "doc" ? state.asks[scope.fileKey] : state.asks[scopeKey(scope)]) ?? []),
     cancelAsk: vi.fn(async () => {}),

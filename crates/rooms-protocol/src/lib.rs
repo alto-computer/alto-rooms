@@ -287,8 +287,8 @@ pub enum AskKind {
     Compact,
 }
 
-/// What a conversation is about, and the one thread it keeps: a doc (by the file key its rooms
-/// share), a room, or a Journal day.
+/// What an ask thread is about, and the one thread it keeps: a doc (by the file key its rooms
+/// share), a room, a Journal day, or an agent conversation (asked in a fork of its own session).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
@@ -296,6 +296,12 @@ pub enum AskScope {
     #[serde(rename_all = "camelCase")] Doc { file_key: String },
     #[serde(rename_all = "camelCase")] Room { room_id: RoomId },
     Day { date: IsoDate },
+    Conversation {
+        agent: Agent,
+        #[ts(type = "string")]
+        #[schemars(with = "String")]
+        session: SessionId,
+    },
 }
 
 wire!(

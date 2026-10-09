@@ -17,7 +17,7 @@ import type { StartAsk } from "./generated/StartAsk";
 
 export type Snapshot<T> = { data: T; seq: number };
 
-/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`. */
+/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `conversation:<agent>:<session>`. */
 export function scopeKey(scope: AskScope): string {
   switch (scope.kind) {
     case "doc":
@@ -26,6 +26,8 @@ export function scopeKey(scope: AskScope): string {
       return `room:${scope.roomId}`;
     case "day":
       return `day:${scope.date}`;
+    case "conversation":
+      return `conversation:${scope.agent}:${scope.session}`;
   }
 }
 

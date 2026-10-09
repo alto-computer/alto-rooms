@@ -149,7 +149,9 @@ async fn tool_errors() {
 async fn ask_errors() {
     let (d, app, st) = app();
     assert_eq!(wire(&app, req("GET", "/v1/asks?scope=doc:..%2Fx", "")).await, w(400, "bad_request", "bad scope key"));
-    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=doc:0000000000000000", "")).await, w(404, "not_found", "Can't find this doc"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=doc:0000000000000000", "")).await, w(404, "not_found", "Can't find this artifact"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=conversation:codex:s-1", "")).await, w(404, "not_found", "Can't find this session"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks?scope=conversation:cursor:s-1", "")).await, w(400, "bad_request", "bad scope key"));
     assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=room:inbox", "")).await, w(400, "bad_request", "Room and day asks are not available yet"));
     let (status, code, _) = wire(&app, req("GET", "/v1/asks", "")).await;
     assert_eq!((status, code.as_str()), (400, "bad_request"));

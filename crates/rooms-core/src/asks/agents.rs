@@ -16,6 +16,10 @@ pub(crate) const DEFAULT_AGENT: &str = "claude-code";
 pub(crate) const DEFAULT_PREAMBLE: &str =
     "[Rooms] The user is reading the HTML document below in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
+/// A conversation ask's preamble; agents.toml's `preamble` is about docs.
+pub(crate) const CONVERSATION_PREAMBLE: &str =
+    "[Rooms] The user is looking back at this agent conversation in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Profile {
