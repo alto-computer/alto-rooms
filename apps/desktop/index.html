@@ -5,8 +5,13 @@
     <link rel="icon" type="image/svg+xml" href="/src/assets/otter-avatar.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Alto Rooms</title>
+    <!-- First paint, before the app sets the theme: the desk colour of each scheme. -->
+    <style>
+      body { background: #ebe4da; }
+      @media (prefers-color-scheme: dark) { body { background: #161311; } }
+    </style>
   </head>
-  <body style="background:#f7f7f7">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

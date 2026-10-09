@@ -259,6 +259,23 @@ describe("ViewerStore", () => {
     expect(JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!).sidebarOpen).toBe(true);
   });
 
+  it("defaults appearance to System and keeps the user's choice across restarts", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    expect(st.getState().appearance).toBe("system");
+    st.setAppearance("dark");
+    st.flush();
+    expect(new ViewerStore(storage, clock().now).getState().appearance).toBe("dark");
+  });
+
+  it("reads an unknown or missing appearance as System", () => {
+    const saved = (appearance: unknown) =>
+      memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify({ tabs: [], firstRunAt: "2026-10-01T00:00:00Z", appearance }) });
+    expect(new ViewerStore(saved("sepia"), clock().now).getState().appearance).toBe("system");
+    expect(new ViewerStore(saved(undefined), clock().now).getState().appearance).toBe("system");
+    expect(new ViewerStore(saved("light"), clock().now).getState().appearance).toBe("light");
+  });
+
   it("starts fresh on corrupt storage without throwing", () => {
     const storage = memoryStorage({ [VIEWER_STORAGE_KEY]: "{not json" });
     const st = new ViewerStore(storage, clock().now);

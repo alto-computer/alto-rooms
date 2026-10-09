@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AlertCircle } from "lucide-react";
 import { createRoomsClient } from "@alto-rooms/protocol-ts";
+import { applyAppearance } from "@/lib/appearance";
 import { DAEMON_EXITED, installQuitFlushResponder, listenAll, onBeforeQuitFlush, onQuitFlushAsync } from "@/lib/appEvents";
 import { flushAllPlugins } from "@/plugins/host";
 import { CLOSE_CAP_MS as PLUGIN_CLOSE_CAP_MS } from "@/plugins/PluginFrame";
@@ -80,6 +81,10 @@ export default function App() {
   useEffect(() => {
     connect();
   }, [connect]);
+
+  // Before paint, on every screen (the connecting and error screens too).
+  const appearance = useSyncExternalStore(viewer.subscribe, () => viewer.getState().appearance);
+  useLayoutEffect(() => applyAppearance(appearance), [appearance]);
 
   useEffect(
     () => () => {

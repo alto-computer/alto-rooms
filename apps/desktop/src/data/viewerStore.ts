@@ -1,4 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
+import { isAppearance, type Appearance } from "@/lib/appearance";
 import { globalTimers, type Clock } from "@/lib/clock";
 
 export type Tab =
@@ -33,6 +34,7 @@ export type ViewerState = {
   history: Record<string, TabHistory>;
   activeId: string | null;
   sidebarOpen: boolean;
+  appearance: Appearance;
   lastVisit: Record<string, string>; // roomId -> ISO time the user last LEFT that room tab
   firstRunAt: string; // rooms never visited use this as their last visit
 };
@@ -128,6 +130,7 @@ function parseState(raw: string | null): ViewerState | null {
       history: parseHistory(v.history, seen),
       activeId,
       sidebarOpen: typeof v.sidebarOpen === "boolean" ? v.sidebarOpen : true,
+      appearance: isAppearance(v.appearance) ? v.appearance : "system",
       lastVisit,
       firstRunAt: v.firstRunAt,
     };
@@ -178,7 +181,7 @@ function makeTab(id: string, t: TabInput): Tab {
   }
 }
 
-/** Per-viewer UI state (tabs, sidebar, last visits), persisted to localStorage. */
+/** Per-viewer UI state (tabs, sidebar, appearance, last visits), persisted to localStorage. */
 export class ViewerStore {
   private state: ViewerState;
   private listeners = new Set<() => void>();
@@ -210,6 +213,7 @@ export class ViewerStore {
       history: {},
       activeId: null,
       sidebarOpen: true,
+      appearance: "system",
       lastVisit: {},
       firstRunAt: this.now().toISOString(),
     };
@@ -388,6 +392,10 @@ export class ViewerStore {
 
   setSidebarOpen(open: boolean): void {
     if (open !== this.state.sidebarOpen) this.set({ sidebarOpen: open });
+  }
+
+  setAppearance(appearance: Appearance): void {
+    if (appearance !== this.state.appearance) this.set({ appearance });
   }
 
   /** Records leaving the active room tab now (the app is quitting or hiding) and persists synchronously. */
