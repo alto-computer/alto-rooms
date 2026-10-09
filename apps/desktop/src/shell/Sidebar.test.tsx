@@ -166,6 +166,120 @@ describe("Sidebar: reorder rooms", () => {
   });
 });
 
+describe("Sidebar: pinned rooms", () => {
+  // A fresh list per test: the fake moveRoom reorders the array it was given.
+  const rooms = () => [
+    room("inbox", "Inbox", { artifactCount: 1 }),
+    room("p1", "P1", { color: "sage" }),
+    room("p2", "P2", { color: "rose" }),
+    room("p3", "P3", { color: "dusk" }),
+    room("a", "A"),
+    room("b", "B"),
+  ];
+  const opts = () => ({ rooms: rooms(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] } });
+  const listNames = (label: string) => within(screen.getByRole("list", { name: label })).getAllByRole("button").map((b) => b.textContent);
+  const rowIn = (label: string, name: string) => within(screen.getByRole("list", { name: label })).getByRole("button", { name });
+
+  /**
+   * jsdom has no layout. Rows stack 29px apart; a list spans its rows; the lifted copy that follows
+   * a keyboard drag (outside any list) starts where its row is. Enough for the keyboard sensor.
+   */
+  afterEach(() => vi.restoreAllMocks());
+  function layOut() {
+    const rows = screen.getAllByRole("listitem");
+    const box = (top: number, height: number) => ({ x: 0, y: top, left: 0, top, right: 200, bottom: top + height, width: 200, height, toJSON: () => ({}) });
+    const rowBox = (li: Element) => box(29 * (rows.indexOf(li as HTMLElement) + 1), 28);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.tagName === "LI") return rowBox(this);
+      if (this.tagName === "UL") {
+        const own = rows.filter((li) => li.parentElement === this).map(rowBox);
+        return own.length ? box(own[0].top, own[own.length - 1].bottom - own[0].top) : box(0, 0);
+      }
+      const row = this.closest("ul") ? null : rows.find((li) => li.textContent === this.textContent);
+      return row ? rowBox(row) : box(0, 0);
+    });
+  }
+  async function keyDrag(row: HTMLElement, key: "ArrowUp" | "ArrowDown", times = 1) {
+    layOut();
+    row.focus();
+    await act(async () => void fireEvent.keyDown(row, { code: "Space" }));
+    for (let i = 0; i < times; i++) await act(async () => void fireEvent.keyDown(row, { code: key }));
+    await act(async () => void fireEvent.keyDown(row, { code: "Space" }));
+  }
+
+  it("hides the Pinned section while no room is pinned", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("a", "A"), room("b", "B")] });
+    expect(screen.queryByRole("list", { name: "Pinned" })).toBeNull();
+    expect(screen.queryByText("Pinned")).toBeNull();
+    expect(listNames("Rooms")).toEqual(["A", "B"]);
+  });
+
+  it("lists pinned rooms under Pinned with their colour dot instead of the folder icon", async () => {
+    await renderWithStores(<AppShell />, opts());
+    expect(listNames("Pinned")).toEqual(["P1", "P2", "P3"]);
+    expect(listNames("Rooms")).toEqual(["A", "B"]);
+    expect(rowIn("Pinned", "P2").querySelector("[data-tint]")).toHaveAttribute("data-tint", "rose");
+    expect(rowIn("Pinned", "P2").querySelector("svg")).toBeNull();
+    expect(rowIn("Rooms", "A").querySelector("[data-tint]")).toBeNull();
+    expect(rowIn("Rooms", "A").querySelector("svg")).not.toBeNull();
+  });
+
+  it("brings the section back when the core pins a room, and hides it when the last one is unpinned", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox"), room("a", "A"), room("b", "B")] });
+    act(() => {
+      h.emit({ type: "room.updated", room: room("b", "B", { color: "clay" }) });
+      h.emit({ type: "rooms.reordered", roomIds: ["inbox", "b", "a"] });
+    });
+    expect(listNames("Pinned")).toEqual(["B"]);
+    expect(listNames("Rooms")).toEqual(["A"]);
+    act(() => {
+      h.emit({ type: "room.updated", room: room("b", "B", { color: null }) });
+    });
+    expect(screen.queryByRole("list", { name: "Pinned" })).toBeNull();
+    expect(listNames("Rooms")).toEqual(["B", "A"]);
+  });
+
+  it("reorders within Pinned, sending the index among the rooms other than the inbox", async () => {
+    const h = await renderWithStores(<AppShell />, opts());
+    await keyDrag(rowIn("Pinned", "P3"), "ArrowUp", 2);
+    expect(h.client.moveRoom).toHaveBeenCalledWith("p3", 0);
+    expect(listNames("Pinned")).toEqual(["P3", "P1", "P2"]);
+    expect(listNames("Rooms")).toEqual(["A", "B"]);
+  });
+
+  it("reorders within Rooms, counting the pinned rooms before it", async () => {
+    const h = await renderWithStores(<AppShell />, opts());
+    await keyDrag(rowIn("Rooms", "B"), "ArrowUp");
+    expect(h.client.moveRoom).toHaveBeenCalledWith("b", 3);
+    expect(listNames("Rooms")).toEqual(["B", "A"]);
+    expect(listNames("Pinned")).toEqual(["P1", "P2", "P3"]);
+  });
+
+  it("a room can't be dragged out of its section", async () => {
+    const h = await renderWithStores(<AppShell />, opts());
+    await keyDrag(rowIn("Rooms", "A"), "ArrowUp", 2);
+    await keyDrag(rowIn("Pinned", "P3"), "ArrowDown", 2);
+    expect(h.client.moveRoom).not.toHaveBeenCalled();
+    expect(listNames("Pinned")).toEqual(["P1", "P2", "P3"]);
+    expect(listNames("Rooms")).toEqual(["A", "B"]);
+  });
+
+  it("while a room is carried, its place in the list is a gap marked by the thread line", async () => {
+    await renderWithStores(<AppShell />, opts());
+    const p3 = rowIn("Pinned", "P3");
+    const marked = () => screen.getAllByRole("listitem").filter((li) => li.hasAttribute("data-drop"));
+    layOut();
+    p3.focus();
+    await act(async () => void fireEvent.keyDown(p3, { code: "Space" }));
+    await act(async () => void fireEvent.keyDown(p3, { code: "ArrowUp" }));
+    expect(marked()).toEqual([p3.closest("li")]);
+    expect(p3).toHaveClass("invisible");
+    await act(async () => void fireEvent.keyDown(p3, { code: "Escape" }));
+    expect(marked()).toEqual([]);
+    expect(p3).not.toHaveClass("invisible");
+  });
+});
+
 describe("Sidebar: inbox", () => {
   const rows = () => within(screen.getByRole("list", { name: "Rooms" })).getAllByRole("button").map((b) => b.textContent);
 

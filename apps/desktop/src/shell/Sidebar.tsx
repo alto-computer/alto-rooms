@@ -1,15 +1,4 @@
 import { useEffect, useState } from "react";
-import {
-  closestCenter,
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type Modifier,
-} from "@dnd-kit/core";
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type { Room } from "@alto-rooms/protocol-ts";
 import { BookOpen, CircleAlert, Inbox, PanelLeft, Plus, Search } from "lucide-react";
 import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
@@ -18,14 +7,15 @@ import type { ViewerStore } from "@/data/viewerStore";
 import { isNewSince, localDate } from "@/lib/dates";
 import { INBOX_ID, type ArtifactDragPayload } from "@/lib/drag";
 import { moveErrorCopy } from "@/lib/errors";
+import { moveWithinSection } from "@/lib/roomOrder";
 import { wantsNewTab } from "@/lib/nav";
 import { IconTip } from "@/components/IconTip";
 import { cn } from "@/lib/utils";
 import { useBriefError } from "@/views/briefError";
-import { DRAG_KEYBOARD_CODES } from "./dragKeys";
 import { BrandMenu } from "./BrandMenu";
 import { NewRoomRow } from "./NewRoomRow";
 import { PluginItems } from "./PluginItems";
+import { RoomList } from "./RoomList";
 import { RoomRow } from "./RoomRow";
 import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE, SECTION } from "./sidebarItem";
 
@@ -63,27 +53,16 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
     );
   };
 
-  // Reordering: rooms below the pinned inbox are sortable. After a drop the new order shows at
-  // once (`pending`) and stays until the core's `rooms.reordered` brings the same order.
+  // Reordering: rooms below the inbox are sortable, each within its section. After a drop the new
+  // order shows at once (`pending`) and stays until the core's `rooms.reordered` brings the same order.
   const [pending, setPending] = useState<string[] | null>(null);
   const shown = inOrder(rooms, pending);
   useEffect(() => {
     if (pending && rooms.map((r) => r.id).join("\n") === pending.join("\n")) setPending(null);
   }, [rooms, pending]);
-  const sortableIds = shown.filter((r) => r.id !== INBOX_ID).map((r) => r.id);
-  const sensors = useSensors(
-    // A few pixels of movement before a drag starts, so a click still opens the room.
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    // Space picks a room up, ↑/↓ move it, Space drops; Enter keeps opening the room.
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: DRAG_KEYBOARD_CODES }),
-  );
-  const onDragEnd = ({ active, over }: DragEndEvent) => {
-    const id = String(active.id);
-    const from = sortableIds.indexOf(id);
-    const to = over ? sortableIds.indexOf(String(over.id)) : -1;
-    if (from < 0 || to < 0 || from === to) return;
-    const pinned = shown.some((r) => r.id === INBOX_ID) ? [INBOX_ID] : [];
-    setPending([...pinned, ...arrayMove(sortableIds, from, to)]);
+  /** `to` counts the rooms other than the inbox, as `moveRoom` does. */
+  const reorder = (id: string, to: number) => {
+    setPending(moveWithinSection(shown, id, to));
     client.moveRoom(id, to).then(
       () => moveFailed.clear(),
       (e: unknown) => {
@@ -100,8 +79,22 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
   // The empty inbox stays out of the sidebar, unless it is the room being viewed.
   const inbox = shown.find((r) => r.id === INBOX_ID && (r.artifactCount > 0 || r.id === activeRoomId));
   const listed = shown.filter((r) => r.id !== INBOX_ID);
+  const pinned = listed.filter((r) => r.color !== null);
+  const others = listed.filter((r) => r.color === null);
   // Something arrived since you last left the room; the room you are in never counts.
   const unread = (r: Room) => r.id !== activeRoomId && r.updatedAt !== null && isNewSince(r.updatedAt, lastVisit[r.id] ?? firstRunAt);
+
+  const row = (room: Room) => (
+    <RoomRow
+      key={room.id}
+      room={room}
+      active={room.id === activeRoomId}
+      unread={unread(room)}
+      readOnly={readOnly}
+      sortable={!readOnly}
+      onMove={readOnly || !isDropTarget(room) ? undefined : move}
+    />
+  );
 
   return (
     <ShadcnSidebar
@@ -160,40 +153,32 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
           ) : null}
         </nav>
 
-        <div className={cn(SECTION, "mt-3")}>
-          <span>Rooms</span>
-          {readOnly ? null : (
-            <IconTip label="New room">
-              <button
-                type="button"
-                aria-label="New room"
-                onClick={() => setCreating(true)}
-                className="grid size-6 place-items-center rounded-md text-ink-3 hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
-              >
-                <Plus size={14} strokeWidth={1.5} aria-hidden />
-              </button>
-            </IconTip>
-          )}
+        <div className="no-scrollbar mt-3 flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {pinned.length > 0 ? (
+            <>
+              <div className={SECTION}>Pinned</div>
+              <RoomList label="Pinned" rooms={pinned} onReorder={reorder} renderRow={row} />
+            </>
+          ) : null}
+          <div className={cn(SECTION, pinned.length > 0 && "mt-3")}>
+            <span>Rooms</span>
+            {readOnly ? null : (
+              <IconTip label="New room">
+                <button
+                  type="button"
+                  aria-label="New room"
+                  onClick={() => setCreating(true)}
+                  className="grid size-6 place-items-center rounded-md text-ink-3 hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+                >
+                  <Plus size={14} strokeWidth={1.5} aria-hidden />
+                </button>
+              </IconTip>
+            )}
+          </div>
+          <RoomList label="Rooms" rooms={others} onReorder={(id, to) => reorder(id, pinned.length + to)} renderRow={row}>
+            {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
+          </RoomList>
         </div>
-
-        <ul aria-label="Rooms" className="no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-y-auto">
-          {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
-          <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[verticalOnly]} onDragEnd={onDragEnd}>
-            <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-              {listed.map((room) => (
-                <RoomRow
-                  key={room.id}
-                  room={room}
-                  active={room.id === activeRoomId}
-                  unread={unread(room)}
-                  readOnly={readOnly}
-                  sortable={!readOnly}
-                  onMove={readOnly || !isDropTarget(room) ? undefined : move}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
-        </ul>
         <PluginItems />
         {moveFailed.shown ? (
           <p role="status" className="mt-2 flex items-center gap-1.5 px-2 text-small text-error">
@@ -208,9 +193,6 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
 
 /** Docs can be dropped on owned, available rooms other than the inbox. */
 const isDropTarget = (room: Room) => room.kind === "owned" && room.id !== INBOX_ID && room.status === "ok";
-
-/** Rooms only move up and down. */
-const verticalOnly: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 
 /** `rooms` in the `order` of ids (rooms it doesn't list keep their place at the end); `rooms` when there is none. */
 function inOrder(rooms: Room[], order: string[] | null): Room[] {
