@@ -1,40 +1,19 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { NotebookPen } from "lucide-react";
-import { RoomsApiError } from "@alto-rooms/protocol-ts";
-import { useClient, useRoomsStore, useViewerStore, type RoomsClient } from "@/data/hooks";
+import { useClient, useRoomsStore, useViewerStore } from "@/data/hooks";
 import { GENERIC_ERROR, noteNameErrorCopy } from "@/lib/errors";
-import { freeNoteNames, MAX_QUESTION_NAME, noteFileName, noteNameFromQuestion } from "@/lib/notes";
+import { createUnderFreeName, freeNoteNames, MAX_QUESTION_NAME, noteNameFromQuestion } from "@/lib/notes";
 import type { NoteTargetOf } from "./askSubjects";
 import { splitQuotes } from "./quotes";
 import { ErrorText, TextButton } from "./ui";
 
-/** Most names tried before giving up (each one already on disk costs a getNote). */
+/** Most names tried before giving up. */
 const MAX_TRIES = 50;
 
 /** A saved answer: the line naming where it came from, the question as a heading, then the answer. */
 export function answerNoteBody(source: string | null, question: string, answer: string): string {
   const heading = `## ${splitQuotes(question).text.replace(/\s+/g, " ").trim()}`;
   return [...(source ? [source, ""] : []), heading, "", answer].join("\n");
-}
-
-/**
- * Writes `body` under the first name in `names` that is free, and returns its file name; null when
- * none is. Never saves over a note: the day list may lag behind the disk, so each name is confirmed
- * with getNote (404 = free).
- */
-async function saveUnderFreeName(client: RoomsClient, date: string, names: string[], body: string): Promise<string | null> {
-  for (const candidate of names) {
-    const fileName = noteFileName(candidate);
-    try {
-      await client.getNote(date, fileName);
-      continue;
-    } catch (e) {
-      if (!(e instanceof RoomsApiError && e.status === 404)) throw e;
-    }
-    const saved = await client.saveNote(date, fileName, body);
-    return saved?.name || fileName;
-  }
-  return null;
 }
 
 type Step =
@@ -81,7 +60,8 @@ export function SaveAsNote({ question, answer, target }: { question: string; ans
     const { date, source } = target(new Date(), rooms.getState().rooms);
     const listed = rooms.getState().days[date]?.notes ?? [];
     try {
-      const fileName = await saveUnderFreeName(client, date, freeNoteNames(name.trim(), listed, MAX_TRIES), answerNoteBody(source, question, answer));
+      const body = answerNoteBody(source, question, answer);
+      const fileName = await createUnderFreeName(freeNoteNames(name.trim(), listed, MAX_TRIES), (file) => client.createNote(date, file, body));
       setStep(fileName ? { kind: "saved", date, fileName } : { kind: "naming", name, error: GENERIC_ERROR });
     } catch (e) {
       setStep({ kind: "naming", name, error: noteNameErrorCopy(e) });

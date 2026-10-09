@@ -137,6 +137,14 @@ export function fakeClient(
       state.notes[`${date}/${file}`] = body;
       return { date, name: file, relPath: `${date}/${file}`, updatedAt: new Date().toISOString(), author: "me" as const };
     }),
+    // Like roomsd's create-only PUT: 409 note_exists if any note folds to the name.
+    createNote: vi.fn(async (date: string, name: string, body: string) => {
+      const file = noteFile(name);
+      const key = `${date}/${file}`.toLowerCase();
+      if (Object.keys(state.notes).some((k) => k.toLowerCase() === key)) throw new RoomsApiError(409, "note exists", "note_exists");
+      state.notes[`${date}/${file}`] = body;
+      return { date, name: file, relPath: `${date}/${file}`, updatedAt: new Date().toISOString(), author: "me" as const };
+    }),
     // Like roomsd: 404 if the source is gone, 409 note_exists if another note folds to the target name.
     renameNote: vi.fn(async (date: string, from: string, to: string) => {
       const src = `${date}/${noteFile(from)}`;

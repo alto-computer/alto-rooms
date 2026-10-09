@@ -1,7 +1,7 @@
 import type { Artifact, AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError, scopeKey } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { localDate } from "@/lib/dates";
 import { renderWithStores, room } from "@/test/fakes";
 import { AskBar } from "./AskBar";
@@ -47,7 +47,8 @@ describe("SaveAsNote", () => {
     expect(input.value).toBe(NAME);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Saved to Journal")).toBeTruthy();
-    expect(client.saveNote).toHaveBeenCalledTimes(1);
+    expect(client.createNote).toHaveBeenCalledTimes(1);
+    expect(client.saveNote).not.toHaveBeenCalled();
     expect(state.notes[`${today}/${NAME}.md`]).toBe(ROOM_NOTE);
     fireEvent.click(screen.getByRole("button", { name: "Open note" }));
     const { tabs, activeId } = viewer.getState();
@@ -62,15 +63,32 @@ describe("SaveAsNote", () => {
     expect(state.notes[`${localDate()}/회의 정리.md`]).toBe(ROOM_NOTE);
   });
 
-  it("takes the next free name when the disk has a note the day list missed, and leaves that note alone", async () => {
+  it("takes the next free name when roomsd says the name is taken (a note the day list missed), and leaves that note alone", async () => {
     const today = localDate();
     const { client, state } = await setup({ kind: "room", roomId: "r1" }, turn(roomScope), { [`${today}/${NAME}.md`]: "mine" });
     await openNameInput();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Saved to Journal")).toBeTruthy();
-    expect(client.saveNote).toHaveBeenCalledTimes(1);
-    expect(client.saveNote).toHaveBeenCalledWith(today, `${NAME} (2).md`, ROOM_NOTE);
+    expect(client.createNote).toHaveBeenCalledTimes(2);
+    await expect(client.createNote.mock.results[0].value).rejects.toMatchObject({ status: 409, code: "note_exists" });
+    expect(client.createNote).toHaveBeenLastCalledWith(today, `${NAME} (2).md`, ROOM_NOTE);
+    expect(client.saveNote).not.toHaveBeenCalled();
     expect(state.notes[`${today}/${NAME}.md`]).toBe("mine");
+  });
+
+  it("files a room answer under the day it is saved, not the day the name input opened", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(2026, 9, 9, 23, 59));
+      const { state } = await setup({ kind: "room", roomId: "r1" }, turn(roomScope));
+      await openNameInput();
+      vi.setSystemTime(new Date(2026, 9, 10, 0, 5));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(await screen.findByText("Saved to Journal")).toBeTruthy();
+      expect(Object.keys(state.notes)).toEqual([`2026-10-10/${NAME}.md`]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("saves a day answer into the viewed day, with no source line", async () => {
@@ -84,7 +102,7 @@ describe("SaveAsNote", () => {
 
   it("shows a refused save inline and keeps the name to fix", async () => {
     const { client } = await setup({ kind: "room", roomId: "r1" }, turn(roomScope));
-    client.saveNote.mockRejectedValueOnce(new RoomsApiError(400, "bad", "invalid_input"));
+    client.createNote.mockRejectedValueOnce(new RoomsApiError(400, "bad", "invalid_input"));
     await openNameInput();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("That name can't be used")).toBeTruthy();
@@ -92,11 +110,21 @@ describe("SaveAsNote", () => {
     expect(screen.queryByText("Saved to Journal")).toBeNull();
   });
 
+  it("shows any other failure inline and tries no other name", async () => {
+    const { client } = await setup({ kind: "room", roomId: "r1" }, turn(roomScope));
+    client.createNote.mockRejectedValueOnce(new RoomsApiError(500, "disk", "write_failed"));
+    await openNameInput();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Couldn't save. Trying again")).toBeTruthy();
+    expect(client.createNote).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Saved to Journal")).toBeNull();
+  });
+
   it("closes the name input on Escape without saving", async () => {
     const { client } = await setup({ kind: "room", roomId: "r1" }, turn(roomScope));
     fireEvent.keyDown(await openNameInput(), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "Note name" })).toBeNull());
-    expect(client.saveNote).not.toHaveBeenCalled();
+    expect(client.createNote).not.toHaveBeenCalled();
   });
 
   it("offers no save on a stopped answer, though Copy keeps its partial text", async () => {

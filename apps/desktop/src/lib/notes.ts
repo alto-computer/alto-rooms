@@ -1,4 +1,4 @@
-import type { Note } from "@alto-rooms/protocol-ts";
+import { RoomsApiError, type Note } from "@alto-rooms/protocol-ts";
 import { splitQuotes } from "@/ask/quotes";
 
 /** A note's name without its file extension: strips exactly one trailing `.md`, case-insensitively. */
@@ -82,6 +82,24 @@ export function freeNoteNames(base: string, notes: readonly Note[], count: numbe
     if (!findNote(notes, candidate)) out.push(candidate);
   }
   return out;
+}
+
+/**
+ * Creates a note under the first of `names` that is free and returns its file name, or null when
+ * every name is taken. Never saves over a note: `create` must refuse a taken name with 409
+ * `note_exists` (roomsd's create-only PUT does), and the next name is tried.
+ */
+export async function createUnderFreeName(names: readonly string[], create: (fileName: string) => Promise<Note>): Promise<string | null> {
+  for (const candidate of names) {
+    const fileName = noteFileName(candidate);
+    try {
+      const saved = await create(fileName);
+      return saved?.name || fileName;
+    } catch (e) {
+      if (!(e instanceof RoomsApiError && e.code === "note_exists")) throw e;
+    }
+  }
+  return null;
 }
 
 /*

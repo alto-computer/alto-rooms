@@ -209,9 +209,9 @@ describe("JournalView: me row and new note", () => {
       fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
     expect(screen.queryByLabelText("Note name")).not.toBeInTheDocument();
-    expect(client.getNote).toHaveBeenCalledWith(today, "New Note.md");
-    expect(client.saveNote).toHaveBeenCalledTimes(1);
-    expect(client.saveNote).toHaveBeenCalledWith(today, "New Note.md", "");
+    expect(client.createNote).toHaveBeenCalledTimes(1);
+    expect(client.createNote).toHaveBeenCalledWith(today, "New Note.md", "");
+    expect(client.saveNote).not.toHaveBeenCalled();
     const { tabs, activeId } = viewer.getState();
     expect(tabs).toHaveLength(before + 1);
     expect(tabs.find((t) => t.id === activeId)).toMatchObject({ kind: "note", date: today, name: "New Note.md" });
@@ -226,8 +226,8 @@ describe("JournalView: me row and new note", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
-    expect(client.getNote).not.toHaveBeenCalledWith(today, "New Note.md");
-    expect(client.saveNote).toHaveBeenCalledWith(today, "New Note 2.md", "");
+    expect(client.createNote).not.toHaveBeenCalledWith(today, "New Note.md", "");
+    expect(client.createNote).toHaveBeenCalledWith(today, "New Note 2.md", "");
     expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ name: "New Note 2.md" });
     cleanup();
 
@@ -238,7 +238,7 @@ describe("JournalView: me row and new note", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
-    expect(r.client.saveNote).toHaveBeenCalledWith(today, "New Note 3.md", "");
+    expect(r.client.createNote).toHaveBeenCalledWith(today, "New Note 3.md", "");
   });
 
   it("never saves over a New Note that exists on disk but not in the day list: it moves on to New Note 2", async () => {
@@ -249,32 +249,20 @@ describe("JournalView: me row and new note", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
-    expect(client.getNote).toHaveBeenCalledWith(today, "New Note.md");
-    expect(client.saveNote).not.toHaveBeenCalledWith(today, "New Note.md", expect.anything());
-    expect(client.saveNote).toHaveBeenCalledWith(today, "New Note 2.md", "");
+    await expect(client.createNote.mock.results[0].value).rejects.toMatchObject({ status: 409, code: "note_exists" });
+    expect(client.createNote).toHaveBeenLastCalledWith(today, "New Note 2.md", "");
+    expect(client.saveNote).not.toHaveBeenCalled();
     expect(state.notes[`${today}/New Note.md`]).toBe("이미 쓴 글");
     expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ name: "New Note 2.md" });
   });
 
-  it("shows the error copy and creates nothing when the existence check fails with anything but 404", async () => {
-    const { client, viewer } = await renderWithStores(<Host />, {
-      viewer: journalViewer(),
-      notes: { [`${today}/New Note.md`]: new RoomsApiError(500, "boom") },
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New note" }));
-    });
-    expect(client.saveNote).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong");
-    expect(viewer.getState().tabs.some((t) => t.kind === "note")).toBe(false);
-  });
-
   it("shows the error copy and opens nothing when saving fails", async () => {
     const { client, viewer } = await renderWithStores(<Host />, { viewer: journalViewer() });
-    client.saveNote.mockRejectedValueOnce(new RoomsApiError(500, "disk", "write_failed"));
+    client.createNote.mockRejectedValueOnce(new RoomsApiError(500, "disk", "write_failed"));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
+    expect(client.createNote).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("alert")).toHaveTextContent("Couldn't save. Trying again");
     expect(viewer.getState().tabs.some((t) => t.kind === "note")).toBe(false);
   });
@@ -285,7 +273,7 @@ describe("JournalView: me row and new note", () => {
       fireEvent.click(screen.getByRole("button", { name: "New note" }));
       fireEvent.click(screen.getByRole("button", { name: "New note" }));
     });
-    expect(client.saveNote).toHaveBeenCalledTimes(1);
+    expect(client.createNote).toHaveBeenCalledTimes(1);
   });
 
   it("strips only one .md for display: x.md.md shows as x.md and opens as x.md.md", async () => {
