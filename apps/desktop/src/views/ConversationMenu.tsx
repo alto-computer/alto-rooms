@@ -1,6 +1,6 @@
-import { Fragment, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Conversation, Room } from "@alto-rooms/protocol-ts";
-import { ArrowRight, ChevronDown, Folder, FolderMinus, FolderPlus } from "lucide-react";
+import { ChevronDown, Folder, FolderMinus, FolderPlus } from "lucide-react";
 import { toast } from "sonner";
 import { RoomDot } from "@/components/RoomDot";
 import {
@@ -22,9 +22,6 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useClient, useReadOnly, useRoomList, useViewerStore } from "@/data/hooks";
@@ -41,7 +38,7 @@ export function openConversationMenu(el: HTMLElement): void {
 }
 
 function RoomMark({ room }: { room: Room }) {
-  return room.color ? <RoomDot color={room.color} className="size-3.5" /> : <Folder className="text-ink-3" />;
+  return room.color ? <RoomDot color={room.color} className="size-3.5" /> : <Folder strokeWidth={1.75} className="size-3.5 shrink-0 text-ink-3" />;
 }
 
 function RoomItem({ room }: { room: Room }) {
@@ -127,13 +124,21 @@ export function ConversationMenu({ conversation, children }: { conversation: Con
 }
 
 /**
- * The room chip in a session's toolbar: the room it is in, or "Add to Room", opening a menu to open
- * that room, move it to another, or take it out. Read-only, the chip only names the room.
+ * The room chip in a session's toolbar: the room it is in, or "Add to Room". One click opens the
+ * room list, pinned rooms first and the current one checked, and picking one moves the session
+ * there. In a room, the menu also opens that room or takes the session out of it. Read-only, the
+ * chip only opens the room it names.
  */
 export function ConversationRoomMenu({ conversation, room }: { conversation: Conversation; room: Room | undefined }) {
   const viewer = useViewerStore();
   const { pinned, others, setRoom, movable } = useConversationRoom(conversation);
   if (!room && !movable) return null;
+  const roomItem = (r: Room) => (
+    <DropdownMenuRadioItem key={r.id} value={r.id}>
+      <RoomMark room={r} />
+      <span className="min-w-0 truncate">{r.name}</span>
+    </DropdownMenuRadioItem>
+  );
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -153,27 +158,16 @@ export function ConversationRoomMenu({ conversation, room }: { conversation: Con
         ) : null}
         {movable ? (
           <>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                {room ? <ArrowRight className="text-ink-3" /> : <FolderPlus className="text-ink-3" />}
-                {room ? "Move to Room" : "Add to Room"}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] w-[208px] overflow-y-auto">
-                <DropdownMenuRadioGroup value={conversation.roomId ?? ""} onValueChange={setRoom}>
-                  {[pinned, others].map((list, i) => (
-                    <Fragment key={i}>
-                      {i === 1 && pinned.length && others.length ? <DropdownMenuSeparator /> : null}
-                      {list.map((r) => (
-                        <DropdownMenuRadioItem key={r.id} value={r.id}>
-                          <RoomMark room={r} />
-                          <span className="min-w-0 truncate">{r.name}</span>
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </Fragment>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
+            {room ? <DropdownMenuSeparator /> : null}
+            <DropdownMenuRadioGroup
+              value={conversation.roomId ?? ""}
+              onValueChange={setRoom}
+              className="-mx-1 max-h-[296px] overflow-x-hidden overflow-y-auto px-1"
+            >
+              {pinned.map(roomItem)}
+              {pinned.length && others.length ? <DropdownMenuSeparator /> : null}
+              {others.map(roomItem)}
+            </DropdownMenuRadioGroup>
             {room ? (
               <>
                 <DropdownMenuSeparator />

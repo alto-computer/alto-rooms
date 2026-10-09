@@ -95,24 +95,51 @@ describe("Session view", () => {
     expect(continueConversation).toHaveBeenCalledWith(s.c);
   });
 
-  it("the room chip adds it to a room, then offers open, move and remove", async () => {
+  it("the room chip opens the room list in one click, pinned first and never the inbox, and adds it to the pick", async () => {
     const h = await setup().render();
     fireEvent.pointerDown(await screen.findByRole("button", { name: "Add to Room" }), { button: 0, ctrlKey: false });
-    const menu = within(await screen.findByRole("menu"));
-    expect(menu.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Add to Room"]);
-    fireEvent.click(menu.getByRole("menuitem", { name: "Add to Room" }));
-    // The chip names the first menu too; the room list is the submenu, opened last.
-    const list = within((await screen.findAllByRole("menu", { name: "Add to Room" })).at(-1)!);
-    expect(list.getAllByRole("menuitemradio").map((i) => i.textContent)).toEqual(["벤치마크", "리서치"]);
-    await act(async () => void fireEvent.click(list.getByRole("menuitemradio", { name: "리서치" })));
+    const menu = within(await screen.findByRole("menu", { name: "Add to Room" }));
+    expect(menu.queryAllByRole("menuitem")).toEqual([]);
+    expect(menu.getAllByRole("menuitemradio").map((i) => [i.textContent, i.getAttribute("aria-checked")])).toEqual([
+      ["벤치마크", "false"],
+      ["리서치", "false"],
+    ]);
+    await act(async () => void fireEvent.click(menu.getByRole("menuitemradio", { name: "리서치" })));
     expect(h.client.setConversationRoom).toHaveBeenCalledWith(ID, "r");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
 
-    await act(async () => h.emit({ type: "conversation.moved", conversation: h.state.conversations[0], fromRoomId: null }));
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "Room: 리서치" }), { button: 0, ctrlKey: false });
-    const inRoom = within(await screen.findByRole("menu"));
-    expect(inRoom.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Open 리서치", "Move to Room", "Remove from Room"]);
-    await act(async () => void fireEvent.click(inRoom.getByRole("menuitem", { name: "Remove from Room" })));
+  it("in a room, the chip names it, checks it in the same list, moves, opens and removes", async () => {
+    const h = await setup({ roomId: "r" }).render();
+    const openChip = async () => {
+      fireEvent.pointerDown(await screen.findByRole("button", { name: "Room: 리서치" }), { button: 0, ctrlKey: false });
+      return within(await screen.findByRole("menu"));
+    };
+    let menu = await openChip();
+    expect(menu.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Open 리서치", "Remove from Room"]);
+    expect(menu.getAllByRole("menuitemradio").map((i) => [i.textContent, i.getAttribute("aria-checked")])).toEqual([
+      ["벤치마크", "false"],
+      ["리서치", "true"],
+    ]);
+    await act(async () => void fireEvent.click(menu.getByRole("menuitemradio", { name: "벤치마크" })));
+    expect(h.client.setConversationRoom).toHaveBeenLastCalledWith(ID, "p");
+
+    menu = await openChip();
+    await act(async () => void fireEvent.click(menu.getByRole("menuitem", { name: "Remove from Room" })));
     expect(h.client.setConversationRoom).toHaveBeenLastCalledWith(ID, null);
+
+    menu = await openChip();
+    fireEvent.click(menu.getByRole("menuitem", { name: "Open 리서치" }));
+    expect(activeTab(h.viewer)).toMatchObject({ kind: "room", roomId: "r" });
+  });
+
+  it("read-only, the chip in a room only opens it", async () => {
+    const c = conversation("s7", { roomId: "r" });
+    await renderWithStores(<ConversationView id={ID} />, { rooms: ROOMS, conversations: [c], readOnly: true });
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "Room: 리서치" }), { button: 0, ctrlKey: false });
+    const menu = within(await screen.findByRole("menu"));
+    expect(menu.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Open 리서치"]);
+    expect(menu.queryAllByRole("menuitemradio")).toEqual([]);
   });
 
   it("asks about the session in its own scope", async () => {
