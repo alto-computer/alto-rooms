@@ -2,6 +2,7 @@ mod collector;
 mod daemon;
 mod drafts;
 mod flush;
+mod share;
 #[cfg(target_os = "macos")]
 mod terminate;
 
@@ -94,7 +95,10 @@ fn invoke_handler() -> InvokeHandler {
         flush::flush_done,
         drafts::save_note_draft,
         drafts::load_note_draft,
-        drafts::delete_note_draft
+        drafts::delete_note_draft,
+        share::doc_original,
+        share::reveal_doc,
+        share::open_doc
     ])
 }
 
@@ -108,6 +112,9 @@ fn invoke_handler() -> InvokeHandler {
         drafts::save_note_draft,
         drafts::load_note_draft,
         drafts::delete_note_draft,
+        share::doc_original,
+        share::reveal_doc,
+        share::open_doc,
         flush::flush_probe,
         flush::flush_probe_armed
     ])

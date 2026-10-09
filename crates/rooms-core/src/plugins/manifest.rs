@@ -7,8 +7,8 @@ use serde_json::Value;
 use std::path::Path;
 
 pub const PERMISSIONS: [&str; 3] = ["rooms.read", "clipboard", "downloads"];
-pub const ICONS: [&str; 12] = [
-    "target", "pencil", "list-checks", "calendar", "star", "book", "flag", "layout-grid", "sparkles", "notebook", "lightbulb", "puzzle",
+pub const ICONS: [&str; 13] = [
+    "target", "pencil", "list-checks", "calendar", "star", "book", "flag", "layout-grid", "sparkles", "notebook", "lightbulb", "puzzle", "palette",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +82,12 @@ fn title(v: &Value) -> Result<String, String> {
     Ok(t.to_string())
 }
 
+fn icon(v: &Value) -> Result<Option<String>, String> {
+    let icon = v.get("icon").and_then(Value::as_str).map(str::to_string);
+    if let Some(i) = icon.as_deref().filter(|i| !ICONS.contains(i)) { return Err(format!("unknown icon: {i}")); }
+    Ok(icon)
+}
+
 /// Reads and validates `<dir>/manifest.json`; the error is a short reason for `PluginInfo.reason`.
 pub fn load_manifest(dir: &Path) -> Result<Manifest, String> {
     let folder = dir.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
@@ -107,12 +113,8 @@ pub fn load_manifest(dir: &Path) -> Result<Manifest, String> {
     if let Some(obj) = v.get("slots").and_then(Value::as_object) {
         for (k, sv) in obj {
             match k.as_str() {
-                "artifact.sidePanel" => slots.artifact_side_panel = Some(SidePanelSlot { title: title(sv)? }),
-                "tab" => {
-                    let icon = sv.get("icon").and_then(Value::as_str).map(str::to_string);
-                    if let Some(i) = icon.as_deref().filter(|i| !ICONS.contains(i)) { return Err(format!("unknown icon: {i}")); }
-                    slots.tab = Some(TabSlot { title: title(sv)?, icon, sidebar: sv.get("sidebar").and_then(Value::as_bool).unwrap_or(false) });
-                }
+                "artifact.sidePanel" => slots.artifact_side_panel = Some(SidePanelSlot { title: title(sv)?, icon: icon(sv)? }),
+                "tab" => slots.tab = Some(TabSlot { title: title(sv)?, icon: icon(sv)?, sidebar: sv.get("sidebar").and_then(Value::as_bool).unwrap_or(false) }),
                 other => eprintln!("rooms-core: plugin {id}: ignoring unknown slot {other}"),
             }
         }
@@ -153,7 +155,9 @@ mod tests {
         assert_eq!(m.id, "echo");
         assert_eq!(m.entry, "index.html");
         assert_eq!(m.permissions, vec!["rooms.read".to_string()]);
-        assert_eq!(m.slots.artifact_side_panel.unwrap().title, "Echo");
+        let panel = m.slots.artifact_side_panel.unwrap();
+        assert_eq!(panel.title, "Echo");
+        assert_eq!(panel.icon, None);
         let tab = m.slots.tab.unwrap();
         assert!(tab.sidebar);
         assert_eq!(tab.icon.as_deref(), Some("puzzle"));
@@ -229,6 +233,16 @@ mod tests {
         assert!(reason(h, "json", "{not json").contains("manifest"));
         let long = "x".repeat(25);
         assert!(reason(h, "title", &base("title").replace(r#"{"title":"Echo"}"#, &format!(r#"{{"title":"{long}"}}"#))).contains("title"));
+    }
+
+    #[test]
+    fn a_side_panel_icon_is_checked_against_the_same_icons_as_a_tab() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path();
+        let panel = |f: &str, icon: &str| OK.replacen(r#""id":"echo""#, &format!(r#""id":"{f}""#), 1).replace(r#"{"title":"Echo"}"#, &format!(r#"{{"title":"Echo","icon":"{icon}"}}"#));
+        let m = load_manifest(&plugin(h, "canvas", &panel("canvas", "palette"))).unwrap();
+        assert_eq!(m.slots.artifact_side_panel.unwrap().icon.as_deref(), Some("palette"));
+        assert_eq!(reason(h, "rocket", &panel("rocket", "rocket-ship")), "unknown icon: rocket-ship");
     }
 
     #[test]

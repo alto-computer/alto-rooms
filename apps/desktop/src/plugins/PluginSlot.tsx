@@ -1,14 +1,18 @@
 /*
  * The places plugins can appear. The shell only puts a <PluginSlot> where a
- * slot belongs; which plugins show, the side panel's toggle, open state and
- * width, and the frames themselves are all decided here.
+ * slot belongs, and the side panel's <SidePanelOpener> in the document's
+ * toolbar; which plugins show, open state and width, and the frames themselves
+ * are all decided here.
  */
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { Pencil, X } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { usePlugins, usePluginsStore, useInfo, useViewer, useViewerStore } from "@/data/hooks";
+import { IconTip } from "@/components/IconTip";
+import { toolbarButton } from "@/components/ToolbarGroup";
 import { cn } from "@/lib/utils";
 import { CLOSE_CAP_MS, PluginFrame, type PluginFrameHandle } from "./PluginFrame";
+import { pluginIcon } from "./icons";
 import type { HostPlugin, PluginsStore } from "./pluginsStore";
 
 type Props =
@@ -73,11 +77,33 @@ function PluginTab({ pluginId }: { pluginId: string }) {
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 1200;
 
-function SidePanel({ artifact }: { artifact: Artifact }) {
+function useSidePanelPlugins() {
   const { list } = usePlugins();
   const store = usePluginsStore();
-  const info = useInfo();
   const { pluginPanel: panel } = useViewer();
+  const candidates = list.filter((p) => p.slots.artifactSidePanel && store.usable(p));
+  const usable = candidates.find((p) => p.id === panel.pluginId) ?? candidates[0];
+  return { list, store, panel, candidates, usable };
+}
+
+export function SidePanelOpener() {
+  const { panel, usable } = useSidePanelPlugins();
+  const viewer = useViewerStore();
+  if (panel.open || !usable) return null;
+  const { title, icon } = usable.slots.artifactSidePanel!;
+  const Icon = pluginIcon(icon, Pencil);
+  return (
+    <IconTip label={`Open ${title}`}>
+      <button type="button" aria-label={`Open ${title}`} onClick={() => viewer.setPluginPanel({ open: true, pluginId: usable.id })} className={toolbarButton}>
+        <Icon size={15} aria-hidden />
+      </button>
+    </IconTip>
+  );
+}
+
+function SidePanel({ artifact }: { artifact: Artifact }) {
+  const { list, store, panel, candidates, usable } = useSidePanelPlugins();
+  const info = useInfo();
   const viewer = useViewerStore();
   const frame = useRef<PluginFrameHandle>(null);
   const closing = useRef(false);
@@ -85,26 +111,10 @@ function SidePanel({ artifact }: { artifact: Artifact }) {
   const cancelResize = useRef<(() => void) | null>(null);
   useEffect(() => () => cancelResize.current?.(), [panel.open]);
 
-  const candidates = list.filter((p) => p.slots.artifactSidePanel && store.usable(p));
-  const usable = candidates.find((p) => p.id === panel.pluginId) ?? candidates[0];
   const { retiring, done } = useRetiring(store, list, panel.open ? usable : undefined, panel.open);
   const current = usable ?? retiring;
-  if (!current || !info) return null;
+  if (!panel.open || !current || !info) return null;
   const title = current.slots.artifactSidePanel!.title;
-
-  if (!panel.open) {
-    return (
-      <button
-        type="button"
-        aria-label={`Open ${title}`}
-        onClick={() => viewer.setPluginPanel({ open: true, pluginId: current.id })}
-        className="absolute top-3 right-3 z-10 flex h-8 items-center gap-1.5 rounded-lg border border-[#ddd] bg-white/95 px-2.5 text-[13px] text-ink shadow-float hover:bg-white focus-visible:outline-2 focus-visible:outline-ink"
-      >
-        <Pencil size={14} aria-hidden />
-        {title}
-      </button>
-    );
-  }
 
   const close = async () => {
     if (closing.current) return;
