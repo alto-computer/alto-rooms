@@ -195,14 +195,17 @@ fn none_match_hits<'a>(if_none_match: impl Iterator<Item = &'a str>, tag: &str) 
     if_none_match.flat_map(|v| v.split(',')).any(|t| t.trim() == "*" || opaque(t) == opaque(tag))
 }
 
-/// Serves a room file. Previews remount often (scrolling, tab switches), so responses carry an
-/// ETag with `no-cache`: the webview revalidates every time and gets a bodyless 304 while unchanged.
-/// Appended to every HTML document Rooms shows (after `</html>`, where the parser still runs it):
-/// it posts the selected text to the Rooms window for "ask about this". Files on disk are untouched.
+/// Appended to every HTML document Rooms shows, so "ask about this" works inside docs. The app
+/// frames a doc sandboxed with no origin of its own (agent-written HTML must not reach the app), so
+/// it can't read the doc's selection; this script, running inside, posts it out instead. It goes
+/// after `</html>`, where the parser still runs it, so the document is never parsed or rewritten;
+/// files on disk are untouched.
 const SELECTION_BRIDGE: &[u8] = include_bytes!("selection-bridge.html");
 /// Bumped when the bridge changes, so cached documents pick up the new one.
-const BRIDGE_VERSION: &str = "b1";
+const BRIDGE_VERSION: &str = "b2";
 
+/// Serves a room file. Previews remount often (scrolling, tab switches), so responses carry an
+/// ETag with `no-cache`: the webview revalidates every time and gets a bodyless 304 while unchanged.
 pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ApiErr> {
     let path = blocking(&st, move |c| c.resolve_file(&room_id, &rel)).await?;
     let read_err = |e: std::io::Error| ApiErr(CoreError::Io(e));

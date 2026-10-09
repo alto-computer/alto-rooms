@@ -1,6 +1,12 @@
 <script data-rooms-bridge>
 /* Added by Rooms when it shows this file (the file itself is unchanged): tells the Rooms window
-   what text is selected, so you can ask about it. Sends only the selected text and where it is. */
+   what text is selected, so you can ask about it. Sends only the selected text and where it is.
+
+   Why a script inside: Rooms shows this page in a sandboxed frame with no origin, so the window
+   around it can't look in. Posting out is the one way across, and the window takes a message only
+   from its own frame and only in this shape: {roomsSelection: 1, text, rect | null}.
+   Why "*": the script doesn't know the app's origin, which differs by platform; the selection is
+   all it ever sends. */
 (function () {
   if (window.parent === window) return;
   var down = false, timer = 0, last = "";

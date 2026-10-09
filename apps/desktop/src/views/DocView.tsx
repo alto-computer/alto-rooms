@@ -42,6 +42,8 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
   return (
     <div className="relative flex min-h-0 flex-1 bg-white">
       <div className="relative min-w-0 flex-1">
+        {/* No allow-same-origin: a doc is agent-written HTML and must never reach the app. What
+            it shares comes out by postMessage only: the selection bridge roomsd appends. */}
         <iframe
           title={artifact.title}
           ref={frame}
