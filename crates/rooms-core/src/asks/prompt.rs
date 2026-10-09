@@ -73,7 +73,7 @@ pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, file_key: 
 }
 
 /// One document a room or day ask lists. `path` is a realpath: `rg` skips symlinks.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct ContextEntry {
     /// Where it lives: the room name, "Journal", "Review" (the day's dream) or "Note".
     pub label: String,
