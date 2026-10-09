@@ -1,6 +1,6 @@
 import type { PluginInfo, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { describe, expect, it, vi } from "vitest";
-import { compatible, PluginsStore } from "./pluginsStore";
+import { compatible, contentKey, PluginsStore, type HostPlugin } from "./pluginsStore";
 import { plugin } from "@/test/plugins";
 
 function setup(list: PluginInfo[], appVersion = "0.3.0") {
@@ -28,6 +28,24 @@ describe("compatible", () => {
     expect(compatible("1.0.0", "0.9.9")).toBe(true);
     expect(compatible("0.2.9", "0.3.0")).toBe(false);
     expect(compatible("0.3.0", "0.10.0")).toBe(false);
+  });
+});
+
+describe("contentKey", () => {
+  const host = (extra: Partial<HostPlugin>): HostPlugin => ({ ...plugin({ permissions: ["artifact.content"] }), compatible: true, ...extra });
+
+  it("changes only with the usable content plugins and their revs", () => {
+    const none = contentKey([]);
+    expect(none).toMatch(/^[0-9a-f]{8}$/);
+    expect(contentKey([host({ id: "echo", permissions: [] })])).toBe(none);
+    expect(contentKey([host({ id: "off", enabled: false })])).toBe(none);
+    expect(contentKey([host({ id: "asks", needsApproval: true })])).toBe(none);
+    expect(contentKey([host({ id: "old", compatible: false })])).toBe(none);
+    expect(contentKey([host({ id: "bad", status: "invalid" })])).toBe(none);
+    const on = contentKey([host({ id: "marker" })]);
+    expect(on).not.toBe(none);
+    expect(contentKey([host({ id: "marker", rev: "r2" })])).not.toBe(on);
+    expect(contentKey([host({ id: "marker" }), host({ id: "echo", permissions: [] })])).toBe(on);
   });
 });
 

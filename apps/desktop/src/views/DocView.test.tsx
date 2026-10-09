@@ -2,6 +2,7 @@ import type { Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderWithStores, room } from "@/test/fakes";
+import { plugin } from "@/test/plugins";
 import { DocView } from "./DocView";
 
 afterEach(cleanup);
@@ -26,9 +27,28 @@ describe("DocView", () => {
     const frame = container.querySelector("iframe")!;
     expect(frame).toBeInTheDocument();
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-popups");
-    expect(frame.getAttribute("src")).toBe("http://files.test/r1/sub/a1.html");
+    expect(frame.getAttribute("src")).toMatch(/^http:\/\/files\.test\/r1\/sub\/a1\.html\?doc=1&cs=[0-9a-f]{8}$/);
     expect(frame.hasAttribute("srcdoc")).toBe(false);
     expect(frame).toHaveAttribute("title", "보고서");
+  });
+
+  it("keys the doc URL by the content plugins that are on, so turning one off reloads the frame", async () => {
+    const marker = plugin({ id: "marker", permissions: ["artifact.content"], granted: ["artifact.content"], slots: { artifactSidePanel: null, tab: null } });
+    const { container, client, emit } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+      plugins: [marker],
+    });
+    const frame = container.querySelector("iframe")!;
+    const withMarker = frame.getAttribute("src")!;
+    const toggle = async (enabled: boolean) => {
+      await client.setPluginEnabled("marker", enabled, ["artifact.content"]);
+      await act(async () => void emit({ type: "plugins.changed" }));
+    };
+    await toggle(false);
+    await waitFor(() => expect(frame.getAttribute("src")).not.toBe(withMarker));
+    await toggle(true);
+    await waitFor(() => expect(frame.getAttribute("src")).toBe(withMarker));
   });
 
   it("shows a skeleton until the document loads", async () => {

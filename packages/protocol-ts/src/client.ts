@@ -135,9 +135,12 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     },
     pluginEntryUrl: (info: Info, p: PluginInfo) =>
       `${info.filesOrigin}/_plugins/${encodeURIComponent(p.id)}/${p.entry.split("/").map(encodeURIComponent).join("/")}`,
-    /** Versioned by `updatedAt`: when the file changes, frames showing it get a new URL and reload. */
-    fileUrl: (info: Info, a: Artifact) =>
-      `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}?v=${encodeURIComponent(a.updatedAt)}`,
+    /** Versioned by `updatedAt`: when the file changes, frames showing it get a new URL and reload. A doc tab passes
+     *  `doc` and gets the document with the content scripts of the enabled plugins spliced in; `contentKey` names
+     *  that set, so a plugin toggle changes the URL and reloads the frame too. Without `doc` (card previews) the
+     *  document carries the selection bridge alone. */
+    fileUrl: (info: Info, a: Artifact, doc?: { contentKey: string }) =>
+      `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}?v=${encodeURIComponent(a.updatedAt)}${doc ? `&doc=1&cs=${encodeURIComponent(doc.contentKey)}` : ""}`,
     /** Every (re)connection first delivers `resync {roomId: null}`; `onOpen` fires on each (re)open. */
     subscribe: (onEvent: (e: RoomsEvent) => void, onOpen?: () => void) => {
       const es = new EventSource(baseUrl + "/v1/events");
