@@ -72,7 +72,7 @@ function KeyRow({ state, refresh }: { state: SortState; refresh: () => Promise<v
       label="TypeSafe key"
       detail={
         <>
-          <span className="font-mono tracking-[.08em]">{MASK}</span>
+          <span className="font-mono">{MASK}</span>
           {env ? " · From TYPESAFE_API_KEY" : " · In your Keychain"}
           {keyRejected ? <span className="block text-error">{env ? "TypeSafe refused TYPESAFE_API_KEY. Only artifacts named like a room move." : "TypeSafe stopped accepting this key."}</span> : null}
           {env ? (

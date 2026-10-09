@@ -113,7 +113,8 @@ export function PluginsRow() {
         role="menu"
         aria-label="Plugins"
         side="right"
-        align="start"
+        // The row sits at the sidebar's foot, so the flyout grows upward from it.
+        align="end"
         sideOffset={10}
         alignOffset={-5}
         collisionPadding={8}
