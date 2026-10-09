@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useArtifacts, useAsksStore, useClient, useInfo, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -59,7 +60,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
           <SelectionAsk
             rect={selection.current.rect}
             onAsk={() => {
-              asks.addQuote(artifact.fileKey, selection.current!.text);
+              asks.addQuote(scopeKey({ kind: "doc", fileKey: artifact.fileKey }), selection.current!.text);
               selection.dismiss();
             }}
           />

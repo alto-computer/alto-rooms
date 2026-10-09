@@ -1,8 +1,8 @@
-import type { Artifact, AskKind, AskTarget, AskTurn, Info, JournalDay, PluginInfo, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskKind, AskScope, AskTarget, AskTurn, Info, JournalDay, PluginInfo, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
-import { RoomsApiError } from "@alto-rooms/protocol-ts";
+import { RoomsApiError, scopeKey } from "@alto-rooms/protocol-ts";
 import { StoresProvider, type RoomsClient } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
 import type { Clock } from "@/lib/clock";
@@ -51,9 +51,9 @@ export function fakeClient(
     pluginData?: Record<string, string>;
     /** `Info.home` (default `/h`). */
     home?: string;
-    /** Ask threads by file key. */
+    /** Ask threads by file key (a doc scope). */
     asks?: Record<string, AskTurn[]>;
-    /** What `askTarget` answers (or throws), by artifact id; default: the doc's own agent with no models. */
+    /** What `askTarget` answers (or throws), by file key; default: the doc's own agent with no models. */
     askTargets?: Record<string, AskTarget | Error>;
   } = {},
 ) {
@@ -75,6 +75,9 @@ export function fakeClient(
     journalRoomId: "journal",
     filesOrigin: "http://files.test",
   };
+  // Like roomsd before F1-2: only a doc scope resolves, through the artifact holding its file.
+  const docOf = (scope: AskScope) =>
+    scope.kind === "doc" ? Object.values(state.artifacts).flat().find((a) => a.fileKey === scope.fileKey) : undefined;
   const client = {
     info: async () => info,
     listPlugins: vi.fn(async () => state.plugins.map((p) => ({ ...p }))),
@@ -160,13 +163,13 @@ export function fakeClient(
       if (!a) throw new RoomsApiError(404, "not found", "not_found");
       return { ...a, roomId: toRoomId };
     }),
-    startAsk: vi.fn(async (req: { roomId: string; artifactId: string; question: string; model: string | null; images?: string[]; kind?: AskKind }): Promise<AskTurn> => {
-      const a = state.artifacts[req.roomId]?.find((x) => x.id === req.artifactId);
+    startAsk: vi.fn(async (req: { scope: AskScope; question: string; model: string | null; images?: string[]; kind?: AskKind }): Promise<AskTurn> => {
+      const a = docOf(req.scope);
       if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
       const kind = req.kind ?? "question";
       const question = kind === "clear" ? "/new" : kind === "compact" ? "/compact" : req.question;
       return {
-        id: `ask-${question}`, fileKey: a.fileKey, question, answer: "", agent: a.source.agent ?? "claude-code",
+        id: `ask-${question}`, scope: req.scope, question, answer: "", agent: a.source.agent ?? "claude-code",
         model: req.model, mode: a.source.session ? "resume" : "new", status: kind === "clear" ? "done" : "running", error: null,
         startedAt: "2026-10-06T10:00:00+09:00", endedAt: kind === "clear" ? "2026-10-06T10:00:00+09:00" : null,
         images: kind === "question" ? (req.images ?? []) : [], kind, leftOut: 0,
@@ -174,14 +177,14 @@ export function fakeClient(
     }),
     uploadAskImage: vi.fn(async (image: Blob) => ({ id: `img-${(image as File).name ?? "blob"}` })),
     askImageUrl: (i: Info, id: string) => `${i.filesOrigin}/_asks/images/${id}`,
-    askTarget: vi.fn(async (roomId: string, artifactId: string): Promise<AskTarget> => {
-      const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);
+    askTarget: vi.fn(async (scope: AskScope): Promise<AskTarget> => {
+      const a = docOf(scope);
       if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
-      const t = opts.askTargets?.[artifactId];
+      const t = opts.askTargets?.[a.fileKey];
       if (t instanceof Error) throw t;
       return t ?? { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new", models: [] };
     }),
-    askThread: vi.fn(async (fileKey: string) => state.asks[fileKey] ?? []),
+    askThread: vi.fn(async (scope: AskScope) => (scope.kind === "doc" ? state.asks[scope.fileKey] : state.asks[scopeKey(scope)]) ?? []),
     cancelAsk: vi.fn(async () => {}),
     // Like the real client minus encoding, and unversioned so tests can match plain paths.
     fileUrl: (i: Info, a: Artifact) => `${i.filesOrigin}/${a.roomId}/${a.relPath}`,

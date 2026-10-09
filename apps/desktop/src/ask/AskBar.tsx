@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { Artifact, AskTurn } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTurn } from "@alto-rooms/protocol-ts";
+import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
-import type { AskDoc } from "./asksStore";
 import { Composer } from "./Composer";
 import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThreadSheet } from "./ThreadSheet";
@@ -22,13 +22,13 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const { open, threads, live } = useAsks();
   const readOnly = useReadOnly();
   const shown = open && !readOnly;
-  const { roomId, id: artifactId, fileKey } = artifact;
-  const doc: AskDoc = { roomId, artifactId, fileKey };
-  const thread = threads[fileKey];
+  const scope: AskScope = { kind: "doc", fileKey: artifact.fileKey };
+  const key = scopeKey(scope);
+  const thread = threads[key];
   const turns = thread?.turns ?? [];
   const running = turns.find((t) => t.status === "running");
-  const { target, model, pick, modelFor } = useAskTarget(doc, shown);
-  const composer = useComposer(doc, model);
+  const { target, model, pick, modelFor } = useAskTarget(scope, shown);
+  const composer = useComposer(scope, model);
   const [unfolded, setUnfolded] = useState(true);
   const [dragging, setDragging] = useState(false);
   /** What the live region says once an answer ends. */
@@ -36,10 +36,10 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const container = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => store.hold(fileKey), [store, fileKey]);
+  useEffect(() => store.hold(key), [store, key]);
   // Fetch the Markdown renderer while the doc is read, so an answer never waits on it.
   useEffect(() => void preloadAnswer(), []);
-  useLoadThread(fileKey, shown && !(thread?.loaded ?? false));
+  useLoadThread(scope, shown && !(thread?.loaded ?? false));
   useFocusRules({ open, shown, quoteCount: composer.quotes.length, runningId: running?.id, input, container, setUnfolded, setAnnounce });
   useFoldOnOutsideClick(container, shown, () => setUnfolded(false));
 
@@ -77,8 +77,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           pending={composer.pending}
           onRetry={retry}
           onCompact={() => composer.runCommand("compact")}
-          onReload={() => void store.load(fileKey)}
-          onQuote={(text) => store.addQuote(fileKey, text)}
+          onReload={() => void store.load(scope)}
+          onQuote={(text) => store.addQuote(key, text)}
         />
       ) : null}
       {/* For screen readers: when an answer starts and when it lands. */}
@@ -100,16 +100,18 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
 }
 
 /** Loads the thread when it's needed and not loaded (an ask event from another client creates it unloaded). */
-function useLoadThread(fileKey: string, needed: boolean) {
+function useLoadThread(scope: AskScope, needed: boolean) {
   const store = useAsksStore();
+  const key = scopeKey(scope);
   const loading = useRef<string | null>(null);
+  // The scope object is rebuilt on every render; its key says when it really changed.
   useEffect(() => {
-    if (!needed || loading.current === fileKey) return;
-    loading.current = fileKey;
-    void store.load(fileKey).finally(() => {
-      if (loading.current === fileKey) loading.current = null;
+    if (!needed || loading.current === key) return;
+    loading.current = key;
+    void store.load(scope).finally(() => {
+      if (loading.current === key) loading.current = null;
     });
-  }, [needed, store, fileKey]);
+  }, [needed, store, key]);
 }
 
 /**

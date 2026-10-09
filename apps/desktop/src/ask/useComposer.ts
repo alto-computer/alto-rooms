@@ -1,9 +1,9 @@
 import { useState } from "react";
-import type { AskTurn } from "@alto-rooms/protocol-ts";
-import { RoomsApiError } from "@alto-rooms/protocol-ts";
+import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
+import { RoomsApiError, scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
-import type { AskDoc, Outgoing, Queued } from "./asksStore";
+import type { Outgoing, Queued } from "./asksStore";
 import { useAttachments } from "./attachments";
 import { commandText, exactCommand, matchCommands, type CommandKind } from "./commands";
 import { splitQuotes, withQuotes } from "./quotes";
@@ -15,15 +15,16 @@ export type Pending = { question: string; images: string[] };
 const isQuestion = (t: AskTurn) => (t.kind ?? "question") === "question";
 
 /**
- * What the input holds for a doc (draft, quotes, images, queued questions) and the ways it goes
+ * What the input holds for a scope (draft, quotes, images, queued questions) and the ways it goes
  * out. Sending is optimistic: the input empties at once, and a question roomsd refuses comes back.
  */
-export function useComposer(doc: AskDoc, model: string | null) {
+export function useComposer(scope: AskScope, model: string | null) {
   const store = useAsksStore();
   const { quotes: allQuotes, queues } = useAsks();
-  const quotes = allQuotes[doc.fileKey] ?? [];
-  const queue = queues[doc.fileKey] ?? [];
-  const [draft, setDraft] = useDraft(doc.fileKey);
+  const key = scopeKey(scope);
+  const quotes = allQuotes[key] ?? [];
+  const queue = queues[key] ?? [];
+  const [draft, setDraft] = useDraft(scope);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const attachments = useAttachments(setError);
@@ -33,7 +34,7 @@ export function useComposer(doc: AskDoc, model: string | null) {
     setError(null);
     if (q.kind === "question") setPending({ question: q.text, images: q.images });
     try {
-      await store.submit(doc, q, now);
+      await store.submit(scope, q, now);
       return true;
     } catch (e) {
       setError(e instanceof RoomsApiError ? e.message : GENERIC_ERROR);
@@ -62,7 +63,7 @@ export function useComposer(doc: AskDoc, model: string | null) {
     const images = attachments.items.map((a) => a.id!);
     setDraft("");
     attachments.clear(attachments.items.map((a) => a.key));
-    store.clearQuotes(doc.fileKey, sentQuotes);
+    store.clearQuotes(key, sentQuotes);
     const sent = await deliver({ text: withQuotes(sentQuotes, text), model, images, kind: "question" }, now);
     if (!sent) restore(text, sentQuotes, images);
   };
@@ -70,7 +71,7 @@ export function useComposer(doc: AskDoc, model: string | null) {
   /** Puts a question back in the input: its text (unless something new was typed), quotes and images. */
   const restore = (text: string, qs: string[], images: string[]) => {
     setDraft((d) => d || text);
-    qs.forEach((x) => store.addQuote(doc.fileKey, x));
+    qs.forEach((x) => store.addQuote(key, x));
     attachments.restore(images);
   };
 
@@ -80,11 +81,11 @@ export function useComposer(doc: AskDoc, model: string | null) {
 
   /** A queued question back in the input, out of the queue. */
   const edit = (q: Queued) => {
-    const item = store.unqueue(doc.fileKey, q.id);
+    const item = store.unqueue(key, q.id);
     if (!item) return;
     const { quotes: qs, text } = splitQuotes(item.text);
     setDraft(text);
-    qs.forEach((x) => store.addQuote(doc.fileKey, x));
+    qs.forEach((x) => store.addQuote(key, x));
     attachments.restore(item.images);
   };
 
@@ -104,9 +105,9 @@ export function useComposer(doc: AskDoc, model: string | null) {
   return {
     draft, setDraft, quotes, queue, attachments, pending, error,
     submit, runCommand, retry, edit, recall,
-    removeQuote: (i: number) => store.removeQuote(doc.fileKey, i),
-    sendNow: (q: Queued) => store.sendNow(doc.fileKey, q.id),
-    unqueue: (q: Queued) => void store.unqueue(doc.fileKey, q.id),
+    removeQuote: (i: number) => store.removeQuote(key, i),
+    sendNow: (q: Queued) => store.sendNow(key, q.id),
+    unqueue: (q: Queued) => void store.unqueue(key, q.id),
   };
 }
 
