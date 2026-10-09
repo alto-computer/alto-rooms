@@ -186,7 +186,6 @@ impl RoomsCore {
     /// What a room ask lists: the room's name and its artifacts, newest first, as realpaths (`rg`
     /// skips symlinks). An artifact whose link no longer resolves is left out.
     pub(crate) fn room_context(&self, room: &RoomId) -> Result<(String, Vec<ContextEntry>), CoreError> {
-        if room == JOURNAL_ROOM_ID { return Err(CoreError::InvalidInput("the Journal is asked by day".into())); }
         let name = lock(&self.inner).state.find(room).ok_or(CoreError::RoomNotFound)?.name.clone();
         let entries = self.list_artifacts(room)?.into_iter().rev().filter_map(|a| {
             let path = self.resolve_file(room, &a.rel_path).ok()?;
@@ -283,8 +282,9 @@ mod tests {
         assert_eq!(paths, want, "realpaths only; the dangling link is left out");
         let today = local_day(&chrono::Local::now().to_rfc3339()).unwrap();
         assert!(entries.iter().all(|e| e.label == "Research" && e.day == today), "{entries:?}");
-        assert!(matches!(core.room_context(&JOURNAL_ROOM_ID.into()), Err(CoreError::InvalidInput(_))));
-        assert!(matches!(core.room_context(&"nope".into()), Err(CoreError::RoomNotFound)));
+        for not_a_room in [JOURNAL_ROOM_ID, "nope"] {
+            assert!(matches!(core.room_context(&not_a_room.into()), Err(CoreError::RoomNotFound)), "{not_a_room}");
+        }
     }
 
     /// Makes the index step of `move_artifact` fail on this thread (after the filesystem move).

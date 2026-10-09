@@ -141,7 +141,10 @@ mod tests {
         let core = RoomsCore::open(d.path()).unwrap();
         let day = local_day(&chrono::Local::now().to_rfc3339()).unwrap();
         let room = core.create_room("Research").unwrap();
-        std::fs::write(core.room_root(&room.id).unwrap().0.join("a.html"), "<title>Room doc</title>").unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let orig = std::fs::canonicalize(outside.path()).unwrap().join("orig.html");
+        std::fs::write(&orig, "<title>Room doc</title>").unwrap();
+        std::os::unix::fs::symlink(&orig, core.room_root(&room.id).unwrap().0.join("a.html")).unwrap();
         let jdir = d.path().join("journal").join(&day);
         std::fs::create_dir_all(&jdir).unwrap();
         std::fs::write(jdir.join("dream.html"), "<title>Dream</title>").unwrap();
@@ -157,5 +160,6 @@ mod tests {
         assert_eq!(got, vec![("Journal", "Other"), ("Note", "회고.md"), ("Research", "Room doc"), ("Review", "Dream")]);
         assert!(entries.iter().all(|e| e.day == day && e.path == std::fs::canonicalize(&e.path).unwrap()), "{entries:?}");
         assert_eq!(entries.last().unwrap().label, "Note", "artifacts first, notes last");
+        assert!(entries.iter().any(|e| e.path == orig), "a linked doc is listed by its original's path: {entries:?}");
     }
 }
