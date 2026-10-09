@@ -18,6 +18,11 @@ pub fn valid_path(rel: &str) -> bool {
         && segs.iter().all(|s| !s.is_empty() && *s != "." && *s != ".." && s.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
 }
 
+/// A plugin file the app serves or runs (entry, content script, asset): a valid path outside data/.
+pub fn valid_code_path(rel: &str) -> bool {
+    valid_path(rel) && rel.split('/').next() != Some(DATA)
+}
+
 /// `<dir>/data/<rel>` after the path rule, refusing any symlink on the way (no escape from data/).
 fn data_file(dir: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     if !valid_path(rel) { return Err(CoreError::InvalidPath); }
@@ -110,7 +115,7 @@ pub fn delete_data(dir: &Path, rel: &str) -> Result<(), CoreError> {
 
 /// An asset of the plugin to serve: a file inside `<dir>` (after resolving symlinks), never under data/.
 pub fn resolve_asset(dir: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    if !valid_path(rel) || rel.split('/').next() == Some(DATA) { return Err(CoreError::InvalidPath); }
+    if !valid_code_path(rel) { return Err(CoreError::InvalidPath); }
     let root = std::fs::canonicalize(dir).map_err(|_| CoreError::NotFound)?;
     let p = std::fs::canonicalize(dir.join(rel)).map_err(|_| CoreError::NotFound)?;
     let inside = p.strip_prefix(&root).ok().filter(|r| r.components().next() != Some(Component::Normal(DATA.as_ref())));

@@ -1,7 +1,6 @@
 //! `manifest.json`: reading and validating a plugin's manifest, and the rev that changes with it.
 
-use super::data::valid_path;
-use super::DATA;
+use super::data::{valid_code_path, valid_path};
 use rooms_protocol::{PluginSlots, SidePanelSlot, TabSlot};
 use serde_json::Value;
 use std::path::Path;
@@ -82,12 +81,15 @@ fn content_scripts(v: Option<&Value>) -> Result<Vec<String>, String> {
     let Some(v) = v else { return Ok(Vec::new()) };
     let list = v.as_array().ok_or("contentScripts must be an array")?;
     if list.len() > MAX_CONTENT_SCRIPTS { return Err(format!("at most {MAX_CONTENT_SCRIPTS} content scripts")); }
-    list.iter()
-        .map(|p| match p.as_str() {
-            Some(p) if valid_path(p) && p.ends_with(".js") && p.split('/').next() != Some(DATA) => Ok(p.to_string()),
-            _ => Err(format!("content script must be a .js file in the plugin folder, outside data/: {p}")),
-        })
-        .collect()
+    let mut out: Vec<String> = Vec::new();
+    for p in list {
+        match p.as_str() {
+            Some(s) if out.iter().any(|o| o == s) => return Err(format!("duplicate content script: {s}")),
+            Some(s) if valid_code_path(s) && s.ends_with(".js") => out.push(s.to_string()),
+            _ => return Err(format!("content script must be a .js file in the plugin folder, outside data/: {p}")),
+        }
+    }
+    Ok(out)
 }
 
 fn title(v: &Value) -> Result<String, String> {
@@ -116,7 +118,7 @@ pub fn load_manifest(dir: &Path) -> Result<Manifest, String> {
     let description = s("description");
     if description.as_ref().is_some_and(|d| d.chars().count() > 200) { return Err("description must be at most 200 characters".into()); }
     let entry = s("entry").unwrap_or_else(|| "index.html".into());
-    if !valid_path(&entry) || entry.split('/').next() == Some(DATA) { return Err("entry must be a file in the plugin folder, outside data/".into()); }
+    if !valid_code_path(&entry) { return Err("entry must be a file in the plugin folder, outside data/".into()); }
     let mut permissions: Vec<String> = Vec::new();
     for p in v.get("permissions").and_then(Value::as_array).cloned().unwrap_or_default() {
         let p = p.as_str().unwrap_or("").to_string();
@@ -306,10 +308,12 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let h = d.path();
         let perm = r#"["artifact.content"]"#;
-        for (i, bad) in [r#"["../x.js"]"#, r#"["data/x.js"]"#, r#"["x.css"]"#, r#"["/x.js"]"#, "[3]", r#""x.js""#].iter().enumerate() {
+        assert_eq!(reason(h, "str", &content("str", perm, r#""x.js""#, "{}")), "contentScripts must be an array");
+        for (i, bad) in [r#"["../x.js"]"#, r#"["data/x.js"]"#, r#"["x.css"]"#, r#"["/x.js"]"#, "[3]"].iter().enumerate() {
             let f = format!("p{i}");
-            assert!(reason(h, &f, &content(&f, perm, bad, "{}")).to_lowercase().contains("content"), "{bad}");
+            assert!(reason(h, &f, &content(&f, perm, bad, "{}")).contains("content script must be"), "{bad}");
         }
+        assert_eq!(reason(h, "dup", &content("dup", perm, r#"["a.js","lib/b.js","a.js"]"#, "{}")), "duplicate content script: a.js");
         assert!(reason(h, "five", &content("five", perm, r#"["a.js","b.js","c.js","d.js","e.js"]"#, "{}")).contains("at most 4"));
         assert_eq!(load_manifest(&plugin(h, "four", &content("four", perm, r#"["a.js","b.js","c.js","d.js"]"#, "{}"))).unwrap().content_scripts.len(), 4);
     }
