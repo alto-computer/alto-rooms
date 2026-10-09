@@ -772,6 +772,7 @@ async fn room_and_day_asks_list_their_documents() {
     let r = app.clone().oneshot(get("/v1/asks/target?scope=day:2026-10-09", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["opus", "sonnet", "haiku"]}));
+    assert!(!d.path().join(".rooms/asks").exists(), "a target lookup writes nothing");
 
     let room = st.core.create_room("r").unwrap();
     let outside = tempfile::tempdir().unwrap();

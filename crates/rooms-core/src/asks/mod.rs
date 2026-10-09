@@ -22,7 +22,7 @@ use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, EventKind
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -263,7 +263,7 @@ impl Asks {
 
     /// Which subject, agent, template, session and cwd an ask in `scope` would use. A room or a day
     /// has no source session: the default agent starts a new conversation in an empty folder, so a
-    /// search without a path finds nothing.
+    /// search without a path finds nothing. `start` creates that folder; `target` writes nothing.
     fn resolve(&self, scope: &AskScope) -> Result<Resolved, AskError> {
         scope.validate()?;
         let core = &self.0.core;
@@ -277,7 +277,8 @@ impl Asks {
         };
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
         let plan = profiles.plan(None, None);
-        Ok(Resolved { subject: Subject::Listing { listing, entries }, profiles, plan, session: None, cwd: self.empty_cwd()? })
+        let cwd = self.0.core.home().join(".rooms/asks/cwd");
+        Ok(Resolved { subject: Subject::Listing { listing, entries }, profiles, plan, session: None, cwd })
     }
 
     /// A doc scope goes through the first artifact holding its file whose link still resolves
@@ -300,14 +301,6 @@ impl Asks {
         let cwd = src.cwd.as_deref().map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir())
             .unwrap_or_else(|| file_abs.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| core.home().to_path_buf()));
         Ok(Resolved { subject: Subject::Doc { file_key: artifact.file_key, file_abs }, profiles, plan, session, cwd })
-    }
-
-    /// `<home>/.rooms/asks/cwd`, empty and private to the user.
-    fn empty_cwd(&self) -> Result<PathBuf, AskError> {
-        use std::os::unix::fs::DirBuilderExt;
-        let dir = self.0.core.home().join(".rooms/asks/cwd");
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).map_err(|e| AskError::Io(e.to_string()))?;
-        Ok(dir)
     }
 
     /// Blocking, like `start`: what the ask bar shows before the first question.
@@ -362,7 +355,10 @@ impl Asks {
                 let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, file_key, &ctx, &asked);
                 (file_s, prompt)
             }
-            Subject::Listing { listing, entries } => (String::new(), build_scope_prompt(listing, entries, &ctx, &asked)),
+            Subject::Listing { listing, entries } => {
+                private_dir(&cwd).map_err(|e| AskError::Io(e.to_string()))?;
+                (String::new(), build_scope_prompt(listing, entries, &ctx, &asked))
+            }
         };
         let cwd_s = cwd.to_string_lossy().into_owned();
         let image_dir = if image_paths.is_empty() { String::new() } else { self.0.images.dir().to_string_lossy().into_owned() };
@@ -551,6 +547,13 @@ fn listing_error(e: CoreError) -> AskError {
     }
 }
 
+/// Creates `dir` if needed and makes it private to the user, an existing one included.
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,6 +669,8 @@ mod tests {
         let asks = Asks::new(core.clone(), None);
         let scope = AskScope::Room { room_id: room.id.clone() };
         assert_eq!(asks.target(&scope).unwrap(), AskTarget { agent: "mine".into(), mode: AskMode::New, models: vec![] });
+        assert_eq!(asks.target(&AskScope::Day { date: "2026-10-09".into() }).unwrap().agent, "mine");
+        assert!(!d.path().join(".rooms/asks").exists(), "target writes nothing");
         let mut rx = core.subscribe();
         let t = asks.start(&scope, "q", None).unwrap();
         assert_eq!((t.agent.as_str(), t.mode), ("mine", AskMode::New));
@@ -680,6 +685,21 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(std::fs::metadata(&cwd).unwrap().permissions().mode() & 0o777, 0o700);
         assert_eq!(std::fs::read_dir(&cwd).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn private_dir_creates_and_tightens() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let fresh = d.path().join("a/b/cwd");
+        private_dir(&fresh).unwrap();
+        assert_eq!(mode(&fresh), 0o700);
+        let open = d.path().join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+        private_dir(&open).unwrap();
+        assert_eq!(mode(&open), 0o700, "a folder left open by an earlier run is made private");
     }
 
     #[test]
