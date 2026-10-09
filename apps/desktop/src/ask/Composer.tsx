@@ -10,7 +10,6 @@ import { splitQuotes } from "./quotes";
 import { ICON_BUTTON } from "./ui";
 import type { ComposerState } from "./useComposer";
 
-const PLACEHOLDER = "Ask about this artifact…";
 /** The input grows with its text up to this height (about 5 lines), then scrolls. */
 const INPUT_MAX_PX = 128;
 /** Taller than this is more than one line (the input is `leading-5`, 20px a line). */
@@ -125,12 +124,13 @@ function SendButton({ running, hasDraft, busy, onSend, onStop }: { running: bool
  * answer and sends now, Tab queues, Esc stops the answer (or folds the thread), ↑ in an empty
  * input recalls the last queued or asked question.
  */
-export function Composer({ composer: c, inputRef, turns, running, dragging, model, onStop, onFold, onFocus }: {
+export function Composer({ composer: c, inputRef, turns, running, dragging, placeholder, model, onStop, onFold, onFocus }: {
   composer: ComposerState;
   inputRef: RefObject<HTMLTextAreaElement | null>;
   turns: AskTurn[];
   running: AskTurn | undefined;
   dragging: boolean;
+  placeholder: string;
   /** The agent and model picker. */
   model: ReactNode;
   onStop: () => void;
@@ -214,7 +214,7 @@ export function Composer({ composer: c, inputRef, turns, running, dragging, mode
           ref={inputRef}
           rows={1}
           value={c.draft}
-          placeholder={PLACEHOLDER}
+          placeholder={placeholder}
           onChange={(e) => c.setDraft(e.target.value)}
           onKeyDown={onKeyDown}
           onFocus={onFocus}

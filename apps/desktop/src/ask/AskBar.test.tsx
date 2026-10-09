@@ -22,7 +22,7 @@ function Grab() { store = useAsksStore(); return null; }
 
 async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false, target?: AskTarget) {
   const askTargets = target ? { k1: target } : undefined;
-  return renderWithStores(<><Grab /><AskBar artifact={doc} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
+  return renderWithStores(<><Grab /><AskBar scope={{ kind: "doc", fileKey: doc.fileKey }} agentName={doc.source.agent ?? "Default agent"} placeholder="Ask about this artifact…" /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
 }
 
 const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"] };
@@ -428,7 +428,7 @@ describe("AskBar", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const noAgent = { ...doc, source: { ...doc.source, agent: null } };
-      await renderWithStores(<AskBar artifact={noAgent} />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { k1: new Error("down") } });
+      await renderWithStores(<AskBar scope={{ kind: "doc", fileKey: noAgent.fileKey }} agentName={noAgent.source.agent ?? "Default agent"} placeholder="Ask about this artifact…" />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { k1: new Error("down") } });
       expect(await screen.findByText("Default agent")).toBeTruthy();
       await waitFor(() => expect(warn).toHaveBeenCalled());
       expect(screen.getByText("Default agent")).toBeTruthy();

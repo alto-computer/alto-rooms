@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { Artifact, AskScope, AskTurn } from "@alto-rooms/protocol-ts";
+import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
 import { Composer } from "./Composer";
@@ -14,16 +14,20 @@ import { useComposer } from "./useComposer";
 const PART_OF_THE_BAR = "[data-slot=dropdown-menu-content], [data-slot=dialog-content], [data-slot=dialog-overlay], [data-selection-ask]";
 
 /**
- * The ask bar over the bottom of an artifact (⌘J): the artifact's thread on a sheet, and the input
- * that asks the agent that made it. The thread folds on Esc or a click elsewhere, and unfolds when
- * the input is focused.
+ * The ask bar over the bottom of an artifact or a session (⌘J): the scope's thread on a sheet, and
+ * the input that asks the agent behind it. The thread folds on Esc or a click elsewhere, and
+ * unfolds when the input is focused.
  */
-export function AskBar({ artifact }: { artifact: Artifact }) {
+export function AskBar({ scope, agentName, placeholder }: {
+  scope: AskScope;
+  /** The agent the chip names until roomsd says where asks go. */
+  agentName: string;
+  placeholder: string;
+}) {
   const store = useAsksStore();
   const { open, threads, live } = useAsks();
   const readOnly = useReadOnly();
   const shown = open && !readOnly;
-  const scope: AskScope = { kind: "doc", fileKey: artifact.fileKey };
   const key = scopeKey(scope);
   const thread = threads[key];
   const turns = thread?.turns ?? [];
@@ -91,7 +95,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
         turns={turns}
         running={running}
         dragging={dragging}
-        model={target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={artifact.source.agent ?? "Default agent"} />}
+        placeholder={placeholder}
+        model={target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={agentName} />}
         onStop={() => running && store.cancel(running.id)}
         onFold={() => setUnfolded(false)}
         onFocus={() => setUnfolded(true)}

@@ -126,7 +126,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
               />
             ) : null}
           </div>
-          <AskBar artifact={artifact} />
+          <AskBar scope={{ kind: "doc", fileKey: artifact.fileKey }} agentName={artifact.source.agent ?? "Default agent"} placeholder="Ask about this artifact…" />
         </div>
         {/* A plugin frame treats a hidden tab as closed (its effects end), so it only lives in the visible one. */}
         {visible ? <PluginSlot slot="artifact.sidePanel" context={{ artifact }} /> : null}
