@@ -6,7 +6,7 @@ mod data;
 mod manifest;
 
 pub use data::{append_data, delete_data, list_data, read_data, resolve_asset, valid_path, write_data, MAX_DATA_BYTES};
-pub use manifest::{load_manifest, rev, Manifest, ICONS};
+pub use manifest::{compatible, load_manifest, rev, Manifest, APP_VERSION, ICONS};
 
 use crate::core::RoomsCore;
 use crate::error::CoreError;
@@ -89,14 +89,30 @@ fn copy_code(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
 /// A file of a valid, enabled plugin to serve, with the permissions its manifest declares.
 pub struct PluginAsset { pub path: PathBuf, pub permissions: Vec<String> }
 
+/// One script a plugin runs inside documents: its plugin, that plugin's `rev`, and the script's
+/// path in the plugin folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentScript { pub plugin_id: String, pub rev: String, pub path: String }
+
+/// Never approved, or declaring a permission beyond what the user approved.
+fn needs_approval(state: &PluginState, m: &Manifest) -> bool {
+    state.grants.get(&m.id).is_none_or(|g| !m.permissions.iter().all(|p| g.contains(p)))
+}
+
+/// Turned on, runnable by this app version, and every declared permission granted: the client's
+/// `usable` in `pluginsStore.ts`, so both sides agree on which plugins run.
+fn usable(state: &PluginState, m: &Manifest) -> bool {
+    state.enabled.contains(&m.id) && compatible(&m.min_app_version) && !needs_approval(state, m)
+}
+
 impl RoomsCore {
     fn plugin_info(&self, state: &PluginState, folder: String, loaded: Result<Manifest, String>) -> PluginInfo {
         match loaded {
             Ok(m) => {
                 let rev = rev(&plugins_dir(&self.home).join(&folder), &m);
                 let enabled = state.enabled.contains(&m.id);
+                let needs_approval = needs_approval(state, &m);
                 let granted = state.grants.get(&m.id).cloned();
-                let needs_approval = granted.as_ref().is_none_or(|g| !m.permissions.iter().all(|p| g.contains(p)));
                 PluginInfo {
                     id: m.id, name: m.name, version: m.version, min_app_version: m.min_app_version, description: m.description,
                     entry: m.entry, permissions: m.permissions, slots: m.slots, status: PluginStatus::Ok, reason: None,
@@ -179,6 +195,22 @@ impl RoomsCore {
             for t in &m.tools {
                 out.push(ToolInfo { plugin_id: m.id.clone(), name: t.name.clone(), description: t.description.clone(), input: t.input.clone() });
             }
+        }
+        out
+    }
+
+    /// The content scripts to load into a document: those of valid, usable plugins (the client's
+    /// `contentKey` rule), in plugin-id order and then manifest order. A valid manifest lists
+    /// content scripts only with `artifact.content` declared, and usable means every declared
+    /// permission is granted, so `artifact.content` is.
+    pub fn content_scripts(&self) -> Vec<ContentScript> {
+        let state = self.plugin_state();
+        let mut out = Vec::new();
+        for (folder, r) in scan(&self.home) {
+            let Ok(m) = r else { continue };
+            if !usable(&state, &m) { continue; }
+            let rev = rev(&plugins_dir(&self.home).join(&folder), &m);
+            out.extend(m.content_scripts.iter().map(|p| ContentScript { plugin_id: m.id.clone(), rev: rev.clone(), path: p.clone() }));
         }
         out
     }
@@ -294,6 +326,46 @@ mod tests {
         std::fs::write(plugins_dir(d.path()).join("stray.txt"), "").unwrap();
         let found: Vec<(String, bool)> = scan(d.path()).into_iter().map(|(f, r)| (f, r.is_ok())).collect();
         assert_eq!(found, vec![("broken".into(), false), ("echo".into(), true), ("zed".into(), true)]);
+    }
+
+    #[test]
+    fn content_scripts_come_from_usable_plugins_that_declare_artifact_content() {
+        let d = tempfile::tempdir().unwrap();
+        let content = |id: &str, min: &str, permissions: &str| format!(r#"{{"id":"{id}","name":"{id}","version":"0.1.0","minAppVersion":"{min}","permissions":{permissions},"contentScripts":["lib/b.js","a.js"]}}"#);
+        for id in ["zed", "marker", "off", "unapproved", "old", "partial"] {
+            let (min, permissions) = match id {
+                "old" => ("99.0.0", r#"["artifact.content"]"#),
+                "partial" => ("0.3.0", r#"["artifact.content","rooms.read"]"#),
+                _ => ("0.3.0", r#"["artifact.content"]"#),
+            };
+            let dir = plugin(d.path(), id, &content(id, min, permissions));
+            std::fs::write(dir.join("a.js"), "a").unwrap();
+        }
+        plugin(d.path(), "echo", OK);
+        let core = RoomsCore::open(d.path()).unwrap();
+        assert!(core.content_scripts().is_empty(), "nothing is on yet");
+        for id in ["zed", "marker", "echo", "old"] { core.set_plugin_enabled(id, true, None).unwrap(); }
+        core.set_plugin_enabled("unapproved", true, Some(Vec::new())).unwrap();
+        core.set_plugin_enabled("partial", true, Some(vec!["artifact.content".into()])).unwrap();
+        core.set_plugin_enabled("off", true, None).unwrap();
+        core.set_plugin_enabled("off", false, None).unwrap();
+        let rev_of = |id: &str| core.plugins().into_iter().find(|p| p.id == id).unwrap().rev;
+        let found: Vec<(String, String, String)> = core.content_scripts().into_iter().map(|s| (s.plugin_id, s.rev, s.path)).collect();
+        for (id, why) in [
+            ("off", "turned off"),
+            ("unapproved", "turned on with no permission approved"),
+            ("old", "needs a newer app than this one"),
+            ("partial", "artifact.content is granted but rooms.read still awaits approval"),
+            ("echo", "declares no content scripts"),
+        ] {
+            assert!(!found.iter().any(|(p, _, _)| p == id), "{id} must load nothing: {why}");
+        }
+        assert_eq!(found, vec![
+            ("marker".into(), rev_of("marker"), "lib/b.js".into()),
+            ("marker".into(), rev_of("marker"), "a.js".into()),
+            ("zed".into(), rev_of("zed"), "lib/b.js".into()),
+            ("zed".into(), rev_of("zed"), "a.js".into()),
+        ]);
     }
 
     #[test]

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { useArtifacts, useAsksStore, useClient, useInfo, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
+import { useArtifacts, useAsksStore, useClient, useInfo, usePlugins, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { PluginSlot, SidePanelOpener } from "@/plugins/PluginSlot";
+import { contentKey } from "@/plugins/pluginsStore";
 import { ToolbarGroup } from "@/components/ToolbarGroup";
 import { useTabVisible } from "@/shell/currentTab";
 import { AskBar } from "@/ask/AskBar";
@@ -30,6 +31,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
   const selection = useDocSelection(frame);
   const asks = useAsksStore();
   const readOnly = useReadOnly();
+  const plugins = usePlugins();
 
   // The store forgets a removed room's artifacts; its documents are gone too.
   const roomGone = info !== null && roomId !== info.journalRoomId && !rooms.some((r) => r.id === roomId);
@@ -45,11 +47,12 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
     <div className="relative flex min-h-0 flex-1 bg-white">
       <div className="relative min-w-0 flex-1">
         {/* No allow-same-origin: a doc is agent-written HTML and must never reach the app. What
-            it shares comes out by postMessage only: the selection bridge roomsd appends. */}
+            it shares comes out by postMessage only: the selection bridge roomsd splices in, and
+            the content scripts of the plugins the user turned on, which the doc variant adds. */}
         <iframe
           title={artifact.title}
           ref={frame}
-          src={client.fileUrl(info, artifact)}
+          src={client.fileUrl(info, artifact, { contentKey: contentKey(plugins.list) })}
           sandbox="allow-scripts allow-popups"
           onLoad={() => setLoaded(true)}
           className={cn("absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out motion-reduce:transition-none", loaded ? "opacity-100" : "opacity-0")}
