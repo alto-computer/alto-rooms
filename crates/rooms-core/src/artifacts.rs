@@ -186,6 +186,7 @@ impl RoomsCore {
     /// What a room ask lists: the room's name and its artifacts, newest first, as realpaths (`rg`
     /// skips symlinks). An artifact whose link no longer resolves is left out.
     pub(crate) fn room_context(&self, room: &RoomId) -> Result<(String, Vec<ContextEntry>), CoreError> {
+        if room == JOURNAL_ROOM_ID { return Err(CoreError::InvalidInput("the Journal is asked by day".into())); }
         let name = lock(&self.inner).state.find(room).ok_or(CoreError::RoomNotFound)?.name.clone();
         let entries = self.list_artifacts(room)?.into_iter().rev().filter_map(|a| {
             let path = self.resolve_file(room, &a.rel_path).ok()?;
@@ -288,6 +289,18 @@ mod tests {
         let today = local_day(&chrono::Local::now().to_rfc3339()).unwrap();
         assert!(entries.iter().all(|e| e.label == "Research" && e.day == today), "{entries:?}");
         assert!(matches!(core.room_context(&"nope".into()), Err(CoreError::RoomNotFound)));
+    }
+
+    #[test]
+    fn room_context_refuses_the_journal() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let day = core.home().join("journal").join(local_day(&chrono::Local::now().to_rfc3339()).unwrap());
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(day.join("a.html"), "<title>a</title>").unwrap();
+        core.backfill_all().unwrap();
+        assert_eq!(core.list_artifacts(&JOURNAL_ROOM_ID.into()).unwrap().len(), 1, "the Journal lists like a room");
+        assert!(matches!(core.room_context(&JOURNAL_ROOM_ID.into()), Err(CoreError::InvalidInput(m)) if m == "the Journal is asked by day"));
     }
 
     /// Makes the index step of `move_artifact` fail on this thread (after the filesystem move).
