@@ -9,6 +9,7 @@ mod journal;
 mod lock;
 pub mod meta;
 pub mod onboarding;
+mod order;
 pub mod plugins;
 mod rooms;
 pub mod rules;

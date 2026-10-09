@@ -79,9 +79,11 @@ impl StateStore {
                 }
             }
         };
+        let mut rooms = disk.rooms;
+        crate::order::normalize(&mut rooms);
         Ok(StateStore {
             path,
-            rooms: disk.rooms,
+            rooms,
             plugins: disk.plugins,
         })
     }
@@ -137,6 +139,24 @@ mod tests {
         assert_eq!(s2.find("a").unwrap().name, "연구 도구");
         let mut s2 = s2;
         assert_eq!(s2.find_by_inode_mut(1, 2).unwrap().id, "b");
+    }
+
+    #[test]
+    fn colour_roundtrips_and_files_without_it_still_load() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join(".rooms");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A state file from before pins.
+        std::fs::write(dir.join("state.json"), r#"{"rooms":[{"id":"a","name":"A","kind":"owned","path":"/x/a","dev":null,"ino":null}]}"#).unwrap();
+        let mut s = StateStore::load(&dir).unwrap();
+        assert_eq!(s.find("a").unwrap().color, None);
+        s.save().unwrap();
+        assert!(!std::fs::read_to_string(dir.join("state.json")).unwrap().contains("color"));
+
+        s.find_mut("a").unwrap().color = Some(RoomColor::Clay);
+        s.save().unwrap();
+        assert!(std::fs::read_to_string(dir.join("state.json")).unwrap().contains(r#""color": "clay""#));
+        assert_eq!(StateStore::load(&dir).unwrap().find("a").unwrap().color, Some(RoomColor::Clay));
     }
 
     #[test]
