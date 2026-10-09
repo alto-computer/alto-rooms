@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { addDays, dateLabel, isNewSince, journalTitle, localDate, weekdayIndex, weekOf, WEEKDAY_LETTERS } from "./dates";
+import { addDays, agoPhrase, clockTime, dateLabel, daybookTitle, isNewSince, isoWeek, journalTitle, localDate, shortAge, weekdayIndex, weekOf, WEEKDAY_LETTERS } from "./dates";
 
 const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
 
@@ -121,5 +121,36 @@ describe("calendar-date math (YYYY-MM-DD, local calendar)", () => {
     expect(journalTitle("2026-10-05")).toBe("Monday, Oct 5");
     expect(journalTitle("2026-10-04")).toBe("Sunday, Oct 4");
     expect(journalTitle("2027-01-02")).toBe("Saturday, Jan 2");
+  });
+});
+
+describe("ages and day headings", () => {
+  const now = new Date(2026, 9, 9, 15, 0, 0); // local Fri 2026-10-09 15:00
+  const at = (...a: [number, number, number, number?, number?]) => new Date(a[0], a[1], a[2], a[3] ?? 12, a[4] ?? 0).toISOString();
+
+  it("steps from minutes to hours to calendar days", () => {
+    expect(shortAge(at(2026, 9, 9, 14, 59), now)).toBe("1 min");
+    expect(shortAge(new Date(now.getTime() - 20_000).toISOString(), now)).toBe("now");
+    expect(shortAge(at(2026, 9, 9, 14, 48), now)).toBe("12 min");
+    expect(shortAge(at(2026, 9, 9, 1, 0), now)).toBe("14 h");
+    expect(shortAge(at(2026, 9, 8, 23, 0), now)).toBe("Yesterday");
+    expect(shortAge(at(2026, 9, 6), now)).toBe("Tue");
+    expect(shortAge(at(2026, 9, 2), now)).toBe("Oct 2");
+    expect(shortAge("nope", now)).toBe("");
+  });
+
+  it("reads as a phrase after 'last added'", () => {
+    expect(agoPhrase(at(2026, 9, 9, 14, 48), now)).toBe("12 min ago");
+    expect(agoPhrase(at(2026, 9, 8), now)).toBe("yesterday");
+    expect(agoPhrase(at(2026, 9, 6), now)).toBe("Tuesday");
+    expect(agoPhrase(at(2026, 8, 30), now)).toBe("Sep 30");
+  });
+
+  it("titles the day, numbers the ISO week and keeps wall-clock times", () => {
+    expect(daybookTitle("2026-10-09")).toBe("Friday, 9 October");
+    expect(isoWeek("2026-10-09")).toBe(41);
+    expect(isoWeek("2027-01-01")).toBe(53);
+    expect(isoWeek("2026-01-01")).toBe(1);
+    expect(clockTime(at(2026, 9, 9, 9, 5))).toBe("09:05");
   });
 });
