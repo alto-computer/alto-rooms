@@ -178,12 +178,23 @@ async fn files_stream_a_big_document_whole() {
     let r = files.oneshot(get(&format!("/{}/big.html", room.id), FILES_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     assert_eq!(r.headers()["content-type"], "text/html; charset=utf-8");
-    // The whole file, then the selection bridge Rooms appends to every HTML document it shows.
+    // No <head> anywhere, so the bridge Rooms splices into every HTML document goes first, then the whole file.
     let body = r.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(&body[..big.len()], big.as_slice());
-    let tail = std::str::from_utf8(&body[big.len()..]).unwrap();
-    assert!(tail.starts_with("<script data-rooms-bridge>") && tail.contains("roomsSelection"), "{tail}");
+    let head = std::str::from_utf8(&body[..body.len() - big.len()]).unwrap();
+    assert!(head.starts_with("<script data-rooms-bridge>") && head.contains("roomsSelection"), "{head}");
+    assert_eq!(&body[body.len() - big.len()..], big.as_slice());
     assert_eq!(std::fs::read(d.path().join("a/big.html")).unwrap(), big, "the file on disk is unchanged");
+}
+
+const DOC: &str = "<!doctype html><html><head><meta charset=\"utf-8\"><title>t</title></head><body><p>hi</p></body></html>\n";
+
+/// The bytes between `<head>` and the file's own `<meta charset>`: what Rooms spliced in.
+fn spliced(body: &str) -> &str {
+    let (start, rest) = body.split_once("<head>").unwrap();
+    assert_eq!(start, "<!doctype html><html>");
+    let (block, rest) = rest.split_once("<meta charset=\"utf-8\">").unwrap();
+    assert_eq!(rest, "<title>t</title></head><body><p>hi</p></body></html>\n", "the rest of the file is untouched, nothing after </html>");
+    block
 }
 
 #[tokio::test]
@@ -191,9 +202,139 @@ async fn only_html_gets_the_selection_bridge() {
     let (d, _app, st) = app(false, "127.0.0.1:5000");
     let room = st.core.create_room("a").unwrap();
     std::fs::write(d.path().join("a/x.css"), "p{}").unwrap();
+    std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
     let files = build_files_router(st);
-    let r = files.oneshot(get(&format!("/{}/x.css", room.id), FILES_HOST)).await.unwrap();
+    let r = files.clone().oneshot(get(&format!("/{}/x.css", room.id), FILES_HOST)).await.unwrap();
     assert_eq!(r.into_body().collect().await.unwrap().to_bytes().as_ref(), b"p{}");
+    let r = files.oneshot(get(&format!("/{}/x.html", room.id), FILES_HOST)).await.unwrap();
+    let block = text(r).await;
+    let block = spliced(&block);
+    assert!(block.starts_with("<script data-rooms-bridge>") && block.trim_end().ends_with("</script>") && block.contains("roomsSelection"), "{block}");
+    assert_eq!(block.matches("<script").count(), 1, "the bridge alone");
+}
+
+fn install_marker(home: &std::path::Path, id: &str) {
+    let dir = home.join(".rooms/plugins").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("manifest.json"), format!(
+        r#"{{"id":"{id}","name":"{id}","version":"0.1.0","minAppVersion":"0.3.0","permissions":["artifact.content"],"contentScripts":["content.js","lib/more.js"]}}"#)).unwrap();
+    std::fs::write(dir.join("content.js"), "mark()").unwrap();
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    std::fs::write(dir.join("lib/more.js"), "more()").unwrap();
+}
+
+fn rev_of(st: &AppState, id: &str) -> String {
+    st.core.plugins().into_iter().find(|p| p.id == id).unwrap().rev
+}
+
+#[tokio::test]
+async fn doc_variant_injects_bridge_then_content_scripts() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
+    install_marker(d.path(), "marker");
+    install_marker(d.path(), "alpha");
+    install_marker(d.path(), "off");
+    install_marker(d.path(), "unapproved");
+    install_echo(d.path(), r#"["rooms.read"]"#);
+    for id in ["marker", "alpha", "echo"] { st.core.set_plugin_enabled(id, true, None).unwrap(); }
+    st.core.set_plugin_enabled("unapproved", true, Some(Vec::new())).unwrap();
+    let files = build_files_router(st.clone());
+    let r = files.clone().oneshot(get(&format!("/{}/x.html?v=1&doc=1&cs=abc", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(r.headers()["content-type"], "text/html; charset=utf-8");
+    let body = text(r).await;
+    let block = spliced(&body);
+    let (bridge, tags) = block.split_once("</script>\n").unwrap();
+    assert!(bridge.starts_with("<script data-rooms-bridge>"), "{bridge}");
+    let tag = |id: &str, path: &str| format!("<script src=\"http://127.0.0.1:4318/_plugins/{id}/{path}?r={}\"></script>\n", rev_of(&st, id));
+    assert_eq!(tags, format!("{}{}{}{}", tag("alpha", "content.js"), tag("alpha", "lib/more.js"), tag("marker", "content.js"), tag("marker", "lib/more.js")));
+    assert_eq!(std::fs::read_to_string(d.path().join("a/x.html")).unwrap(), DOC, "the file on disk is unchanged");
+
+    // A non-HTML file is served as is, whatever the query says.
+    std::fs::write(d.path().join("a/x.svg"), "<svg/>").unwrap();
+    let r = files.oneshot(get(&format!("/{}/x.svg?doc=1", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(text(r).await, "<svg/>");
+}
+
+#[tokio::test]
+async fn card_variant_has_only_the_bridge() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
+    install_marker(d.path(), "marker");
+    st.core.set_plugin_enabled("marker", true, None).unwrap();
+    let files = build_files_router(st);
+    for query in ["", "?v=1", "?doc=0", "?doc="] {
+        let r = files.clone().oneshot(get(&format!("/{}/x.html{query}", room.id), FILES_HOST)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK, "{query}");
+        let body = text(r).await;
+        let block = spliced(&body);
+        assert_eq!(block.matches("<script").count(), 1, "{query}: {block}");
+        assert!(!block.contains("_plugins"), "{query}");
+    }
+}
+
+#[tokio::test]
+async fn doc_etag_changes_when_a_content_plugin_toggles() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
+    install_marker(d.path(), "marker");
+    let files = build_files_router(st.clone());
+    let uri = format!("/{}/x.html?doc=1", room.id);
+    let fetch = |tag: Option<String>| {
+        let mut b = Request::get(&uri).header("host", FILES_HOST);
+        if let Some(t) = tag { b = b.header("if-none-match", t); }
+        files.clone().oneshot(b.body(Body::empty()).unwrap())
+    };
+    let etag = |r: &axum::response::Response| r.headers()["etag"].to_str().unwrap().to_string();
+    let off = fetch(None).await.unwrap();
+    let card = files.clone().oneshot(get(&format!("/{}/x.html", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(etag(&off), etag(&card), "with no content plugin on, the doc variant is the card body");
+    let off_tag = etag(&off);
+
+    st.core.set_plugin_enabled("marker", true, None).unwrap();
+    let on = fetch(Some(off_tag.clone())).await.unwrap();
+    assert_eq!(on.status(), StatusCode::OK, "the cached body has no tag, so the old tag must miss");
+    let on_tag = etag(&on);
+    assert_ne!(on_tag, off_tag);
+    assert!(text(on).await.contains("_plugins/marker/content.js"));
+    assert_eq!(fetch(Some(on_tag.clone())).await.unwrap().status(), StatusCode::NOT_MODIFIED);
+
+    // An edited content script changes the plugin's rev, so the tag's `?r=` and the ETag move too.
+    std::fs::write(d.path().join(".rooms/plugins/marker/content.js"), "mark(); mark()").unwrap();
+    let edited = fetch(Some(on_tag.clone())).await.unwrap();
+    assert_eq!(edited.status(), StatusCode::OK);
+    assert_ne!(etag(&edited), on_tag);
+    assert!(text(edited).await.contains(&format!("content.js?r={}", rev_of(&st, "marker"))));
+
+    st.core.set_plugin_enabled("marker", false, None).unwrap();
+    let back = fetch(Some(on_tag)).await.unwrap();
+    assert_eq!(back.status(), StatusCode::OK, "off again: the on tag must miss");
+    assert_eq!(etag(&back), off_tag, "and the body is the card body again");
+}
+
+#[tokio::test]
+async fn big_doc_variant_streams_whole() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    let mut big = b"<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n</head>\n<body>".to_vec();
+    big.extend((0..300_000u32).map(|i| b"ab \n"[(i % 4) as usize]));
+    big.extend_from_slice(b"</body>\n</html>\n");
+    std::fs::write(d.path().join("a/big.html"), &big).unwrap();
+    install_marker(d.path(), "marker");
+    st.core.set_plugin_enabled("marker", true, None).unwrap();
+    let files = build_files_router(st);
+    let r = files.oneshot(get(&format!("/{}/big.html?doc=1", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let body = r.into_body().collect().await.unwrap().to_bytes();
+    let at = b"<!doctype html>\n<html>\n<head>".len();
+    assert_eq!(&body[..at], &big[..at]);
+    let block_len = body.len() - big.len();
+    let block = std::str::from_utf8(&body[at..at + block_len]).unwrap();
+    assert!(block.starts_with("<script data-rooms-bridge>") && block.contains("_plugins/marker/lib/more.js"), "{block}");
+    assert_eq!(&body[at + block_len..], &big[at..], "the rest of the file, byte for byte, with nothing after </html>");
 }
 
 #[tokio::test]
