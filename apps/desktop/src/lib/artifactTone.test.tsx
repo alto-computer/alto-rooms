@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { dimsInDark, readToneMessage, useFrameTone } from "./docTone";
+import { dimsInDark, readToneMessage, useFrameTone } from "./artifactTone";
 
 afterEach(cleanup);
 
@@ -18,7 +18,7 @@ function Probe() {
 
 const post = (data: unknown, source: MessageEventSource | null) => act(() => void window.dispatchEvent(new MessageEvent("message", { data, source })));
 
-describe("doc tone", () => {
+describe("artifact tone", () => {
   it("dims a light page and a page that hasn't said, never a dark one", () => {
     expect(dimsInDark("light")).toBe(true);
     expect(dimsInDark(null)).toBe(true);

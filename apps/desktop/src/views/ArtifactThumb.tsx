@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import type { Artifact, Info } from "@alto-rooms/protocol-ts";
 import { useClient } from "@/data/hooks";
-import { dimsInDark, useFrameTone } from "@/lib/docTone";
+import { dimsInDark, useFrameTone } from "@/lib/artifactTone";
 import { useLiveFrame } from "@/lib/liveFrames";
 import { useLoadSlot } from "@/lib/loadSlots";
 import { useLingering } from "@/lib/useLingering";

@@ -23,7 +23,7 @@
   /* A room's header band: warm paper, never grey. A pinned room sets --room-tint on the band instead. */
   --paper-band:#f1e9de; --on-band:rgb(255 253 249 / .6); --on-band-hover:rgb(255 253 249 / .9);
   /* Agent pages keep their own colours; in dark mode a light page is dimmed so it doesn't glare. */
-  --doc-filter:none; --thumb-filter:none;
+  --artifact-filter:none; --thumb-filter:none;
 
   /* The one colour */
   --thread:#ff385c;        /* Rausch: the thread, knots, live status */
@@ -74,7 +74,7 @@
   --menu:rgb(44 38 34 / .95);
   --sidebar-sheen-top:rgb(255 240 225 / .035); --sidebar-sheen-bottom:rgb(255 240 225 / .012);
   --paper-band:#2a241f; --on-band:rgb(255 240 225 / .07); --on-band-hover:rgb(255 240 225 / .12);
-  --doc-filter:brightness(.86) sepia(.07); --thumb-filter:brightness(.9) sepia(.05);
+  --artifact-filter:brightness(.86) sepia(.07); --thumb-filter:brightness(.9) sepia(.05);
   --thread:#ff5a76; --thread-deep:#ff7088; --thread-deeper:#ff8a9e; --thread-soft:rgb(255 90 118 / .32);
   --on-thread:#1c1714;
   --error:#ff7a5c; --success:#4cc35a;

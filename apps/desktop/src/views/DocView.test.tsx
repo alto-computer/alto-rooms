@@ -78,7 +78,7 @@ describe("DocView", () => {
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
     const frame = container.querySelector("iframe")!;
-    const dimmed = () => frame.classList.contains("[filter:var(--doc-filter)]");
+    const dimmed = () => frame.classList.contains("[filter:var(--artifact-filter)]");
     const tone = (t: string, source: MessageEventSource | null = frame.contentWindow) =>
       act(() => void window.dispatchEvent(new MessageEvent("message", { data: { roomsTone: 1, tone: t }, source })));
     expect(dimmed()).toBe(true);

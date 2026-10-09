@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import type { Artifact, Info, Room } from "@alto-rooms/protocol-ts";
 import { BookOpen, ChevronRight, Folder, Inbox } from "lucide-react";
 import { useArtifacts, useAsksStore, useClient, useInfo, usePlugins, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
-import { dimsInDark, useFrameTone } from "@/lib/docTone";
+import { dimsInDark, useFrameTone } from "@/lib/artifactTone";
 import { INBOX_ID } from "@/lib/drag";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { wantsNewTab } from "@/lib/nav";
@@ -109,7 +109,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
               className={cn(
                 "absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out motion-reduce:transition-none",
                 loaded ? "opacity-100" : "opacity-0",
-                dimsInDark(tone) && "[filter:var(--doc-filter)]",
+                dimsInDark(tone) && "[filter:var(--artifact-filter)]",
               )}
             />
             {loaded ? null : <DocSkeleton />}
