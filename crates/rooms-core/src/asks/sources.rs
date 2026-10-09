@@ -1,11 +1,11 @@
-//! `<home>/.rooms/sources.json`: which agent conversation last wrote a doc (written by find_html.py).
-//! Rooms never parses agent logs; it only reads this file, fresh on every ask.
+//! `<home>/.rooms/sources.json`: which agent conversation last wrote a doc (written by rooms-collect
+//! and by find_html.py). rooms-core never parses agent logs; it only reads this file, fresh on every ask.
 use rooms_protocol::Source;
 use std::path::Path;
 
 /// The entry for `file_realpath`, or `None` when the file is missing, invalid, or has no such key.
 ///
-/// Keys come from Python's `os.path.realpath`, which keeps the typed case and Unicode form,
+/// Keys from find_html.py come from Python's `os.path.realpath`, which keeps the typed case and Unicode form,
 /// while `file_realpath` is canonicalized (on-disk name). On an exact miss, the first key
 /// that canonicalizes to `file_realpath` is used instead.
 pub(crate) fn lookup(home: &Path, file_realpath: &Path) -> Option<Source> {

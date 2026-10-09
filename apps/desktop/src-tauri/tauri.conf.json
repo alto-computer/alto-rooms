@@ -30,7 +30,8 @@
     "targets": "all",
     "externalBin": [
       "binaries/roomsd",
-      "binaries/rooms-mcp"
+      "binaries/rooms-mcp",
+      "binaries/rooms-collect"
     ],
     "resources": {
       "resources/plugins/": "plugins/"

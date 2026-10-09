@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# rooms-onboarding v7
+# rooms-onboarding v8
 """List existing .html files that an AI agent wrote recently.
 
 Reads Claude Code, Codex and Aside session logs and <home>/.rooms/state.json

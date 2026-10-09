@@ -1,4 +1,4 @@
-<!-- rooms-onboarding v7 -->
+<!-- rooms-onboarding v8 -->
 # Rooms onboarding (for agents)
 
 Rooms is an app that shows HTML artifacts grouped into topic rooms. A room is one folder under Home. Artifacts go into a room as file symlinks that point to the original. The original never moves.
