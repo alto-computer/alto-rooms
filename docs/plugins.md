@@ -103,12 +103,12 @@ rooms.onBeforeClose(async () => {
 | `storage.write(path, text)` | Writes atomically; up to 10 MB |
 | `storage.list(prefix?)` | Your files under `data/`, sorted |
 | `storage.delete(path)` | Removes a file; a missing file is fine |
-| `storage.onChange(cb)` | Calls `cb(path)` when one of your files changes from outside the frame (an agent called one of your tools); returns an unsubscribe function |
+| `storage.onChange(cb)` | Calls `cb(path)` when one of your files changes from outside the frame: an agent called one of your tools, or another frame of your plugin (a tab, a panel, a content script) wrote it. Never for this frame's own writes. Returns an unsubscribe function |
 | `rooms.list()` | Rooms in sidebar order (`rooms.read`) |
 | `artifacts.list(roomId)` | Documents in a room, newest first (`rooms.read`) |
 | `open({ roomId } \| { fileKey })` | Opens a room or document in the current tab |
 
-Errors are `PluginError` with a `code`: `permission_denied`, `invalid_path`, `too_large`, `not_found`, `write_failed`, `unknown_method`, `timeout`.
+Errors are `PluginError` with a `code`: `permission_denied`, `invalid_path`, `too_large`, `not_found`, `write_failed`, `unknown_method`, `rate_limited`, `timeout`.
 
 The context is `{ slot: "artifact.sidePanel", artifact }` or `{ slot: "tab" }`. `artifact.fileKey` identifies the original file: it stays the same when Rooms moves the document, and every room that links the same original gets the same key. Key your per-document data by it.
 
@@ -149,6 +149,38 @@ A content script runs inside the document's sandbox with the document's own powe
 - It can read and change the page, including its text.
 - It can use the network the way the document can, for example `no-cors` requests.
 - It can't reach cookies, `localStorage` or IndexedDB (the document's origin is opaque), the roomsd API or its token, or the app window.
+
+### Talking to the app
+
+A content script stores data and adds buttons to the selection bar through `connectContent` from SDK 0.3.0.
+
+```ts
+import { connectContent } from "@alto-rooms/plugin-sdk";
+
+const rooms = connectContent("highlight");
+rooms.setActions([{ id: "yellow", title: "Highlight", color: "#ffd400" }]);
+rooms.onAction(async (id, selection) => {
+  if (!selection) return;
+  paint(selection.range);
+  await rooms.storage.write("highlights.json", JSON.stringify(save()));
+});
+rooms.onDataChanged((path) => path === "highlights.json" && repaint());
+rooms.ready();
+```
+
+| Call | What it does |
+| --- | --- |
+| `storage.read/write/list/delete` | Your data for this document only. Paths are relative to `docs/<fileKey>/` in your `data/`, so your tab or panel finds them there. Up to 1 MiB a write, 20 writes or deletes a second, and 100 reads or lists a second for the document |
+| `setActions(items)` | Replaces your buttons in the selection bar, shown after Ask: up to 6 `{ id, title, color? }`, titles cut to 24 characters with control and bidi formatting characters removed, `color` any CSS color |
+| `onAction(cb)` | Calls `cb(id, selection)` when one of your buttons is clicked. `selection` is the last `{ text, range }` selected in the document, since the click can clear the live selection |
+| `onDataChanged(cb)` | Calls `cb(path)` when another frame of your plugin changed a file in this document's folder |
+| `ready()` | Tells the app the script is listening |
+
+Messages are `{ rooms: "content", v: 1, plugin, type, … }` posted to `window.parent`, and the SDK trusts only messages whose source is `window.parent`.
+
+### What a hostile document can do
+
+The document's own script shares the window with your content script and can post the same messages. Rooms takes the document's `fileKey` from the tab, never from a message, and accepts only plugin ids that are on and declare `artifact.content`. So a hostile document can read, forge, or delete your files under `docs/<its fileKey>/`, and nothing else: not another document's folder, not the rest of your `data/`, not another plugin's data, and not the token. Two content plugins in one document share the window too, so each can reach the other's folder for that document. Treat every file under `docs/` as untrusted input, and render its text as text.
 
 ## Rules of the sandbox
 

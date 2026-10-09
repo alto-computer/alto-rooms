@@ -122,3 +122,101 @@ test("the bridge and the content scripts run under every artifact CSP, and a lat
     await page.keyboard.press("Escape");
   }
 });
+
+/** Every file under a plugin's data folder, relative to it. */
+async function dataFiles(daemon: Daemon, plugin: string): Promise<string[]> {
+  const dir = path.join(daemon.home, ".rooms", "plugins", plugin, "data");
+  if (!(await fs.stat(dir).catch(() => null))) return [];
+  return (await fs.readdir(dir, { recursive: true, withFileTypes: true })).filter((e) => e.isFile()).map((e) => path.relative(dir, path.join(e.parentPath, e.name))).sort();
+}
+
+async function fileKeyOf(daemon: Daemon, room: string, title: string): Promise<string> {
+  const [r] = (await daemon.listRooms()).filter((x) => x.name === room);
+  const list = (await api(daemon, "GET", `/v1/rooms/${r.id}/artifacts`)) as { title: string; fileKey: string }[];
+  return list.find((a) => a.title === title)!.fileKey;
+}
+
+test("a content script stores data for its document through the app, and its action joins Ask in one bar", async ({ page, daemon }) => {
+  await daemon.createRoom("Bench");
+  await daemon.write("Bench/report.html", "<!doctype html><html><head><meta charset=\"utf-8\"><title>Report</title></head><body><p id=\"text\">p95 118 ms</p></body></html>");
+  await daemon.installPlugin("marker");
+  await page.goto("/");
+  await turnOnMarker(page);
+  await openDoc(page, "Report");
+  const doc = docFrame(page, "Report");
+  await expect(doc.locator("html"), "wrote marks.json, then read it back").toHaveAttribute("data-marker-read", "Report");
+  const key = await fileKeyOf(daemon, "Bench", "Report");
+  expect(await dataFiles(daemon, "marker")).toEqual([`docs/${key}/marks.json`]);
+  expect(JSON.parse(await daemon.read(`.rooms/plugins/marker/data/docs/${key}/marks.json`))).toEqual({ title: "Report" });
+
+  await selectText(doc);
+  const bar = page.getByRole("toolbar", { name: "Selection actions" });
+  await expect(bar).toBeVisible();
+  await expect(bar.getByRole("button")).toHaveText(["Ask", "Mark"]);
+  await bar.getByRole("button", { name: "Mark" }).click();
+  await expect(doc.locator("html")).toHaveAttribute("data-marker-selected", "p95 118 ms");
+  await expect(bar).toBeHidden();
+
+  await selectText(doc);
+  await page.getByRole("button", { name: "Ask" }).click();
+  await expect(page.getByRole("list", { name: "Quoted text" })).toContainText("p95 118 ms");
+});
+
+test("a hostile document can only touch its own folder of the plugins that are on, and only 20 writes a second", async ({ page, daemon }) => {
+  await daemon.createRoom("Bench");
+  const forged = "ffffffffffffffff";
+  await daemon.write(
+    "Bench/hostile.html",
+    `<!doctype html><html><head><meta charset="utf-8"><title>Hostile</title></head><body><p id="text">hostile</p><script>
+const results = {};
+addEventListener("message", (e) => {
+  const d = e.data;
+  if (!d || d.rooms !== "content" || d.type !== "reply") return;
+  results[d.id] = d.error ? d.error.code : "ok";
+  document.body.dataset.results = JSON.stringify(results);
+});
+const send = (m) => parent.postMessage({ rooms: "content", v: 1, ...m }, "*");
+send({ plugin: "marker", type: "storage.write", id: "escape", path: "../other/marks.json", text: "x" });
+send({ plugin: "marker", type: "storage.write", id: "token", path: "../../../../token", text: "x" });
+send({ plugin: "marker", type: "storage.read", id: "readToken", path: "../../../../token" });
+send({ plugin: "echo", type: "storage.write", id: "otherPlugin", path: "stolen.json", text: "x" });
+send({ plugin: "marker", type: "storage.write", id: "forgedKey", fileKey: "${forged}", path: "forged.json", text: "x" });
+send({ plugin: "marker", type: "storage.write", id: "nested", path: "docs/${forged}/marks.json", text: "x" });
+setTimeout(() => { for (let i = 0; i < 500; i++) send({ plugin: "marker", type: "storage.write", id: "flood" + i, path: "flood/" + i + ".json", text: String(i) }); }, 1500);
+</script></body></html>`,
+  );
+  await daemon.installPlugin("marker");
+  await daemon.installPlugin("echo");
+  await api(daemon, "PATCH", "/v1/plugins/echo", { enabled: true, permissions: ["rooms.read"] });
+  const tokenBefore = await daemon.read(".rooms/token");
+  await page.goto("/");
+  await turnOnMarker(page);
+  await openDoc(page, "Hostile");
+  const doc = docFrame(page, "Hostile");
+  await expect(doc.locator("html")).toHaveAttribute("data-marker-read", "Hostile");
+  const results = async () => JSON.parse((await doc.locator("body").getAttribute("data-results")) ?? "{}") as Record<string, string>;
+  await expect.poll(async () => Object.keys(await results()).filter((k) => k.startsWith("flood")).length, { timeout: 10_000 }).toBe(500);
+  const r = await results();
+  expect({ escape: r.escape, token: r.token, readToken: r.readToken, otherPlugin: r.otherPlugin }).toEqual({
+    escape: "invalid_path",
+    token: "invalid_path",
+    readToken: "invalid_path",
+    otherPlugin: undefined,
+  });
+  const flood = Object.entries(r).filter(([k]) => k.startsWith("flood"));
+  const ok = flood.filter(([, v]) => v === "ok").length;
+  expect(ok, "at most 20 writes in that second").toBeLessThanOrEqual(20);
+  expect(ok).toBeGreaterThan(0);
+  expect(flood.filter(([, v]) => v !== "ok" && v !== "rate_limited")).toEqual([]);
+
+  const key = await fileKeyOf(daemon, "Bench", "Hostile");
+  const files = await dataFiles(daemon, "marker");
+  expect(files.filter((f) => !f.startsWith(`docs/${key}/flood/`)), "every write landed under this document's folder").toEqual(
+    [`docs/${key}/docs/${forged}/marks.json`, `docs/${key}/forged.json`, `docs/${key}/marks.json`].sort(),
+  );
+  expect(files.filter((f) => f.startsWith(`docs/${key}/flood/`))).toHaveLength(ok);
+  expect(await dataFiles(daemon, "echo"), "a plugin without artifact.content gets nothing").toEqual([]);
+  expect(await daemon.read(".rooms/token")).toBe(tokenBefore);
+  await page.getByRole("button", { name: "Back (⌘[)" }).click();
+  await expect(page.getByRole("tab", { name: "Bench", selected: true }), "the app stays responsive").toBeVisible({ timeout: 1000 });
+});

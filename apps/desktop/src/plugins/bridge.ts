@@ -7,7 +7,7 @@ import type { Artifact, PluginInfo, Room } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import type { TabInput } from "@/data/viewerStore";
 
-export type BridgeErrorCode = "permission_denied" | "invalid_path" | "too_large" | "not_found" | "write_failed" | "unknown_method";
+export type BridgeErrorCode = "permission_denied" | "invalid_path" | "too_large" | "not_found" | "write_failed" | "unknown_method" | "rate_limited";
 
 export class BridgeError extends Error {
   code: BridgeErrorCode;
@@ -28,6 +28,8 @@ export type BridgeDeps = {
     listArtifacts(roomId: string): Promise<{ data: Artifact[] }>;
     findArtifactByFileKey(fileKey: string): Promise<Artifact | null>;
   };
+  /** A write or delete of `path` in the plugin's data went through. */
+  changed(path: string): void;
   /** Opens a room or doc in the current tab. */
   navigate(tab: TabInput): void;
   /** The rooms in sidebar order. */
@@ -58,7 +60,7 @@ function needs(p: PluginInfo, permission: string) {
 }
 
 /** roomsd failures as bridge codes (unknown failures read as write_failed). */
-function relay<T>(promise: Promise<T>): Promise<T> {
+export function relay<T>(promise: Promise<T>): Promise<T> {
   return promise.catch((e: unknown) => {
     const code = e instanceof RoomsApiError ? e.code : undefined;
     if (code === "invalid_path" || code === "too_large" || code === "not_found") throw new BridgeError(code);
@@ -77,6 +79,7 @@ export async function handleBridgeCall(p: PluginInfo, call: BridgeCall, deps: Br
       if (typeof text !== "string") throw new BridgeError("invalid_path", "text must be a string");
       if (new TextEncoder().encode(text).length > MAX_DATA_BYTES) throw new BridgeError("too_large");
       await relay(client.putPluginData(p.id, path, text));
+      deps.changed(path);
       return null;
     }
     case "storage.list": {
@@ -84,9 +87,12 @@ export async function handleBridgeCall(p: PluginInfo, call: BridgeCall, deps: Br
       if (typeof prefix !== "string") throw new BridgeError("invalid_path");
       return relay(client.listPluginData(p.id, prefix));
     }
-    case "storage.delete":
-      await relay(client.deletePluginData(p.id, pathOf(call.params)));
+    case "storage.delete": {
+      const path = pathOf(call.params);
+      await relay(client.deletePluginData(p.id, path));
+      deps.changed(path);
       return null;
+    }
     case "rooms.list":
       needs(p, "rooms.read");
       return deps.rooms().map((r) => ({ id: r.id, name: r.name }));

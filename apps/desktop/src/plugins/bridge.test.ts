@@ -27,7 +27,7 @@ function deps() {
     findArtifactByFileKey: vi.fn(async (k: string) => (k === "key-new" ? art("new", "2026-02-01T00:00:00Z") : null)),
   };
   const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null }];
-  return { client, navigate: vi.fn(), rooms: () => rooms };
+  return { client, changed: vi.fn(), navigate: vi.fn(), rooms: () => rooms };
 }
 
 const call = (method: string, params: unknown = {}) => ({ id: "1", method, params });
@@ -84,6 +84,7 @@ describe("handleBridgeCall", () => {
     expect(await handleBridgeCall(plugin(), call("storage.list", { prefix: "" }), d)).toEqual(["a.txt"]);
     await handleBridgeCall(plugin(), call("storage.delete", { path: "a.txt" }), d);
     expect(d.client.deletePluginData).toHaveBeenCalledWith("echo", "a.txt");
+    expect(d.changed.mock.calls).toEqual([["a.txt"], ["a.txt"]]);
   });
 
   it("refuses bad paths and oversized text before any request", async () => {
