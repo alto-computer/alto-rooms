@@ -512,6 +512,7 @@ fn install_echo(home: &std::path::Path, permissions: &str) {
         r#"{{"id":"echo","name":"Echo","version":"0.1.0","minAppVersion":"0.3.0","permissions":{permissions},"slots":{{"tab":{{"title":"Echo","sidebar":true}}}}}}"#)).unwrap();
     std::fs::write(dir.join("index.html"), "<p>echo</p>").unwrap();
     std::fs::write(dir.join("font.woff2"), "w").unwrap();
+    std::fs::write(dir.join("main.js"), "1").unwrap();
 }
 
 async fn text(r: axum::response::Response) -> String {
@@ -615,11 +616,32 @@ async fn plugin_assets_get_their_own_narrow_csp() {
 async fn plugin_csp_without_downloads_has_no_extra_sandbox_tokens() {
     let (d, _app, st) = app(false, "127.0.0.1:5000");
     install_echo(d.path(), "[]");
+    st.core.set_plugin_enabled("echo", true, None).unwrap();
     let files = build_files_router(st);
     let r = files.oneshot(get("/_plugins/echo/index.html", FILES_HOST)).await.unwrap();
     let csp = r.headers()["content-security-policy"].to_str().unwrap().to_string();
     assert!(csp.starts_with("sandbox allow-scripts; "), "{csp}");
     assert!(!csp.contains("allow-popups") && !csp.contains("allow-same-origin"));
+}
+
+#[tokio::test]
+async fn disabled_plugin_files_are_not_served() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    install_echo(d.path(), "[]");
+    let files = build_files_router(st.clone());
+    let expect = |want: StatusCode, why: &'static str| {
+        let files = files.clone();
+        async move {
+            for path in ["/_plugins/echo/index.html", "/_plugins/echo/main.js"] {
+                assert_eq!(files.clone().oneshot(get(path, FILES_HOST)).await.unwrap().status(), want, "{why}: {path}");
+            }
+        }
+    };
+    expect(StatusCode::NOT_FOUND, "installed but off").await;
+    st.core.set_plugin_enabled("echo", true, None).unwrap();
+    expect(StatusCode::OK, "on").await;
+    st.core.set_plugin_enabled("echo", false, None).unwrap();
+    expect(StatusCode::NOT_FOUND, "turned off again").await;
 }
 
 fn delete(uri: &str, token: Option<&str>, host: &str) -> Request<Body> {

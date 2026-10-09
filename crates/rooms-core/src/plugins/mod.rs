@@ -86,7 +86,7 @@ fn copy_code(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
     Ok(())
 }
 
-/// A file of a valid plugin to serve, with the permissions its manifest declares.
+/// A file of a valid, enabled plugin to serve, with the permissions its manifest declares.
 pub struct PluginAsset { pub path: PathBuf, pub permissions: Vec<String> }
 
 impl RoomsCore {
@@ -215,13 +215,11 @@ impl RoomsCore {
         delete_data(&self.usable_plugin_dir(id)?, rel)
     }
 
-    /// A file of a valid plugin to serve (never under data/). Enabled or not: the app only opens
-    /// frames for enabled plugins, and serving lets the enable card show nothing but the manifest.
+    /// A file of a valid, enabled plugin to serve (never under data/). Any page on the files origin
+    /// can load these, so an installed plugin the user has not turned on serves nothing.
     pub fn resolve_plugin_file(&self, id: &str, rel: &str) -> Result<PluginAsset, CoreError> {
-        match find(&self.home, id) {
-            Some(Ok(m)) => Ok(PluginAsset { path: resolve_asset(&plugins_dir(&self.home).join(id), rel)?, permissions: m.permissions }),
-            _ => Err(CoreError::NotFound),
-        }
+        let (dir, m) = self.usable_plugin(id)?;
+        Ok(PluginAsset { path: resolve_asset(&dir, rel)?, permissions: m.permissions })
     }
 
     /// Installs the plugins the app ships (`src/<id>/`). A plugin seen for the first time is turned
