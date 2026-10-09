@@ -89,7 +89,7 @@ impl RoomsCore {
         // ensure inbox record; journal is implicit (constant id)
         if !state.rooms.iter().any(|r| r.kind == RoomKind::Owned && r.path == inbox) {
             let (dev, ino) = inode_of(&inbox).unzip();
-            state.rooms.insert(0, RoomRecord { id: INBOX_ROOM_ID.into(), name: "inbox".into(), kind: RoomKind::Owned, path: inbox, dev, ino });
+            state.rooms.insert(0, RoomRecord { id: INBOX_ROOM_ID.into(), name: "inbox".into(), kind: RoomKind::Owned, path: inbox, dev, ino, color: None });
             state.save()?;
         }
         // adopt / follow / drop owned folders changed in Finder while we were not running
@@ -196,6 +196,7 @@ impl RoomsCore {
             status: if inner.unavailable.contains(&r.id) { RoomStatus::Unavailable } else { RoomStatus::Ok },
             artifact_count: count,
             updated_at,
+            color: r.color,
         }
     }
 }

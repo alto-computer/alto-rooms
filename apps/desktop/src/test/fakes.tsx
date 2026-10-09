@@ -21,6 +21,7 @@ export const room = (id: string, name: string, extra: Partial<Room> = {}): Room 
   status: "ok",
   artifactCount: 0,
   updatedAt: null,
+  color: null,
   ...extra,
 });
 

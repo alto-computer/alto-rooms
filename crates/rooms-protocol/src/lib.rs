@@ -40,6 +40,12 @@ pub enum RoomStatus { Ok, Unavailable }
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
 pub enum Author { Agent, Me }
 
+/// The tint the user pinned a room with (spec decision 5). A room without one is neutral and unpinned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum RoomColor { Stone, Dusk, Sage, Clay, Oat, Lilac, Sea, Rose }
+
 wire!(pub struct Room {
     pub id: RoomId,
     pub name: String,
@@ -48,6 +54,8 @@ wire!(pub struct Room {
     pub status: RoomStatus,
     pub artifact_count: u32,
     pub updated_at: Option<String>,
+    /// Set = pinned. `GET /v1/rooms` lists pinned rooms before the others; the inbox keeps its place.
+    pub color: Option<RoomColor>,
 });
 
 wire!(#[derive(Default)] pub struct Source {

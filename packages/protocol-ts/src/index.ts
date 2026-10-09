@@ -20,6 +20,7 @@ export * from "./generated/PluginStatus";
 export * from "./generated/SidePanelSlot";
 export * from "./generated/TabSlot";
 export * from "./generated/Room";
+export * from "./generated/RoomColor";
 export * from "./generated/RoomKind";
 export * from "./generated/RoomStatus";
 export * from "./generated/RoomsEvent";

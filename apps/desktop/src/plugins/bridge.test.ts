@@ -26,7 +26,7 @@ function deps() {
     listArtifacts: vi.fn(async () => ({ data: [art("old", "2026-01-01T00:00:00Z"), art("new", "2026-02-01T00:00:00Z")], seq: 1 })),
     findArtifactByFileKey: vi.fn(async (k: string) => (k === "key-new" ? art("new", "2026-02-01T00:00:00Z") : null)),
   };
-  const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null }];
+  const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null, color: null }];
   return { client, navigate: vi.fn(), rooms: () => rooms };
 }
 

@@ -22,7 +22,7 @@ function client() {
   let emit: (e: RoomsEvent) => void = () => {};
   const calls = { listArtifacts: 0 };
   let failArtifacts = false;
-  let roomList = [{ id: "r1", name: "Room one", kind: "owned" as const, path: "/h/r1", status: "ok" as const, artifactCount: 1, updatedAt: null }];
+  let roomList = [{ id: "r1", name: "Room one", kind: "owned" as const, path: "/h/r1", status: "ok" as const, artifactCount: 1, updatedAt: null, color: null }];
   const c: RoomsClientLike = {
     info: async () => ({ version: "0", readOnly: false, home: "/h", journalRoomId: "j", filesOrigin: "http://f" }),
     listRooms: async () => ({ data: roomList, seq: 1 }),
@@ -101,12 +101,12 @@ describe("hooks", () => {
     await act(async () => h.emit({ seq: 2, type: "room.removed", roomId: "r1" }));
     expect(screen.getByText("live||loading|1")).toBeTruthy();
     await act(async () =>
-      h.emit({ seq: 3, type: "room.added", room: { id: "r1", name: "Back", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 1, updatedAt: null } }),
+      h.emit({ seq: 3, type: "room.added", room: { id: "r1", name: "Back", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 1, updatedAt: null, color: null } }),
     );
     expect(await screen.findByText("live|Back|First|1")).toBeTruthy();
 
     // Pruned by a resync, then reappears on the next one.
-    const keep = [{ id: "r1", name: "Again", kind: "owned" as const, path: "/h/r1", status: "ok" as const, artifactCount: 1, updatedAt: null }];
+    const keep = [{ id: "r1", name: "Again", kind: "owned" as const, path: "/h/r1", status: "ok" as const, artifactCount: 1, updatedAt: null, color: null }];
     h.setRooms([]);
     await act(async () => h.emit({ seq: 4, type: "resync", roomId: null }));
     expect(screen.getByText("live||loading|1")).toBeTruthy();

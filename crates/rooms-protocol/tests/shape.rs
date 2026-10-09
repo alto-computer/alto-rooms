@@ -10,11 +10,15 @@ fn room_serializes_camel_case() {
         status: RoomStatus::Ok,
         artifact_count: 2,
         updated_at: None,
+        color: None,
     };
     let v = serde_json::to_value(&r).unwrap();
     assert_eq!(v["kind"], "owned");
     assert_eq!(v["artifactCount"], 2);
     assert!(v["updatedAt"].is_null());
+    assert!(v["color"].is_null());
+    let pinned = serde_json::to_value(Room { color: Some(RoomColor::Lilac), ..r }).unwrap();
+    assert_eq!(pinned["color"], "lilac");
 }
 
 #[test]

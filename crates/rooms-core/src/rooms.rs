@@ -62,7 +62,7 @@ impl RoomsCore {
         if std::fs::symlink_metadata(&path).is_ok() { return Err(CoreError::RoomExists); }
         std::fs::create_dir(&path).map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { CoreError::RoomExists } else { e.into() })?;
         let (dev, ino) = inode_of(&path).unzip();
-        let rec = RoomRecord { id: nanoid::nanoid!(12), name, kind: RoomKind::Owned, path, dev, ino };
+        let rec = RoomRecord { id: nanoid::nanoid!(12), name, kind: RoomKind::Owned, path, dev, ino, color: None };
         inner.state.rooms.push(rec.clone());
         inner.state.save()?;
         let room = Self::to_room(&inner, &rec);
@@ -82,7 +82,7 @@ impl RoomsCore {
         }
         let display = match name { Some(n) => validate_room_name(n)?, None => validate_room_name(&real.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())? };
         if Self::slug_taken(&inner, &room_slug(&display)) { return Err(CoreError::RoomExists); }
-        let rec = RoomRecord { id: nanoid::nanoid!(12), name: display, kind: RoomKind::Linked, path: real, dev: None, ino: None };
+        let rec = RoomRecord { id: nanoid::nanoid!(12), name: display, kind: RoomKind::Linked, path: real, dev: None, ino: None, color: None };
         inner.state.rooms.push(rec.clone());
         inner.state.save()?;
         let room = Self::to_room(&inner, &rec);

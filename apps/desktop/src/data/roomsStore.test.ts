@@ -11,7 +11,7 @@ const INFO: Info = {
 };
 
 function room(id: string, name = id): Room {
-  return { id, name, kind: "owned", path: `/h/${id}`, status: "ok", artifactCount: 0, updatedAt: null };
+  return { id, name, kind: "owned", path: `/h/${id}`, status: "ok", artifactCount: 0, updatedAt: null, color: null };
 }
 
 function art(id: string, roomId = "r1", createdAt = `2026-10-05T00:00:0${id.slice(-1)}Z`): Artifact {

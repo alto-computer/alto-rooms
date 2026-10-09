@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use rooms_protocol::{RoomId, RoomKind, INBOX_ROOM_ID};
+use rooms_protocol::{RoomColor, RoomId, RoomKind, INBOX_ROOM_ID};
 use serde::{Deserialize, Serialize};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -12,6 +12,9 @@ pub struct RoomRecord {
     pub path: PathBuf,
     pub dev: Option<u64>,
     pub ino: Option<u64>,
+    /// Kept out of the file while unset, so a neutral room's record reads as it did before pins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<RoomColor>,
 }
 
 /// Which plugins the user turned on, and the permissions they saw when they did.
@@ -126,8 +129,8 @@ mod tests {
         let dir = d.path().join(".rooms");
         let mut s = StateStore::load(&dir).unwrap();
         assert!(s.rooms.is_empty());
-        s.rooms.push(RoomRecord { id: "b".into(), name: "B".into(), kind: RoomKind::Owned, path: "/x/b".into(), dev: Some(1), ino: Some(2) });
-        s.rooms.push(RoomRecord { id: "a".into(), name: "연구 도구".into(), kind: RoomKind::Linked, path: "/t".into(), dev: None, ino: None });
+        s.rooms.push(RoomRecord { id: "b".into(), name: "B".into(), kind: RoomKind::Owned, path: "/x/b".into(), dev: Some(1), ino: Some(2), color: None });
+        s.rooms.push(RoomRecord { id: "a".into(), name: "연구 도구".into(), kind: RoomKind::Linked, path: "/t".into(), dev: None, ino: None, color: None });
         s.save().unwrap();
         let s2 = StateStore::load(&dir).unwrap();
         assert_eq!(s2.rooms.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["b", "a"]);
