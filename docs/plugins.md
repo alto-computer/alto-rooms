@@ -40,8 +40,9 @@ Install a plugin by copying its built folder there. Rooms notices it and asks th
 | `version`, `minAppVersion` | semver. Rooms older than `minAppVersion` won't run the plugin |
 | `description` | optional, up to 200 characters, shown when Rooms asks the user |
 | `entry` | optional, defaults to `index.html`; not under `data/` |
-| `permissions` | any of `rooms.read`, `clipboard`, `downloads` |
-| `slots` | at least one of the two below. Unknown slots are ignored |
+| `permissions` | any of `rooms.read`, `clipboard`, `downloads`, `artifact.content` |
+| `slots` | at least one of the two below, unless the plugin has `contentScripts`. Unknown slots are ignored |
+| `contentScripts` | optional, up to 4 `.js` files in the plugin folder, not under `data/`. Needs `artifact.content`, and `artifact.content` needs it. See [Content scripts](#content-scripts) |
 
 Slots:
 
@@ -61,6 +62,7 @@ Storing your own files is always allowed. Everything else is declared, and the u
 | `rooms.read` | Can see your rooms and documents | `rooms.list()`, `artifacts.list()` |
 | `clipboard` | Can copy and paste | clipboard access in the frame |
 | `downloads` | Can save files you export | file downloads from the frame |
+| `artifact.content` | Can read the text of documents and use the network inside them | your `contentScripts` run inside documents |
 
 If a new version asks for more permissions, Rooms asks the user again.
 
@@ -129,11 +131,28 @@ A plugin can let agents write into its data by declaring tools in `manifest.json
 - Treat `appendTo` files as append-only from your side: rewriting them can race with an agent's call. Each file is capped at 10 MB.
 - Rooms itself never interprets your tools. What a line means is up to your plugin. [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw) is a complete example (`draw`).
 
+## Content scripts
+
+A plugin that declares `artifact.content` can list scripts under `contentScripts`, like a browser extension's content scripts:
+
+```json
+"permissions": ["artifact.content"],
+"contentScripts": ["content.js"]
+```
+
+A plugin with content scripts needs no slot. The user sees "Can read the text of documents and use the network inside them" before it runs, and a changed content script changes the plugin's `rev`.
+
+A content script runs inside the document's sandbox with the document's own powers, not the plugin frame's:
+
+- It can read and change the page, including its text.
+- It can use the network the way the document can, for example `no-cors` requests.
+- It can't reach cookies, `localStorage` or IndexedDB (the document's origin is opaque), the roomsd API or its token, or the app window.
+
 ## Rules of the sandbox
 
 - **Paths** are relative to `data/`: 1–200 characters, `/`-separated segments of `A–Z a–z 0–9 . _ -`, no `.` or `..`, at most 8 deep.
-- **No network.** `fetch` to anywhere is blocked. Bundle your fonts, images and wasm into the plugin folder.
-- **Your files only.** You can't read other plugins' data, document contents, or Rooms' own state.
+- **No network** in the plugin frame. `fetch` to anywhere is blocked. Bundle your fonts, images and wasm into the plugin folder.
+- **Your files only.** You can't read other plugins' data or Rooms' own state. Only content scripts see document contents.
 - **Save as you go.** Switching tabs closes your frame right away; `onBeforeClose` is reliable when the panel closes or the app quits, but not on a tab switch. Debounce writes to a few hundred milliseconds.
 - **Stay responsive.** If your frame stops answering pings, Rooms shows "This plugin stopped responding" with a Reload button.
 

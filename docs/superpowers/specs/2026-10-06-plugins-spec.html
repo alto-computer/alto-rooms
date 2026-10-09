@@ -113,7 +113,7 @@
   <li>slot: Journal 위젯(B), ⌘K 명령(D), 설정 페이지(E), 문서 탭 액션 버튼 — 모두 같은 구조로 나중에 추가 가능</li>
   <li>플러그인 마켓·레지스트리·자동 업데이트, 설치 UI (v1 설치 = 폴더 복사)</li>
   <li>플러그인 끄기·제거 UI (v1은 폴더 삭제 / §11)</li>
-  <li>네트워크 접근, Artifact 본문 읽기, 다른 플러그인 데이터, 방·노트 쓰기 API</li>
+  <li>네트워크 접근, Artifact 본문 읽기(<code>artifact.content</code>를 선언한 플러그인만 예외, <a href="#amend-2026-10-09">2026-10-09 개정</a>), 다른 플러그인 데이터, 방·노트 쓰기 API</li>
   <li>플러그인끼리 통신, 탭 사이 드래그</li>
 </ul>
 
@@ -128,7 +128,7 @@
     <tr><td><code>Bridge</code></td><td>플러그인 iframe ↔ PluginHost 사이 <code>postMessage</code> 프로토콜 (<code>{ rooms: 1, … }</code>).</td></tr>
     <tr><td><code>plugin-sdk</code></td><td><code>packages/plugin-sdk</code>: manifest 타입·브리지 클라이언트. 플러그인이 import하는 유일한 Rooms 코드.</td></tr>
     <tr><td><code>fileKey</code></td><td>Artifact가 가리키는 <strong>원본 파일</strong>의 안정 키. <strong>처음 인덱싱할 때</strong> sha256(그때의 realpath) 앞 16 hex로 정하고 index에 저장, 이후 Rooms가 옮기면(<code>move_artifact</code>) 행과 함께 그대로 따라간다. 두 방에 링크된 같은 원본은 같은 키. (<code>sourceKey</code>에서 개명 — <code>Artifact.source</code>가 이미 "만든 에이전트" 뜻이라 혼동)</td></tr>
-    <tr><td><code>Permission</code></td><td>manifest에 선언하는 추가 능력: <code>rooms.read</code>, <code>clipboard</code>, <code>downloads</code>. 저장(<code>storage.*</code>)은 항상 허용.</td></tr>
+    <tr><td><code>Permission</code></td><td>manifest에 선언하는 추가 능력: <code>rooms.read</code>, <code>clipboard</code>, <code>downloads</code>, <code>artifact.content</code>. 저장(<code>storage.*</code>)은 항상 허용.</td></tr>
   </tbody>
 </table>
 
@@ -174,13 +174,16 @@
   <li><strong>켜짐:</strong> 처음 본 유효 플러그인은 <code>pending</code>. 사용자가 Turn on 하면 <code>state.json</code>의 <code>plugins.enabled</code>에 id 추가. 켜진 것만 iframe을 연다.</li>
   <li><strong>재확인:</strong> 켠 뒤 manifest의 <code>permissions</code>가 늘어나면 다시 <code>pending</code> (새 권한만 표시해 묻는다). 버전만 바뀌면 묻지 않는다.</li>
   <li><strong>실행:</strong> entry를 files origin(<code>127.0.0.1:4318/_plugins/&lt;id&gt;/…</code>)에서 <code>sandbox="allow-scripts"</code> iframe으로 연다. <code>allow-same-origin</code>은 절대 없음 → opaque origin (localStorage·쿠키·부모 접근 불가).</li>
-  <li><strong>권한 → iframe 속성:</strong> <code>clipboard</code> → <code>allow="clipboard-read; clipboard-write"</code>, <code>downloads</code> → <code>sandbox</code>에 <code>allow-downloads</code>. <code>rooms.read</code> → 브리지 <code>rooms.list</code>·<code>artifacts.list</code> 허용. 선언 안 한 능력은 열지 않는다.</li>
+  <li><strong>권한 → iframe 속성:</strong> <code>clipboard</code> → <code>allow="clipboard-read; clipboard-write"</code>, <code>downloads</code> → <code>sandbox</code>에 <code>allow-downloads</code>. <code>rooms.read</code> → 브리지 <code>rooms.list</code>·<code>artifacts.list</code> 허용. <code>artifact.content</code> → 플러그인 iframe에는 아무것도 더하지 않는다. 선언 안 한 능력은 열지 않는다.</li>
+  <li><strong>본문 읽기 (<code>artifact.content</code>):</strong> manifest의 <code>contentScripts</code>(플러그인 폴더 안 <code>.js</code> 최대 4개, <code>data/</code> 아래 금지)가 Artifact 문서 안에서 Artifact와 같은 샌드박스·같은 권한으로 실행된다. 페이지 텍스트와 no-cors 네트워크에 닿고, 쿠키·저장소·roomsd API·앱에는 닿지 않는다. <code>contentScripts</code>와 <code>artifact.content</code>는 서로를 요구한다(한쪽만 있으면 invalid). <code>contentScripts</code>만 있고 slot이 없어도 유효하다. 켜짐 카드 문구: "Can read the text of documents and use the network inside them".</li>
   <li><strong>네트워크·출처:</strong> files origin은 Artifact(신뢰 못 함)와 플러그인을 함께 서빙하므로 <code>'self'</code>를 쓰지 않는다. <code>/_plugins/&lt;id&gt;/*</code> 응답 헤더는 플러그인마다:<br><code>Content-Security-Policy: sandbox allow-scripts[ allow-downloads]; default-src 'none'; script-src {P}; style-src {P} 'unsafe-inline'; img-src {P} data: blob:; font-src {P}; connect-src 'none'; frame-src 'none'; form-action 'none'</code> (<code>{P}</code> = <code>http://127.0.0.1:4318/_plugins/&lt;id&gt;/</code>, 경로 한정). 헤더의 <code>sandbox</code> 토큰은 iframe 속성과 같은 manifest 권한에서 도출 — 지금 모든 응답에 붙는 <code>sandbox allow-scripts allow-popups</code>를 <code>/_plugins</code>에는 적용하지 않는다. 글꼴 등 자산은 플러그인이 직접 동봉.</li>
   <li><strong>저장:</strong> <code>storage.*</code>는 <code>&lt;plugin&gt;/data/</code> 안의 상대 경로만. UTF-8 텍스트, 파일당 ≤ 10 MB. 원자적 쓰기(tmp → rename).</li>
   <li><strong>열기:</strong> <code>open</code>은 현재 탭에서 navigate (⌘ 등 수정키 없음 — 플러그인은 새 탭을 강제하지 못함). 대상은 room 또는 <code>fileKey</code>.</li>
   <li><strong>종료 전 저장:</strong> <code>app://flush</code> 때 열린 모든 플러그인 iframe에 <code>beforeClose</code>를 보내고 ack를 기다린다(전체 1.5 s cap, 노트 flush cap 2 s 안에서 병렬).</li>
   <li><strong>사이드바:</strong> <code>tab</code> slot에 <code>sidebar: true</code>면 사이드바 "Plugins" 구역에 항목이 생긴다. Plugins 구역은 그런 플러그인이 하나라도 켜져 있을 때만 보인다.</li>
 </ol>
+
+<div class="review-box" id="amend-2026-10-09"><h4>개정 2026-10-09: <code>contentScripts</code>와 <code>artifact.content</code></h4>운영자 결정(standing order 7): "Chrome 확장처럼 contentScripts라는 generic 능력과 artifact.content 권한을 새로 둡니다. 플러그인을 켤 때 확인 카드에 &quot;이 플러그인은 문서 본문을 읽을 수 있고, 문서 안에서 네트워크를 쓸 수 있음&quot;이라고 보여줍니다." 이에 따라 §0 Out of scope의 "Artifact 본문 읽기"는 <code>artifact.content</code>를 선언한 플러그인에 한해 풀리고, §2에 위 "본문 읽기" 규칙이 더해졌다. 카드 문구는 카드의 다른 줄처럼 영어다. 플러그인 iframe의 격리(샌드박스, 토큰 없음, <code>connect-src 'none'</code>)는 그대로다.</div>
 
 <h3>Cross-field &amp; Temporal Invariants</h3>
 <table>
@@ -499,8 +502,9 @@ pub fn artifact_by_file_key(&amp;self, file_key: &amp;str) -&gt; Option&lt;Artif
     <tr><td><code>minAppVersion</code></td><td><code>string</code></td><td>semver; 앱 &lt; 이 값이면 <code>incompatible</code></td></tr>
     <tr><td><code>description</code></td><td><code>string?</code></td><td>≤ 200자, 켜짐 카드에 표시</td></tr>
     <tr><td><code>entry</code></td><td><code>string?</code></td><td>기본 <code>index.html</code>; 폴더 안 상대 경로, <code>data/</code> 아래 금지</td></tr>
-    <tr><td><code>permissions</code></td><td><code>("rooms.read"|"clipboard"|"downloads")[]</code></td><td>모르는 값 → invalid; 중복 제거</td></tr>
-    <tr><td><code>slots</code></td><td><code>{ "artifact.sidePanel"?: { title }, "tab"?: { title, icon?, sidebar? } }</code></td><td>최소 1개; 모르는 slot 키 → 무시하고 경고(미래 호환); title 1–24자; icon ∈ 허용 목록(lucide 이름 12개)</td></tr>
+    <tr><td><code>permissions</code></td><td><code>("rooms.read"|"clipboard"|"downloads"|"artifact.content")[]</code></td><td>모르는 값 → invalid; 중복 제거</td></tr>
+    <tr><td><code>contentScripts</code></td><td><code>string[]?</code></td><td>≤ 4개; 폴더 안 <code>.js</code> 상대 경로, <code>data/</code> 아래 금지; <code>artifact.content</code>와 함께만</td></tr>
+    <tr><td><code>slots</code></td><td><code>{ "artifact.sidePanel"?: { title }, "tab"?: { title, icon?, sidebar? } }</code></td><td>최소 1개(<code>contentScripts</code>가 있으면 0개 가능); 모르는 slot 키 → 무시하고 경고(미래 호환); title 1–24자; icon ∈ 허용 목록(lucide 이름 12개)</td></tr>
   </tbody>
 </table>
 
