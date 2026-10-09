@@ -1005,11 +1005,17 @@ fn plugins_changed_emits_event() {
 fn plugin_assets_resolve_and_data_stays_private() {
     let (d, core) = home();
     install(d.path(), ECHO);
+    assert!(matches!(core.resolve_plugin_file("echo", "index.html"), Err(CoreError::NotFound)), "installed but off");
     core.set_plugin_enabled("echo", true, None).unwrap();
     core.write_plugin_data("echo", "x.txt", "hi").unwrap();
     assert!(core.resolve_plugin_file("echo", "index.html").unwrap().path.ends_with("index.html"));
     assert!(core.resolve_plugin_file("echo", "data/x.txt").is_err());
     assert!(core.resolve_plugin_file("nope", "index.html").is_err());
+    core.set_plugin_enabled("echo", false, None).unwrap();
+    assert!(matches!(core.resolve_plugin_file("echo", "index.html"), Err(CoreError::NotFound)), "turned off again");
+    core.set_plugin_enabled("echo", true, None).unwrap();
+    install(d.path(), "{");
+    assert!(matches!(core.resolve_plugin_file("echo", "index.html"), Err(CoreError::NotFound)), "enabled but invalid");
 }
 
 #[test]
