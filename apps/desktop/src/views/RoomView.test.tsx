@@ -165,6 +165,24 @@ describe("RoomView", () => {
     expect(within(cards()[0]).queryByLabelText("New doc")).toBeNull();
   });
 
+  it("⌘J toggles the ask bar on a room tab and does nothing on a tab without one", async () => {
+    const viewer = viewerFor(longAgo);
+    await renderWithStores(<AppShell />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [artifact("a", "첫째", longAgo)] }, viewer });
+    const roomTab = viewer.getState().activeId!;
+    const cmdJ = () => fireEvent.keyDown(window, { key: "j", code: "KeyJ", metaKey: true });
+    await screen.findByPlaceholderText("Ask about this room…");
+    act(cmdJ);
+    expect(screen.queryByPlaceholderText("Ask about this room…")).toBeNull();
+    act(cmdJ);
+    expect(await screen.findByPlaceholderText("Ask about this room…")).toBeInTheDocument();
+    act(() => {
+      viewer.open({ kind: "new" });
+    });
+    act(cmdJ);
+    act(() => viewer.activate(roomTab));
+    expect(await screen.findByPlaceholderText("Ask about this room…")).toBeInTheDocument();
+  });
+
   it("an empty room shows the empty state with the path chip", async () => {
     await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [] } });
     expect(screen.getByText("No docs yet")).toBeInTheDocument();

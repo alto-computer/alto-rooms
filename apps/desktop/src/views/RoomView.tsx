@@ -124,7 +124,7 @@ export function RoomView({ roomId }: { roomId: string }) {
         ) : null}
       </header>
       {body}
-      {barReady ? <AskBar subject={{ kind: "room", roomId }} /> : null}
+      {barReady && !readOnly ? <AskBar subject={{ kind: "room", roomId }} /> : null}
     </div>
   );
 }
