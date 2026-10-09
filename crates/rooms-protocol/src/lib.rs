@@ -40,7 +40,7 @@ pub enum RoomStatus { Ok, Unavailable }
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
 pub enum Author { Agent, Me }
 
-/// The tint the user pinned a room with (spec decision 5). A room without one is neutral and unpinned.
+/// The tint a room is pinned with. A room without one is neutral and unpinned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]

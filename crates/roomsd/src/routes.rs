@@ -159,7 +159,8 @@ pub async fn move_room(State(st): State<AppState>, Path(room_id): Path<String>, 
     Ok(Json(blocking(&st, move |c| c.move_room(&room_id, b.to)).await?))
 }
 
-#[derive(Deserialize)] pub struct RoomColorBody { color: Option<RoomColor> }
+// `deserialize_with` makes `color` required: `{}` is refused instead of read as an unpin.
+#[derive(Deserialize)] pub struct RoomColorBody { #[serde(deserialize_with = "Option::deserialize")] color: Option<RoomColor> }
 /// Pins a room with a colour, or unpins it (`null`); returns the room. The new order, if it
 /// changed, arrives as `rooms.reordered`.
 pub async fn set_room_color(State(st): State<AppState>, Path(room_id): Path<String>, Json(b): Json<RoomColorBody>) -> Result<Json<Room>, ApiErr> {

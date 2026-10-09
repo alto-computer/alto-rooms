@@ -569,6 +569,13 @@ async fn room_color_pins_and_unpins_and_the_list_follows() {
     let r = app.clone().oneshot(put_color(&b, r#"{"color":"sage"}"#, None)).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
     assert_eq!(names().await, ["inbox:null", "b:null", "a:null"]);
+
+    st.core.set_room_color(&b, Some(rooms_protocol::RoomColor::Sea)).unwrap();
+    for bad in ["{}", r#"{"color":"teal"}"#] {
+        let r = app.clone().oneshot(put_color(&b, bad, Some("t0k"))).await.unwrap();
+        assert!(r.status().is_client_error(), "{bad}: {}", r.status());
+    }
+    assert_eq!(names().await, ["inbox:null", "b:\"sea\"", "a:null"]);
 }
 
 #[tokio::test]

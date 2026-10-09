@@ -80,7 +80,7 @@ impl StateStore {
             }
         };
         let mut rooms = disk.rooms;
-        crate::order::normalize(&mut rooms);
+        crate::order::put_pinned_first(&mut rooms);
         Ok(StateStore {
             path,
             rooms,

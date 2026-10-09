@@ -3,7 +3,7 @@
 use crate::core::{Inner, RoomsCore};
 use crate::error::CoreError;
 use crate::lock::lock;
-use crate::order;
+use crate::order::{self, ColorChange};
 use crate::rules::{room_slug, slug_key, validate_room_name};
 use crate::state::{inode_of, RoomRecord};
 use rooms_protocol::*;
@@ -128,26 +128,24 @@ impl RoomsCore {
     pub fn move_room(&self, room: &RoomId, to: usize) -> Result<Vec<RoomId>, CoreError> {
         if room == INBOX_ROOM_ID { return Err(CoreError::InvalidInput("the inbox can't be moved".into())); }
         let mut inner = lock(&self.inner);
-        if !order::move_to(&mut inner.state.rooms, room, to) { return Err(CoreError::RoomNotFound); }
+        if !order::move_within_section(&mut inner.state.rooms, room, to) { return Err(CoreError::RoomNotFound); }
         inner.state.save()?;
         let room_ids = Self::room_ids(&inner);
         self.emit(&mut inner, EventKind::RoomsReordered { room_ids: room_ids.clone() });
         Ok(room_ids)
     }
 
-    /// Pins `room` with `color`, or unpins it (`None`); see `order::set_color` for where it moves.
-    /// Saves state.json and emits `room.updated`, then `rooms.reordered` when the order changed.
-    /// Setting the colour a room already has changes nothing and emits nothing.
+    /// Pins `room` with `color` (to the end of the pinned rooms), unpins it with `None` (to the top
+    /// of the others), or recolours it in place. Saves state.json and emits `room.updated`, then
+    /// `rooms.reordered` if it moved. Setting the colour it already has saves and emits nothing.
     pub fn set_room_color(&self, room: &RoomId, color: Option<RoomColor>) -> Result<Room, CoreError> {
         if room == INBOX_ROOM_ID { return Err(CoreError::InvalidInput("the inbox can't be pinned".into())); }
         let mut inner = lock(&self.inner);
-        let current = inner.state.find(room).ok_or(CoreError::RoomNotFound)?;
-        if current.color == color { return Ok(Self::to_room(&inner, current)); }
-        let reordered = order::set_color(&mut inner.state.rooms, room, color).ok_or(CoreError::RoomNotFound)?; // found above, same lock
-        inner.state.save()?;
-        let room_v = Self::to_room(&inner, inner.state.find(room).ok_or(CoreError::RoomNotFound)?);
-        self.emit(&mut inner, EventKind::RoomUpdated { room: room_v.clone() });
-        if reordered {
+        let change = order::set_color(&mut inner.state.rooms, room, color).ok_or(CoreError::RoomNotFound)?;
+        if change != ColorChange::Unchanged { inner.state.save()?; }
+        let room_v = Self::to_room(&inner, inner.state.find(room).ok_or(CoreError::RoomNotFound)?); // set above, same lock
+        if change != ColorChange::Unchanged { self.emit(&mut inner, EventKind::RoomUpdated { room: room_v.clone() }); }
+        if change == ColorChange::Moved {
             let room_ids = Self::room_ids(&inner);
             self.emit(&mut inner, EventKind::RoomsReordered { room_ids });
         }
