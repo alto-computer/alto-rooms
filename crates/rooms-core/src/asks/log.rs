@@ -182,7 +182,7 @@ mod tests {
         log.append(&t("a", AskStatus::Done, "A")).unwrap();
         let mut names: Vec<_> = std::fs::read_dir(d.path().join("asks")).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         names.sort();
-        assert_eq!(names, [format!("{K1}.jsonl"), format!("day-2026-10-09.jsonl"), format!("room-{K1}.jsonl")]);
+        assert_eq!(names, [format!("{K1}.jsonl"), "day-2026-10-09.jsonl".to_string(), format!("room-{K1}.jsonl")]);
         assert_eq!(log.read(&doc()).unwrap().iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a"]);
         let r = log.read(&room).unwrap();
         assert_eq!((r.len(), r[0].id.as_str(), &r[0].scope), (1, "r", &room));
