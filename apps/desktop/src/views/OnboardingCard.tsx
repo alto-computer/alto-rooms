@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Calendar, FileText, Folder, Inbox, Lightbulb, RefreshCw, type LucideIcon } from "lucide-react";
 import { ClewPeek } from "@/components/ClewPeek";
-import { useInfo } from "@/data/hooks";
+import { useInfo, useRoomList } from "@/data/hooks";
+import { INBOX_ID } from "@/lib/drag";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { CopyStatus, useCopy } from "./CopyChip";
@@ -27,6 +28,13 @@ export const EXAMPLE_PROMPTS: readonly { icon: LucideIcon; text: string }[] = [
   { icon: RefreshCw, text: "Sort my rooms again, going back 30 days" },
   { icon: Calendar, text: "Turn today's conversation into an HTML review and put it in today's Journal" },
 ];
+
+/** First run: synced, and no rooms besides the inbox. False before the first sync, when nothing can be told yet. */
+export function useFirstRun(): boolean {
+  const info = useInfo();
+  const rooms = useRoomList();
+  return info !== null && rooms.every((r) => r.id === INBOX_ID);
+}
 
 /**
  * The first-run welcome page (no rooms besides inbox): the one line to paste

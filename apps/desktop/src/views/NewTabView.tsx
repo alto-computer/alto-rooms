@@ -3,7 +3,7 @@ import type { Artifact } from "@alto-rooms/protocol-ts";
 import { useOpenDoc, useReadOnly, useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
 import { count, dateLabel, isNewSince } from "@/lib/dates";
 import { artifactDragSource, INBOX_ID } from "@/lib/drag";
-import { OnboardingCard } from "./OnboardingCard";
+import { OnboardingCard, useFirstRun } from "./OnboardingCard";
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { useScrollMemory } from "@/lib/scrollMemory";
@@ -33,6 +33,7 @@ export function NewTabView() {
   const readOnly = useReadOnly();
   const openDoc = useOpenDoc();
   const visits = useVisitsAtArrival();
+  const firstRun = useFirstRun();
   const { since } = visits;
   const changed = useMemo(
     () => rooms.filter((r) => r.updatedAt !== null && isNewSince(r.updatedAt, since(r.id))).map((r) => r.id),
@@ -88,7 +89,7 @@ export function NewTabView() {
       />
     ) : null;
 
-  if (rooms.every((r) => r.id === INBOX_ID)) {
+  if (firstRun) {
     return (
       <div ref={shellRef} className={cn(shell, "pt-14")}>
         <OnboardingCard />

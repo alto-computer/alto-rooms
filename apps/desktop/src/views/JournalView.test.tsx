@@ -1,12 +1,13 @@
 import type { Artifact, Note } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useViewer } from "@/data/hooks";
+import { StoresProvider, useViewer } from "@/data/hooks";
+import { RoomsStore } from "@/data/roomsStore";
 import { ViewerStore } from "@/data/viewerStore";
 import { addDays, clockTime, isoWeek, localDate } from "@/lib/dates";
 import { takeNoteBodyFocus } from "@/lib/notes";
-import { memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { fakeClient, memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { JournalView } from "./JournalView";
 
 vi.mock("@/lib/native", () => ({
@@ -48,18 +49,22 @@ function Host() {
   return tab?.kind === "journal" ? <JournalView key={tab.id} tabId={tab.id} date={tab.date} /> : null;
 }
 
+/** A viewer whose one tab, home, shows the journal for `date`. */
 function journalViewer(date = today) {
   const viewer = new ViewerStore(memoryStorage());
-  viewer.open({ kind: "journal", date });
+  viewer.replace(viewer.getState().activeId!, { kind: "journal", date });
   return viewer;
 }
+
+/** The journal past the first run: one room besides the inbox, unless `rooms` says otherwise. */
+const renderJournal = (opts: Parameters<typeof renderWithStores>[1] = {}) => renderWithStores(<Host />, { rooms: [room("r0", "방")], ...opts });
 
 const daybook = () => screen.getByRole("list", { name: "Your day" });
 const titles = () => within(daybook()).getAllByRole("listitem").map((li) => within(li).getByRole("button").getAttribute("aria-label"));
 
 describe("JournalView: the daybook", () => {
   it("puts notes and every room's artifacts in time order, the time in the margin and the room beside each artifact", async () => {
-    await renderWithStores(<Host />, {
+    await renderJournal({
       viewer: journalViewer(),
       rooms: [room("r1", "벤치마크"), room("r2", "리서치")],
       days: {
@@ -85,7 +90,7 @@ describe("JournalView: the daybook", () => {
   });
 
   it("shows a note's own words in the day and opens the note on click", async () => {
-    const { viewer } = await renderWithStores(<Host />, {
+    const { viewer } = await renderJournal({
       viewer: journalViewer(),
       days: { [today]: { notes: [note(today, "계획.md")] } },
       notes: { [`${today}/계획.md`]: "점심 전에 끝내기\n- 첫째 할 일\n- 둘째 할 일" },
@@ -97,7 +102,7 @@ describe("JournalView: the daybook", () => {
   });
 
   it("opens another room's artifact as a doc tab, from a sandboxed preview of it", async () => {
-    const { viewer } = await renderWithStores(<Host />, {
+    const { viewer } = await renderJournal({
       viewer: journalViewer(),
       rooms: [room("r9", "다른 방")],
       days: { [today]: { artifacts: [artifact("a1", "r9", "x.html", "보고서", `${today}T01:00:00Z`)] } },
@@ -113,7 +118,7 @@ describe("JournalView: the daybook", () => {
   });
 
   it("labels an artifact whose room isn't listed Room, and a dream.html outside the Journal is no Review", async () => {
-    await renderWithStores(<Host />, {
+    await renderJournal({
       viewer: journalViewer(),
       days: {
         [today]: {
@@ -129,7 +134,7 @@ describe("JournalView: the daybook", () => {
   });
 
   it("shows the load-failure copy when the day can't be loaded", async () => {
-    await renderWithStores(<Host />, { viewer: journalViewer(), dayErrors: { [today]: new Error("boom") } });
+    await renderJournal({ viewer: journalViewer(), dayErrors: { [today]: new Error("boom") } });
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
   });
 });
@@ -138,7 +143,7 @@ describe("JournalView: an empty day", () => {
   it("lets Clew sleep, offers a note and today, and points at the nearest days with something in them", async () => {
     const day = addDays(today, -3);
     const viewer = journalViewer(day);
-    await renderWithStores(<Host />, {
+    await renderJournal({
       viewer,
       rooms: [room("r1", "벤치마크")],
       days: { [addDays(day, -2)]: { artifacts: [artifact("a", "r1", "a.html", "보고서", `${addDays(day, -2)}T03:00:00Z`)] }, [addDays(day, 1)]: { notes: [note(addDays(day, 1), "메모.md")] } },
@@ -157,13 +162,13 @@ describe("JournalView: an empty day", () => {
 
   it("goes to today from another quiet day", async () => {
     const viewer = journalViewer(addDays(today, -3));
-    await renderWithStores(<Host />, { viewer });
+    await renderJournal({ viewer });
     fireEvent.click(screen.getByRole("button", { name: "Go to today" }));
     expect(viewer.getState().tabs.find((t) => t.kind === "journal")).toMatchObject({ date: today });
   });
 
   it("never shows Clew on a load error", async () => {
-    await renderWithStores(<Host />, { viewer: journalViewer(), dayErrors: { [today]: new Error("boom") } });
+    await renderJournal({ viewer: journalViewer(), dayErrors: { [today]: new Error("boom") } });
     expect(screen.queryByRole("img", { name: /Clew/ })).toBeNull();
   });
 });
@@ -186,13 +191,13 @@ describe("JournalView: the day's tally", () => {
   const tally = () => screen.getByRole("region", { name: "Today" });
 
   it("counts the day's conversations, its artifacts across rooms and its notes, and has nothing else beside the day", async () => {
-    await renderWithStores(<Host />, busyDay());
+    await renderJournal(busyDay());
     expect(within(tally()).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["0 sessions", "3 artifacts", "1 note"]);
     expect(screen.getAllByRole("region").map((r) => r.getAttribute("aria-label"))).toEqual(["Your day", "Today"]);
   });
 
   it("opens a list of the artifacts on hover, newest first, and an item opens on click", async () => {
-    const { viewer } = await renderWithStores(<Host />, busyDay());
+    const { viewer } = await renderJournal(busyDay());
     fireEvent.pointerEnter(within(tally()).getByRole("button", { name: "3 artifacts" }), { pointerType: "mouse" });
     const list = await screen.findByRole("dialog", { name: "3 artifacts" });
     const rows = within(list).getAllByRole("button");
@@ -207,7 +212,7 @@ describe("JournalView: the day's tally", () => {
   });
 
   it("opens on keyboard focus without taking the caret, Enter moves into it, and the notes list opens a note", async () => {
-    const { viewer } = await renderWithStores(<Host />, busyDay());
+    const { viewer } = await renderJournal(busyDay());
     const cell = within(tally()).getByRole("button", { name: "1 note" });
     act(() => cell.focus());
     const list = await screen.findByRole("dialog", { name: "1 note" });
@@ -219,15 +224,55 @@ describe("JournalView: the day's tally", () => {
   });
 
   it("names the day it counts when it isn't today", async () => {
-    await renderWithStores(<Host />, { viewer: journalViewer("2026-10-05") });
+    await renderJournal({ viewer: journalViewer("2026-10-05") });
     expect(screen.getByRole("region", { name: "Oct 5" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Today" })).toBeNull();
   });
 });
 
+describe("JournalView: first run", () => {
+  const welcome = () => screen.queryByRole("heading", { level: 1, name: "Welcome to Rooms" });
+
+  it("with no rooms but the inbox, the welcome takes the empty day's place, tally and all", async () => {
+    await renderJournal({ viewer: journalViewer(), rooms: [room("inbox", "Inbox")] });
+    expect(welcome()).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: /day, / })).toBeInTheDocument(); // the date stays on top
+    expect(screen.queryByTestId("empty-day")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Today" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Write a note" })).toBeInTheDocument();
+  });
+
+  it("once there is a room, an empty day is just an empty day", async () => {
+    await renderJournal({ viewer: journalViewer(), rooms: [room("inbox", "Inbox"), room("a", "가")] });
+    expect(screen.getByTestId("empty-day")).toBeInTheDocument();
+    expect(welcome()).toBeNull();
+  });
+
+  it("a first-run day with something in it shows the day, not the welcome", async () => {
+    await renderJournal({
+      viewer: journalViewer(),
+      rooms: [room("inbox", "Inbox")],
+      days: { [today]: { artifacts: [artifact("a1", "inbox", "x.html", "받은 문서", `${today}T01:00:00Z`)] } },
+    });
+    expect(within(daybook()).getByTestId("day-artifact")).toBeInTheDocument();
+    expect(welcome()).toBeNull();
+  });
+
+  it("shows neither the welcome nor an empty day before the first sync", () => {
+    const fake = fakeClient({ rooms: [] });
+    render(
+      <StoresProvider rooms={new RoomsStore(fake.client, { warn: () => {} })} viewer={journalViewer()} client={fake.client}>
+        <Host />
+      </StoresProvider>,
+    );
+    expect(welcome()).toBeNull();
+    expect(screen.queryByTestId("empty-day")).toBeNull();
+  });
+});
+
 describe("JournalView: header and week strip", () => {
   it("titles the day and marks today", async () => {
-    await renderWithStores(<Host />, { viewer: journalViewer() });
+    await renderJournal({ viewer: journalViewer() });
     const [, m, d] = today.split("-").map(Number);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(new RegExp(`^[A-Z][a-z]+day, ${d} ${["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][m - 1]}$`));
     expect(screen.getByText(`Journal · Week ${isoWeek(today)}`)).toBeInTheDocument();
@@ -237,7 +282,7 @@ describe("JournalView: header and week strip", () => {
 
   it("moves by a week with ‹ › and selects a day by clicking it, in the same tab", async () => {
     const viewer = journalViewer("2026-10-05");
-    await renderWithStores(<Host />, { viewer });
+    await renderJournal({ viewer });
     const tabId = viewer.getState().tabs.find((t) => t.kind === "journal")!.id;
     const count = viewer.getState().tabs.length;
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Monday, 5 October");
@@ -261,7 +306,7 @@ describe("JournalView: header and week strip", () => {
 
 describe("JournalView: write a note", () => {
   it("Write a note asks for no name: it creates New Note at once and opens it in a new tab, cursor in the body", async () => {
-    const { viewer, client } = await renderWithStores(<Host />, { viewer: journalViewer() });
+    const { viewer, client } = await renderJournal({ viewer: journalViewer() });
     const before = viewer.getState().tabs.length;
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Write a note" }));
@@ -277,7 +322,7 @@ describe("JournalView: write a note", () => {
   });
 
   it("the next note is New Note 2, then New Note 3 (names compared case-insensitively)", async () => {
-    const { viewer, client } = await renderWithStores(<Host />, {
+    const { viewer, client } = await renderJournal({
       viewer: journalViewer(),
       days: { [today]: { notes: [note(today, "new note.md")] } },
     });
@@ -289,7 +334,7 @@ describe("JournalView: write a note", () => {
     expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ name: "New Note 2.md" });
     cleanup();
 
-    const r = await renderWithStores(<Host />, {
+    const r = await renderJournal({
       viewer: journalViewer(),
       days: { [today]: { notes: [note(today, "New Note.md"), note(today, "NEW NOTE 2.md")] } },
     });
@@ -300,7 +345,7 @@ describe("JournalView: write a note", () => {
   });
 
   it("never saves over a New Note that exists on disk but not in the day list: it moves on to New Note 2", async () => {
-    const { viewer, client, state } = await renderWithStores(<Host />, {
+    const { viewer, client, state } = await renderJournal({
       viewer: journalViewer(),
       notes: { [`${today}/New Note.md`]: "이미 쓴 글" },
     });
@@ -315,7 +360,7 @@ describe("JournalView: write a note", () => {
   });
 
   it("shows the error copy and creates nothing when the existence check fails with anything but 404", async () => {
-    const { client, viewer } = await renderWithStores(<Host />, {
+    const { client, viewer } = await renderJournal({
       viewer: journalViewer(),
       notes: { [`${today}/New Note.md`]: new RoomsApiError(500, "boom") },
     });
@@ -328,7 +373,7 @@ describe("JournalView: write a note", () => {
   });
 
   it("shows the error copy and opens nothing when saving fails", async () => {
-    const { client, viewer } = await renderWithStores(<Host />, { viewer: journalViewer() });
+    const { client, viewer } = await renderJournal({ viewer: journalViewer() });
     client.saveNote.mockRejectedValueOnce(new RoomsApiError(500, "disk", "write_failed"));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Write a note" }));
@@ -338,7 +383,7 @@ describe("JournalView: write a note", () => {
   });
 
   it("a second click while creating does not create a second note", async () => {
-    const { client } = await renderWithStores(<Host />, { viewer: journalViewer() });
+    const { client } = await renderJournal({ viewer: journalViewer() });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Write a note" }));
       fireEvent.click(screen.getByRole("button", { name: "Write a note" }));
@@ -347,7 +392,7 @@ describe("JournalView: write a note", () => {
   });
 
   it("strips only one .md for display: x.md.md shows as x.md and opens as x.md.md", async () => {
-    const { viewer } = await renderWithStores(<Host />, {
+    const { viewer } = await renderJournal({
       viewer: journalViewer(),
       days: { [today]: { notes: [note(today, "x.md.md")] } },
     });
@@ -357,7 +402,7 @@ describe("JournalView: write a note", () => {
   });
 
   it("hides Write a note in read-only mode", async () => {
-    await renderWithStores(<Host />, { viewer: journalViewer(), readOnly: true, days: { [today]: { notes: [note(today, "계획.md")] } } });
+    await renderJournal({ viewer: journalViewer(), readOnly: true, days: { [today]: { notes: [note(today, "계획.md")] } } });
     expect(screen.queryByRole("button", { name: "Write a note" })).not.toBeInTheDocument();
     expect(within(daybook()).getByRole("button", { name: "계획" })).toBeInTheDocument();
   });

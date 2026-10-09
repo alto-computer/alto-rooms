@@ -13,6 +13,7 @@ import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from 
 import { Daybook, dayEntries, type DayEntry } from "./Daybook";
 import { DayTally, type TallyCell, type TallyItem } from "./DayTally";
 import { EmptyDay } from "./EmptyDay";
+import { OnboardingCard, useFirstRun } from "./OnboardingCard";
 import { WeekStrip } from "./WeekStrip";
 
 /** Most default names tried before giving up (each one already on disk costs a getNote). */
@@ -93,6 +94,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const loadError = useScopeError(`day:${date}`);
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const readOnly = useReadOnly();
+  const firstRun = useFirstRun();
   // The selected conversation's entry key, for this date only.
   const [selection, setSelection] = useState<{ date: string; key: string } | null>(null);
   const selected = selection?.date === date ? selection.key : null;
@@ -140,8 +142,19 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   ];
 
   let body: ReactNode;
-  if (day === undefined) {
+  if (day === undefined || !info) {
     body = loadError ? <div className="flex flex-1 items-center justify-center text-heading text-ink-2">{GENERIC_ERROR}</div> : null;
+  } else if (firstRun && !entries.length) {
+    // First run: the welcome takes the empty day's place, tally and all.
+    body = (
+      <section aria-label="Your day" className="flex max-w-[calc(760px+7rem)] flex-col px-14 pt-9 pb-10">
+        <div className="mb-4 flex h-7 items-center justify-between">
+          <h2 className="text-small font-semibold tracking-[0.02em] text-ink-3">Your day</h2>
+          {writeNote}
+        </div>
+        <OnboardingCard />
+      </section>
+    );
   } else {
     body = (
       <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-14 px-14 pt-9 pb-10">
@@ -150,7 +163,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
             <h2 className="text-small font-semibold tracking-[0.02em] text-ink-3">Your day</h2>
             {entries.length ? writeNote : null}
           </div>
-          {entries.length && info ? (
+          {entries.length ? (
             <Daybook entries={entries} info={info} selected={selected} onSelect={select} />
           ) : (
             <EmptyDay date={date} rooms={rooms} writeNote={writeNote} onPick={setDate} />

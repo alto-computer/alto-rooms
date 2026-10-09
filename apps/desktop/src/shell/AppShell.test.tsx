@@ -526,7 +526,7 @@ describe("AppShell: a new note, then its name", () => {
     const date = "2026-10-05";
     const viewer = new ViewerStore(memoryStorage());
     const journalId = viewer.open({ kind: "journal", date });
-    const h = await renderWithStores(<AppShell />, { viewer, days: { [date]: { notes: [] } } });
+    const h = await renderWithStores(<AppShell />, { viewer, rooms: twoRooms, days: { [date]: { notes: [] } } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Write a note" }));
     });
