@@ -63,15 +63,21 @@ function pathOf(params: unknown): string {
 function anchorOf(params: unknown): unknown {
   const anchor = field(params, "anchor");
   if (anchor === undefined) return undefined;
+  const refused = new BridgeError("bad_request", `anchor must be JSON of at most ${MAX_ANCHOR_BYTES} bytes`);
+  // Counts at least one byte per key and value, and a string's length (UTF-8 never takes fewer bytes), so a
+  // multi-megabyte anchor stops after a few thousand steps instead of being serialized whole.
+  let budget = MAX_ANCHOR_BYTES;
   let json: string | undefined;
   try {
-    json = JSON.stringify(anchor);
+    json = JSON.stringify(anchor, (key, value: unknown) => {
+      budget -= 1 + key.length + (typeof value === "string" ? value.length : 0);
+      if (budget < 0) throw refused;
+      return value;
+    });
   } catch {
-    json = undefined;
+    throw refused;
   }
-  if (json === undefined || new TextEncoder().encode(json).length > MAX_ANCHOR_BYTES) {
-    throw new BridgeError("bad_request", `anchor must be JSON of at most ${MAX_ANCHOR_BYTES} bytes`);
-  }
+  if (json === undefined || new TextEncoder().encode(json).length > MAX_ANCHOR_BYTES) throw refused;
   return JSON.parse(json);
 }
 

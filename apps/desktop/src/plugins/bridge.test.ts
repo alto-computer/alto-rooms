@@ -153,6 +153,29 @@ describe("handleBridgeCall", () => {
     expect(await codeOf(handleBridgeCall(plugin(), call("open", { fileKey: "key-new", anchor: "x".repeat(4094) }), d))).toBe("ok");
   });
 
+  it("refuses a multi-megabyte anchor without serializing it whole", async () => {
+    const d = { ...deps(), slot: "tab" as const };
+    let visited = 0;
+    const item = {
+      toJSON() {
+        visited++;
+        return 0;
+      },
+    };
+    const wide = new Array<unknown>(2_000_000).fill(item);
+    for (const anchor of ["x".repeat(8 * 1024 * 1024), wide, { deep: wide }]) {
+      expect(await codeOf(handleBridgeCall(plugin(), call("open", { fileKey: "key-new", anchor }), d))).toBe("bad_request");
+    }
+    expect(visited, "stops within the 4 KiB budget").toBeLessThan(2 * 4096);
+    expect(d.viewer.open).not.toHaveBeenCalled();
+  });
+
+  it("hands the anchor to the calling plugin, whatever plugin the call names", async () => {
+    const d = { ...deps(), slot: "tab" as const };
+    await handleBridgeCall(plugin({ id: "marker" }), call("open", { fileKey: "key-new", anchor: 1, plugin: "other", pluginId: "other" }), d);
+    expect(d.viewer.reveal).toHaveBeenCalledWith("opened", { pluginId: "marker", anchor: 1 });
+  });
+
   it("maps server errors and unknown methods to codes", async () => {
     const d = deps();
     d.client.putPluginData.mockRejectedValueOnce(new RoomsApiError(413, "too large", "too_large"));
