@@ -344,3 +344,43 @@ async fn model_is_passed_and_recorded() {
     let done = wait_done(&mut rx, &t.id).await;
     assert!(done.answer.starts_with("ARGV: [new] [[Rooms]"), "{}", done.answer);
 }
+
+#[tokio::test]
+async fn json_lines_stream_as_progress_then_the_final_answer() {
+    let (d, core, room, art) = setup("");
+    let script = d.path().join("stream-agent.sh");
+    std::fs::write(&script, concat!(
+        "#!/bin/sh\n",
+        "echo '{\"type\":\"tool\",\"name\":\"Read\",\"path\":\"/x/doc.html\"}'; sleep 0.3\n",
+        "echo '{\"type\":\"delta\",\"text\":\"표는 \"}'; sleep 0.3\n",
+        "echo '{\"type\":\"delta\",\"text\":\"이렇게\"}'; sleep 0.3\n",
+        "echo '{\"type\":\"result\",\"result\":\"표는 이렇게 읽어요.\"}'\n",
+    )).unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
+        "[agents.claude-code]\nnew = [\"{}\", \"{{prompt}}\"]\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"tool\" }}\nactivity = [\"/name\", \"/path\"]\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"delta\" }}\ndelta = \"/text\"\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"result\" }}\nanswer = \"/result\"\n",
+    ), script.display())).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, &art, "표 설명", None).unwrap();
+    let mut progress = Vec::new();
+    let done = loop {
+        let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("events in time").unwrap();
+        match ev.kind {
+            EventKind::AskProgress { id, file_key, answer, activity } if id == t.id => {
+                assert_eq!(file_key, t.file_key);
+                progress.push((answer, activity));
+            }
+            EventKind::AskDone { turn } if turn.id == t.id => break turn,
+            _ => {}
+        }
+    };
+    assert!(progress.contains(&(String::new(), Some("Read · doc.html".into()))), "{progress:?}");
+    assert!(progress.iter().any(|(a, act)| a == "표는" && act.is_none()), "{progress:?}");
+    assert!(progress.iter().any(|(a, _)| a == "표는 이렇게"), "{progress:?}");
+    assert_eq!((done.status, done.answer.as_str()), (AskStatus::Done, "표는 이렇게 읽어요."));
+    assert_eq!(asks.thread(&t.file_key).unwrap()[0].answer, "표는 이렇게 읽어요.");
+}

@@ -158,7 +158,8 @@ pub struct AskTurn {
     pub id: String,
     pub file_key: String,
     pub question: String,
-    /// The agent's stdout (ANSI stripped, trimmed); empty while running.
+    /// The answer: the agent's stdout (ANSI stripped, trimmed), or what its profile's event rules
+    /// read from it. Empty while running (`ask.progress` carries the answer so far).
     pub answer: String,
     pub agent: String,
     /// The model picked for this turn; `None` = the agent's own default.
@@ -229,7 +230,10 @@ pub enum EventKind {
     #[serde(rename = "note.removed")] NoteRemoved { date: IsoDate, name: String },
     #[serde(rename = "journal.changed")] JournalChanged { date: IsoDate },
     #[serde(rename = "ask.started")] AskStarted { turn: AskTurn },
-    /// Exactly once per started turn; `turn.answer` is the whole answer.
+    /// The answer so far and what the agent is doing, while a turn runs (at most ~10 a second, only
+    /// on change). Not recorded: a client that missed one just shows the next, or `ask.done`.
+    #[serde(rename = "ask.progress", rename_all = "camelCase")] AskProgress { id: String, file_key: String, answer: String, activity: Option<String> },
+    /// Exactly once per started turn, after every `ask.progress` of it; `turn.answer` is the whole answer.
     #[serde(rename = "ask.done")] AskDone { turn: AskTurn },
     #[serde(rename = "resync", rename_all = "camelCase")] Resync { room_id: Option<RoomId> },
 }

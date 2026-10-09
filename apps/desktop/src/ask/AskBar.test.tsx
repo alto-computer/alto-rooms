@@ -147,6 +147,31 @@ describe("AskBar", () => {
     }
   });
 
+  it("streams the answer so far with what the agent is doing, then follows to the end instead of jumping back", async () => {
+    const scrollTo = vi.fn();
+    const scrollIntoView = vi.fn();
+    vi.spyOn(Element.prototype, "scrollTo").mockImplementation(scrollTo);
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(scrollIntoView);
+    try {
+      const { emit } = await setup({ k1: [turn({})] });
+      await screen.findByText("Thinking");
+      act(() => emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "", activity: "Read · doc.html" }));
+      expect(await screen.findByText("Read · doc.html")).toBeInTheDocument();
+      expect(screen.queryByText("Thinking")).toBeNull();
+      scrollTo.mockClear();
+      act(() => emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "| a | b |\n|---|---|\n| **1** | 2 |", activity: null }));
+      expect((await screen.findByText("1")).tagName).toBe("STRONG");
+      expect(screen.getByText("Thinking")).toBeInTheDocument();
+      expect(scrollTo).toHaveBeenCalled();
+      act(() => emit({ type: "ask.done", turn: turn({ status: "done", answer: "| a | b |\n|---|---|\n| **1** | 2 |", endedAt: "2026-10-06T10:00:02+09:00" }) }));
+      await waitFor(() => expect(screen.queryByText("Thinking")).toBeNull());
+      expect(screen.getByRole("button", { name: "Copy answer" })).toBeInTheDocument();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("the input grows with its text up to about five lines, rounds less when taller, and shrinks after send", async () => {
     let height = 20;
     vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(() => height);

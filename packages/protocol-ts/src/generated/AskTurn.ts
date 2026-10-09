@@ -7,7 +7,8 @@ import type { AskStatus } from "./AskStatus";
  */
 export type AskTurn = { id: string, fileKey: string, question: string, 
 /**
- * The agent's stdout (ANSI stripped, trimmed); empty while running.
+ * The answer: the agent's stdout (ANSI stripped, trimmed), or what its profile's event rules
+ * read from it. Empty while running (`ask.progress` carries the answer so far).
  */
 answer: string, agent: string, 
 /**

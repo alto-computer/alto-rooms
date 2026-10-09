@@ -5,7 +5,10 @@
 import type { AskTarget, AskTurn, RoomsEvent, StartAsk } from "@alto-rooms/protocol-ts";
 
 export type Thread = { turns: AskTurn[]; loaded: boolean; error: boolean };
-export type AsksState = { open: boolean; threads: Record<string, Thread> };
+/** A running turn's answer so far and what the agent is doing, from `ask.progress`. */
+export type Live = { answer: string; activity: string | null };
+export type AsksState = { open: boolean; threads: Record<string, Thread>; live: Record<string, Live> };
+type Progress = Extract<RoomsEvent, { type: "ask.progress" }>;
 
 type Client = {
   startAsk(req: StartAsk): Promise<AskTurn>;
@@ -33,7 +36,7 @@ export const MAX_THREADS = 20;
 const EMPTY: Thread = { turns: [], loaded: false, error: false };
 
 export class AsksStore {
-  private state: AsksState = { open: true, threads: {} };
+  private state: AsksState = { open: true, threads: {}, live: {} };
   private listeners = new Set<() => void>();
   /** File keys an ask bar is showing, with a count per bar. */
   private held = new Map<string, number>();
@@ -55,6 +58,7 @@ export class AsksStore {
     if (this.stopSignals) return;
     this.stopSignals = this.rooms.onSignal((type, e) => {
       if (e.type === "ask.started" || e.type === "ask.done") this.apply(e.turn);
+      else if (e.type === "ask.progress") this.progress(e);
       else if (type === "resync" && e.type === "resync" && e.roomId === null) {
         for (const [key, th] of Object.entries(this.state.threads)) if (th.loaded) void this.load(key);
       }
@@ -120,8 +124,19 @@ export class AsksStore {
   }
 
   private apply(t: AskTurn) {
+    if (finished(t) && t.id in this.state.live) {
+      const { [t.id]: _done, ...live } = this.state.live;
+      this.state = { ...this.state, live };
+    }
     const th = this.state.threads[t.fileKey] ?? EMPTY;
     this.setThread(t.fileKey, { ...th, turns: upsert(th.turns, t) });
+  }
+
+  /** Progress for a turn already known to be finished is late and dropped. */
+  private progress(e: Progress) {
+    const turn = this.state.threads[e.fileKey]?.turns.find((t) => t.id === e.id);
+    if (turn && finished(turn)) return;
+    this.set({ ...this.state, live: { ...this.state.live, [e.id]: { answer: e.answer, activity: e.activity } } });
   }
 
   /** Moves `key` to the end (most recently touched) and drops the oldest idle threads past the cap. */

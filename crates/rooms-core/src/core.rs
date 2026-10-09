@@ -131,7 +131,7 @@ impl RoomsCore {
 
     /// `ask.started` / `ask.done` from `asks::Asks`: same seq and broadcast as every other event.
     pub fn emit_ask(&self, kind: EventKind) {
-        debug_assert!(matches!(kind, EventKind::AskStarted { .. } | EventKind::AskDone { .. }));
+        debug_assert!(matches!(kind, EventKind::AskStarted { .. } | EventKind::AskProgress { .. } | EventKind::AskDone { .. }));
         let mut inner = lock(&self.inner);
         self.emit(&mut inner, kind);
     }

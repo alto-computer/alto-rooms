@@ -55,6 +55,18 @@ describe("AsksStore", () => {
     expect(Object.keys(store.getState().threads)).not.toContain("seen");
   });
 
+  it("keeps a running turn's progress until it finishes, and drops late progress", () => {
+    const { store, emit } = setup();
+    emit({ type: "ask.started", turn: turn("t1", "running") });
+    emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "표는", activity: null });
+    emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "", activity: "Read · doc.html" });
+    expect(store.getState().live.t1).toEqual({ answer: "", activity: "Read · doc.html" });
+    emit({ type: "ask.done", turn: turn("t1", "done", { answer: "표는 이래요" }) });
+    expect(store.getState().live).toEqual({});
+    emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "late", activity: null });
+    expect(store.getState().live).toEqual({});
+  });
+
   it("starts open and toggles", () => {
     const { store } = setup();
     expect(store.getState().open).toBe(true);

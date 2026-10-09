@@ -5,6 +5,7 @@ pub(crate) mod log;
 pub(crate) mod prompt;
 pub(crate) mod run;
 pub(crate) mod sources;
+pub(crate) mod stream;
 
 pub use run::Limits;
 
@@ -15,6 +16,7 @@ use log::AskLog;
 use prompt::{build_prompt, valid_file_key, valid_ident};
 use rooms_protocol::{Artifact, AskStatus, AskTarget, AskTurn, EventKind};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
+use stream::{EventRule, Reader};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +26,18 @@ use std::time::Duration;
 pub const MAX_RUNNING: usize = 4;
 const MAX_QUESTION_CHARS: usize = 8_000;
 const RESTARTED: &str = "Stopped because Rooms restarted";
+/// `ask.progress` goes out at most this often per turn.
+const PROGRESS_EVERY: Duration = Duration::from_millis(100);
+
+/// The answer in `stdout`: what the profile's event rules read from it, or the plain text when the
+/// profile has no rules or the output holds no JSON line (a template without its JSON flag).
+fn read_answer(rules: &[EventRule], stdout: &[u8]) -> String {
+    if rules.is_empty() { return run::clean_output(stdout); }
+    let mut r = Reader::new(rules);
+    r.push(stdout);
+    r.finish();
+    if r.saw_json() { run::clean_output(r.text().as_bytes()) } else { run::clean_output(stdout) }
+}
 
 /// Why an ask call failed, with the wire `code()` and HTTP `status()` roomsd answers with (the
 /// message is the `Display` text, shown to the user as is).
@@ -104,18 +118,19 @@ pub async fn login_path() -> Option<String> {
 }
 
 /// How a finished run of `agent` ends its turn: (status, answer, error shown to the user). The
-/// answer is the cleaned stdout, kept even when the run failed or was stopped.
-fn turn_end(agent: &str, outcome: Outcome) -> (AskStatus, String, Option<String>) {
+/// answer is read from stdout by `rules`, and kept even when the run failed or was stopped.
+fn turn_end(agent: &str, rules: &[EventRule], outcome: Outcome) -> (AskStatus, String, Option<String>) {
+    let answer = |stdout: String| read_answer(rules, stdout.as_bytes());
     match outcome {
-        Outcome::Exited { code: 0, stdout, .. } => (AskStatus::Done, run::clean_output(stdout.as_bytes()), None),
+        Outcome::Exited { code: 0, stdout, .. } => (AskStatus::Done, answer(stdout), None),
         Outcome::Exited { code, stdout, stderr_tail } => {
             let last = run::clean_output(stderr_tail.as_bytes()).lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string);
             let mut m = format!("{agent} exited with an error (code {code})");
             if let Some(l) = last { m.push('\n'); m.push_str(&l); }
-            (AskStatus::Failed, run::clean_output(stdout.as_bytes()), Some(m))
+            (AskStatus::Failed, answer(stdout), Some(m))
         }
         Outcome::Killed { reason, stdout } => {
-            let a = run::clean_output(stdout.as_bytes());
+            let a = answer(stdout);
             match reason {
                 Reason::Cancelled | Reason::Shutdown => (AskStatus::Cancelled, a, None),
                 Reason::Timeout => (AskStatus::Failed, a, Some("Stopped: took too long".into())),
@@ -217,7 +232,8 @@ impl Asks {
         };
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
         core.emit_ask(EventKind::AskStarted { turn: turn.clone() });
-        let spawned = spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.get().cloned(), limits: self.0.limits });
+        let (tap, chunks) = tokio::sync::mpsc::unbounded_channel();
+        let spawned = spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.get().cloned(), limits: self.0.limits, tap: Some(tap) });
         match spawned {
             Err(e) => {
                 drop(running);
@@ -231,11 +247,13 @@ impl Asks {
             Ok(Running { killer, done }) => {
                 running.insert(turn.id.clone(), Entry { file_key: turn.file_key.clone(), killer });
                 drop(running);
+                self.relay_progress(&turn, plan.events.clone(), chunks);
                 let me = self.clone();
                 let t = turn.clone();
+                let rules = plan.events;
                 tokio::spawn(async move {
                     let (status, answer, error) = match done.await {
-                        Ok(outcome) => turn_end(&t.agent, outcome),
+                        Ok(outcome) => turn_end(&t.agent, &rules, outcome),
                         Err(_) => (AskStatus::Failed, String::new(), Some("Internal error".into())),
                     };
                     me.finish(t, status, answer, error);
@@ -243,6 +261,50 @@ impl Asks {
             }
         }
         Ok(turn)
+    }
+
+    /// Reads stdout chunks as they come and emits `ask.progress` with the answer so far, at most
+    /// once per PROGRESS_EVERY and only on change. Ends when the run's stdout tap closes.
+    fn relay_progress(&self, turn: &AskTurn, rules: Vec<EventRule>, mut chunks: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>) {
+        let me = self.clone();
+        let (id, file_key) = (turn.id.clone(), turn.file_key.clone());
+        tokio::spawn(async move {
+            let mut reader = Reader::new(&rules);
+            let mut raw: Vec<u8> = Vec::new();
+            let mut sent: (String, Option<String>) = (String::new(), None);
+            let mut tick = tokio::time::interval(PROGRESS_EVERY);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut dirty = false;
+            loop {
+                tokio::select! {
+                    chunk = chunks.recv() => match chunk {
+                        Some(b) => {
+                            if rules.is_empty() { raw.extend_from_slice(&b) } else { reader.push(&b) }
+                            dirty = true;
+                        }
+                        None => break,
+                    },
+                    _ = tick.tick(), if dirty => {
+                        dirty = false;
+                        let now = if rules.is_empty() {
+                            (run::clean_output(&raw), None)
+                        } else if reader.saw_json() {
+                            (reader.text().trim().to_string(), reader.activity().map(str::to_string))
+                        } else {
+                            continue;
+                        };
+                        if now == sent { continue; }
+                        // Under the running lock: `finish` removes the turn under it before `ask.done`,
+                        // so no progress can follow the done event.
+                        let running = lock(&me.0.running);
+                        if !running.contains_key(&id) { break; }
+                        me.0.core.emit_ask(EventKind::AskProgress { id: id.clone(), file_key: file_key.clone(), answer: now.0.clone(), activity: now.1.clone() });
+                        drop(running);
+                        sent = now;
+                    }
+                }
+            }
+        });
     }
 
     /// Append the final record (I3), drop it from the running map, then emit `ask.done` (I2).
@@ -316,14 +378,27 @@ mod tests {
 
     #[test]
     fn turn_end_maps_every_outcome() {
-        assert_eq!(turn_end("codex", exited(0, "\x1b[1mhi\x1b[0m\n", "noise")), (AskStatus::Done, "hi".into(), None));
-        assert_eq!(turn_end("codex", exited(2, "partial", "warn\nboom: bad flag\n\n")),
+        let t = |agent: &str, o: Outcome| turn_end(agent, &[], o);
+        assert_eq!(t("codex", exited(0, "\x1b[1mhi\x1b[0m\n", "noise")), (AskStatus::Done, "hi".into(), None));
+        assert_eq!(t("codex", exited(2, "partial", "warn\nboom: bad flag\n\n")),
             (AskStatus::Failed, "partial".into(), Some("codex exited with an error (code 2)\nboom: bad flag".into())));
-        assert_eq!(turn_end("codex", exited(1, "", "  \n")), (AskStatus::Failed, String::new(), Some("codex exited with an error (code 1)".into())));
-        assert_eq!(turn_end("codex", killed(Reason::Cancelled, "so far")), (AskStatus::Cancelled, "so far".into(), None));
-        assert_eq!(turn_end("codex", killed(Reason::Shutdown, "")), (AskStatus::Cancelled, String::new(), None));
-        assert_eq!(turn_end("codex", killed(Reason::Timeout, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: took too long".into())));
-        assert_eq!(turn_end("codex", killed(Reason::TooLong, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: the answer was too long".into())));
+        assert_eq!(t("codex", exited(1, "", "  \n")), (AskStatus::Failed, String::new(), Some("codex exited with an error (code 1)".into())));
+        assert_eq!(t("codex", killed(Reason::Cancelled, "so far")), (AskStatus::Cancelled, "so far".into(), None));
+        assert_eq!(t("codex", killed(Reason::Shutdown, "")), (AskStatus::Cancelled, String::new(), None));
+        assert_eq!(t("codex", killed(Reason::Timeout, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: took too long".into())));
+        assert_eq!(t("codex", killed(Reason::TooLong, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: the answer was too long".into())));
+    }
+
+    #[test]
+    fn answers_come_from_event_rules_or_plain_stdout() {
+        let rules: Vec<EventRule> = vec![toml::from_str("match = { \"/type\" = \"result\" }\nanswer = \"/result\"").unwrap()];
+        let json = "{\"type\":\"system\"}\n{\"type\":\"result\",\"result\":\"  **Done**\\n\"}\n";
+        assert_eq!(read_answer(&rules, json.as_bytes()), "**Done**");
+        // no JSON line: the template has no JSON flag, so stdout is the answer
+        assert_eq!(read_answer(&rules, b"\x1b[1mplain\x1b[0m\n"), "plain");
+        assert_eq!(read_answer(&[], json.as_bytes()), json.trim());
+        assert_eq!(turn_end("claude-code", &rules, exited(0, json, "")), (AskStatus::Done, "**Done**".into(), None));
+        assert_eq!(turn_end("claude-code", &rules, killed(Reason::Cancelled, "{\"type\":\"x\"}")), (AskStatus::Cancelled, String::new(), None));
     }
 
     #[test]

@@ -11,6 +11,7 @@ import { CopyAnswerButton } from "./CopyAnswerButton";
 import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThinkingLine } from "./ThinkingLine";
 import { useStickToBottom } from "./useStickToBottom";
+import type { Live } from "./asksStore";
 
 /** The Markdown chain is heavy and only needed once an answer arrives. */
 const loadAnswerMarkdown = () => import("./AnswerMarkdown");
@@ -73,14 +74,22 @@ function ErrorText({ children }: { children: ReactNode }) {
 /** A small text button with a full 28px hit area, pulled left so its label lines up with the text above. */
 const TEXT_BUTTON = "-ml-2 inline-flex min-h-7 items-center rounded-md px-2 text-[12.5px] font-medium text-ink hover:bg-[#f2f2f2] focus-visible:outline-2 focus-visible:outline-ink";
 
-function Turn({ t, onRetry }: { t: AskTurn; onRetry: () => void }) {
+function Turn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: () => void }) {
   return (
     <div data-turn-id={t.id} className="space-y-2">
       <div className="ml-auto w-fit max-w-[80%] rounded-[10px] bg-[#f2f2f2] px-3 py-1.5 whitespace-pre-wrap">{t.question}</div>
       {t.status === "running" ? (
-        <div className="flex items-center gap-2 text-[12.5px] text-ink-2">
-          <ThinkingLine />
-        </div>
+        <>
+          {/* The answer so far, as the agent streams it; the line under it says what it's doing. */}
+          {live?.answer ? (
+            <Suspense fallback={<AnswerFallback text={live.answer} />}>
+              <AnswerMarkdown text={live.answer} />
+            </Suspense>
+          ) : null}
+          <div className="flex min-w-0 items-center gap-2 text-[12.5px] text-ink-2">
+            <ThinkingLine label={live?.activity ?? undefined} />
+          </div>
+        </>
       ) : (
         <>
           {t.answer ? (
@@ -109,7 +118,7 @@ function Turn({ t, onRetry }: { t: AskTurn; onRetry: () => void }) {
 /** The round ask bar under a doc (⌘J), with this doc's thread above it. Hidden until toggled. */
 export function AskBar({ artifact }: { artifact: Artifact }) {
   const store = useAsksStore();
-  const { open, threads } = useAsks();
+  const { open, threads, live } = useAsks();
   const readOnly = useReadOnly();
   const thread = threads[artifact.fileKey];
   const [draft, setDraft] = useState("");
@@ -159,11 +168,15 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const runningId = running?.id;
   /** The turn that was running as of the last commit; cleared by the effect below once it ends. */
   const wasRunning = useRef<string | undefined>(undefined);
-  // While thinking, stick to the bottom. When the answer lands, put its question at the top of the
-  // sheet instead, so a long answer reads from its start rather than its end.
-  useStickToBottom(sheetRef, [showSheet, loaded, turns.length, turns.map((t) => t.status).join()], () => {
+  const streaming = runningId ? live[runningId] : undefined;
+  /** Turns whose answer streamed in: the reader already followed it, so it isn't jumped back to its start. */
+  const streamed = useRef(new Set<string>());
+  if (runningId && streaming?.answer) streamed.current.add(runningId);
+  // While thinking or streaming, stick to the bottom. When a whole answer lands at once, put its
+  // question at the top of the sheet instead, so a long answer reads from its start rather than its end.
+  useStickToBottom(sheetRef, [showSheet, loaded, turns.length, turns.map((t) => t.status).join(), streaming?.answer.length, streaming?.activity], () => {
     const id = wasRunning.current;
-    if (!id || turns.find((t) => t.id === id)?.status !== "done") return null;
+    if (!id || streamed.current.has(id) || turns.find((t) => t.id === id)?.status !== "done") return null;
     return Array.from(sheetRef.current?.querySelectorAll<HTMLElement>("[data-turn-id]") ?? []).find((el) => el.dataset.turnId === id) ?? null;
   });
   // When the running turn finishes, put the caret back in the input, but only if focus is nowhere
@@ -246,7 +259,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           ) : null}
           <div className="space-y-4">
             {turns.map((t) => (
-              <Turn key={t.id} t={t} onRetry={() => void send(t.question, retryModel(t))} />
+              <Turn key={t.id} t={t} live={live[t.id]} onRetry={() => void send(t.question, retryModel(t))} />
             ))}
           </div>
         </div>
