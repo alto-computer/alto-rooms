@@ -1,7 +1,8 @@
 import type { MouseEvent } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Calendar, FileText, Folder, Puzzle, X, type LucideIcon } from "lucide-react";
+import { Calendar, FileText, Folder, MessageSquare, Puzzle, X, type LucideIcon } from "lucide-react";
+import { AgentMark } from "@/components/AgentMark";
 import { RoomDot } from "@/components/RoomDot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlugins, useRoomList } from "@/data/hooks";
@@ -18,6 +19,8 @@ const ICONS: Record<Tab["kind"], LucideIcon> = {
   note: FileText,
   journal: Calendar,
   plugin: Puzzle,
+  // Drawn as its agent's mark instead.
+  conversation: MessageSquare,
 };
 
 /** One tab in the strip: activates on click, sorts by drag, closes from its button or a middle click. */
@@ -110,7 +113,13 @@ export function TabItem({
               sort.isDragging && "cursor-grabbing rounded-lg border-hairline shadow-float before:hidden after:hidden",
             )}
           >
-            {color ? <RoomDot color={color} /> : <Icon size={15} strokeWidth={1.75} aria-hidden className="shrink-0" />}
+            {tab.kind === "conversation" ? (
+              <AgentMark agent={tab.agent} className="size-[15px]" />
+            ) : color ? (
+              <RoomDot color={color} />
+            ) : (
+              <Icon size={15} strokeWidth={1.75} aria-hidden className="shrink-0" />
+            )}
             {/* Chrome style: a long label fades out at the tab's end instead of an ellipsis, so more of it shows. */}
             <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_left,transparent,#000_20px)]">
               <TabLabel tab={tab} />

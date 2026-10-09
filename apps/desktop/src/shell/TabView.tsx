@@ -1,5 +1,6 @@
 import type { Tab } from "@/data/viewerStore";
 import { PluginSlot } from "@/plugins/PluginSlot";
+import { ConversationView } from "@/views/ConversationView";
 import { DocView } from "@/views/DocView";
 import { JournalView } from "@/views/JournalView";
 import { NoteView } from "@/views/NoteView";
@@ -18,5 +19,7 @@ export function TabView({ tab }: { tab: Tab }) {
       return <NoteView tabId={tab.id} date={tab.date} name={tab.name} />;
     case "plugin":
       return <PluginSlot slot="tab" pluginId={tab.pluginId} context={{}} />;
+    case "conversation":
+      return <ConversationView id={{ agent: tab.agent, session: tab.session }} />;
   }
 }

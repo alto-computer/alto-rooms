@@ -119,7 +119,7 @@ function NoteEntry({ note }: { note: Note }) {
   );
 }
 
-function ArtifactEntry({ artifact, label, color, info }: { artifact: Artifact; label: string; color: RoomColor | null; info: Info }) {
+export function ArtifactEntry({ artifact, label, color, info }: { artifact: Artifact; label: string; color: RoomColor | null; info: Info }) {
   const openDoc = useOpenDoc();
   return (
     <button

@@ -1,5 +1,8 @@
+import type { Agent } from "@alto-rooms/protocol-ts";
 import { useArtifacts, useInfo, usePlugins, useRoomList } from "@/data/hooks";
+import { useConversation } from "@/data/useConversation";
 import type { Tab } from "@/data/viewerStore";
+import { conversationTitle } from "@/lib/conversations";
 import { monthDay } from "@/lib/dates";
 import { noteBase } from "@/lib/notes";
 
@@ -40,7 +43,16 @@ export function TabLabel({ tab }: { tab: Tab }) {
       return <>{noteBase(tab.name)}</>;
     case "plugin":
       return <PluginLabel pluginId={tab.pluginId} />;
+    case "conversation":
+      return <ConversationLabel agent={tab.agent} session={tab.session} />;
   }
+}
+
+function ConversationLabel({ agent, session }: { agent: Agent; session: string }) {
+  const c = useConversation({ agent, session });
+  if (c === undefined) return <>{PENDING}</>;
+  if (c === null) return <>Missing session</>;
+  return <>{c === "error" ? "Session" : conversationTitle(c)}</>;
 }
 
 function PluginLabel({ pluginId }: { pluginId: string }) {

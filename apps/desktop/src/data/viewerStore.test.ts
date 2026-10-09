@@ -496,3 +496,30 @@ describe("ViewerStore: plugins", () => {
     expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });
   });
 });
+
+describe("ViewerStore: conversations", () => {
+  it("a conversation tab is keyed by agent and session, persists, and comes back", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    const id = st.open({ kind: "conversation", agent: "codex", session: "s-1" });
+    expect(st.open({ kind: "conversation", agent: "codex", session: "s-1" })).toBe(id);
+    expect(st.open({ kind: "conversation", agent: "claude-code", session: "s-1" })).not.toBe(id);
+    st.flush();
+    const again = new ViewerStore(storage, clock().now);
+    expect(again.getState().tabs.filter((t) => t.kind === "conversation")).toEqual([
+      { id, kind: "conversation", agent: "codex", session: "s-1" },
+      expect.objectContaining({ agent: "claude-code", session: "s-1" }),
+    ]);
+  });
+
+  it("drops a saved conversation tab with an unknown agent or a session id roomsd would refuse", () => {
+    const tabs = [
+      { id: "ok", kind: "conversation", agent: "aside", session: "ses_01HQ" },
+      { id: "agent", kind: "conversation", agent: "cursor", session: "s1" },
+      { id: "flag", kind: "conversation", agent: "codex", session: "s;rm" },
+      { id: "none", kind: "conversation", agent: "codex" },
+    ];
+    const storage = memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify({ tabs, activeId: "ok", firstRunAt: "2026-10-01T00:00:00Z" }) });
+    expect(new ViewerStore(storage, clock().now).getState().tabs.map((t) => t.id)).toEqual(["ok"]);
+  });
+});

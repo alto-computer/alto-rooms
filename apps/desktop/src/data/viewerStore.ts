@@ -1,4 +1,5 @@
-import type { Artifact } from "@alto-rooms/protocol-ts";
+import type { Agent, Artifact } from "@alto-rooms/protocol-ts";
+import { isAgent } from "@/lib/agents";
 import { isAppearance, type Appearance } from "@/lib/appearance";
 import { globalTimers, type Clock } from "@/lib/clock";
 import { localDate } from "@/lib/dates";
@@ -8,7 +9,8 @@ export type Tab =
   | { id: string; kind: "doc"; roomId: string; artifactId: string }
   | { id: string; kind: "journal"; date: string }
   | { id: string; kind: "note"; date: string; name: string }
-  | { id: string; kind: "plugin"; pluginId: string };
+  | { id: string; kind: "plugin"; pluginId: string }
+  | { id: string; kind: "conversation"; agent: Agent; session: string };
 
 /** `Omit` distributed over the union, so each kind keeps its own id fields. */
 export type TabInput = Tab extends infer T ? (T extends Tab ? Omit<T, "id"> : never) : never;
@@ -55,6 +57,8 @@ function defaultStorage(): StorageLike | undefined {
 }
 
 const isStr = (v: unknown): v is string => typeof v === "string";
+/** roomsd's session id rule; anything else could never name a conversation. */
+const isSession = (v: unknown): v is string => isStr(v) && /^[A-Za-z0-9_-]{1,128}$/.test(v);
 
 /**
  * Rebuilds a tab from untrusted JSON, keeping only its id fields. The retired New tab
@@ -77,6 +81,8 @@ function parseTab(v: unknown, today: string): Tab | null {
       return { id: t.id, kind: "journal", date: today };
     case "plugin":
       return isStr(t.pluginId) ? { id: t.id, kind: "plugin", pluginId: t.pluginId } : null;
+    case "conversation":
+      return isAgent(t.agent) && isSession(t.session) ? { id: t.id, kind: "conversation", agent: t.agent, session: t.session } : null;
     default:
       return null;
   }
@@ -155,6 +161,8 @@ function sameTab(a: TabInput | Tab, b: TabInput | Tab): boolean {
       return b.kind === "note" && a.date === b.date && a.name === b.name;
     case "plugin":
       return b.kind === "plugin" && a.pluginId === b.pluginId;
+    case "conversation":
+      return b.kind === "conversation" && a.agent === b.agent && a.session === b.session;
   }
 }
 
@@ -177,6 +185,8 @@ function makeTab(id: string, t: TabInput): Tab {
       return { id, kind: "note", date: t.date, name: t.name };
     case "plugin":
       return { id, kind: "plugin", pluginId: t.pluginId };
+    case "conversation":
+      return { id, kind: "conversation", agent: t.agent, session: t.session };
   }
 }
 
