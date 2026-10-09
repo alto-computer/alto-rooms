@@ -4,6 +4,8 @@ import type { AskImage } from "./generated/AskImage";
 import type { AskScope } from "./generated/AskScope";
 import type { AskTarget } from "./generated/AskTarget";
 import type { AskTurn } from "./generated/AskTurn";
+import type { Conversation } from "./generated/Conversation";
+import type { ConversationId } from "./generated/ConversationId";
 import type { Info } from "./generated/Info";
 import type { JournalDay } from "./generated/JournalDay";
 import type { Note } from "./generated/Note";
@@ -71,6 +73,12 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     listRooms: () => get<Room[]>("/v1/rooms"),
     listArtifacts: (roomId: string) => get<Artifact[]>(`/v1/rooms/${encodeURIComponent(roomId)}/artifacts`),
     journalDay: (date: string) => get<JournalDay>(`/v1/journal/${date}`),
+    /** The conversations added to a room, last active first; empty for the Journal. 404 `room_not_found`. */
+    listRoomConversations: (roomId: string) => get<Conversation[]>(`/v1/rooms/${encodeURIComponent(roomId)}/conversations`),
+    /** Puts a conversation in a room (out of any other), or out of every room with `null`. 400 `invalid_input` for an
+     *  unknown agent or a bad session id, 404 `not_found` / `room_not_found`. Emits `conversation.moved` when it moves. */
+    setConversationRoom: (id: ConversationId, roomId: string | null) =>
+      write<Conversation>("PUT", `/v1/conversations/${encodeURIComponent(id.agent)}/${encodeURIComponent(id.session)}/room`, JSON.stringify(roomId)),
     getNote: async (date: string, name: string): Promise<string> => {
       const r = await fetch(`${baseUrl}/v1/journal/${date}/notes/${encodeURIComponent(name)}`);
       if (!r.ok) throw await failure(r);

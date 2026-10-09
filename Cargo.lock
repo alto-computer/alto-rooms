@@ -1444,6 +1444,7 @@ dependencies = [
  "futures",
  "http-body-util",
  "nanoid",
+ "rooms-collect",
  "rooms-core",
  "rooms-protocol",
  "serde",

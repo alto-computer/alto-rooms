@@ -19,6 +19,7 @@ nanoid = "0.4"
 dirs = "5"
 
 [dev-dependencies]
+rooms-collect = { path = "../rooms-collect" }
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
 http-body-util = "0.1"

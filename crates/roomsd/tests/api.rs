@@ -123,6 +123,53 @@ async fn note_put_and_journal_get() {
     assert_eq!(body_json(r).await["notes"][0]["name"], "회고.md");
 }
 
+fn put_json(uri: &str, json: &str, token: Option<&str>) -> Request<Body> {
+    let mut b = Request::put(uri).header("content-type", "application/json").header("host", API_HOST);
+    if let Some(t) = token { b = b.header("authorization", format!("Bearer {t}")); }
+    b.body(Body::from(json.to_string())).unwrap()
+}
+
+#[tokio::test]
+async fn without_collect_data_there_are_no_conversations() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert!(r.headers().get("x-rooms-seq").is_some());
+    assert_eq!(body_json(r).await, serde_json::json!([]));
+    let r = app.clone().oneshot(get("/v1/journal/2026-10-05", API_HOST)).await.unwrap();
+    assert_eq!(body_json(r).await["conversations"], serde_json::json!([]));
+    let r = app.oneshot(put_json("/v1/conversations/claude-code/s1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn conversations_join_and_leave_a_room() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let data = d.path().join("collect");
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
+                VALUES('e1', 'message', 'codex', 's-1', '2026-10-05T01:00:00Z', 'user', '/log', 'k', 0, 0, 'tidy the report')", []).unwrap();
+    st.core.set_collect_data(&data);
+    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "writes need the token");
+    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!((&v["roomId"], &v["title"], &v["id"]), (&serde_json::json!("inbox"), &serde_json::json!("tidy the report"), &serde_json::json!({"agent": "codex", "session": "s-1"})));
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    assert_eq!(body_json(r).await.as_array().map(Vec::len), Some(1));
+    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", "null", Some("t0k"))).await.unwrap();
+    assert_eq!(body_json(r).await["roomId"], serde_json::Value::Null);
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    assert_eq!(body_json(r).await, serde_json::json!([]));
+    for (uri, body) in [("/v1/conversations/cursor/s-1/room", r#""inbox""#), ("/v1/conversations/codex/s%3B1/room", r#""inbox""#), ("/v1/conversations/codex/s-1/room", "{}")] {
+        let r = app.clone().oneshot(put_json(uri, body, Some("t0k"))).await.unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{uri} {body}");
+    }
+    let r = app.oneshot(put_json("/v1/conversations/codex/s-1/room", r#""nope""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn unknown_room_is_404_and_bad_date_400() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
