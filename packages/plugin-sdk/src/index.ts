@@ -30,6 +30,7 @@ export type PluginErrorCode =
   | "not_found"
   | "write_failed"
   | "unknown_method"
+  | "rate_limited"
   | "timeout";
 
 export class PluginError extends Error {
@@ -56,7 +57,7 @@ export interface RoomsPlugin {
     list(prefix?: string): Promise<string[]>;
     /** Removes a file; a missing file is fine. */
     delete(path: string): Promise<void>;
-    /** Called with the path when a tool of yours appended to your data (not for your own writes). Returns an unsubscribe. */
+    /** Called with the path when a tool of yours or another frame of your plugin changed your data (not for this frame's own writes). Returns an unsubscribe. */
     onChange(cb: (path: string) => void): () => void;
   };
   /** Needs the `rooms.read` permission. */
@@ -73,6 +74,8 @@ type Inbound =
   | { rooms: 1; type: "ping"; id: string }
   | { rooms: 1; type: "dataChanged"; path: string }
   | { rooms: 1; id: string; result?: unknown; error?: { code: PluginErrorCode; message?: string } };
+
+export { connectContent, type ContentAction, type ContentSelection, type RoomsContent } from "./content";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
