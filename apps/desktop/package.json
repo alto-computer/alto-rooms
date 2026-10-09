@@ -10,6 +10,7 @@
     "test": "vitest run",
     "e2e": "playwright test",
     "tauri": "tauri",
+    "icon": "bun scripts/render-icon.ts",
     "sidecar": "bash scripts/build-sidecar.sh",
     "plugins": "bun scripts/bundle-plugins.ts"
   },
