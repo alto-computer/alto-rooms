@@ -8,6 +8,7 @@ import { plugin } from "@/test/plugins";
 import { DocView } from "@/views/DocView";
 import { EnableCard } from "./EnableCard";
 import { flushAllPlugins } from "./host";
+import { pluginDataBus, type PluginDataChange } from "./pluginDataBus";
 
 afterEach(() => {
   cleanup();
@@ -191,6 +192,22 @@ describe("artifact side panel", () => {
     expect(posted).not.toHaveBeenCalled();
     h.emit({ type: "plugin.data.changed", pluginId: "echo", path: "drawings/a.jsonl" });
     expect(posted).toHaveBeenLastCalledWith({ rooms: 1, type: "dataChanged", path: "drawings/a.jsonl" }, "*");
+  });
+
+  it("a bridge write tells the plugin's other frames, not the frame that wrote it", async () => {
+    await openDoc();
+    const { f, posted } = await openPanel();
+    const heard: PluginDataChange[] = [];
+    const off = pluginDataBus.subscribe((c) => heard.push(c));
+    fromFrame(f, { rooms: 1, id: "w1", method: "storage.write", params: { path: "notes/a.txt", text: "hi" } });
+    await act(async () => {});
+    off();
+    expect(heard).toEqual([{ pluginId: "echo", path: "notes/a.txt", from: f.contentWindow }]);
+    const changes = () => posted.mock.calls.map((c) => c[0] as { type?: string }).filter((m) => m.type === "dataChanged");
+    expect(changes(), "no echo of its own write").toEqual([]);
+    act(() => pluginDataBus.publish({ pluginId: "echo", path: "docs/9f2c000000000000/marks.json", from: window }));
+    act(() => pluginDataBus.publish({ pluginId: "other", path: "x.json", from: window }));
+    expect(changes()).toEqual([{ rooms: 1, type: "dataChanged", path: "docs/9f2c000000000000/marks.json" }]);
   });
 
   it("stops relaying data changes once the frame is gone", async () => {

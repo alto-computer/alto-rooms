@@ -1,6 +1,6 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithStores, room } from "@/test/fakes";
 import { plugin } from "@/test/plugins";
 import { DocView } from "./DocView";
@@ -134,6 +134,52 @@ describe("DocView: removed room", () => {
     post({ roomsSelection: 1, text: "x", rect: { x: 1, y: 100, w: 1, h: 1 } });
     await screen.findByRole("button", { name: "Ask" });
     post({ roomsSelection: 1, text: "", rect: null });
+    expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+  });
+});
+
+describe("DocView: content scripts", () => {
+  const marker = plugin({ id: "marker", name: "Marker", permissions: ["artifact.content"], granted: ["artifact.content"], slots: { artifactSidePanel: null, tab: null } });
+
+  async function open(opts: { readOnly?: boolean } = {}) {
+    const h = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+      plugins: [marker],
+      ...opts,
+    });
+    const frame = h.container.querySelector("iframe")!;
+    const posted = vi.spyOn(frame.contentWindow!, "postMessage");
+    const post = (data: unknown) => act(() => void window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow })));
+    return { ...h, posted, post };
+  }
+
+  it("shows a content plugin's action after Ask and tells only that plugin it was clicked", async () => {
+    const { posted, post } = await open();
+    post({ rooms: "content", v: 1, plugin: "marker", type: "actions", items: [{ id: "mark", title: "Mark" }] });
+    post({ roomsSelection: 1, text: "p95 118 ms", rect: { x: 100, y: 200, w: 80, h: 16 } });
+    const bar = await screen.findByRole("toolbar", { name: "Selection actions" });
+    expect(Array.from(bar.querySelectorAll("button")).map((b) => b.textContent)).toEqual(["Ask", "Mark"]);
+    fireEvent.click(screen.getByRole("button", { name: "Mark" }));
+    expect(posted).toHaveBeenCalledWith({ rooms: "content", v: 1, type: "selection.action", plugin: "marker", actionId: "mark" }, "*");
+    expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+
+  it("keeps a document's writes in its own folder of the plugin's data", async () => {
+    const { posted, post, state } = await open();
+    post({ rooms: "content", v: 1, plugin: "marker", type: "storage.write", id: "1", path: "marks.json", text: "보고서" });
+    post({ rooms: "content", v: 1, plugin: "marker", type: "storage.write", id: "2", path: "../other/marks.json", text: "x" });
+    await act(async () => {});
+    expect(state.pluginData).toEqual({ "marker/docs/0000000000000000/marks.json": "보고서" });
+    expect(posted).toHaveBeenCalledWith({ rooms: "content", v: 1, type: "reply", plugin: "marker", id: "1", result: null }, "*");
+    expect(posted).toHaveBeenCalledWith(expect.objectContaining({ id: "2", error: expect.objectContaining({ code: "invalid_path" }) }), "*");
+  });
+
+  it("drops Ask under read-only but keeps plugin actions", async () => {
+    const { post } = await open({ readOnly: true });
+    post({ rooms: "content", v: 1, plugin: "marker", type: "actions", items: [{ id: "mark", title: "Mark" }] });
+    post({ roomsSelection: 1, text: "p95", rect: { x: 100, y: 200, w: 80, h: 16 } });
+    await screen.findByRole("button", { name: "Mark" });
     expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
   });
 });
