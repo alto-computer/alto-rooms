@@ -1,4 +1,4 @@
-use rooms_core::asks::{AskError, Asks, Limits};
+use rooms_core::asks::{AskError, Asks, Limits, Request};
 use rooms_core::RoomsCore;
 use rooms_protocol::{AskKind, AskMode, AskStatus, AskTurn, EventKind};
 use std::time::Duration;
@@ -394,7 +394,8 @@ async fn images_reach_the_template_and_the_prompt_and_stay_on_the_turn() {
     let id = asks.save_image(b"\x89PNG\r\n\x1a\none").unwrap();
     let id2 = asks.save_image(b"GIF89a-two").unwrap();
     let mut rx = core.subscribe();
-    let t = asks.start_with(&room, &art, "이 화면 뭐야?", None, &[id.clone(), id2.clone()], AskKind::Question).unwrap();
+    let both = [id.clone(), id2.clone()];
+    let t = asks.start_with(&room, &art, Request { images: &both, ..Request::question("이 화면 뭐야?") }).unwrap();
     assert_eq!(t.images, vec![id.clone(), id2.clone()]);
     let done = wait_done(&mut rx, &t.id).await;
     let dir = d.path().join(".rooms/asks/images");
@@ -409,8 +410,8 @@ async fn images_reach_the_template_and_the_prompt_and_stay_on_the_turn() {
     assert!(!argv.contains("[-i]") && !argv.contains("[--dir]"), "{argv}");
     // Unknown or too many images are refused before anything runs.
     let missing = "0123456789abcdef0123456789abcdef.png".to_string();
-    assert!(matches!(asks.start_with(&room, &art, "q", None, &[missing], AskKind::Question), Err(AskError::BadRequest(_))));
-    assert!(matches!(asks.start_with(&room, &art, "q", None, &vec![id; 6], AskKind::Question), Err(AskError::BadRequest(_))));
+    assert!(matches!(asks.start_with(&room, &art, Request { images: &[missing], ..Request::question("q") }), Err(AskError::BadRequest(_))));
+    assert!(matches!(asks.start_with(&room, &art, Request { images: &vec![id; 6], ..Request::question("q") }), Err(AskError::BadRequest(_))));
 }
 
 #[tokio::test]
@@ -418,7 +419,7 @@ async fn new_starts_over_and_compact_sends_the_agents_summary_instead() {
     let (_d, core, room, art) = setup("");
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
-    let start = |kind| asks.start_with(&room, &art, "", None, &[], kind);
+    let start = |kind| asks.start_with(&room, &art, Request::command(kind));
     assert!(matches!(start(AskKind::Clear), Err(AskError::BadRequest(m)) if m == "Nothing to clear yet"));
     assert!(matches!(start(AskKind::Compact), Err(AskError::BadRequest(m)) if m == "Nothing to summarize yet"));
     let t1 = asks.start(&room, &art, "first", None).unwrap();

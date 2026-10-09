@@ -14,14 +14,14 @@ use crate::lock::lock;
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
-use prompt::{build_prompt, context, valid_file_key, valid_ident, COMPACT_ASK};
+use prompt::{build_prompt, context, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK};
 use rooms_protocol::{Artifact, AskKind, AskStatus, AskTarget, AskTurn, EventKind};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 pub const MAX_RUNNING: usize = 4;
@@ -76,6 +76,41 @@ impl AskError {
             AskError::Io(_) => 500,
         }
     }
+}
+
+/// What the ask bar sends: a question, with its images and model, or a command (`kind`).
+#[derive(Debug, Clone, Copy)]
+pub struct Request<'a> {
+    pub question: &'a str,
+    /// One of the target's models; `None` or "" leaves the agent's default.
+    pub model: Option<&'a str>,
+    /// Ids from `save_image`.
+    pub images: &'a [String],
+    pub kind: AskKind,
+}
+
+impl<'a> Request<'a> {
+    pub fn question(question: &'a str) -> Self { Self { question, model: None, images: &[], kind: AskKind::Question } }
+
+    pub fn command(kind: AskKind) -> Self { Self { kind, ..Self::question("") } }
+
+    /// The turn's question: what was asked, trimmed and within bounds, or the command as typed.
+    fn text(&self) -> Result<&'a str, AskError> {
+        match self.kind {
+            AskKind::Clear => Ok("/new"),
+            AskKind::Compact => Ok("/compact"),
+            AskKind::Question => {
+                let q = self.question.trim();
+                if q.is_empty() || q.chars().count() > MAX_QUESTION_CHARS {
+                    return Err(AskError::BadRequest(format!("A question must be 1–{MAX_QUESTION_CHARS} characters")));
+                }
+                Ok(q)
+            }
+        }
+    }
+
+    /// A command carries no images.
+    fn images(&self) -> &'a [String] { if self.kind == AskKind::Question { self.images } else { &[] } }
 }
 
 struct Entry { file_key: String, killer: Killer }
@@ -207,10 +242,10 @@ impl Asks {
     /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
     /// `model` must be one of the target's models; `None` or "" leaves the agent's default.
     pub fn start(&self, room: &str, artifact_id: &str, question: &str, model: Option<&str>) -> Result<AskTurn, AskError> {
-        self.start_with(room, artifact_id, question, model, &[], AskKind::Question)
+        self.start_with(room, artifact_id, Request { model, ..Request::question(question) })
     }
 
-    /// Stores an attached image; the id goes in `StartAsk::images`. Blocking (file IO).
+    /// Stores an attached image; the id goes in `Request::images`. Blocking (file IO).
     pub fn save_image(&self, bytes: &[u8]) -> Result<String, AskError> {
         self.0.images.save(bytes).map_err(AskError::BadRequest)
     }
@@ -218,78 +253,83 @@ impl Asks {
     /// The stored image `id`, for serving it back.
     pub fn image_path(&self, id: &str) -> Option<PathBuf> { self.0.images.path(id) }
 
-    /// `start` with images (ids from `save_image`): their paths reach the agent through the template's
-    /// `{image}` / `{image_dir}` and a line in the prompt, so an agent without an image flag can open them.
-    /// `kind` `Clear` records a fresh start (nothing runs); `Compact` asks the agent to summarize the
-    /// conversation so far; both ignore `question` and `image_ids`.
-    pub fn start_with(&self, room: &str, artifact_id: &str, question: &str, model: Option<&str>, image_ids: &[String], kind: AskKind) -> Result<AskTurn, AskError> {
+    /// Starts a turn: a question goes to the agent; `/new` is recorded at once (nothing runs);
+    /// `/compact` asks the agent to summarize the conversation so far. Blocking, like `start`.
+    pub fn start_with(&self, room: &str, artifact_id: &str, req: Request) -> Result<AskTurn, AskError> {
         let _rt = self.0.rt.as_ref().map(|h| h.enter());
-        let (question, image_ids) = match kind {
-            AskKind::Question => (question, image_ids),
-            AskKind::Clear => ("/new", &[][..]),
-            AskKind::Compact => ("/compact", &[][..]),
-        };
-        let q = question.trim();
-        if q.is_empty() || q.chars().count() > MAX_QUESTION_CHARS {
-            return Err(AskError::BadRequest(format!("A question must be 1–{MAX_QUESTION_CHARS} characters")));
-        }
-        if image_ids.len() > images::MAX_IMAGES {
-            return Err(AskError::BadRequest(format!("At most {} images per question", images::MAX_IMAGES)));
-        }
-        let image_paths: Vec<String> = image_ids.iter()
-            .map(|id| self.0.images.path(id).map(|p| p.to_string_lossy().into_owned()).ok_or_else(|| AskError::BadRequest("An attached image is missing — attach it again".into())))
-            .collect::<Result<_, _>>()?;
-        let core = &self.0.core;
+        let question = req.text()?;
+        let image_paths = self.image_paths(req.images())?;
         let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(room, artifact_id)?;
-        let model = model.filter(|m| !m.is_empty());
-        if let Some(m) = model {
-            if !plan.models.iter().any(|x| x == m) {
-                return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
-            }
+        let model = req.model.filter(|m| !m.is_empty());
+        if let Some(m) = model.filter(|m| !plan.models.iter().any(|x| x == m)) {
+            return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
         }
-        let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
 
-        let mut running = lock(&self.0.running);
-        if self.0.shutting_down.load(Ordering::SeqCst) { return Err(AskError::Capacity); }
-        if running.values().any(|e| e.file_key == artifact.file_key) { return Err(AskError::Busy); }
-        if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
+        let running = self.reserve(&artifact.file_key)?;
         let prior = self.read_thread(&running, &artifact.file_key)?;
         let ctx = context(&prior);
-        if kind != AskKind::Question && ctx.is_empty() {
-            return Err(AskError::BadRequest(if kind == AskKind::Clear { "Nothing to clear yet" } else { "Nothing to summarize yet" }.into()));
+        if req.kind != AskKind::Question && ctx.is_empty() {
+            return Err(AskError::BadRequest(if req.kind == AskKind::Clear { "Nothing to clear yet" } else { "Nothing to summarize yet" }.into()));
         }
-        if kind == AskKind::Clear {
-            let turn = AskTurn {
-                id: nanoid::nanoid!(16), file_key: artifact.file_key.clone(), question: q.to_string(), answer: String::new(),
-                agent: plan.agent.clone(), model: None, mode: plan.mode, status: AskStatus::Done, error: None, started_at: now(), ended_at: Some(now()),
-                images: vec![], kind, left_out: 0,
-            };
-            self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
-            drop(running);
-            self.0.core.emit_ask(EventKind::AskDone { turn: turn.clone() });
-            return Ok(turn);
-        }
-        let asked = if kind == AskKind::Compact { COMPACT_ASK.to_string() } else if image_paths.is_empty() { q.to_string() } else {
-            format!("{q}\n\nAttached images (open each one to see it):\n{}", image_paths.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n"))
+        let turn = AskTurn {
+            id: nanoid::nanoid!(16), file_key: artifact.file_key.clone(), question: question.to_string(), answer: String::new(),
+            agent: plan.agent.clone(), model: model.map(str::to_string), mode: plan.mode, status: AskStatus::Running, error: None,
+            started_at: now(), ended_at: None, images: req.images().to_vec(), kind: req.kind, left_out: ctx.left_out as u32,
         };
+        if req.kind == AskKind::Clear { return self.record_clear(running, turn); }
+
+        let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
+        let asked = if req.kind == AskKind::Compact { COMPACT_ASK.to_string() } else { with_image_paths(question, &image_paths) };
         let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, &ctx, &asked);
         let image_dir = if image_paths.is_empty() { String::new() } else { self.0.images.dir().to_string_lossy().into_owned() };
         // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
-        let mcp = core.home().join(".rooms/mcp.json");
+        let mcp = self.0.core.home().join(".rooms/mcp.json");
         let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
-        let argv = plan.render(&Vars { prompt: &prompt, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s, model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir });
-        let turn = AskTurn {
-            id: nanoid::nanoid!(16), file_key: artifact.file_key.clone(), question: q.to_string(), answer: String::new(),
-            agent: plan.agent.clone(), model: model.map(str::to_string), mode: plan.mode, status: AskStatus::Running, error: None, started_at: now(), ended_at: None,
-            images: image_ids.to_vec(), kind, left_out: ctx.left_out as u32,
-        };
+        let argv = plan.render(&Vars {
+            prompt: &prompt, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
+            model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir,
+        });
+        self.launch(running, turn, argv, cwd, plan.events)
+    }
+
+    /// The stored files for `ids`; an unknown id is the user's to fix.
+    fn image_paths(&self, ids: &[String]) -> Result<Vec<String>, AskError> {
+        if ids.len() > images::MAX_IMAGES {
+            return Err(AskError::BadRequest(format!("At most {} images per question", images::MAX_IMAGES)));
+        }
+        ids.iter()
+            .map(|id| self.0.images.path(id).map(|p| p.to_string_lossy().into_owned()))
+            .collect::<Option<_>>()
+            .ok_or_else(|| AskError::BadRequest("An attached image is missing — attach it again".into()))
+    }
+
+    /// The running map, locked, once there's room for one more turn about `file_key`.
+    fn reserve(&self, file_key: &str) -> Result<MutexGuard<'_, HashMap<String, Entry>>, AskError> {
+        let running = lock(&self.0.running);
+        if self.0.shutting_down.load(Ordering::SeqCst) { return Err(AskError::Capacity); }
+        if running.values().any(|e| e.file_key == file_key) { return Err(AskError::Busy); }
+        if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
+        Ok(running)
+    }
+
+    /// `/new`: nothing runs; the turn is recorded done, and the next question starts over.
+    fn record_clear(&self, running: MutexGuard<'_, HashMap<String, Entry>>, mut turn: AskTurn) -> Result<AskTurn, AskError> {
+        turn.status = AskStatus::Done;
+        turn.ended_at = Some(now());
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
-        core.emit_ask(EventKind::AskStarted { turn: turn.clone() });
+        drop(running);
+        self.0.core.emit_ask(EventKind::AskDone { turn: turn.clone() });
+        Ok(turn)
+    }
+
+    /// Records `turn`, runs `argv`, relays its progress, and finishes the turn when it ends.
+    fn launch(&self, mut running: MutexGuard<'_, HashMap<String, Entry>>, turn: AskTurn, argv: Vec<String>, cwd: PathBuf, rules: Vec<EventRule>) -> Result<AskTurn, AskError> {
+        self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
+        self.0.core.emit_ask(EventKind::AskStarted { turn: turn.clone() });
         let (tap, chunks) = tokio::sync::mpsc::unbounded_channel();
         let mut limits = self.0.limits;
-        if !plan.events.is_empty() { limits.max_stdout = limits.max_stdout.saturating_mul(JSON_STDOUT_FACTOR); }
-        let spawned = spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.get().cloned(), limits, tap: Some(tap) });
-        match spawned {
+        if !rules.is_empty() { limits.max_stdout = limits.max_stdout.saturating_mul(JSON_STDOUT_FACTOR); }
+        match spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.get().cloned(), limits, tap: Some(tap) }) {
             Err(e) => {
                 drop(running);
                 let msg = if e.kind() == std::io::ErrorKind::NotFound {
@@ -302,10 +342,8 @@ impl Asks {
             Ok(Running { killer, done }) => {
                 running.insert(turn.id.clone(), Entry { file_key: turn.file_key.clone(), killer });
                 drop(running);
-                self.relay_progress(&turn, plan.events.clone(), chunks);
-                let me = self.clone();
-                let t = turn.clone();
-                let rules = plan.events;
+                self.relay_progress(&turn, rules.clone(), chunks);
+                let (me, t) = (self.clone(), turn.clone());
                 tokio::spawn(async move {
                     let (status, answer, error) = match done.await {
                         Ok(outcome) => turn_end(&t.agent, &rules, outcome),

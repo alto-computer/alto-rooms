@@ -71,47 +71,63 @@ pub(crate) struct Vars<'a> {
 
 fn argv(parts: &[&str]) -> Vec<String> { parts.iter().map(|s| s.to_string()).collect() }
 
-/// One built-in rule: `(match pairs, field, pointers)`; field is "delta", "answer", "clear",
-/// or "activity" / "activity:<label>".
-fn rules(spec: &[(&[(&str, &str)], &str, &[&str])]) -> Vec<EventRule> {
-    spec.iter().map(|(when, field, ptrs)| {
-        let when = when.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        let ptr = ptrs.first().map(|p| p.to_string());
-        let mut r = EventRule { when, delta: None, answer: None, activity: Vec::new(), label: None, clear: false };
-        match *field {
-            "delta" => r.delta = ptr,
-            "answer" => r.answer = ptr,
-            "clear" => r.clear = true,
-            f => { r.label = f.strip_prefix("activity:").map(str::to_string); r.activity = argv(ptrs); }
-        }
-        r
-    }).collect()
+/// Built-in event rules, written as a user would write them in agents.toml (`[[agents.X.events]]`).
+fn rules(toml_text: &str) -> Vec<EventRule> {
+    #[derive(Deserialize)]
+    struct Rules { events: Vec<EventRule> }
+    toml::from_str::<Rules>(toml_text).expect("built-in event rules parse").events
 }
 
 /// `claude -p --output-format stream-json --verbose --include-partial-messages`: text deltas of the
 /// current model message, each tool call as activity ("Read · AskBar.tsx"), and `result` (the
 /// last message's text) as the answer.
-fn claude_events() -> Vec<EventRule> {
-    rules(&[
-        (&[("/type", "stream_event"), ("/event/type", "message_start")], "clear", &[]),
-        (&[("/type", "stream_event"), ("/event/type", "content_block_delta"), ("/event/delta/type", "text_delta")], "delta", &["/event/delta/text"]),
-        (&[("/type", "stream_event"), ("/event/type", "content_block_start"), ("/event/content_block/type", "thinking")], "activity:Thinking", &[]),
-        (&[("/type", "assistant")], "activity", &["/message/content/*/name", "/message/content/*/input/file_path", "/message/content/*/input/pattern"]),
-        (&[("/type", "result")], "answer", &["/result"]),
-    ])
-}
+const CLAUDE_EVENTS: &str = r#"
+[[events]]
+match = { "/type" = "stream_event", "/event/type" = "message_start" }
+clear = true
+
+[[events]]
+match = { "/type" = "stream_event", "/event/type" = "content_block_delta", "/event/delta/type" = "text_delta" }
+delta = "/event/delta/text"
+
+[[events]]
+match = { "/type" = "stream_event", "/event/type" = "content_block_start", "/event/content_block/type" = "thinking" }
+label = "Thinking"
+
+[[events]]
+match = { "/type" = "assistant" }
+activity = ["/message/content/*/name", "/message/content/*/input/file_path", "/message/content/*/input/pattern"]
+
+[[events]]
+match = { "/type" = "result" }
+answer = "/result"
+"#;
 
 /// `codex exec --json`: each agent message replaces the answer (the last is the final one);
 /// commands, tool calls and searches show as activity.
-fn codex_events() -> Vec<EventRule> {
-    rules(&[
-        (&[("/type", "item.started"), ("/item/type", "reasoning")], "activity:Thinking", &[]),
-        (&[("/type", "item.started"), ("/item/type", "command_execution")], "activity:Running", &["/item/command"]),
-        (&[("/type", "item.started"), ("/item/type", "mcp_tool_call")], "activity:", &["/item/tool"]),
-        (&[("/type", "item.started"), ("/item/type", "web_search")], "activity:Searching", &["/item/query"]),
-        (&[("/type", "item.completed"), ("/item/type", "agent_message")], "answer", &["/item/text"]),
-    ])
-}
+const CODEX_EVENTS: &str = r#"
+[[events]]
+match = { "/type" = "item.started", "/item/type" = "reasoning" }
+label = "Thinking"
+
+[[events]]
+match = { "/type" = "item.started", "/item/type" = "command_execution" }
+label = "Running"
+activity = ["/item/command"]
+
+[[events]]
+match = { "/type" = "item.started", "/item/type" = "mcp_tool_call" }
+activity = ["/item/tool"]
+
+[[events]]
+match = { "/type" = "item.started", "/item/type" = "web_search" }
+label = "Searching"
+activity = ["/item/query"]
+
+[[events]]
+match = { "/type" = "item.completed", "/item/type" = "agent_message" }
+answer = "/item/text"
+"#;
 
 fn builtin() -> BTreeMap<String, Profile> {
     BTreeMap::from([
@@ -119,13 +135,13 @@ fn builtin() -> BTreeMap<String, Profile> {
             resume: Some(argv(&["claude", "-p", "--model", "{model}", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "{prompt}"])),
             new: argv(&["claude", "-p", "--model", "{model}", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "{prompt}"]),
             models: argv(&["opus", "sonnet", "haiku"]),
-            events: claude_events(),
+            events: rules(CLAUDE_EVENTS),
         }),
         ("codex".to_string(), Profile {
             resume: Some(argv(&["codex", "exec", "fork", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "-i", "{image}", "--json", "{prompt}"])),
             new: argv(&["codex", "exec", "-m", "{model}", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "-i", "{image}", "--json", "{prompt}"]),
             models: argv(&["gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol"]),
-            events: codex_events(),
+            events: rules(CODEX_EVENTS),
         }),
         // `aside session resume` takes no model flag: resumed asks keep the session's model.
         ("aside".to_string(), Profile {

@@ -52,6 +52,13 @@ pub(crate) fn context(prior: &[AskTurn]) -> Context<'_> {
     Context { summary, left_out: done.len() - turns.len(), turns }
 }
 
+/// The question with its images listed, so an agent without an image flag can still open them.
+pub(crate) fn with_image_paths(question: &str, paths: &[String]) -> String {
+    if paths.is_empty() { return question.to_string(); }
+    let list: Vec<String> = paths.iter().map(|p| format!("- {p}")).collect();
+    format!("{question}\n\nAttached images (open each one to see it):\n{}", list.join("\n"))
+}
+
 pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, file_key: &str, ctx: &Context, question: &str) -> String {
     let mut out = format!("{preamble}\n\nDocument: {file}\nRooms doc: {file_key}\n");
     if mode == AskMode::New { out.push_str("Read this file first.\n"); }

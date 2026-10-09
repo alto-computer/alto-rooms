@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use rooms_core::asks::AskError;
+use rooms_core::asks::{AskError, Request};
 use rooms_core::plugins::PluginAsset;
 use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
@@ -31,7 +31,11 @@ impl IntoResponse for AskErr {
 
 pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
     let Json(b) = b.map_err(|e| AskError::BadRequest(e.body_text()))?;
-    let turn = ask_blocking(&st, move |a| a.start_with(&b.room_id, &b.artifact_id, &b.question, b.model.as_deref(), &b.images.unwrap_or_default(), b.kind.unwrap_or_default())).await?;
+    let turn = ask_blocking(&st, move |a| {
+        let images = b.images.unwrap_or_default();
+        let req = Request { question: &b.question, model: b.model.as_deref(), images: &images, kind: b.kind.unwrap_or_default() };
+        a.start_with(&b.room_id, &b.artifact_id, req)
+    }).await?;
     Ok((StatusCode::ACCEPTED, Json(turn)))
 }
 
