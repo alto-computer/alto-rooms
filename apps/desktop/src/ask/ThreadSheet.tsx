@@ -53,8 +53,8 @@ function useFollow(sheet: RefObject<HTMLDivElement | null>, turns: AskTurn[], li
 }
 
 /**
- * A doc's thread above the ask bar: its turns, a question on its way, and an "Ask" button over
- * text selected in an answer (it becomes a quote).
+ * A doc's thread in the docked ask column, above the input: its turns, a question on its way, and
+ * an "Ask" button over text selected in an answer (it becomes a quote).
  */
 export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
   turns: AskTurn[];
@@ -75,8 +75,8 @@ export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompac
   const leftOut = last && (last.kind ?? "question") === "question" ? last.leftOut : 0;
 
   return (
-    <div ref={box} className="pointer-events-auto relative w-full max-w-[720px]">
-      <div ref={sheet} className="max-h-[50vh] overflow-y-auto rounded-xl border border-hairline bg-sheet px-4 py-3 text-body shadow-float">
+    <div ref={box} className="pointer-events-auto relative flex min-h-0 w-full flex-1 flex-col">
+      <div ref={sheet} className="min-h-0 flex-1 overflow-y-auto pt-2 pr-1 text-body">
         {head ? <div className="mb-2 text-small text-ink-2" title={head.title}>{head.text}</div> : null}
         {loadError ? (
           <div>

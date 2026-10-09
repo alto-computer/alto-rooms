@@ -1,5 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderWithStores, room } from "@/test/fakes";
 import { plugin } from "@/test/plugins";
@@ -70,6 +70,35 @@ describe("DocView", () => {
     expect(frame).toHaveClass("opacity-0", "transition-opacity", "motion-reduce:transition-none");
     fireEvent.load(frame);
     expect(frame).toHaveClass("opacity-100");
+  });
+
+  it("takes the dark-mode dim unless its own page reports a dark background", async () => {
+    const { container } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+    });
+    const frame = container.querySelector("iframe")!;
+    const dimmed = () => frame.classList.contains("[filter:var(--doc-filter)]");
+    const tone = (t: string, source: MessageEventSource | null = frame.contentWindow) =>
+      act(() => void window.dispatchEvent(new MessageEvent("message", { data: { roomsTone: 1, tone: t }, source })));
+    expect(dimmed()).toBe(true);
+    tone("dark", window);
+    expect(dimmed()).toBe(true);
+    tone("dark");
+    expect(dimmed()).toBe(false);
+    tone("light");
+    expect(dimmed()).toBe(true);
+  });
+
+  it("names where the artifact lives in a breadcrumb, and the room opens from it", async () => {
+    const { viewer } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+    });
+    const crumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(crumb).toHaveTextContent("방보고서");
+    fireEvent.click(within(crumb).getByRole("button", { name: "방" }));
+    expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "room", roomId: "r1" });
   });
 
   it("says the document is gone once the room's artifacts no longer include it", async () => {

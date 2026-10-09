@@ -48,3 +48,24 @@ test("Light and Dark hold against the OS and survive a reload; System lets go ag
   await pick(page, "System");
   await expect.poll(() => isDark(page)).toBe(false);
 });
+
+test("Dark dims a light artifact page but leaves a dark one alone; Light dims neither", async ({ page, daemon }) => {
+  await daemon.createRoom("Pages");
+  await daemon.write("Pages/light.html", "<!doctype html><html><head><title>Light page</title></head><body><h1>Light</h1></body></html>");
+  await daemon.write("Pages/dark.html", '<!doctype html><html><head><title>Dark page</title><style>body{background:#0f172a;color:#e2e8f0}</style></head><body><h1>Dark</h1></body></html>');
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("/");
+  const filterOf = async (title: string) => {
+    await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "Pages" }).click();
+    await page.getByTestId("artifact-card").filter({ hasText: title }).click();
+    const frame = page.locator(`iframe[title="${title}"]`);
+    await expect(frame).toHaveCSS("opacity", "1");
+    return frame;
+  };
+
+  await pick(page, "Dark");
+  await expect(await filterOf("Light page")).toHaveCSS("filter", /brightness\(0\.86\)/);
+  await expect(await filterOf("Dark page")).toHaveCSS("filter", "none");
+  await pick(page, "Light");
+  await expect(await filterOf("Light page")).toHaveCSS("filter", "none");
+});
