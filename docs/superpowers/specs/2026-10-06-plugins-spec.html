@@ -183,7 +183,7 @@
   <li><strong>사이드바:</strong> <code>tab</code> slot에 <code>sidebar: true</code>면 사이드바 "Plugins" 구역에 항목이 생긴다. Plugins 구역은 그런 플러그인이 하나라도 켜져 있을 때만 보인다.</li>
 </ol>
 
-<div class="review-box" id="amend-2026-10-09"><h4>개정 2026-10-09: <code>contentScripts</code>와 <code>artifact.content</code></h4>운영자 결정(standing order 7): "Chrome 확장처럼 contentScripts라는 generic 능력과 artifact.content 권한을 새로 둡니다. 플러그인을 켤 때 확인 카드에 &quot;이 플러그인은 문서 본문을 읽을 수 있고, 문서 안에서 네트워크를 쓸 수 있음&quot;이라고 보여줍니다." 이에 따라 §0 Out of scope의 "Artifact 본문 읽기"는 <code>artifact.content</code>를 선언한 플러그인에 한해 풀리고, §2에 위 "본문 읽기" 규칙이 더해졌다. 카드 문구는 카드의 다른 줄처럼 영어다. 플러그인 iframe의 격리(샌드박스, 토큰 없음, <code>connect-src 'none'</code>)는 그대로다.</div>
+<div class="review-box" id="amend-2026-10-09"><h4>개정 2026-10-09: <code>contentScripts</code>와 <code>artifact.content</code></h4>운영자 결정(standing order 7): "Chrome 확장처럼 contentScripts라는 generic 능력과 artifact.content 권한을 새로 둡니다. 플러그인을 켤 때 확인 카드에 &quot;이 플러그인은 문서 본문을 읽을 수 있고, 문서 안에서 네트워크를 쓸 수 있음&quot;이라고 보여줍니다." 이에 따라 §0 Out of scope의 "Artifact 본문 읽기"는 <code>artifact.content</code>를 선언한 플러그인에 한해 풀리고, §2에 위 "본문 읽기" 규칙이 더해졌다. 카드 문구는 카드의 다른 줄처럼 영어다. 플러그인 iframe의 격리(샌드박스, 토큰 없음, <code>connect-src 'none'</code>)는 그대로다. 앱에 포함된(bundled) 플러그인도 <code>artifact.content</code>는 앱 업데이트로 자동 허용되지 않는다. 새로 선언하면 사용자가 설치한 플러그인처럼 "Updated plugin" 카드로 승인받고, 한 번 승인하면 이후 버전에도 유지된다. 다른 권한은 지금처럼 앱과 함께 허용된다. 이번 릴리스(F2-2)는 선언·검증·카드까지이고, 문서에 실제로 주입하는 것은 다음 릴리스(F2-3)부터다.</div>
 
 <h3>Cross-field &amp; Temporal Invariants</h3>
 <table>
@@ -503,7 +503,7 @@ pub fn artifact_by_file_key(&amp;self, file_key: &amp;str) -&gt; Option&lt;Artif
     <tr><td><code>description</code></td><td><code>string?</code></td><td>≤ 200자, 켜짐 카드에 표시</td></tr>
     <tr><td><code>entry</code></td><td><code>string?</code></td><td>기본 <code>index.html</code>; 폴더 안 상대 경로, <code>data/</code> 아래 금지</td></tr>
     <tr><td><code>permissions</code></td><td><code>("rooms.read"|"clipboard"|"downloads"|"artifact.content")[]</code></td><td>모르는 값 → invalid; 중복 제거</td></tr>
-    <tr><td><code>contentScripts</code></td><td><code>string[]?</code></td><td>≤ 4개; 폴더 안 <code>.js</code> 상대 경로, <code>data/</code> 아래 금지; <code>artifact.content</code>와 함께만</td></tr>
+    <tr><td><code>contentScripts</code></td><td><code>string[]?</code></td><td>≤ 4개; 폴더 안 <code>.js</code> 상대 경로, <code>data/</code> 아래 금지; 중복 → invalid(순서가 로드 순서); <code>artifact.content</code>와 함께만</td></tr>
     <tr><td><code>slots</code></td><td><code>{ "artifact.sidePanel"?: { title }, "tab"?: { title, icon?, sidebar? } }</code></td><td>최소 1개(<code>contentScripts</code>가 있으면 0개 가능); 모르는 slot 키 → 무시하고 경고(미래 호환); title 1–24자; icon ∈ 허용 목록(lucide 이름 12개)</td></tr>
   </tbody>
 </table>

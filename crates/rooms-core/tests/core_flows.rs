@@ -1134,6 +1134,43 @@ fn a_new_bundled_version_replaces_code_keeps_data_and_respects_turn_off() {
 }
 
 #[test]
+fn a_bundled_version_that_adds_artifact_content_asks_the_user() {
+    let (_d, core) = home();
+    let src = tempfile::tempdir().unwrap();
+    bundle(src.path(), GOALS, "v1");
+    core.install_bundled_plugins(src.path()).unwrap();
+
+    let v2 = GOALS.replace("0.1.0", "0.2.0").replace(r#""permissions":["rooms.read"]"#, r#""permissions":["rooms.read","artifact.content"],"contentScripts":["assets/main.js"]"#);
+    bundle(src.path(), &v2, "v2");
+    core.install_bundled_plugins(src.path()).unwrap();
+    let p = goals(&core);
+    assert!(p.enabled && p.needs_approval, "the Updated plugin card asks for artifact.content");
+    assert_eq!(p.granted.as_deref(), Some(&["rooms.read".to_string()][..]));
+
+    // Once approved, later bundled versions keep it.
+    core.set_plugin_enabled("goals", true, Some(vec!["rooms.read".into(), "artifact.content".into()])).unwrap();
+    bundle(src.path(), &v2.replace("0.2.0", "0.3.0"), "v3");
+    core.install_bundled_plugins(src.path()).unwrap();
+    let p = goals(&core);
+    assert!(!p.needs_approval);
+    assert_eq!(p.granted, Some(vec!["rooms.read".to_string(), "artifact.content".to_string()]));
+}
+
+#[test]
+fn a_bundled_version_still_gets_its_other_new_permissions_without_asking() {
+    let (_d, core) = home();
+    let src = tempfile::tempdir().unwrap();
+    bundle(src.path(), GOALS, "v1");
+    core.install_bundled_plugins(src.path()).unwrap();
+    let v2 = GOALS.replace("0.1.0", "0.2.0").replace(r#"["rooms.read"]"#, r#"["rooms.read","clipboard","downloads"]"#);
+    bundle(src.path(), &v2, "v2");
+    core.install_bundled_plugins(src.path()).unwrap();
+    let p = goals(&core);
+    assert!(p.enabled && !p.needs_approval);
+    assert_eq!(p.granted, Some(vec!["rooms.read".to_string(), "clipboard".to_string(), "downloads".to_string()]));
+}
+
+#[test]
 fn bundled_plugins_never_replace_a_users_own_plugin_or_install_invalid_ones() {
     let (d, core) = home();
     let mine = d.path().join(".rooms/plugins/goals");

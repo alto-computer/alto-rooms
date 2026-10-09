@@ -223,8 +223,9 @@ impl RoomsCore {
     }
 
     /// Installs the plugins the app ships (`src/<id>/`). A plugin seen for the first time is turned
-    /// on; every bundled version gets its declared permissions, since it comes with the app. A user's
-    /// "off" stays off. Returns the ids it copied.
+    /// on; every bundled version gets its declared permissions, since it comes with the app, except
+    /// `artifact.content`. The user approves that one on the enable card as for any plugin, and the
+    /// approval carries over to later versions. A user's "off" stays off. Returns the ids it copied.
     pub fn install_bundled_plugins(&self, src: &Path) -> Result<Vec<String>, CoreError> {
         let Ok(rd) = std::fs::read_dir(src) else { return Ok(Vec::new()) };
         let mut dirs: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
@@ -242,7 +243,9 @@ impl RoomsCore {
                     st.enabled.sort();
                 }
             }
-            st.grants.insert(m.id.clone(), m.permissions.clone());
+            let content_approved = st.grants.get(&m.id).is_some_and(|g| g.iter().any(|p| p == "artifact.content"));
+            let granted = m.permissions.iter().filter(|p| *p != "artifact.content" || content_approved).cloned().collect();
+            st.grants.insert(m.id.clone(), granted);
             inner.state.save()?;
             copied.push(m.id);
         }

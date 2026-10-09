@@ -133,16 +133,18 @@ A plugin can let agents write into its data by declaring tools in `manifest.json
 
 ## Content scripts
 
-A plugin that declares `artifact.content` can list scripts under `contentScripts`, like a browser extension's content scripts:
+A plugin that declares `artifact.content` can list scripts under `contentScripts`, like a browser extension's content scripts.
+
+> This release checks and records content scripts and shows the permission on the enable card. Rooms does not load them into documents yet. Loading starts in the next release (F2-3).
 
 ```json
 "permissions": ["artifact.content"],
 "contentScripts": ["content.js"]
 ```
 
-A plugin with content scripts needs no slot. The user sees "Can read the text of documents and use the network inside them" before it runs, and a changed content script changes the plugin's `rev`.
+Scripts load in the listed order, so each path may appear once; a repeated path makes the manifest invalid. A plugin with content scripts needs no slot. The user sees "Can read the text of documents and use the network inside them" before it runs, and a changed content script changes the plugin's `rev`.
 
-A content script runs inside the document's sandbox with the document's own powers, not the plugin frame's:
+Once loading ships, a content script runs inside the document's sandbox with the document's own powers, not the plugin frame's:
 
 - It can read and change the page, including its text.
 - It can use the network the way the document can, for example `no-cors` requests.
@@ -166,7 +168,7 @@ The desktop app ships a few plugins, listed in `apps/desktop/bundled-plugins.jso
 
 When the app starts, roomsd installs them into `~/rooms/.rooms/plugins/<id>/` and marks each folder with a `.bundled` file:
 
-- The first time, the plugin is turned on with its permissions; no card asks.
-- A new version replaces the code and keeps `data/`. Its permissions come with the app update.
+- The first time, the plugin is turned on with its permissions; no card asks, unless it declares `artifact.content`.
+- A new version replaces the code and keeps `data/`. Its permissions come with the app update, except `artifact.content`. A bundled plugin that declares it for the first time shows the "Updated plugin" card, like a plugin you installed yourself. Once approved, later versions keep it.
 - If the user turned it off, it stays off. A deleted folder comes back on the next start, on or off as it was; turn it off to stop using it.
 - A folder without the `.bundled` mark is the user's own and is never replaced.
