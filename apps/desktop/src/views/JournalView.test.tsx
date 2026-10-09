@@ -187,7 +187,7 @@ describe("JournalView: the day's tally", () => {
 
   it("counts the day's conversations, its artifacts across rooms and its notes, and has nothing else beside the day", async () => {
     await renderWithStores(<Host />, busyDay());
-    expect(within(tally()).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["0 conversations", "3 artifacts", "1 note"]);
+    expect(within(tally()).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["0 sessions", "3 artifacts", "1 note"]);
     expect(screen.getAllByRole("region").map((r) => r.getAttribute("aria-label"))).toEqual(["Your day", "Today"]);
   });
 

@@ -134,7 +134,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
     }
   };
   const cells: TallyCell[] = [
-    { noun: "conversation", items: entries.filter((e) => e.kind === "conversation").map(tallyItem) },
+    { noun: "session", items: entries.filter((e) => e.kind === "conversation").map(tallyItem) },
     { noun: "artifact", items: entries.filter((e) => e.kind === "artifact").map(tallyItem) },
     { noun: "note", items: entries.filter((e) => e.kind === "note").map(tallyItem) },
   ];

@@ -63,7 +63,7 @@ describe("Journal: conversations", () => {
     expect(second).toHaveAccessibleName("Spawning roomsd after first paint gets cold start…");
     expect(second).toHaveTextContent("벤치마크");
     expect(screen.getByText(clockTime(`${today}T01:00:00Z`))).toBeInTheDocument();
-    expect(screen.getByText(/2 conversations$/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2 sessions" })).toBeInTheDocument();
   });
 
   it("a click selects the row and never continues it", async () => {
@@ -108,9 +108,9 @@ describe("Journal: conversations", () => {
 
   it("the tally lists the day's conversations newest first, and one selects its row", async () => {
     await renderWithStores(<Journal />, day([conversation("s1", { title: "아침" }), conversation("s2", { title: "점심", roomId: "p" })]));
-    const cell = within(screen.getByRole("region", { name: "Today" })).getByRole("button", { name: "2 conversations" });
+    const cell = within(screen.getByRole("region", { name: "Today" })).getByRole("button", { name: "2 sessions" });
     fireEvent.pointerEnter(cell, { pointerType: "mouse" });
-    const list = within(await screen.findByRole("dialog", { name: "2 conversations" }));
+    const list = within(await screen.findByRole("dialog", { name: "2 sessions" }));
     const items = list.getAllByRole("button");
     expect(items.map((b) => b.textContent)).toEqual([`${clockTime(`${today}T02:00:00Z`)}점심Claude Code · 벤치마크`, `${clockTime(`${today}T01:00:00Z`)}아침Claude Code`]);
     await act(async () => {

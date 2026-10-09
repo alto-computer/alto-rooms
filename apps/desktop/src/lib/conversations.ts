@@ -9,12 +9,12 @@ export const sameConversation = (a: ConversationId, b: ConversationId): boolean 
 /** How many words of the last reply stand in for a missing title. */
 const FALLBACK_WORDS = 8;
 
-/** The conversation's title, else the first words of its last reply, else "Untitled conversation". */
+/** The conversation's title, else the first words of its last reply, else "Untitled session". */
 export function conversationTitle(c: Conversation): string {
   const title = c.title?.trim();
   if (title) return title;
   const words = c.lastReply?.trim().split(/\s+/).filter(Boolean) ?? [];
-  if (words.length === 0) return "Untitled conversation";
+  if (words.length === 0) return "Untitled session";
   return words.length > FALLBACK_WORDS ? `${words.slice(0, FALLBACK_WORDS).join(" ")}…` : words.join(" ");
 }
 

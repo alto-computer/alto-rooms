@@ -31,20 +31,20 @@ describe("Room: conversations", () => {
       artifacts: { p: [artifact("a1")] },
       conversations: [conversation("s1", { title: "Cold start", messages: 42, roomId: "p" }), conversation("s9", { title: "Elsewhere" })],
     });
-    const section = await screen.findByRole("region", { name: "Conversations" });
+    const section = await screen.findByRole("region", { name: "Sessions" });
     const card = within(section).getByTestId("conversation-card");
     expect(card).toHaveTextContent("Cold start");
     expect(card).toHaveTextContent("42 msgs");
     expect(screen.queryByText("Elsewhere")).toBeNull();
     const grid = screen.getByTestId("artifact-card");
     expect(grid.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText("1 conversation")).toBeInTheDocument();
+    expect(screen.getByText("1 session")).toBeInTheDocument();
 
     const filter = within(screen.getByRole("group", { name: "Show" }));
-    fireEvent.click(filter.getByRole("button", { name: /^Conversations/ }));
+    fireEvent.click(filter.getByRole("button", { name: /^Sessions/ }));
     expect(screen.queryByTestId("artifact-card")).toBeNull();
     fireEvent.click(filter.getByRole("button", { name: /^Artifacts/ }));
-    expect(screen.queryByRole("region", { name: "Conversations" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Sessions" })).toBeNull();
     expect(screen.getByTestId("artifact-card")).toBeInTheDocument();
   });
 
@@ -52,7 +52,7 @@ describe("Room: conversations", () => {
     const h = await renderWithStores(<RoomView roomId="p" />, { rooms: [room("p", "벤치마크", { artifactCount: 1 })], artifacts: { p: [artifact("a1")] } });
     await waitFor(() => expect(h.client.listRoomConversations).toHaveBeenCalledWith("p"));
     expect(screen.queryByRole("group", { name: "Show" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Conversations" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Sessions" })).toBeNull();
   });
 
   it("refetches when a conversation moves in, and on window focus", async () => {
@@ -95,7 +95,7 @@ describe("Room: conversations", () => {
       );
     }
     await renderWithStores(<Tab />, opts);
-    fireEvent.click(within(await screen.findByRole("group", { name: "Show" })).getByRole("button", { name: /^Conversations/ }));
+    fireEvent.click(within(await screen.findByRole("group", { name: "Show" })).getByRole("button", { name: /^Sessions/ }));
     expect(screen.queryByTestId("artifact-card")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Go to q" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /^All/ })).toHaveAttribute("aria-pressed", "true"));

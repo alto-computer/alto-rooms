@@ -11,7 +11,7 @@ const TOAST_ID = "continue-conversation";
 export function continueIn(conversation: Conversation): void {
   continueConversation(conversation).then(
     (opened) => {
-      if (!opened) toast("Continuing a conversation needs the Rooms app", { id: TOAST_ID });
+      if (!opened) toast("Continuing a session needs the Rooms app", { id: TOAST_ID });
     },
     (e: unknown) => {
       console.warn("could not continue the conversation", e);
