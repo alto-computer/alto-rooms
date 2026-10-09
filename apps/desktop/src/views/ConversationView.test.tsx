@@ -123,6 +123,8 @@ describe("Session view", () => {
     await waitFor(() =>
       expect(h.client.startAsk).toHaveBeenCalledWith({ scope: { kind: "conversation", ...ID }, question: "세 줄로 요약해줘", model: null }),
     );
+    await act(async () => h.emit({ type: "ask.started", turn: { ...(await h.client.startAsk.mock.results[0].value), mode: "resume" } }));
+    expect(await screen.findByText("claude-code · continuing this session")).toBeInTheDocument();
   });
 
   it("lists the artifacts it wrote, and only those, and opens one", async () => {

@@ -12,11 +12,13 @@ import { useStickToBottom } from "./useStickToBottom";
 /** Turns further back than this skip layout and paint while off screen: a long thread stays quick. */
 const RECENT_TURNS = 4;
 
-/** Who answers and how: the agent, its model, and whether it continues the thread that made the doc. */
+/** Who answers and how: the agent, its model, and whether it continues the doc's thread or the session asked about. */
 function header(t: AskTurn): { text: string; title?: string } {
-  const how = t.mode === "resume" ? "continuing the thread that made it" : "New conversation";
+  const session = t.scope.kind === "conversation";
+  const how = t.mode === "resume" ? (session ? "continuing this session" : "continuing the thread that made it") : "New conversation";
   const text = [t.agent, t.model ? modelLabel(t.model) : null, how].filter(Boolean).join(" · ");
-  return t.mode === "resume" ? { text } : { text, title: "Couldn't find the thread that made this artifact" };
+  if (t.mode === "resume") return { text };
+  return { text, title: session ? "Couldn't resume this session" : "Couldn't find the thread that made this artifact" };
 }
 
 /** Said under the last question when earlier answers no longer fit in what goes along with it. */
