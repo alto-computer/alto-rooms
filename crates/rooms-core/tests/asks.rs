@@ -1,6 +1,6 @@
-use rooms_core::asks::{AskError, Asks, Limits};
+use rooms_core::asks::{AskError, Asks, Limits, Request};
 use rooms_core::RoomsCore;
-use rooms_protocol::{AskMode, AskStatus, AskTurn, EventKind};
+use rooms_protocol::{AskKind, AskMode, AskStatus, AskTurn, EventKind};
 use std::time::Duration;
 
 const FAKE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-agent.sh");
@@ -343,4 +343,106 @@ async fn model_is_passed_and_recorded() {
     assert_eq!(t.model, None);
     let done = wait_done(&mut rx, &t.id).await;
     assert!(done.answer.starts_with("ARGV: [new] [[Rooms]"), "{}", done.answer);
+}
+
+#[tokio::test]
+async fn json_lines_stream_as_progress_then_the_final_answer() {
+    let (d, core, room, art) = setup("");
+    let script = d.path().join("stream-agent.sh");
+    std::fs::write(&script, concat!(
+        "#!/bin/sh\n",
+        "echo '{\"type\":\"tool\",\"name\":\"Read\",\"path\":\"/x/doc.html\"}'; sleep 0.3\n",
+        "echo '{\"type\":\"delta\",\"text\":\"표는 \"}'; sleep 0.3\n",
+        "echo '{\"type\":\"delta\",\"text\":\"이렇게\"}'; sleep 0.3\n",
+        "echo '{\"type\":\"result\",\"result\":\"표는 이렇게 읽어요.\"}'\n",
+    )).unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
+        "[agents.claude-code]\nnew = [\"{}\", \"{{prompt}}\"]\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"tool\" }}\nactivity = [\"/name\", \"/path\"]\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"delta\" }}\ndelta = \"/text\"\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"result\" }}\nanswer = \"/result\"\n",
+    ), script.display())).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, &art, "표 설명", None).unwrap();
+    let mut progress = Vec::new();
+    let done = loop {
+        let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("events in time").unwrap();
+        match ev.kind {
+            EventKind::AskProgress { id, file_key, answer, activity } if id == t.id => {
+                assert_eq!(file_key, t.file_key);
+                progress.push((answer, activity));
+            }
+            EventKind::AskDone { turn } if turn.id == t.id => break turn,
+            _ => {}
+        }
+    };
+    assert!(progress.contains(&(String::new(), Some("Read · doc.html".into()))), "{progress:?}");
+    assert!(progress.iter().any(|(a, act)| a == "표는" && act.is_none()), "{progress:?}");
+    assert!(progress.iter().any(|(a, _)| a == "표는 이렇게"), "{progress:?}");
+    assert_eq!((done.status, done.answer.as_str()), (AskStatus::Done, "표는 이렇게 읽어요."));
+    assert_eq!(asks.thread(&t.file_key).unwrap()[0].answer, "표는 이렇게 읽어요.");
+}
+
+#[tokio::test]
+async fn images_reach_the_template_and_the_prompt_and_stay_on_the_turn() {
+    let (d, core, room, art) = setup("");
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--dir\", \"{{image_dir}}\", \"-i\", \"{{image}}\", \"{{prompt}}\"]\n")).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let id = asks.save_image(b"\x89PNG\r\n\x1a\none").unwrap();
+    let id2 = asks.save_image(b"GIF89a-two").unwrap();
+    let mut rx = core.subscribe();
+    let both = [id.clone(), id2.clone()];
+    let t = asks.start_with(&room, &art, Request { images: &both, ..Request::question("이 화면 뭐야?") }).unwrap();
+    assert_eq!(t.images, vec![id.clone(), id2.clone()]);
+    let done = wait_done(&mut rx, &t.id).await;
+    let dir = d.path().join(".rooms/asks/images");
+    let (p1, p2) = (dir.join(&id), dir.join(&id2));
+    assert!(done.answer.contains(&format!("[--dir] [{}] [-i] [{}] [-i] [{}]", dir.display(), p1.display(), p2.display())), "{}", done.answer);
+    assert!(done.answer.contains(&format!("Attached images (open each one to see it):\n- {}\n- {}", p1.display(), p2.display())), "{}", done.answer);
+    assert_eq!(asks.thread(&t.file_key).unwrap()[0].images, vec![id.clone(), id2]);
+    // Without images the flags go away.
+    let t = asks.start(&room, &art, "no images", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    let argv = done.answer.lines().next().unwrap();
+    assert!(!argv.contains("[-i]") && !argv.contains("[--dir]"), "{argv}");
+    // Unknown or too many images are refused before anything runs.
+    let missing = "0123456789abcdef0123456789abcdef.png".to_string();
+    assert!(matches!(asks.start_with(&room, &art, Request { images: &[missing], ..Request::question("q") }), Err(AskError::BadRequest(_))));
+    assert!(matches!(asks.start_with(&room, &art, Request { images: &vec![id; 6], ..Request::question("q") }), Err(AskError::BadRequest(_))));
+}
+
+#[tokio::test]
+async fn new_starts_over_and_compact_sends_the_agents_summary_instead() {
+    let (_d, core, room, art) = setup("");
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let start = |kind| asks.start_with(&room, &art, Request::command(kind));
+    assert!(matches!(start(AskKind::Clear), Err(AskError::BadRequest(m)) if m == "Nothing to clear yet"));
+    assert!(matches!(start(AskKind::Compact), Err(AskError::BadRequest(m)) if m == "Nothing to summarize yet"));
+    let t1 = asks.start(&room, &art, "first", None).unwrap();
+    wait_done(&mut rx, &t1.id).await;
+
+    // /compact: the agent gets the Q&A and the summary ask; its answer is the summary.
+    let c = start(AskKind::Compact).unwrap();
+    assert_eq!((c.kind, c.question.as_str(), c.status), (AskKind::Compact, "/compact", AskStatus::Running));
+    let c = wait_done(&mut rx, &c.id).await;
+    assert!(c.answer.contains("Q: first\n") && c.answer.contains("Question: Summarize the Q&A above"), "{}", c.answer);
+    let t2 = asks.start(&room, &art, "second", None).unwrap();
+    let d2 = wait_done(&mut rx, &t2.id).await;
+    // (the fake agent echoes its prompt, so the summary holds the first Q&A once; nothing else does)
+    assert!(d2.answer.contains("Summary of the earlier Q&A:\nARGV:"), "{}", d2.answer);
+    assert_eq!(d2.answer.matches("Previous Q&A:").count(), 1, "{}", d2.answer);
+
+    // /new: recorded at once, nothing runs, and nothing earlier goes along.
+    let n = start(AskKind::Clear).unwrap();
+    assert_eq!((n.kind, n.status, n.question.as_str()), (AskKind::Clear, AskStatus::Done, "/new"));
+    assert_eq!(wait_done(&mut rx, &n.id).await.id, n.id);
+    let t3 = asks.start(&room, &art, "third", None).unwrap();
+    let d3 = wait_done(&mut rx, &t3.id).await;
+    assert!(!d3.answer.contains("Summary of") && !d3.answer.contains("Previous Q&A"), "{}", d3.answer);
+    let kinds: Vec<AskKind> = asks.thread(&t3.file_key).unwrap().iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, [AskKind::Question, AskKind::Compact, AskKind::Question, AskKind::Clear, AskKind::Question]);
 }

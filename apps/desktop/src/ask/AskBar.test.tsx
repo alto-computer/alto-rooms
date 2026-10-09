@@ -13,7 +13,7 @@ const doc: Artifact = {
 };
 const turn = (extra: Partial<AskTurn>): AskTurn => ({
   id: "t1", fileKey: "k1", question: "왜?", answer: "", agent: "claude-code", model: null, mode: "resume", status: "running",
-  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, ...extra,
+  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, ...extra,
 });
 
 let store: ReturnType<typeof useAsksStore>;
@@ -147,13 +147,39 @@ describe("AskBar", () => {
     }
   });
 
+  it("streams the answer so far with what the agent is doing, then follows to the end instead of jumping back", async () => {
+    const scrollTo = vi.fn();
+    const scrollIntoView = vi.fn();
+    vi.spyOn(Element.prototype, "scrollTo").mockImplementation(scrollTo);
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(scrollIntoView);
+    try {
+      const { emit } = await setup({ k1: [turn({})] });
+      await screen.findByText("Thinking");
+      act(() => emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "", activity: "Read · doc.html" }));
+      expect(await screen.findByText("Read · doc.html")).toBeInTheDocument();
+      expect(screen.queryByText("Thinking")).toBeNull();
+      scrollTo.mockClear();
+      act(() => emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "| a | b |\n|---|---|\n| **1** | 2 |", activity: null }));
+      expect((await screen.findByText("1")).tagName).toBe("STRONG");
+      expect(screen.getByText("Thinking")).toBeInTheDocument();
+      expect(scrollTo).toHaveBeenCalled();
+      act(() => emit({ type: "ask.done", turn: turn({ status: "done", answer: "| a | b |\n|---|---|\n| **1** | 2 |", endedAt: "2026-10-06T10:00:02+09:00" }) }));
+      await waitFor(() => expect(screen.queryByText("Thinking")).toBeNull());
+      expect(screen.getByRole("button", { name: "Copy answer" })).toBeInTheDocument();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("the input grows with its text up to about five lines, rounds less when taller, and shrinks after send", async () => {
     let height = 20;
     vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(() => height);
     try {
       await setup();
       const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
-      const pill = input.parentElement!;
+      // The textarea's row sits in the bordered bar, under the attached images when there are any.
+      const pill = input.parentElement!.parentElement!;
       expect(input.style.height).toBe("20px");
       expect(pill).toHaveClass("rounded-full");
       // Focus is ink, not the thread red the send button uses.
@@ -177,16 +203,118 @@ describe("AskBar", () => {
     }
   });
 
-  it("while an answer runs you can type ahead, but Enter doesn't send", async () => {
-    const { client } = await setup({ k1: [turn({})] });
+  it("pasted, dropped or picked images upload at once, go out with the question, and show on it", async () => {
+    const createObjectURL = vi.fn(() => "blob:preview");
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    const { client } = await setup();
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const shot = new File(["png"], "shot.png", { type: "image/png" });
+    fireEvent.paste(input, { clipboardData: { files: [shot] } });
+    await waitFor(() => expect(client.uploadAskImage).toHaveBeenCalledWith(shot));
+    expect(await screen.findByRole("img", { name: "shot.png" })).toHaveAttribute("src", "blob:preview");
+    const drop = new File(["gif"], "drop.gif", { type: "image/gif" });
+    const svg = new File(["<svg/>"], "x.svg", { type: "image/svg+xml" });
+    fireEvent.drop(input, { dataTransfer: { files: [drop, svg], types: ["Files"] } });
+    await screen.findByRole("img", { name: "drop.gif" });
+    expect(screen.queryByRole("img", { name: "x.svg" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove drop.gif" }));
+    expect(screen.queryByRole("img", { name: "drop.gif" })).toBeNull();
+    fireEvent.change(input, { target: { value: "이 화면 뭐야?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ question: "이 화면 뭐야?", images: ["img-shot.png"] })));
+    await waitFor(() => expect(screen.queryByRole("list", { name: "Attached images" })).toBeNull());
+    expect(await screen.findByRole("button", { name: "Open image" })).toBeInTheDocument();
+    expect(document.querySelector('img[src$="/_asks/images/img-shot.png"]')).not.toBeNull();
+  });
+
+  it("a failed upload shows on its thumbnail and holds the question until it's removed", async () => {
+    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:p"), revokeObjectURL: vi.fn() });
+    const { client } = await setup();
+    client.uploadAskImage.mockRejectedValueOnce(new RoomsApiError(400, "Only PNG, JPEG, GIF and WebP images can be attached", "bad_request"));
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    fireEvent.paste(input, { clipboardData: { files: [new File(["x"], "bad.png", { type: "image/png" })] } });
+    expect(await screen.findByLabelText("Only PNG, JPEG, GIF and WebP images can be attached")).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "q" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("Remove the images that couldn't be attached")).toBeInTheDocument();
+    expect(client.startAsk).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove bad.png" }));
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.not.objectContaining({ images: expect.anything() })));
+  });
+
+  it("shows quotes waiting above the input and on the asked question", async () => {
+    const { emit } = await setup();
+    act(() => store.addQuote("k1", "첫 인용\n둘째 줄"));
+    act(() => store.addQuote("k1", "  다른 인용  "));
+    act(() => store.addQuote("k1", "다른 인용"));
+    const chips = await screen.findByRole("list", { name: "Quoted text" });
+    expect(chips.querySelectorAll("li")).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove quote" })[1]);
+    expect(chips.querySelectorAll("li")).toHaveLength(1);
+    act(() => emit({ type: "ask.started", turn: turn({ question: "> 첫 인용\n> 둘째 줄\n\n뭐야?" }) }));
+    const bubbleQuote = await screen.findByText(/첫 인용/, { selector: "div.line-clamp-3" });
+    expect(bubbleQuote.textContent).toBe("첫 인용\n둘째 줄");
+    expect(screen.getByText("뭐야?")).toBeInTheDocument();
+  });
+
+  it("while an answer runs, Enter queues the question and it goes out when the answer ends", async () => {
+    const { client, emit } = await setup({ k1: [turn({})] });
     const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
     await screen.findByText("Thinking");
     expect(input.readOnly).toBe(false);
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
     fireEvent.change(input, { target: { value: "다음 질문" } });
-    expect(input.value).toBe("다음 질문");
+    expect(screen.getByRole("button", { name: "Queue" })).toBeTruthy();
     fireEvent.keyDown(input, { key: "Enter" });
+    expect(input.value).toBe("");
+    const queued = screen.getByRole("list", { name: "Queued questions" });
+    expect(queued.textContent).toContain("다음 질문");
+    fireEvent.change(input, { target: { value: "그 다음" } });
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(screen.getByRole("list", { name: "Queued questions" }).querySelectorAll("li")).toHaveLength(2);
     expect(client.startAsk).not.toHaveBeenCalled();
-    expect(input.value).toBe("다음 질문");
+    act(() => emit({ type: "ask.done", turn: turn({ status: "done", answer: "끝", endedAt: "2026-10-06T10:00:05+09:00" }) }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledTimes(1));
+    expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ question: "다음 질문" }));
+    // the second waits for the first's answer
+    expect(screen.getByRole("list", { name: "Queued questions" }).textContent).toContain("그 다음");
+  });
+
+  it("⌘Enter stops the running answer and sends this question next", async () => {
+    const { client, emit } = await setup({ k1: [turn({})] });
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    await screen.findByText("Thinking");
+    fireEvent.change(input, { target: { value: "지금 바로" } });
+    fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+    await waitFor(() => expect(client.cancelAsk).toHaveBeenCalledWith("t1"));
+    act(() => emit({ type: "ask.done", turn: turn({ status: "cancelled", endedAt: "2026-10-06T10:00:05+09:00" }) }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ question: "지금 바로" })));
+  });
+
+  it("↑ in an empty input takes the last queued question back to edit; the row buttons send now or drop", async () => {
+    const { client } = await setup({ k1: [turn({})] });
+    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    await screen.findByText("Thinking");
+    for (const q of ["첫째", "둘째"]) {
+      fireEvent.change(input, { target: { value: q } });
+      fireEvent.keyDown(input, { key: "Enter" });
+    }
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(input.value).toBe("둘째");
+    expect(screen.getByRole("list", { name: "Queued questions" }).querySelectorAll("li")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Remove queued question" }));
+    expect(screen.queryByRole("list", { name: "Queued questions" })).toBeNull();
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(client.cancelAsk).toHaveBeenCalledWith("t1"));
+  });
+
+  it("↑ in an empty input with nothing queued brings back the last question", async () => {
+    await setup({ k1: [turn({ status: "done", question: "> 인용\n\n지난 질문", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(input.value).toBe("지난 질문");
   });
 
   it("a fast double Enter sends once", async () => {
@@ -364,5 +492,108 @@ describe("AskBar", () => {
   it("shows the turn's model in the sheet header", async () => {
     await setup({ k1: [turn({ model: "sonnet", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
     expect(await screen.findByText("claude-code · Sonnet · continuing the thread that made it")).toBeTruthy();
+  });
+
+  describe("commands", () => {
+    it("typing / lists the commands; arrows pick one, Enter runs it", async () => {
+      const { client } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+      const input = await screen.findByPlaceholderText("Ask about this doc…");
+      fireEvent.change(input, { target: { value: "/" } });
+      const menu = screen.getByRole("listbox", { name: "Commands" });
+      expect(Array.from(menu.querySelectorAll("[role=option]")).map((o) => o.textContent)).toEqual([
+        "/newStart a new conversation", "/clearStart a new conversation", "/compactSummarize the conversation so far, and send that instead",
+      ]);
+      fireEvent.change(input, { target: { value: "/c" } });
+      expect(screen.getAllByRole("option").map((o) => o.getAttribute("aria-selected"))).toEqual(["true", "false"]);
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      expect(screen.getAllByRole("option")[1].getAttribute("aria-selected")).toBe("true");
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ kind: "compact" })));
+      expect(await screen.findByText("Summarizing the conversation")).toBeTruthy();
+      expect(screen.queryByRole("listbox")).toBeNull();
+    });
+
+    it("/new sent as text starts over with a divider; Escape closes the menu", async () => {
+      const { client } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+      const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: "/ne" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(input.value).toBe("");
+      fireEvent.change(input, { target: { value: "/new " } });
+      expect(screen.queryByRole("listbox")).toBeNull();
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ kind: "clear" })));
+      expect(await screen.findByRole("separator", { name: "New conversation" })).toBeTruthy();
+      expect(input.value).toBe("");
+      // ↑ recalls the last question, not the command
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      expect(input.value).toBe("왜?");
+    });
+
+    it("a finished summary is a divider with the summary behind a toggle", async () => {
+      await setup({ k1: [
+        turn({ id: "a", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" }),
+        turn({ id: "c", kind: "compact", question: "/compact", status: "done", answer: "**요약** 내용", endedAt: "2026-10-06T10:00:02+09:00" }),
+      ] });
+      expect(await screen.findByRole("separator", { name: "Conversation summarized" })).toBeTruthy();
+      expect(screen.queryByText("요약")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Show summary" }));
+      expect((await screen.findByText("요약")).tagName).toBe("STRONG");
+      expect(screen.queryByText("/compact")).toBeNull();
+    });
+
+    it("says when earlier answers were left out, and offers to summarize", async () => {
+      const { client } = await setup({ k1: [turn({ status: "done", answer: "a", leftOut: 3, endedAt: "2026-10-06T10:00:01+09:00" })] });
+      expect(await screen.findByText(/3 earlier answers weren't sent along/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Summarize it" }));
+      await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ kind: "compact" })));
+    });
+
+    it("a command typed while an answer runs waits in the queue", async () => {
+      const { client } = await setup({ k1: [turn({})] });
+      const input = await screen.findByPlaceholderText("Ask about this doc…");
+      await screen.findByText("Thinking");
+      fireEvent.change(input, { target: { value: "/new" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(screen.getByRole("list", { name: "Queued questions" }).textContent).toContain("/new");
+      expect(client.startAsk).not.toHaveBeenCalled();
+    });
+
+    it("shows roomsd's refusal", async () => {
+      const { client } = await setup();
+      client.startAsk.mockRejectedValueOnce(new RoomsApiError(400, "Nothing to clear yet", "bad_request"));
+      const input = await screen.findByPlaceholderText("Ask about this doc…");
+      fireEvent.change(input, { target: { value: "/clear" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(await screen.findByText("Nothing to clear yet")).toBeTruthy();
+    });
+  });
+
+  it("keeps an unsent draft per doc, across a remount", async () => {
+    const first = await setup();
+    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "쓰다 만 질문" } });
+    first.unmount();
+    await setup();
+    expect(((await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement).value).toBe("쓰다 만 질문");
+    expect(localStorage.getItem("alto-rooms.askDraft.k1")).toBe("쓰다 만 질문");
+    fireEvent.keyDown(screen.getByPlaceholderText("Ask about this doc…"), { key: "Enter" });
+    await waitFor(() => expect(localStorage.getItem("alto-rooms.askDraft.k1")).toBeNull());
+  });
+
+  it("shows the question at once, and puts it back in the input if roomsd refuses it", async () => {
+    const { client } = await setup();
+    let refuse: (e: Error) => void = () => {};
+    client.startAsk.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
+    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "바로 보여?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("바로 보여?")).toBeTruthy();
+    expect(screen.getByText("Thinking")).toBeTruthy();
+    expect(input.value).toBe("");
+    await act(async () => refuse(new RoomsApiError(409, "Waiting for an answer", "ask_busy")));
+    expect(await screen.findByText("Waiting for an answer")).toBeTruthy();
+    expect(screen.queryByText("Thinking")).toBeNull();
+    expect(input.value).toBe("바로 보여?");
   });
 });

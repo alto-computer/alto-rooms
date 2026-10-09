@@ -178,7 +178,22 @@ async fn files_stream_a_big_document_whole() {
     let r = files.oneshot(get(&format!("/{}/big.html", room.id), FILES_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     assert_eq!(r.headers()["content-type"], "text/html; charset=utf-8");
-    assert_eq!(r.into_body().collect().await.unwrap().to_bytes().as_ref(), big.as_slice());
+    // The whole file, then the selection bridge Rooms appends to every HTML document it shows.
+    let body = r.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..big.len()], big.as_slice());
+    let tail = std::str::from_utf8(&body[big.len()..]).unwrap();
+    assert!(tail.starts_with("<script data-rooms-bridge>") && tail.contains("roomsSelection"), "{tail}");
+    assert_eq!(std::fs::read(d.path().join("a/big.html")).unwrap(), big, "the file on disk is unchanged");
+}
+
+#[tokio::test]
+async fn only_html_gets_the_selection_bridge() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.css"), "p{}").unwrap();
+    let files = build_files_router(st);
+    let r = files.oneshot(get(&format!("/{}/x.css", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(r.into_body().collect().await.unwrap().to_bytes().as_ref(), b"p{}");
 }
 
 #[tokio::test]
@@ -649,8 +664,9 @@ async fn ask_routes() {
     assert_eq!(body_json(r).await["error"], "agent_config");
     let r = app.clone().oneshot(get("/v1/asks?fileKey=..%2Fx", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    // nothing running under that id: the app's "running" turn is stale
     let r = app.clone().oneshot(delete("/v1/asks/whatever", Some("t0k"), API_HOST)).await.unwrap();
-    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
     let r = app.clone().oneshot(post("/v1/asks", &body, None, API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
 }
@@ -785,4 +801,36 @@ async fn rooms_mcp_shaped_request_passes_the_guard() {
     assert_eq!(r.status(), StatusCode::OK);
     let r = app.oneshot(req("POST", "/v1/tools/call", r#"{"pluginId":"nope","name":"x","input":{}}"#)).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND, "past the guard, rejected by the handler");
+}
+
+fn upload(bytes: Vec<u8>, token: Option<&str>) -> Request<Body> {
+    let mut b = Request::post("/v1/asks/images").header("host", API_HOST).header("content-type", "image/png");
+    if let Some(t) = token { b = b.header("authorization", format!("Bearer {t}")); }
+    b.body(Body::from(bytes)).unwrap()
+}
+
+#[tokio::test]
+async fn ask_images_upload_then_serve_from_the_files_origin() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let png = b"\x89PNG\r\n\x1a\nimage-bytes".to_vec();
+    assert_eq!(app.clone().oneshot(upload(png.clone(), None)).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let r = app.clone().oneshot(upload(png.clone(), Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    let id = body_json(r).await["id"].as_str().unwrap().to_string();
+    assert!(id.ends_with(".png"));
+    let r = app.clone().oneshot(upload(b"<svg/>".to_vec(), Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert!(body_json(r).await["message"].as_str().unwrap().contains("PNG"));
+    let r = app.clone().oneshot(upload(vec![0x89; rooms_core::asks::images::MAX_IMAGE_BYTES + 10], Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let files = build_files_router(st);
+    let r = files.clone().oneshot(get(&format!("/_asks/images/{id}"), FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(r.headers()["content-type"], "image/png");
+    assert_eq!(r.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(r.into_body().collect().await.unwrap().to_bytes().to_vec(), png);
+    for bad in ["/_asks/images/..%2F..%2Fagents.toml", "/_asks/images/0123456789abcdef0123456789abcdef.png"] {
+        assert_eq!(files.clone().oneshot(get(bad, FILES_HOST)).await.unwrap().status(), StatusCode::NOT_FOUND, "{bad}");
+    }
 }

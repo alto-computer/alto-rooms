@@ -1,9 +1,10 @@
-//! Runs one agent CLI: no shell, its own process group, stdin /dev/null, with limits (spec R8, S6).
+//! Runs one agent CLI: no shell, its own process group, with limits (spec R8, S6). Its stdin is
+//! the prompt when there is one to write, else /dev/null.
 use crate::lock::lock;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Copy)]
@@ -30,7 +31,8 @@ impl Killer { pub fn kill(&self, r: Reason) { let _ = self.0.send(r); } }
 
 pub(crate) struct Running { pub killer: Killer, pub done: tokio::task::JoinHandle<Outcome> }
 
-pub(crate) struct SpawnSpec { pub argv: Vec<String>, pub cwd: PathBuf, pub path_env: Option<String>, pub limits: Limits }
+/// `tap`, when set, gets a copy of every stdout chunk as it is read (for live progress).
+pub(crate) struct SpawnSpec { pub argv: Vec<String>, pub stdin: Option<String>, pub cwd: PathBuf, pub path_env: Option<String>, pub limits: Limits, pub tap: Option<mpsc::UnboundedSender<Vec<u8>>> }
 
 /// Lossy UTF-8, ANSI escapes (CSI `ESC [ … final` and two-char `ESC x`) removed, trimmed.
 pub(crate) fn clean_output(bytes: &[u8]) -> String {
@@ -77,7 +79,7 @@ async fn terminate(child: &mut tokio::process::Child, pid: Option<i32>, reason: 
 pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
     let mut cmd = tokio::process::Command::new(&spec.argv[0]);
     cmd.args(&spec.argv[1..]).current_dir(&spec.cwd)
-        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .stdin(if spec.stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped())
         .process_group(0).kill_on_drop(true);
     if let Some(p) = &spec.path_env { cmd.env("PATH", p); }
     // macOS has no pipe2: std makes each pipe, then marks it close-on-exec. Two concurrent spawns
@@ -85,10 +87,17 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
     static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let mut child = { let _g = lock(&SPAWN); cmd.spawn()? };
     let pid = child.id().map(|p| p as i32);
+    // Written apart from the stdout loop: a CLI may print before it has read all of a long prompt.
+    // Closing stdin after it is the CLI's end of input; a CLI that exits early just ends the write.
+    if let (Some(text), Some(mut input)) = (spec.stdin, child.stdin.take()) {
+        tokio::spawn(async move { let _ = input.write_all(text.as_bytes()).await; });
+    }
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut stderr = child.stderr.take().expect("piped stderr");
     let (tx, mut rx) = mpsc::unbounded_channel::<Reason>();
     let limits = spec.limits;
+    let tap = spec.tap;
+    let send_tap = move |bytes: &[u8]| if let Some(t) = &tap { let _ = t.send(bytes.to_vec()); };
     let done = tokio::spawn(async move {
         let tail_max = limits.stderr_tail;
         let mut err_task = tokio::spawn(async move {
@@ -112,6 +121,7 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
                 n = stdout.read(&mut buf) => match n {
                     Ok(0) | Err(_) => break Next::Eof,
                     Ok(n) => {
+                        send_tap(&buf[..n]);
                         out.extend_from_slice(&buf[..n]);
                         if out.len() > limits.max_stdout { out.truncate(limits.max_stdout); break Next::Stop(Reason::TooLong); }
                     }
@@ -128,6 +138,7 @@ pub(crate) fn spawn_agent(spec: SpawnSpec) -> std::io::Result<Running> {
                 loop {
                     match tokio::time::timeout_at(drain_until, stdout.read(&mut buf)).await {
                         Ok(Ok(n)) if n > 0 => {
+                            send_tap(&buf[..n]);
                             out.extend_from_slice(&buf[..n]);
                             if out.len() > limits.max_stdout { out.truncate(limits.max_stdout); break Next::Stop(Reason::TooLong); }
                         }
@@ -175,7 +186,7 @@ mod tests {
     use super::*;
 
     fn spec(script: &str, limits: Limits) -> SpawnSpec {
-        SpawnSpec { argv: vec!["/bin/sh".into(), "-c".into(), script.into()], cwd: std::env::temp_dir(), path_env: None, limits }
+        SpawnSpec { argv: vec!["/bin/sh".into(), "-c".into(), script.into()], stdin: None, cwd: std::env::temp_dir(), path_env: None, limits, tap: None }
     }
 
     #[test]
@@ -201,9 +212,25 @@ mod tests {
 
     #[tokio::test]
     async fn argv_is_not_a_shell() {
-        let s = SpawnSpec { argv: vec!["/bin/echo".into(), "a; echo HACKED".into()], cwd: std::env::temp_dir(), path_env: None, limits: Limits::default() };
+        let s = SpawnSpec { argv: vec!["/bin/echo".into(), "a; echo HACKED".into()], stdin: None, cwd: std::env::temp_dir(), path_env: None, limits: Limits::default(), tap: None };
         match spawn_agent(s).unwrap().done.await.unwrap() {
             Outcome::Exited { stdout, .. } => assert_eq!(stdout.trim(), "a; echo HACKED"),
+            _ => panic!(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_prompt_goes_in_on_stdin_whatever_its_size() {
+        // Over Linux's 128 KiB for one argv element: only stdin takes it.
+        let prompt = "가".repeat(100_000);
+        let s = SpawnSpec { stdin: Some(prompt.clone()), ..spec("wc -c", Limits::default()) };
+        match spawn_agent(s).unwrap().done.await.unwrap() {
+            Outcome::Exited { code: 0, stdout, .. } => assert_eq!(stdout.trim(), prompt.len().to_string()),
+            _ => panic!("expected exit 0"),
+        }
+        // Without one, stdin is empty: a CLI that reads it doesn't wait.
+        match spawn_agent(spec("cat; echo end", Limits::default())).unwrap().done.await.unwrap() {
+            Outcome::Exited { stdout, .. } => assert_eq!(stdout.trim(), "end"),
             _ => panic!(),
         }
     }
@@ -230,7 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_program_is_a_spawn_error() {
-        let s = SpawnSpec { argv: vec!["definitely-not-a-cli-xyz".into()], cwd: std::env::temp_dir(), path_env: Some("/nonexistent".into()), limits: Limits::default() };
+        let s = SpawnSpec { argv: vec!["definitely-not-a-cli-xyz".into()], stdin: None, cwd: std::env::temp_dir(), path_env: Some("/nonexistent".into()), limits: Limits::default(), tap: None };
         assert_eq!(spawn_agent(s).err().unwrap().kind(), std::io::ErrorKind::NotFound);
     }
 

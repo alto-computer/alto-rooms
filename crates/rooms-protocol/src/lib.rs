@@ -153,13 +153,27 @@ pub enum AskStatus { Running, Done, Failed, Cancelled }
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
 pub enum AskMode { Resume, New }
 
+/// What a turn is: a question, or a command typed in the ask bar (`/new`, `/compact`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum AskKind {
+    #[default]
+    Question,
+    /// Starts over: earlier Q&A is no longer sent along. Nothing runs.
+    Clear,
+    /// The agent summarizes the Q&A so far; the summary (the answer) is sent along in its place.
+    Compact,
+}
+
 wire!(
 /// One question and its answer, asked from a doc to the agent that made it (spec v2 ask).
 pub struct AskTurn {
     pub id: String,
     pub file_key: String,
     pub question: String,
-    /// The agent's stdout (ANSI stripped, trimmed); empty while running.
+    /// The answer: the agent's stdout (ANSI stripped, trimmed), or what its profile's event rules
+    /// read from it. Empty while running (`ask.progress` carries the answer so far).
     pub answer: String,
     pub agent: String,
     /// The model picked for this turn; `None` = the agent's own default.
@@ -169,6 +183,14 @@ pub struct AskTurn {
     pub error: Option<String>,
     pub started_at: String,
     pub ended_at: Option<String>,
+    /// Ids of the images attached to the question (`<home>/.rooms/asks/images/<id>`).
+    #[serde(default)]
+    pub images: Vec<String>,
+    #[serde(default)]
+    pub kind: AskKind,
+    /// Earlier answers in this conversation that were too many or too long to send along.
+    #[serde(default)]
+    pub left_out: u32,
 });
 
 wire!(
@@ -200,6 +222,20 @@ wire!(pub struct StartAsk {
     pub question: String,
     /// One of `AskTarget::models`; `None` or empty = the agent's own default.
     pub model: Option<String>,
+    /// Ids from `POST /v1/asks/images`, at most 5.
+    #[serde(default)]
+    #[ts(optional)]
+    pub images: Option<Vec<String>>,
+    /// `None` = a question. `clear` and `compact` ignore `question` and `images`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub kind: Option<AskKind>,
+});
+
+wire!(
+/// A stored question image (`POST /v1/asks/images`); its file is served at `<filesOrigin>/_asks/images/<id>`.
+pub struct AskImage {
+    pub id: String,
 });
 
 wire!(
@@ -230,7 +266,10 @@ pub enum EventKind {
     #[serde(rename = "note.removed")] NoteRemoved { date: IsoDate, name: String },
     #[serde(rename = "journal.changed")] JournalChanged { date: IsoDate },
     #[serde(rename = "ask.started")] AskStarted { turn: AskTurn },
-    /// Exactly once per started turn; `turn.answer` is the whole answer.
+    /// The answer so far and what the agent is doing, while a turn runs (at most ~10 a second, only
+    /// on change). Not recorded: a client that missed one just shows the next, or `ask.done`.
+    #[serde(rename = "ask.progress", rename_all = "camelCase")] AskProgress { id: String, file_key: String, answer: String, activity: Option<String> },
+    /// Exactly once per started turn, after every `ask.progress` of it; `turn.answer` is the whole answer.
     #[serde(rename = "ask.done")] AskDone { turn: AskTurn },
     #[serde(rename = "resync", rename_all = "camelCase")] Resync { room_id: Option<RoomId> },
 }

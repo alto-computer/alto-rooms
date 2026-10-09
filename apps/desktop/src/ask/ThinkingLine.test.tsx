@@ -10,4 +10,9 @@ describe("ThinkingLine", () => {
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toBe("Thinking");
   });
+
+  it("shows what the agent is doing in place of Thinking", () => {
+    const { container } = render(<ThinkingLine label="Read · doc.html" />);
+    expect(container.textContent).toBe("Read · doc.html");
+  });
 });

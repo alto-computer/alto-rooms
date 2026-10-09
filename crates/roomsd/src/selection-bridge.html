@@ -1,0 +1,32 @@
+<script data-rooms-bridge>
+/* Added by Rooms when it shows this file (the file itself is unchanged): tells the Rooms window
+   what text is selected, so you can ask about it. Sends only the selected text and where it is.
+
+   Why a script inside: Rooms shows this page in a sandboxed frame with no origin, so the window
+   around it can't look in. Posting out is the one way across, and the window takes a message only
+   from its own frame and only in this shape: {roomsSelection: 1, text, rect | null}.
+   Why "*": the script doesn't know the app's origin, which differs by platform; the selection is
+   all it ever sends. */
+(function () {
+  if (window.parent === window) return;
+  var down = false, timer = 0, last = "";
+  function send() {
+    var s = window.getSelection();
+    var text = s && !s.isCollapsed ? String(s).trim().slice(0, 4000) : "";
+    var rect = null;
+    if (text && s.rangeCount) {
+      var r = s.getRangeAt(0).getBoundingClientRect();
+      rect = { x: r.left, y: r.top, w: r.width, h: r.height };
+    }
+    if (!text && !last) return;
+    last = text;
+    window.parent.postMessage({ roomsSelection: 1, text: text, rect: rect }, "*");
+  }
+  function later(ms) { clearTimeout(timer); timer = setTimeout(function () { if (!down) send(); }, ms); }
+  document.addEventListener("pointerdown", function () { down = true; }, true);
+  document.addEventListener("pointerup", function () { down = false; later(10); }, true);
+  document.addEventListener("selectionchange", function () { later(200); });
+  window.addEventListener("scroll", function () { if (last) later(30); }, true);
+  window.addEventListener("resize", function () { if (last) later(30); });
+})();
+</script>

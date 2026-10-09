@@ -50,6 +50,7 @@ fn export_typescript_bindings() {
     AskTurn::export_all().unwrap();
     StartAsk::export_all().unwrap();
     AskTarget::export_all().unwrap();
+    AskImage::export_all().unwrap();
 }
 
 #[test]
@@ -57,7 +58,8 @@ fn ask_events_are_camel_and_tagged() {
     let turn = AskTurn {
         id: "a1".into(), file_key: "0123456789abcdef".into(), question: "q".into(), answer: "".into(),
         agent: "claude-code".into(), model: None, mode: AskMode::Resume, status: AskStatus::Running,
-        error: None, started_at: "2026-10-06T10:00:00+09:00".into(), ended_at: None,
+        error: None, started_at: "2026-10-06T10:00:00+09:00".into(), ended_at: None, images: vec![],
+        kind: AskKind::Question, left_out: 0,
     };
     let v = serde_json::to_value(&RoomsEvent { seq: 3, kind: EventKind::AskStarted { turn: turn.clone() } }).unwrap();
     assert_eq!(v["type"], "ask.started");
@@ -69,6 +71,13 @@ fn ask_events_are_camel_and_tagged() {
     assert_eq!(d["type"], "ask.done");
     let s: StartAsk = serde_json::from_str(r#"{"roomId":"r","artifactId":"a","question":"hi"}"#).unwrap();
     assert_eq!((s.room_id.as_str(), s.artifact_id.as_str(), s.question.as_str(), s.model), ("r", "a", "hi", None));
+    assert_eq!(v["turn"]["kind"], "question");
+    assert_eq!(v["turn"]["leftOut"], 0);
+    let c: StartAsk = serde_json::from_str(r#"{"roomId":"r","artifactId":"a","question":"","kind":"compact"}"#).unwrap();
+    assert_eq!(c.kind, Some(AskKind::Compact));
+    // records written before kinds existed read back as questions
+    let old: AskTurn = serde_json::from_value(serde_json::json!({"id":"a","fileKey":"k","question":"q","answer":"","agent":"x","model":null,"mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null})).unwrap();
+    assert_eq!((old.kind, old.left_out), (AskKind::Question, 0));
 }
 
 #[test]

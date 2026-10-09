@@ -29,6 +29,11 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/artifacts/by-file-key/{key}", get(routes::artifact_by_file_key))
         .route("/v1/asks", get(routes::ask_thread).post(routes::start_ask))
         .route("/v1/asks/target", get(routes::ask_target))
+        .route(
+            "/v1/asks/images",
+            // One byte over the limit still reaches the handler, which refuses it with the size in the message.
+            post(routes::upload_ask_image).layer(axum::extract::DefaultBodyLimit::max(rooms_core::asks::images::MAX_IMAGE_BYTES + 1)),
+        )
         .route("/v1/asks/{ask_id}", axum::routing::delete(routes::cancel_ask))
         .route("/v1/tools", get(routes::list_tools))
         .route("/v1/tools/call", post(routes::call_tool))
@@ -54,6 +59,7 @@ pub fn build_files_router(state: AppState) -> Router {
     Router::new()
         .route("/{room_id}/{*rel}", get(routes::file))
         .route("/_plugins/{id}/{*rel}", get(routes::plugin_file))
+        .route("/_asks/images/{id}", get(routes::ask_image))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::files_host_guard))
         // Artifacts (and refusals) get the shared sandbox; plugin assets set their own narrower CSP.
         .layer(SetResponseHeaderLayer::if_not_present(

@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use rooms_core::asks::AskError;
+use rooms_core::asks::{AskError, Request};
 use rooms_core::plugins::PluginAsset;
 use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
@@ -31,7 +31,11 @@ impl IntoResponse for AskErr {
 
 pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
     let Json(b) = b.map_err(|e| AskError::BadRequest(e.body_text()))?;
-    let turn = ask_blocking(&st, move |a| a.start(&b.room_id, &b.artifact_id, &b.question, b.model.as_deref())).await?;
+    let turn = ask_blocking(&st, move |a| {
+        let images = b.images.unwrap_or_default();
+        let req = Request { question: &b.question, model: b.model.as_deref(), images: &images, kind: b.kind.unwrap_or_default() };
+        a.start_with(&b.room_id, &b.artifact_id, req)
+    }).await?;
     Ok((StatusCode::ACCEPTED, Json(turn)))
 }
 
@@ -63,9 +67,23 @@ pub async fn ask_target(State(st): State<AppState>, q: Result<Query<TargetQuery>
     Ok(Json(ask_blocking(&st, move |a| a.target(&q.room_id, &q.artifact_id)).await?))
 }
 
+/// The raw image bytes; the type is read from them, not from content-type.
+pub async fn upload_ask_image(State(st): State<AppState>, body: axum::body::Bytes) -> Result<(StatusCode, Json<AskImage>), AskErr> {
+    let id = ask_blocking(&st, move |a| a.save_image(&body)).await?;
+    Ok((StatusCode::CREATED, Json(AskImage { id })))
+}
+
+/// A question image on the files origin. Named by its hash, so it never changes: cache it for good.
+pub async fn ask_image(State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(path) = st.asks.image_path(&id) else { return ApiErr(CoreError::NotFound).into_response() };
+    let Ok(body) = file_body(&path).await else { return ApiErr(CoreError::NotFound).into_response() };
+    let ct = rooms_core::asks::images::content_type(&id);
+    ([("content-type", ct), ("x-content-type-options", "nosniff"), ("cache-control", "private, max-age=31536000, immutable")], body).into_response()
+}
+
 pub async fn cancel_ask(State(st): State<AppState>, Path(ask_id): Path<String>) -> StatusCode {
-    st.asks.cancel(&ask_id);
-    StatusCode::NO_CONTENT
+    // 404 tells the app its "running" turn is stale, so it reloads the thread.
+    if st.asks.cancel(&ask_id) { StatusCode::NO_CONTENT } else { StatusCode::NOT_FOUND }
 }
 
 /// Runs a core call on the blocking pool: core does filesystem/SQLite IO under a std Mutex,
@@ -164,10 +182,10 @@ pub async fn get_note(State(st): State<AppState>, Path((date, name)): Path<(Stri
 /// A weak validator from the file's identity (device, inode), length and mtime: cheap (no read),
 /// changes on every rewrite, and differs between two files of equal size and mtime (a link
 /// retargeted to another original).
-fn etag_of(meta: &std::fs::Metadata) -> Option<HeaderValue> {
+fn etag_of(meta: &std::fs::Metadata, suffix: &str) -> Option<HeaderValue> {
     use std::os::unix::fs::MetadataExt;
     let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
-    HeaderValue::from_str(&format!("W/\"{:x}-{:x}-{:x}-{:x}\"", meta.dev(), meta.ino(), meta.len(), mtime)).ok()
+    HeaderValue::from_str(&format!("W/\"{:x}-{:x}-{:x}-{:x}{suffix}\"", meta.dev(), meta.ino(), meta.len(), mtime)).ok()
 }
 
 /// Whether `If-None-Match` (all its header lines) matches `tag`: `*`, or any listed tag equal
@@ -177,20 +195,37 @@ fn none_match_hits<'a>(if_none_match: impl Iterator<Item = &'a str>, tag: &str) 
     if_none_match.flat_map(|v| v.split(',')).any(|t| t.trim() == "*" || opaque(t) == opaque(tag))
 }
 
+/// Appended to every HTML document Rooms shows, so "ask about this" works inside docs. The app
+/// frames a doc sandboxed with no origin of its own (agent-written HTML must not reach the app), so
+/// it can't read the doc's selection; this script, running inside, posts it out instead. It goes
+/// after `</html>`, where the parser still runs it, so the document is never parsed or rewritten;
+/// files on disk are untouched.
+const SELECTION_BRIDGE: &[u8] = include_bytes!("selection-bridge.html");
+/// Bumped when the bridge changes, so cached documents pick up the new one.
+const BRIDGE_VERSION: &str = "b2";
+
 /// Serves a room file. Previews remount often (scrolling, tab switches), so responses carry an
 /// ETag with `no-cache`: the webview revalidates every time and gets a bodyless 304 while unchanged.
 pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ApiErr> {
     let path = blocking(&st, move |c| c.resolve_file(&room_id, &rel)).await?;
     let read_err = |e: std::io::Error| ApiErr(CoreError::Io(e));
-    let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?);
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let html = matches!(ext.as_str(), "html" | "htm");
+    let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?, if html { BRIDGE_VERSION } else { "" });
     if let Some(tag) = &etag {
         let tag_str = tag.to_str().unwrap_or_default();
         if none_match_hits(headers.get_all("if-none-match").iter().filter_map(|v| v.to_str().ok()), tag_str) {
             return Ok((StatusCode::NOT_MODIFIED, [("etag", tag.clone()), ("cache-control", HeaderValue::from_static("no-cache"))]).into_response());
         }
     }
-    let body = file_body(&path).await.map_err(read_err)?;
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let body = if html {
+        use futures::StreamExt;
+        let f = tokio::fs::File::open(&path).await.map_err(read_err)?;
+        let tail = futures::stream::once(async { Ok::<_, std::io::Error>(axum::body::Bytes::from_static(SELECTION_BRIDGE)) });
+        Body::from_stream(tokio_util::io::ReaderStream::new(f).chain(tail))
+    } else {
+        file_body(&path).await.map_err(read_err)?
+    };
     let mut res = ([("content-type", content_type(&ext)), ("x-content-type-options", "nosniff"), ("cache-control", "no-cache")], body).into_response();
     if let Some(tag) = etag { res.headers_mut().insert("etag", tag); }
     Ok(res)

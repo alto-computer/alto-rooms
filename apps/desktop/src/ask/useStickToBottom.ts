@@ -1,4 +1,4 @@
-import { useEffect, useRef, type DependencyList, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type DependencyList, type RefObject } from "react";
 
 /** How close to the bottom (px) still counts as "reading the latest". */
 export const STICK_PX = 48;
@@ -17,15 +17,17 @@ function prefersReducedMotion(): boolean {
  * turn is never interrupted. Scrolling up unpins; scrolling back near the bottom pins again.
  * While pinned, an element from `anchor` (checked on each change) is scrolled to the top instead,
  * e.g. a question whose long answer just landed. That is a downward move, so it stays pinned.
+ * Returns whether the reader is away from the bottom, and a way back that pins again.
  */
 export function useStickToBottom(
   ref: RefObject<HTMLElement | null>,
   deps: DependencyList,
   anchor?: () => Element | null,
-): void {
+): { away: boolean; toBottom: () => void } {
   const element = useRef<HTMLElement | null>(null);
   const pinned = useRef(true);
   const lastTop = useRef(0);
+  const [away, setAway] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -45,8 +47,17 @@ export function useStickToBottom(
       if (distanceFromBottom(el) <= STICK_PX) pinned.current = true;
       else if (el.scrollTop < lastTop.current) pinned.current = false;
       lastTop.current = el.scrollTop;
+      setAway(distanceFromBottom(el) > STICK_PX);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, deps);
+
+  const toBottom = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    pinned.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  }, [ref]);
+  return { away, toBottom };
 }

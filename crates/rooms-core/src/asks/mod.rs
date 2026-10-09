@@ -1,10 +1,12 @@
 //! v2 ask: send a question about a doc to the agent CLI that made it (spec 2026-10-06 v2 ask).
 //! `Asks` is the only entry point; templates, prompt, log and process stay inside this module.
 pub(crate) mod agents;
+pub mod images;
 pub(crate) mod log;
 pub(crate) mod prompt;
 pub(crate) mod run;
 pub(crate) mod sources;
+pub(crate) mod stream;
 
 pub use run::Limits;
 
@@ -12,18 +14,34 @@ use crate::lock::lock;
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
-use prompt::{build_prompt, valid_file_key, valid_ident};
-use rooms_protocol::{Artifact, AskStatus, AskTarget, AskTurn, EventKind};
+use prompt::{build_prompt, context, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
+use rooms_protocol::{Artifact, AskKind, AskStatus, AskTarget, AskTurn, EventKind};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
+use stream::{EventRule, Reader};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 pub const MAX_RUNNING: usize = 4;
 const MAX_QUESTION_CHARS: usize = 8_000;
 const RESTARTED: &str = "Stopped because Rooms restarted";
+/// JSON-lines output carries every streamed chunk and tool result around the answer, so a profile
+/// with event rules may print this many times `Limits::max_stdout` (16 MB by default).
+const JSON_STDOUT_FACTOR: usize = 16;
+/// `ask.progress` goes out at most this often per turn.
+const PROGRESS_EVERY: Duration = Duration::from_millis(100);
+
+/// The answer in `stdout`: what the profile's event rules read from it, or the plain text when the
+/// profile has no rules or the output holds no JSON line (a template without its JSON flag).
+fn read_answer(rules: &[EventRule], stdout: &[u8]) -> String {
+    if rules.is_empty() { return run::clean_output(stdout); }
+    let mut r = Reader::new(rules);
+    r.push(stdout);
+    r.finish();
+    if r.saw_json() { run::clean_output(r.text().as_bytes()) } else { run::clean_output(stdout) }
+}
 
 /// Why an ask call failed, with the wire `code()` and HTTP `status()` roomsd answers with (the
 /// message is the `Display` text, shown to the user as is).
@@ -60,6 +78,41 @@ impl AskError {
     }
 }
 
+/// What the ask bar sends: a question, with its images and model, or a command (`kind`).
+#[derive(Debug, Clone, Copy)]
+pub struct Request<'a> {
+    pub question: &'a str,
+    /// One of the target's models; `None` or "" leaves the agent's default.
+    pub model: Option<&'a str>,
+    /// Ids from `save_image`.
+    pub images: &'a [String],
+    pub kind: AskKind,
+}
+
+impl<'a> Request<'a> {
+    pub fn question(question: &'a str) -> Self { Self { question, model: None, images: &[], kind: AskKind::Question } }
+
+    pub fn command(kind: AskKind) -> Self { Self { kind, ..Self::question("") } }
+
+    /// The turn's question: what was asked, trimmed and within bounds, or the command as typed.
+    fn text(&self) -> Result<&'a str, AskError> {
+        match self.kind {
+            AskKind::Clear => Ok("/new"),
+            AskKind::Compact => Ok("/compact"),
+            AskKind::Question => {
+                let q = self.question.trim();
+                if q.is_empty() || q.chars().count() > MAX_QUESTION_CHARS {
+                    return Err(AskError::BadRequest(format!("A question must be 1–{MAX_QUESTION_CHARS} characters")));
+                }
+                Ok(q)
+            }
+        }
+    }
+
+    /// A command carries no images.
+    fn images(&self) -> &'a [String] { if self.kind == AskKind::Question { self.images } else { &[] } }
+}
+
 struct Entry { file_key: String, killer: Killer }
 
 /// Where an ask from a doc goes: the one answer both `target` and `start` use.
@@ -75,6 +128,7 @@ struct Resolved {
 struct Inner {
     core: RoomsCore,
     log: AskLog,
+    images: images::Images,
     /// Filled once the login shell answers; until then agents get roomsd's own PATH.
     login_path: OnceLock<String>,
     limits: Limits,
@@ -104,18 +158,19 @@ pub async fn login_path() -> Option<String> {
 }
 
 /// How a finished run of `agent` ends its turn: (status, answer, error shown to the user). The
-/// answer is the cleaned stdout, kept even when the run failed or was stopped.
-fn turn_end(agent: &str, outcome: Outcome) -> (AskStatus, String, Option<String>) {
+/// answer is read from stdout by `rules`, and kept even when the run failed or was stopped.
+fn turn_end(agent: &str, rules: &[EventRule], outcome: Outcome) -> (AskStatus, String, Option<String>) {
+    let answer = |stdout: String| read_answer(rules, stdout.as_bytes());
     match outcome {
-        Outcome::Exited { code: 0, stdout, .. } => (AskStatus::Done, run::clean_output(stdout.as_bytes()), None),
+        Outcome::Exited { code: 0, stdout, .. } => (AskStatus::Done, answer(stdout), None),
         Outcome::Exited { code, stdout, stderr_tail } => {
             let last = run::clean_output(stderr_tail.as_bytes()).lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string);
             let mut m = format!("{agent} exited with an error (code {code})");
             if let Some(l) = last { m.push('\n'); m.push_str(&l); }
-            (AskStatus::Failed, run::clean_output(stdout.as_bytes()), Some(m))
+            (AskStatus::Failed, answer(stdout), Some(m))
         }
         Outcome::Killed { reason, stdout } => {
-            let a = run::clean_output(stdout.as_bytes());
+            let a = answer(stdout);
             match reason {
                 Reason::Cancelled | Reason::Shutdown => (AskStatus::Cancelled, a, None),
                 Reason::Timeout => (AskStatus::Failed, a, Some("Stopped: took too long".into())),
@@ -138,10 +193,11 @@ impl Asks {
 
     pub fn with_limits(core: RoomsCore, login_path: Option<String>, limits: Limits) -> Self {
         let log = AskLog::new(core.home().join(".rooms/asks"));
+        let images = images::Images::new(core.home().join(".rooms/asks/images"));
         let cell = OnceLock::new();
         if let Some(p) = login_path { let _ = cell.set(p); }
         Self(Arc::new(Inner {
-            core, log, login_path: cell, limits, running: Mutex::new(HashMap::new()),
+            core, log, images, login_path: cell, limits, running: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false), rt: tokio::runtime::Handle::try_current().ok(),
         }))
     }
@@ -186,39 +242,96 @@ impl Asks {
     /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
     /// `model` must be one of the target's models; `None` or "" leaves the agent's default.
     pub fn start(&self, room: &str, artifact_id: &str, question: &str, model: Option<&str>) -> Result<AskTurn, AskError> {
-        let _rt = self.0.rt.as_ref().map(|h| h.enter());
-        let q = question.trim();
-        if q.is_empty() || q.chars().count() > MAX_QUESTION_CHARS {
-            return Err(AskError::BadRequest(format!("A question must be 1–{MAX_QUESTION_CHARS} characters")));
-        }
-        let core = &self.0.core;
-        let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(room, artifact_id)?;
-        let model = model.filter(|m| !m.is_empty());
-        if let Some(m) = model {
-            if !plan.models.iter().any(|x| x == m) {
-                return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
-            }
-        }
-        let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
+        self.start_with(room, artifact_id, Request { model, ..Request::question(question) })
+    }
 
-        let mut running = lock(&self.0.running);
-        if self.0.shutting_down.load(Ordering::SeqCst) { return Err(AskError::Capacity); }
-        if running.values().any(|e| e.file_key == artifact.file_key) { return Err(AskError::Busy); }
-        if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
+    /// Stores an attached image; the id goes in `Request::images`. Blocking (file IO).
+    pub fn save_image(&self, bytes: &[u8]) -> Result<String, AskError> {
+        self.0.images.save(bytes).map_err(AskError::BadRequest)
+    }
+
+    /// The stored image `id`, for serving it back.
+    pub fn image_path(&self, id: &str) -> Option<PathBuf> { self.0.images.path(id) }
+
+    /// Starts a turn: a question goes to the agent; `/new` is recorded at once (nothing runs);
+    /// `/compact` asks the agent to summarize the conversation so far. Blocking, like `start`.
+    pub fn start_with(&self, room: &str, artifact_id: &str, req: Request) -> Result<AskTurn, AskError> {
+        let _rt = self.0.rt.as_ref().map(|h| h.enter());
+        let question = req.text()?;
+        let image_paths = self.image_paths(req.images())?;
+        let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(room, artifact_id)?;
+        let model = req.model.filter(|m| !m.is_empty());
+        if let Some(m) = model.filter(|m| !plan.models.iter().any(|x| x == m)) {
+            return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
+        }
+
+        let running = self.reserve(&artifact.file_key)?;
         let prior = self.read_thread(&running, &artifact.file_key)?;
-        let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, &prior, q);
-        // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
-        let mcp = core.home().join(".rooms/mcp.json");
-        let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
-        let argv = plan.render(&Vars { prompt: &prompt, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s, model: model.unwrap_or("") });
+        let ctx = context(&prior, if plan.prompt_on_stdin() { PRIOR_CHARS_STDIN } else { PRIOR_CHARS_ARGV });
+        if req.kind != AskKind::Question && ctx.is_empty() {
+            return Err(AskError::BadRequest(if req.kind == AskKind::Clear { "Nothing to clear yet" } else { "Nothing to summarize yet" }.into()));
+        }
         let turn = AskTurn {
-            id: nanoid::nanoid!(16), file_key: artifact.file_key.clone(), question: q.to_string(), answer: String::new(),
-            agent: plan.agent.clone(), model: model.map(str::to_string), mode: plan.mode, status: AskStatus::Running, error: None, started_at: now(), ended_at: None,
+            id: nanoid::nanoid!(16), file_key: artifact.file_key.clone(), question: question.to_string(), answer: String::new(),
+            agent: plan.agent.clone(), model: model.map(str::to_string), mode: plan.mode, status: AskStatus::Running, error: None,
+            started_at: now(), ended_at: None, images: req.images().to_vec(), kind: req.kind, left_out: ctx.left_out as u32,
         };
+        if req.kind == AskKind::Clear { return self.record_clear(running, turn); }
+
+        let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
+        let asked = if req.kind == AskKind::Compact { COMPACT_ASK.to_string() } else { with_image_paths(question, &image_paths) };
+        let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, &ctx, &asked);
+        let image_dir = if image_paths.is_empty() { String::new() } else { self.0.images.dir().to_string_lossy().into_owned() };
+        // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
+        let mcp = self.0.core.home().join(".rooms/mcp.json");
+        let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
+        let stdin = plan.prompt_on_stdin();
+        let argv = plan.render(&Vars {
+            prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
+            model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir,
+        });
+        self.launch(running, turn, argv, stdin.then_some(prompt), cwd, plan.events)
+    }
+
+    /// The stored files for `ids`; an unknown id is the user's to fix.
+    fn image_paths(&self, ids: &[String]) -> Result<Vec<String>, AskError> {
+        if ids.len() > images::MAX_IMAGES {
+            return Err(AskError::BadRequest(format!("At most {} images per question", images::MAX_IMAGES)));
+        }
+        ids.iter()
+            .map(|id| self.0.images.path(id).map(|p| p.to_string_lossy().into_owned()))
+            .collect::<Option<_>>()
+            .ok_or_else(|| AskError::BadRequest("An attached image is missing — attach it again".into()))
+    }
+
+    /// The running map, locked, once there's room for one more turn about `file_key`.
+    fn reserve(&self, file_key: &str) -> Result<MutexGuard<'_, HashMap<String, Entry>>, AskError> {
+        let running = lock(&self.0.running);
+        if self.0.shutting_down.load(Ordering::SeqCst) { return Err(AskError::Capacity); }
+        if running.values().any(|e| e.file_key == file_key) { return Err(AskError::Busy); }
+        if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
+        Ok(running)
+    }
+
+    /// `/new`: nothing runs; the turn is recorded done, and the next question starts over.
+    fn record_clear(&self, running: MutexGuard<'_, HashMap<String, Entry>>, mut turn: AskTurn) -> Result<AskTurn, AskError> {
+        turn.status = AskStatus::Done;
+        turn.ended_at = Some(now());
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
-        core.emit_ask(EventKind::AskStarted { turn: turn.clone() });
-        let spawned = spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.get().cloned(), limits: self.0.limits });
-        match spawned {
+        drop(running);
+        self.0.core.emit_ask(EventKind::AskDone { turn: turn.clone() });
+        Ok(turn)
+    }
+
+    /// Records `turn`, runs `argv` (with `stdin` as its input, if any), relays its progress, and
+    /// finishes the turn when it ends.
+    fn launch(&self, mut running: MutexGuard<'_, HashMap<String, Entry>>, turn: AskTurn, argv: Vec<String>, stdin: Option<String>, cwd: PathBuf, rules: Vec<EventRule>) -> Result<AskTurn, AskError> {
+        self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
+        self.0.core.emit_ask(EventKind::AskStarted { turn: turn.clone() });
+        let (tap, chunks) = tokio::sync::mpsc::unbounded_channel();
+        let mut limits = self.0.limits;
+        if !rules.is_empty() { limits.max_stdout = limits.max_stdout.saturating_mul(JSON_STDOUT_FACTOR); }
+        match spawn_agent(SpawnSpec { argv: argv.clone(), stdin, cwd, path_env: self.0.login_path.get().cloned(), limits, tap: Some(tap) }) {
             Err(e) => {
                 drop(running);
                 let msg = if e.kind() == std::io::ErrorKind::NotFound {
@@ -231,11 +344,11 @@ impl Asks {
             Ok(Running { killer, done }) => {
                 running.insert(turn.id.clone(), Entry { file_key: turn.file_key.clone(), killer });
                 drop(running);
-                let me = self.clone();
-                let t = turn.clone();
+                self.relay_progress(&turn, rules.clone(), chunks);
+                let (me, t) = (self.clone(), turn.clone());
                 tokio::spawn(async move {
                     let (status, answer, error) = match done.await {
-                        Ok(outcome) => turn_end(&t.agent, outcome),
+                        Ok(outcome) => turn_end(&t.agent, &rules, outcome),
                         Err(_) => (AskStatus::Failed, String::new(), Some("Internal error".into())),
                     };
                     me.finish(t, status, answer, error);
@@ -243,6 +356,50 @@ impl Asks {
             }
         }
         Ok(turn)
+    }
+
+    /// Reads stdout chunks as they come and emits `ask.progress` with the answer so far, at most
+    /// once per PROGRESS_EVERY and only on change. Ends when the run's stdout tap closes.
+    fn relay_progress(&self, turn: &AskTurn, rules: Vec<EventRule>, mut chunks: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>) {
+        let me = self.clone();
+        let (id, file_key) = (turn.id.clone(), turn.file_key.clone());
+        tokio::spawn(async move {
+            let mut reader = Reader::new(&rules);
+            let mut raw: Vec<u8> = Vec::new();
+            let mut sent: (String, Option<String>) = (String::new(), None);
+            let mut tick = tokio::time::interval(PROGRESS_EVERY);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut dirty = false;
+            loop {
+                tokio::select! {
+                    chunk = chunks.recv() => match chunk {
+                        Some(b) => {
+                            if rules.is_empty() { raw.extend_from_slice(&b) } else { reader.push(&b) }
+                            dirty = true;
+                        }
+                        None => break,
+                    },
+                    _ = tick.tick(), if dirty => {
+                        dirty = false;
+                        let now = if rules.is_empty() {
+                            (run::clean_output(&raw), None)
+                        } else if reader.saw_json() {
+                            (reader.text().trim().to_string(), reader.activity().map(str::to_string))
+                        } else {
+                            continue;
+                        };
+                        if now == sent { continue; }
+                        // Under the running lock: `finish` removes the turn under it before `ask.done`,
+                        // so no progress can follow the done event.
+                        let running = lock(&me.0.running);
+                        if !running.contains_key(&id) { break; }
+                        me.0.core.emit_ask(EventKind::AskProgress { id: id.clone(), file_key: file_key.clone(), answer: now.0.clone(), activity: now.1.clone() });
+                        drop(running);
+                        sent = now;
+                    }
+                }
+            }
+        });
     }
 
     /// Append the final record (I3), drop it from the running map, then emit `ask.done` (I2).
@@ -273,8 +430,12 @@ impl Asks {
         self.read_thread(&running, file_key)
     }
 
-    pub fn cancel(&self, ask_id: &str) {
-        if let Some(e) = lock(&self.0.running).get(ask_id) { e.killer.kill(Reason::Cancelled); }
+    /// Stops a running turn; false when it isn't running here (it already ended, or roomsd restarted).
+    pub fn cancel(&self, ask_id: &str) -> bool {
+        match lock(&self.0.running).get(ask_id) {
+            Some(e) => { e.killer.kill(Reason::Cancelled); true }
+            None => false,
+        }
     }
 
     /// Kill everything still running (roomsd is stopping; the app gives it 1 s). Waits ≤ 700 ms
@@ -316,14 +477,27 @@ mod tests {
 
     #[test]
     fn turn_end_maps_every_outcome() {
-        assert_eq!(turn_end("codex", exited(0, "\x1b[1mhi\x1b[0m\n", "noise")), (AskStatus::Done, "hi".into(), None));
-        assert_eq!(turn_end("codex", exited(2, "partial", "warn\nboom: bad flag\n\n")),
+        let t = |agent: &str, o: Outcome| turn_end(agent, &[], o);
+        assert_eq!(t("codex", exited(0, "\x1b[1mhi\x1b[0m\n", "noise")), (AskStatus::Done, "hi".into(), None));
+        assert_eq!(t("codex", exited(2, "partial", "warn\nboom: bad flag\n\n")),
             (AskStatus::Failed, "partial".into(), Some("codex exited with an error (code 2)\nboom: bad flag".into())));
-        assert_eq!(turn_end("codex", exited(1, "", "  \n")), (AskStatus::Failed, String::new(), Some("codex exited with an error (code 1)".into())));
-        assert_eq!(turn_end("codex", killed(Reason::Cancelled, "so far")), (AskStatus::Cancelled, "so far".into(), None));
-        assert_eq!(turn_end("codex", killed(Reason::Shutdown, "")), (AskStatus::Cancelled, String::new(), None));
-        assert_eq!(turn_end("codex", killed(Reason::Timeout, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: took too long".into())));
-        assert_eq!(turn_end("codex", killed(Reason::TooLong, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: the answer was too long".into())));
+        assert_eq!(t("codex", exited(1, "", "  \n")), (AskStatus::Failed, String::new(), Some("codex exited with an error (code 1)".into())));
+        assert_eq!(t("codex", killed(Reason::Cancelled, "so far")), (AskStatus::Cancelled, "so far".into(), None));
+        assert_eq!(t("codex", killed(Reason::Shutdown, "")), (AskStatus::Cancelled, String::new(), None));
+        assert_eq!(t("codex", killed(Reason::Timeout, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: took too long".into())));
+        assert_eq!(t("codex", killed(Reason::TooLong, "a")), (AskStatus::Failed, "a".into(), Some("Stopped: the answer was too long".into())));
+    }
+
+    #[test]
+    fn answers_come_from_event_rules_or_plain_stdout() {
+        let rules: Vec<EventRule> = vec![toml::from_str("match = { \"/type\" = \"result\" }\nanswer = \"/result\"").unwrap()];
+        let json = "{\"type\":\"system\"}\n{\"type\":\"result\",\"result\":\"  **Done**\\n\"}\n";
+        assert_eq!(read_answer(&rules, json.as_bytes()), "**Done**");
+        // no JSON line: the template has no JSON flag, so stdout is the answer
+        assert_eq!(read_answer(&rules, b"\x1b[1mplain\x1b[0m\n"), "plain");
+        assert_eq!(read_answer(&[], json.as_bytes()), json.trim());
+        assert_eq!(turn_end("claude-code", &rules, exited(0, json, "")), (AskStatus::Done, "**Done**".into(), None));
+        assert_eq!(turn_end("claude-code", &rules, killed(Reason::Cancelled, "{\"type\":\"x\"}")), (AskStatus::Cancelled, String::new(), None));
     }
 
     #[test]

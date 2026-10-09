@@ -1,5 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderWithStores, room } from "@/test/fakes";
 import { DocView } from "./DocView";
@@ -83,5 +83,37 @@ describe("DocView: removed room", () => {
       fake.emit({ type: "room.removed", roomId: "r1" });
     });
     expect(screen.getByText("This doc is gone")).toBeInTheDocument();
+  });
+
+  it("offers Ask over text selected in its own frame and quotes it in the ask bar", async () => {
+    const { container, client } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+    });
+    const frame = container.querySelector("iframe")!;
+    const post = (data: unknown, source: MessageEventSource | null = frame.contentWindow) =>
+      act(() => void window.dispatchEvent(new MessageEvent("message", { data, source })));
+    // Another frame's message, or a malformed one, does nothing.
+    post({ roomsSelection: 1, text: "elsewhere", rect: { x: 1, y: 100, w: 10, h: 10 } }, window);
+    post({ roomsSelection: 1, text: 42 });
+    expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+    post({ roomsSelection: 1, text: "한도 초과 판정은 공통", rect: { x: 100, y: 200, w: 80, h: 16 } });
+    const ask = await screen.findByRole("button", { name: "Ask" });
+    expect(ask.style.left).toBe("140px");
+    fireEvent.click(ask);
+    expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+    const quotes = await screen.findByRole("list", { name: "Quoted text" });
+    expect(quotes.textContent).toContain("한도 초과 판정은 공통");
+    const input = screen.getByPlaceholderText("Ask about this doc…");
+    await waitFor(() => expect(input).toHaveFocus());
+    fireEvent.change(input, { target: { value: "왜 공통이야?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ question: "> 한도 초과 판정은 공통\n\n왜 공통이야?" })));
+    await waitFor(() => expect(screen.queryByRole("list", { name: "Quoted text" })).toBeNull());
+    // An empty selection hides the button.
+    post({ roomsSelection: 1, text: "x", rect: { x: 1, y: 100, w: 1, h: 1 } });
+    await screen.findByRole("button", { name: "Ask" });
+    post({ roomsSelection: 1, text: "", rect: null });
+    expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
   });
 });
