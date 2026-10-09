@@ -54,7 +54,7 @@ describe("AsksStore", () => {
   it("never drops a thread an ask bar holds, until it lets go", () => {
     const { store, emit } = setup();
     emit({ type: "ask.done", turn: turn("seen", "done", { scope: docScope("seen") }) });
-    const release = store.hold("doc:seen");
+    const release = store.hold(docScope("seen"));
     for (let i = 0; i < MAX_THREADS + 5; i++) emit({ type: "ask.done", turn: turn(`t${i}`, "done", { scope: docScope(`f${i}`) }) });
     expect(Object.keys(store.getState().threads)).toContain("doc:seen");
     release();
@@ -98,13 +98,13 @@ describe("AsksStore", () => {
     await store.submit(doc, q("one"));
     await store.submit(doc, q("two"));
     const two = store.getState().queues["doc:k1"][1];
-    store.sendNow("doc:k1", two.id);
+    store.sendNow(doc, two.id);
     expect(client.cancelAsk).toHaveBeenCalledWith("t1");
     expect(store.getState().queues["doc:k1"].map((q) => q.text)).toEqual(["two", "one"]);
     client.startAsk.mockRejectedValueOnce(new Error("Waiting for an answer"));
     emit({ type: "ask.done", turn: turn("t1", "cancelled") });
     await vi.waitFor(() => expect(store.getState().queues["doc:k1"][0].error).toBe("Waiting for an answer"));
-    expect(store.unqueue("doc:k1", two.id)?.text).toBe("two");
+    expect(store.unqueue(doc, two.id)?.text).toBe("two");
     expect(store.getState().queues["doc:k1"].map((q) => q.text)).toEqual(["one"]);
     // Nothing running, only a failed question waiting: a new one queues behind it and both go.
     expect(await store.submit(doc, q("three"))).toBe("queued");
@@ -130,7 +130,7 @@ describe("AsksStore", () => {
   it("a quote and a queued question for a room scope never show under the doc scope", async () => {
     const { store, client, emit } = setup();
     const room: AskScope = { kind: "room", roomId: "k1" };
-    store.addQuote("room:k1", "picked in the room");
+    store.addQuote(room, "picked in the room");
     emit({ type: "ask.started", turn: turn("r1", "running", { scope: room }) });
     expect(await store.submit(room, q("later"))).toBe("queued");
     const { quotes, queues } = store.getState();
@@ -272,7 +272,7 @@ describe("AsksStore", () => {
       const { store, client, emit } = setup();
       emit({ type: "ask.started", turn: stale });
       emit({ type: "ask.started", turn: turn("h1", "running", { scope: docScope("hidden") }) });
-      const release = store.hold("doc:k1");
+      const release = store.hold(doc);
       await vi.advanceTimersByTimeAsync(STALE_MS / 2);
       expect(client.askThread).not.toHaveBeenCalled();
       // progress keeps it fresh

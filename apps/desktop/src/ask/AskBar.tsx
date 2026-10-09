@@ -36,7 +36,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const container = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => store.hold(key), [store, key]);
+  useEffect(() => store.hold(scope), [store, key]);
   // Fetch the Markdown renderer while the doc is read, so an answer never waits on it.
   useEffect(() => void preloadAnswer(), []);
   useLoadThread(scope, shown && !(thread?.loaded ?? false));
@@ -78,7 +78,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           onRetry={retry}
           onCompact={() => composer.runCommand("compact")}
           onReload={() => void store.load(scope)}
-          onQuote={(text) => store.addQuote(key, text)}
+          onQuote={(text) => store.addQuote(scope, text)}
         />
       ) : null}
       {/* For screen readers: when an answer starts and when it lands. */}

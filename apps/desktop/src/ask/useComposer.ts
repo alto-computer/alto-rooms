@@ -63,7 +63,7 @@ export function useComposer(scope: AskScope, model: string | null) {
     const images = attachments.items.map((a) => a.id!);
     setDraft("");
     attachments.clear(attachments.items.map((a) => a.key));
-    store.clearQuotes(key, sentQuotes);
+    store.clearQuotes(scope, sentQuotes);
     const sent = await deliver({ text: withQuotes(sentQuotes, text), model, images, kind: "question" }, now);
     if (!sent) restore(text, sentQuotes, images);
   };
@@ -71,7 +71,7 @@ export function useComposer(scope: AskScope, model: string | null) {
   /** Puts a question back in the input: its text (unless something new was typed), quotes and images. */
   const restore = (text: string, qs: string[], images: string[]) => {
     setDraft((d) => d || text);
-    qs.forEach((x) => store.addQuote(key, x));
+    qs.forEach((x) => store.addQuote(scope, x));
     attachments.restore(images);
   };
 
@@ -81,11 +81,11 @@ export function useComposer(scope: AskScope, model: string | null) {
 
   /** A queued question back in the input, out of the queue. */
   const edit = (q: Queued) => {
-    const item = store.unqueue(key, q.id);
+    const item = store.unqueue(scope, q.id);
     if (!item) return;
     const { quotes: qs, text } = splitQuotes(item.text);
     setDraft(text);
-    qs.forEach((x) => store.addQuote(key, x));
+    qs.forEach((x) => store.addQuote(scope, x));
     attachments.restore(item.images);
   };
 
@@ -105,9 +105,9 @@ export function useComposer(scope: AskScope, model: string | null) {
   return {
     draft, setDraft, quotes, queue, attachments, pending, error,
     submit, runCommand, retry, edit, recall,
-    removeQuote: (i: number) => store.removeQuote(key, i),
-    sendNow: (q: Queued) => store.sendNow(key, q.id),
-    unqueue: (q: Queued) => void store.unqueue(key, q.id),
+    removeQuote: (i: number) => store.removeQuote(scope, i),
+    sendNow: (q: Queued) => store.sendNow(scope, q.id),
+    unqueue: (q: Queued) => void store.unqueue(scope, q.id),
   };
 }
 

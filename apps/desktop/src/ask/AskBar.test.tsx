@@ -246,9 +246,9 @@ describe("AskBar", () => {
 
   it("shows quotes waiting above the input and on the asked question", async () => {
     const { emit } = await setup();
-    act(() => store.addQuote("doc:k1", "첫 인용\n둘째 줄"));
-    act(() => store.addQuote("doc:k1", "  다른 인용  "));
-    act(() => store.addQuote("doc:k1", "다른 인용"));
+    act(() => store.addQuote({ kind: "doc", fileKey: "k1" }, "첫 인용\n둘째 줄"));
+    act(() => store.addQuote({ kind: "doc", fileKey: "k1" }, "  다른 인용  "));
+    act(() => store.addQuote({ kind: "doc", fileKey: "k1" }, "다른 인용"));
     const chips = await screen.findByRole("list", { name: "Quoted text" });
     expect(chips.querySelectorAll("li")).toHaveLength(2);
     fireEvent.click(screen.getAllByRole("button", { name: "Remove quote" })[1]);

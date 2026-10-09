@@ -164,7 +164,7 @@ export class AsksStore {
     if (this.busy(key)) {
       const item: Queued = { ...q, id: `q${++this.queueSeq}`, scope, error: null };
       this.setQueue(key, [...(this.state.queues[key] ?? []), item]);
-      if (now) this.sendNow(key, item.id);
+      if (now) this.sendNow(scope, item.id);
       else void this.drain(key); // e.g. only failed questions were waiting
       return "queued";
     }
@@ -201,7 +201,8 @@ export class AsksStore {
   }
 
   /** Takes a queued question out (to edit it, or drop it). */
-  unqueue(key: string, id: string): Queued | undefined {
+  unqueue(scope: AskScope, id: string): Queued | undefined {
+    const key = scopeKey(scope);
     const queue = this.state.queues[key] ?? [];
     const item = queue.find((q) => q.id === id);
     if (item) this.setQueue(key, queue.filter((q) => q.id !== id));
@@ -209,7 +210,8 @@ export class AsksStore {
   }
 
   /** Sends a queued question now: it moves to the front and the running answer is stopped. */
-  sendNow(key: string, id: string): void {
+  sendNow(scope: AskScope, id: string): void {
+    const key = scopeKey(scope);
     const queue = this.state.queues[key] ?? [];
     const item = queue.find((q) => q.id === id);
     if (!item) return;
@@ -236,21 +238,24 @@ export class AsksStore {
     this.set({ ...this.state, queues: { ...this.state.queues, [key]: queue } });
   }
 
-  /** Adds `text` as a quote for the next question in the scope under `key`, and opens the bar. */
-  addQuote(key: string, text: string): void {
+  /** Adds `text` as a quote for the next question in `scope`, and opens the bar. */
+  addQuote(scope: AskScope, text: string): void {
     const q = toQuote(text);
     if (!q) return;
+    const key = scopeKey(scope);
     const current = this.state.quotes[key] ?? [];
     const next = current.includes(q) ? current : [...current, q].slice(-MAX_QUOTES);
     this.set({ ...this.state, open: true, quotes: { ...this.state.quotes, [key]: next } });
   }
 
-  removeQuote(key: string, index: number): void {
+  removeQuote(scope: AskScope, index: number): void {
+    const key = scopeKey(scope);
     const next = (this.state.quotes[key] ?? []).filter((_, i) => i !== index);
     this.set({ ...this.state, quotes: { ...this.state.quotes, [key]: next } });
   }
 
-  clearQuotes(key: string, sent: string[]): void {
+  clearQuotes(scope: AskScope, sent: string[]): void {
+    const key = scopeKey(scope);
     const next = (this.state.quotes[key] ?? []).filter((q) => !sent.includes(q));
     this.set({ ...this.state, quotes: { ...this.state.quotes, [key]: next } });
   }
@@ -281,8 +286,9 @@ export class AsksStore {
     );
   }
 
-  /** Keeps the thread under `key` from being pruned while an ask bar shows it; returns the release. */
-  hold(key: string): () => void {
+  /** Keeps `scope`'s thread from being pruned while an ask bar shows it; returns the release. */
+  hold(scope: AskScope): () => void {
+    const key = scopeKey(scope);
     this.held.set(key, (this.held.get(key) ?? 0) + 1);
     return () => {
       const n = (this.held.get(key) ?? 1) - 1;
