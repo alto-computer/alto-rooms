@@ -1,8 +1,8 @@
 import type { Artifact, Room } from "@alto-rooms/protocol-ts";
-import { RoomsApiError } from "@alto-rooms/protocol-ts";
+import { PERMISSIONS, RoomsApiError } from "@alto-rooms/protocol-ts";
 import { describe, expect, it, vi } from "vitest";
 import { BridgeError, handleBridgeCall, validPath } from "./bridge";
-import { frameAttrs, PERMISSION_COPY } from "./permissions";
+import { frameAttrs, PERMISSION_COPY, permissionLine } from "./permissions";
 import { plugin } from "@/test/plugins";
 
 const art = (id: string, createdAt: string): Artifact => ({
@@ -47,12 +47,23 @@ describe("frameAttrs", () => {
       allow: "clipboard-read; clipboard-write",
     });
   });
+  it("opens nothing in the plugin frame for artifact.content", () => {
+    expect(frameAttrs(plugin({ permissions: ["artifact.content"] }))).toEqual({ sandbox: "allow-scripts", allow: undefined });
+  });
   it("has plain words for every permission", () => {
     expect(PERMISSION_COPY).toEqual({
       "rooms.read": "Can see your rooms and documents",
       clipboard: "Can copy and paste",
       downloads: "Can save files you export",
+      "artifact.content": "Can read the text of documents and use the network inside them",
     });
+  });
+  it("has copy for exactly the permissions the core accepts", () => {
+    expect(Object.keys(PERMISSION_COPY).sort()).toEqual([...PERMISSIONS].sort());
+  });
+  it("still names a permission it has no copy for", () => {
+    expect(permissionLine("clipboard")).toBe("Can copy and paste");
+    expect(permissionLine("camera")).toBe("Can use camera");
   });
 });
 

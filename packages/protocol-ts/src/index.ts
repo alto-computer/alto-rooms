@@ -13,6 +13,7 @@ export * from "./generated/Info";
 export * from "./generated/JournalDay";
 export * from "./generated/Note";
 export * from "./generated/PluginInfo";
+export * from "./generated/permissions";
 export * from "./generated/PluginSlots";
 export * from "./generated/PluginStatus";
 export * from "./generated/SidePanelSlot";

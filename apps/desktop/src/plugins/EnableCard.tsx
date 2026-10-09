@@ -5,7 +5,7 @@
  */
 import { useState } from "react";
 import { usePlugins, usePluginsStore } from "@/data/hooks";
-import { PERMISSION_COPY } from "./permissions";
+import { permissionLine } from "./permissions";
 import type { HostPlugin } from "./pluginsStore";
 
 export function EnableCard() {
@@ -30,7 +30,7 @@ function Card({ plugin: p }: { plugin: HostPlugin }) {
         p.slots.artifactSidePanel ? "Adds a panel beside documents" : null,
       ].filter((x): x is string => x !== null);
   const asked = updated ? p.permissions.filter((x) => !p.granted!.includes(x)) : p.permissions;
-  const can = asked.map((x) => PERMISSION_COPY[x]).filter(Boolean);
+  const can = asked.map(permissionLine);
   const title = `${updated ? "Updated plugin" : "New plugin"}: ${p.name}`;
 
   const turnOn = async () => {
