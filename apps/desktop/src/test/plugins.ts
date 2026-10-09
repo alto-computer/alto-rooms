@@ -10,7 +10,7 @@ export function plugin(extra: Partial<PluginInfo> = {}): PluginInfo {
     description: null,
     entry: "index.html",
     permissions: [],
-    slots: { artifactSidePanel: { title: "Echo" }, tab: null },
+    slots: { artifactSidePanel: { title: "Echo", icon: null }, tab: null },
     status: "ok",
     reason: null,
     enabled: true,

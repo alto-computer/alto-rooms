@@ -255,7 +255,7 @@ describe("artifact side panel", () => {
   });
 
   it("several side-panel plugins share the panel with a switcher", async () => {
-    await openDoc([plugin(), plugin({ id: "notes", name: "Notes", slots: { artifactSidePanel: { title: "Notes" }, tab: null } })]);
+    await openDoc([plugin(), plugin({ id: "notes", name: "Notes", slots: { artifactSidePanel: { title: "Notes", icon: null }, tab: null } })]);
     await openPanel();
     fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
     expect(screen.getByTitle("Notes")).toBeInTheDocument();
