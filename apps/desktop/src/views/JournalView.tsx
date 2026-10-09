@@ -161,8 +161,9 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const initial = useViewerInitial();
   const readOnly = useReadOnly();
-  // The ask bar mounts once the day's cards have painted, and moves to a new day only after that day's
-  // cards are in, so it never delays them.
+  // The ask bar never delays the cards and never asks about a day other than the one shown. It first mounts
+  // a frame after the first day's cards paint (useFrameAfter). On a day change it unmounts at once, since
+  // barDate no longer matches, and the barDate effect brings it back after the new day's cards commit.
   const settled = day !== undefined || !!loadError;
   const barReady = useFrameAfter(settled);
   const [barDate, setBarDate] = useState(date);
@@ -262,7 +263,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
         </header>
         {body}
       </div>
-      {barReady && !readOnly ? bar : null}
+      {barReady && !readOnly && barDate === date ? bar : null}
     </div>
   );
 }

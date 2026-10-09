@@ -41,7 +41,7 @@ function holdFrames() {
 
 const subject = () => JSON.parse(screen.getByTestId("ask-bar").dataset.subject!);
 
-it("asks about the viewed day, and moves to another day only once that day has loaded", async () => {
+it("asks about the viewed day, shows no bar while another day loads, and asks about that day once it has", async () => {
   const { client } = await renderWithStores(<Host />, { viewer: journalViewer("2026-10-05") });
   await screen.findByTestId("ask-bar");
   expect(subject()).toEqual({ kind: "day", date: "2026-10-05" });
@@ -50,7 +50,7 @@ it("asks about the viewed day, and moves to another day only once that day has l
   vi.spyOn(client, "journalDay").mockImplementation((date: string) => new Promise((resolve) => (arrive = () => resolve(load(date)))));
   fireEvent.click(screen.getByRole("button", { name: "Oct 6" }));
   await act(() => new Promise((r) => setTimeout(r, 50)));
-  expect(subject()).toEqual({ kind: "day", date: "2026-10-05" });
+  expect(screen.queryByTestId("ask-bar")).toBeNull();
   await act(async () => arrive());
   await waitFor(() => expect(subject()).toEqual({ kind: "day", date: "2026-10-06" }));
 });
