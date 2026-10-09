@@ -68,6 +68,21 @@ describe("connectContent", () => {
   });
 });
 
+describe("onReveal", () => {
+  it("hands over the anchor from the app, and ignores one the document posted or one for another plugin", () => {
+    const c = connectContent("marker");
+    const got: unknown[] = [];
+    const off = c.onReveal((a) => got.push(a));
+    const reveal = (anchor: unknown, extra: Record<string, unknown> = {}) => ({ rooms: "content", v: 1, plugin: "marker", type: "reveal", anchor, ...extra });
+    host.deliver(reveal({ mark: "forged" }), window);
+    host.deliver(reveal({ mark: "other" }, { plugin: "other" }));
+    host.deliver(reveal({ mark: "x" }));
+    off();
+    host.deliver(reveal({ mark: "after" }));
+    expect(got).toEqual([{ mark: "x" }]);
+  });
+});
+
 describe("content module", () => {
   it("loads without the panel SDK, so a content script bundle and index.ts share no import cycle", async () => {
     vi.resetModules();

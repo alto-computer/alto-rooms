@@ -7,6 +7,7 @@ export type PluginErrorCode =
   | "write_failed"
   | "unknown_method"
   | "rate_limited"
+  | "bad_request"
   | "timeout";
 
 export class PluginError extends Error {

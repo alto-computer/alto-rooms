@@ -45,6 +45,11 @@ export interface RoomsContent {
   onAction(cb: (actionId: string, selection: ContentSelection | null) => void): () => void;
   /** Called with the path (relative to this document) when another frame of your plugin changed it. */
   onDataChanged(cb: (path: string) => void): () => void;
+  /**
+   * Called with the `anchor` your plugin passed to `open({ fileKey, anchor })` for this document,
+   * once per open, after `ready()`. The document's own script can read it, and can post a fake one.
+   */
+  onReveal(cb: (anchor: unknown) => void): () => void;
   /** Tells the app this script is listening. */
   ready(): void;
 }
@@ -52,7 +57,8 @@ export interface RoomsContent {
 type Inbound =
   | { type: "reply"; id: string; result?: unknown; error?: { code: PluginErrorCode; message?: string } }
   | { type: "dataChanged"; path: string }
-  | { type: "selection.action"; actionId: string };
+  | { type: "selection.action"; actionId: string }
+  | { type: "reveal"; anchor: unknown };
 
 const TIMEOUT_MS = 10_000;
 
@@ -63,6 +69,7 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
   const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: PluginError) => void; timer: ReturnType<typeof setTimeout> }>();
   const actionListeners = new Set<(id: string, s: ContentSelection | null) => void>();
   const changeListeners = new Set<(path: string) => void>();
+  const revealListeners = new Set<(anchor: unknown) => void>();
   let nextId = 0;
   let last: Range | null = null;
 
@@ -98,6 +105,8 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
     } else if (d.type === "selection.action") {
       const sel = last ? { text: last.toString(), range: last } : null;
       for (const l of [...actionListeners]) l(d.actionId, sel);
+    } else if (d.type === "reveal") {
+      for (const l of [...revealListeners]) l(d.anchor);
     }
   });
 
@@ -117,6 +126,10 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
     onDataChanged(cb) {
       changeListeners.add(cb);
       return () => void changeListeners.delete(cb);
+    },
+    onReveal(cb) {
+      revealListeners.add(cb);
+      return () => void revealListeners.delete(cb);
     },
     ready: () => post({ type: "ready" }),
   };
