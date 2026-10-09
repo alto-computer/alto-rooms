@@ -6,7 +6,7 @@ type EventInput = RoomsEvent extends infer T ? (T extends RoomsEvent ? Omit<T, "
 
 const turn = (id: string, status: AskTurn["status"], extra: Partial<AskTurn> = {}): AskTurn => ({
   id, fileKey: "k1", question: "q", answer: "", agent: "claude-code", model: null, mode: "resume", status,
-  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], ...extra,
+  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, ...extra,
 });
 
 function setup(thread: AskTurn[] = []) {

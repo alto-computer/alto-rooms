@@ -1,6 +1,6 @@
 use rooms_core::asks::{AskError, Asks, Limits};
 use rooms_core::RoomsCore;
-use rooms_protocol::{AskMode, AskStatus, AskTurn, EventKind};
+use rooms_protocol::{AskKind, AskMode, AskStatus, AskTurn, EventKind};
 use std::time::Duration;
 
 const FAKE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-agent.sh");
@@ -394,7 +394,7 @@ async fn images_reach_the_template_and_the_prompt_and_stay_on_the_turn() {
     let id = asks.save_image(b"\x89PNG\r\n\x1a\none").unwrap();
     let id2 = asks.save_image(b"GIF89a-two").unwrap();
     let mut rx = core.subscribe();
-    let t = asks.start_with(&room, &art, "이 화면 뭐야?", None, &[id.clone(), id2.clone()]).unwrap();
+    let t = asks.start_with(&room, &art, "이 화면 뭐야?", None, &[id.clone(), id2.clone()], AskKind::Question).unwrap();
     assert_eq!(t.images, vec![id.clone(), id2.clone()]);
     let done = wait_done(&mut rx, &t.id).await;
     let dir = d.path().join(".rooms/asks/images");
@@ -409,6 +409,39 @@ async fn images_reach_the_template_and_the_prompt_and_stay_on_the_turn() {
     assert!(!argv.contains("[-i]") && !argv.contains("[--dir]"), "{argv}");
     // Unknown or too many images are refused before anything runs.
     let missing = "0123456789abcdef0123456789abcdef.png".to_string();
-    assert!(matches!(asks.start_with(&room, &art, "q", None, &[missing]), Err(AskError::BadRequest(_))));
-    assert!(matches!(asks.start_with(&room, &art, "q", None, &vec![id; 6]), Err(AskError::BadRequest(_))));
+    assert!(matches!(asks.start_with(&room, &art, "q", None, &[missing], AskKind::Question), Err(AskError::BadRequest(_))));
+    assert!(matches!(asks.start_with(&room, &art, "q", None, &vec![id; 6], AskKind::Question), Err(AskError::BadRequest(_))));
+}
+
+#[tokio::test]
+async fn new_starts_over_and_compact_sends_the_agents_summary_instead() {
+    let (_d, core, room, art) = setup("");
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let start = |kind| asks.start_with(&room, &art, "", None, &[], kind);
+    assert!(matches!(start(AskKind::Clear), Err(AskError::BadRequest(m)) if m == "Nothing to clear yet"));
+    assert!(matches!(start(AskKind::Compact), Err(AskError::BadRequest(m)) if m == "Nothing to summarize yet"));
+    let t1 = asks.start(&room, &art, "first", None).unwrap();
+    wait_done(&mut rx, &t1.id).await;
+
+    // /compact: the agent gets the Q&A and the summary ask; its answer is the summary.
+    let c = start(AskKind::Compact).unwrap();
+    assert_eq!((c.kind, c.question.as_str(), c.status), (AskKind::Compact, "/compact", AskStatus::Running));
+    let c = wait_done(&mut rx, &c.id).await;
+    assert!(c.answer.contains("Q: first\n") && c.answer.contains("Question: Summarize the Q&A above"), "{}", c.answer);
+    let t2 = asks.start(&room, &art, "second", None).unwrap();
+    let d2 = wait_done(&mut rx, &t2.id).await;
+    // (the fake agent echoes its prompt, so the summary holds the first Q&A once; nothing else does)
+    assert!(d2.answer.contains("Summary of the earlier Q&A:\nARGV:"), "{}", d2.answer);
+    assert_eq!(d2.answer.matches("Previous Q&A:").count(), 1, "{}", d2.answer);
+
+    // /new: recorded at once, nothing runs, and nothing earlier goes along.
+    let n = start(AskKind::Clear).unwrap();
+    assert_eq!((n.kind, n.status, n.question.as_str()), (AskKind::Clear, AskStatus::Done, "/new"));
+    assert_eq!(wait_done(&mut rx, &n.id).await.id, n.id);
+    let t3 = asks.start(&room, &art, "third", None).unwrap();
+    let d3 = wait_done(&mut rx, &t3.id).await;
+    assert!(!d3.answer.contains("Summary of") && !d3.answer.contains("Previous Q&A"), "{}", d3.answer);
+    let kinds: Vec<AskKind> = asks.thread(&t3.file_key).unwrap().iter().map(|t| t.kind).collect();
+    assert_eq!(kinds, [AskKind::Question, AskKind::Compact, AskKind::Question, AskKind::Clear, AskKind::Question]);
 }

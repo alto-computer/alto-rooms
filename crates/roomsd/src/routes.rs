@@ -31,7 +31,7 @@ impl IntoResponse for AskErr {
 
 pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
     let Json(b) = b.map_err(|e| AskError::BadRequest(e.body_text()))?;
-    let turn = ask_blocking(&st, move |a| a.start_with(&b.room_id, &b.artifact_id, &b.question, b.model.as_deref(), &b.images.unwrap_or_default())).await?;
+    let turn = ask_blocking(&st, move |a| a.start_with(&b.room_id, &b.artifact_id, &b.question, b.model.as_deref(), &b.images.unwrap_or_default(), b.kind.unwrap_or_default())).await?;
     Ok((StatusCode::ACCEPTED, Json(turn)))
 }
 

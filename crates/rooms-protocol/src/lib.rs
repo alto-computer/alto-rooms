@@ -152,6 +152,19 @@ pub enum AskStatus { Running, Done, Failed, Cancelled }
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
 pub enum AskMode { Resume, New }
 
+/// What a turn is: a question, or a command typed in the ask bar (`/new`, `/compact`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum AskKind {
+    #[default]
+    Question,
+    /// Starts over: earlier Q&A is no longer sent along. Nothing runs.
+    Clear,
+    /// The agent summarizes the Q&A so far; the summary (the answer) is sent along in its place.
+    Compact,
+}
+
 wire!(
 /// One question and its answer, asked from a doc to the agent that made it (spec v2 ask).
 pub struct AskTurn {
@@ -172,6 +185,11 @@ pub struct AskTurn {
     /// Ids of the images attached to the question (`<home>/.rooms/asks/images/<id>`).
     #[serde(default)]
     pub images: Vec<String>,
+    #[serde(default)]
+    pub kind: AskKind,
+    /// Earlier answers in this conversation that were too many or too long to send along.
+    #[serde(default)]
+    pub left_out: u32,
 });
 
 wire!(
@@ -207,6 +225,10 @@ wire!(pub struct StartAsk {
     #[serde(default)]
     #[ts(optional)]
     pub images: Option<Vec<String>>,
+    /// `None` = a question. `clear` and `compact` ignore `question` and `images`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub kind: Option<AskKind>,
 });
 
 wire!(

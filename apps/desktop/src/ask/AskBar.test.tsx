@@ -13,7 +13,7 @@ const doc: Artifact = {
 };
 const turn = (extra: Partial<AskTurn>): AskTurn => ({
   id: "t1", fileKey: "k1", question: "왜?", answer: "", agent: "claude-code", model: null, mode: "resume", status: "running",
-  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], ...extra,
+  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, ...extra,
 });
 
 let store: ReturnType<typeof useAsksStore>;
