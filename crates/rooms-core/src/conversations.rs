@@ -104,7 +104,7 @@ impl RoomsCore {
         rooms_collect::store::open_read_only(&path).ok()
     }
 
-    fn room_ids(&self) -> HashSet<RoomId> {
+    fn room_id_set(&self) -> HashSet<RoomId> {
         lock(&self.inner).state.rooms.iter().map(|r| r.id.clone()).collect()
     }
 
@@ -115,7 +115,7 @@ impl RoomsCore {
             eprintln!("rooms-core: conversations on {date}: {e}");
             Vec::new()
         });
-        let members = load(&self.home, &self.room_ids());
+        let members = load(&self.home, &self.room_id_set());
         rows.into_iter().map(|(at, mut conversation)| {
             conversation.room_id = members.get(&conversation.id).map(|m| m.room_id.clone());
             JournalConversation { at, conversation }
@@ -126,7 +126,7 @@ impl RoomsCore {
     /// collect.db when it still has them.
     pub fn room_conversations(&self, room: &RoomId) -> Result<Vec<Conversation>, CoreError> {
         if room == JOURNAL_ROOM_ID { return Ok(Vec::new()); }
-        let rooms = self.room_ids();
+        let rooms = self.room_id_set();
         if !rooms.contains(room) { return Err(CoreError::RoomNotFound); }
         let mut mine: Vec<(ConversationId, Snapshot)> = load(&self.home, &rooms).into_iter()
             .filter(|(_, m)| &m.room_id == room).map(|(id, m)| (id, m.snapshot)).collect();
