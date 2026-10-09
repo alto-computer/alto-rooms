@@ -14,6 +14,8 @@ import { pluginDataBus } from "./pluginDataBus";
 export const MAX_CONTENT_WRITE_BYTES = 1024 * 1024;
 /** Writes and deletes one doc frame may make in any one second. */
 export const MAX_WRITES_PER_SECOND = 20;
+/** Reads and lists one doc frame may make in any one second. */
+export const MAX_READS_PER_SECOND = 100;
 export const MAX_ACTIONS = 6;
 export const MAX_ACTION_TITLE = 24;
 
@@ -44,9 +46,12 @@ function parseActions(items: unknown, validColor: (v: string) => boolean): Conte
     if (!it || typeof it !== "object") return null;
     const { id, title, color } = it as Record<string, unknown>;
     if (typeof id !== "string" || !id || id.length > 64 || out.some((a) => a.id === id)) return null;
-    if (typeof title !== "string" || !title.trim()) return null;
+    if (typeof title !== "string") return null;
+    // Controls and format characters (bidi overrides, zero-width) could make a title read as something else.
+    const shown = title.replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
+    if (!shown) return null;
     if (color !== undefined && (typeof color !== "string" || color.length > 64 || !validColor(color))) return null;
-    out.push({ id, title: title.trim().slice(0, MAX_ACTION_TITLE), ...(color === undefined ? {} : { color }) });
+    out.push({ id, title: Array.from(shown).slice(0, MAX_ACTION_TITLE).join(""), ...(color === undefined ? {} : { color }) });
   }
   return out;
 }
@@ -97,7 +102,6 @@ export function createContentChannel(deps: ContentChannelDeps): ContentChannel {
   const validColor = deps.validColor ?? isColor;
   const base = `docs/${fileKey}/`;
   const actions = new Map<string, ContentAction[]>();
-  const recentWrites: number[] = [];
   let dropped = 0;
 
   const post = (m: HostMessage) => frame()?.postMessage({ rooms: "content", v: 1, ...m }, "*");
@@ -107,24 +111,32 @@ export function createContentChannel(deps: ContentChannelDeps): ContentChannel {
     return base + p;
   };
 
-  const takeWriteSlot = () => {
-    const t = now();
-    while (recentWrites.length && t - recentWrites[0] >= 1000) recentWrites.shift();
-    if (recentWrites.length >= MAX_WRITES_PER_SECOND) throw new BridgeError("rate_limited", `more than ${MAX_WRITES_PER_SECOND} writes in one second`);
-    recentWrites.push(t);
+  const perSecond = (max: number, what: string) => {
+    const recent: number[] = [];
+    return () => {
+      const t = now();
+      while (recent.length && t - recent[0] >= 1000) recent.shift();
+      if (recent.length >= max) throw new BridgeError("rate_limited", `more than ${max} ${what} in one second`);
+      recent.push(t);
+    };
   };
+  const takeWriteSlot = perSecond(MAX_WRITES_PER_SECOND, "writes");
+  const takeReadSlot = perSecond(MAX_READS_PER_SECOND, "reads");
 
   const changed = (plugin: string, path: string) => pluginDataBus.publish({ pluginId: plugin, path, from: frame() });
 
   async function storage(m: Extract<FrameMessage, { id: string }>): Promise<unknown> {
     switch (m.type) {
       case "storage.read":
+        takeReadSlot();
         return relay(client.getPluginData(m.plugin, docPath(m.path)));
       case "storage.write": {
         const path = docPath(m.path);
         if (typeof m.text !== "string") throw new BridgeError("invalid_path", "text must be a string");
-        if (new TextEncoder().encode(m.text).length > MAX_CONTENT_WRITE_BYTES) throw new BridgeError("too_large");
+        // UTF-8 never takes fewer bytes than UTF-16 code units, so an oversized string is refused before the slot and the encode.
+        if (m.text.length > MAX_CONTENT_WRITE_BYTES) throw new BridgeError("too_large");
         takeWriteSlot();
+        if (new TextEncoder().encode(m.text).length > MAX_CONTENT_WRITE_BYTES) throw new BridgeError("too_large");
         await relay(client.putPluginData(m.plugin, path, m.text));
         changed(m.plugin, path);
         return null;
@@ -132,6 +144,7 @@ export function createContentChannel(deps: ContentChannelDeps): ContentChannel {
       case "storage.list": {
         const prefix = m.prefix ?? "";
         if (typeof prefix !== "string" || (prefix !== "" && !validPath(prefix.replace(/\/$/, "")))) throw new BridgeError("invalid_path");
+        takeReadSlot();
         const found = await relay(client.listPluginData(m.plugin, base + prefix));
         return found.filter((p) => p.startsWith(base)).map((p) => p.slice(base.length));
       }

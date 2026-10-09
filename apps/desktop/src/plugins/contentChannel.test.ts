@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createContentChannel, MAX_CONTENT_WRITE_BYTES, type ContentAction, type ContentChannelDeps } from "./contentChannel";
+import { createContentChannel, MAX_CONTENT_WRITE_BYTES, MAX_READS_PER_SECOND, MAX_WRITES_PER_SECOND, type ContentAction, type ContentChannelDeps } from "./contentChannel";
 import { pluginDataBus } from "./pluginDataBus";
 
 const FILE_KEY = "00000000000000aa";
@@ -110,6 +110,51 @@ describe("contentChannel", () => {
     ]);
   });
 
+  it("refuses an oversized write without encoding it, and counts UTF-8 bytes for the rest", async () => {
+    const s = track(setup());
+    const encode = vi.spyOn(TextEncoder.prototype, "encode");
+    s.send({ plugin: "marker", type: "storage.write", id: "long", path: "a", text: "x".repeat(MAX_CONTENT_WRITE_BYTES + 1) });
+    expect(encode).not.toHaveBeenCalled();
+    s.send({ plugin: "marker", type: "storage.write", id: "wide", path: "a", text: "한".repeat(MAX_CONTENT_WRITE_BYTES / 3 + 1) });
+    await s.flush();
+    encode.mockRestore();
+    const code = (id: string) => (s.replies().find((r) => r.id === id)?.error as { code?: string } | undefined)?.code;
+    expect(code("long")).toBe("too_large");
+    expect(code("wide")).toBe("too_large");
+    expect(s.client.putPluginData).not.toHaveBeenCalled();
+  });
+
+  it("takes the write slot before encoding, so a flood past the limit costs no encode", async () => {
+    const s = track(setup());
+    for (let i = 0; i < MAX_WRITES_PER_SECOND; i++) s.send({ plugin: "marker", type: "storage.write", id: `w${i}`, path: "a", text: "x" });
+    const encode = vi.spyOn(TextEncoder.prototype, "encode");
+    s.send({ plugin: "marker", type: "storage.write", id: "over", path: "a", text: "x".repeat(MAX_CONTENT_WRITE_BYTES) });
+    expect(encode).not.toHaveBeenCalled();
+    encode.mockRestore();
+    await s.flush();
+    expect((s.replies().find((r) => r.id === "over")?.error as { code?: string } | undefined)?.code).toBe("rate_limited");
+  });
+
+  it("allows 100 reads or lists in a second, apart from the write budget", async () => {
+    const s = track(setup());
+    for (let i = 0; i < MAX_READS_PER_SECOND - 1; i++) s.send({ plugin: "marker", type: "storage.read", id: `r${i}`, path: "a" });
+    s.send({ plugin: "second", type: "storage.list", id: "l" });
+    s.send({ plugin: "marker", type: "storage.read", id: "over", path: "a" });
+    s.send({ plugin: "marker", type: "storage.list", id: "lover" });
+    s.send({ plugin: "marker", type: "storage.write", id: "w", path: "a", text: "x" });
+    s.tick(1000);
+    s.send({ plugin: "marker", type: "storage.read", id: "after", path: "a" });
+    await s.flush();
+    const code = (id: string) => (s.replies().find((r) => r.id === id)?.error as { code?: string } | undefined)?.code;
+    expect(code(`r${MAX_READS_PER_SECOND - 2}`)).toBeUndefined();
+    expect(code("l")).toBeUndefined();
+    expect(code("over")).toBe("rate_limited");
+    expect(code("lover")).toBe("rate_limited");
+    expect(code("w")).toBeUndefined();
+    expect(code("after")).toBeUndefined();
+    expect(s.client.getPluginData).toHaveBeenCalledTimes(MAX_READS_PER_SECOND);
+  });
+
   it("allows 20 writes or deletes in a second and refuses the 21st until the second passes", async () => {
     const s = track(setup());
     for (let i = 0; i < 19; i++) s.send({ plugin: "marker", type: "storage.write", id: `w${i}`, path: "a", text: "x" });
@@ -171,6 +216,25 @@ describe("contentChannel", () => {
     const last = s.actions.at(-1)!;
     expect(last.get("marker")).toEqual([{ id: "mark", title: "Mark this passage for la", color: "#ffd400" }]);
     expect(last.get("second")).toHaveLength(6);
+  });
+
+  it("cuts titles by code point and strips control and bidi formatting characters", () => {
+    const s = track(setup());
+    const emoji = "\u{1F58D}";
+    s.send({
+      plugin: "marker",
+      type: "actions",
+      items: [
+        { id: "cut", title: "x".repeat(23) + emoji + "tail" },
+        { id: "rlo", title: "\u202Egnp.exe\u0007" },
+      ],
+    });
+    s.send({ plugin: "second", type: "actions", items: [{ id: "only", title: "\u202E\u200B\n" }] });
+    expect(s.ch.dropped).toBe(1);
+    const titles = s.actions.at(-1)!.get("marker")!.map((a) => a.title);
+    expect(titles[0]).toBe("x".repeat(23) + emoji);
+    expect(titles[1]).toBe("gnp.exe");
+    expect(titles.join("")).not.toMatch(/[\p{Cc}\p{Cf}]/u);
   });
 
   it("posts selection.action only to the plugin that declared the action", () => {
