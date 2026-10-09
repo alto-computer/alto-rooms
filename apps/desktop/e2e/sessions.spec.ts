@@ -22,8 +22,13 @@ test("a Journal session opens in its own tab, asks in its own session, and goes 
 
   await page.goto("/");
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await page.getByTestId("day-conversation").filter({ hasText: "Why is cold start slow?" }).click();
+  const row = page.getByTestId("day-conversation").filter({ hasText: "Why is cold start slow?" });
+  await row.hover();
+  await expect(row.getByRole("button", { name: "More for Why is cold start slow?" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Continue in/ })).toHaveCount(0);
+  await row.click();
   await expect(page.getByRole("tab", { name: "Why is cold start slow?", selected: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Session actions" }).getByRole("button", { name: "Continue in Claude Code" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Why is cold start slow?");
   await expect(page.getByRole("article")).toContainText("4 messages");
   await expect(page.getByRole("region", { name: "Last reply" })).toContainText("Spawning roomsd after first paint");

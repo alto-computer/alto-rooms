@@ -8,8 +8,7 @@ import { conversationTab, conversationTitle } from "@/lib/conversations";
 import { conversationDragSource } from "@/lib/drag";
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
-import { ContinueButton } from "./ContinueButton";
-import { ConversationMenu, openConversationMenu } from "./ConversationMenu";
+import { ConversationMenu, openConversationMenu, useCanMoveConversation } from "./ConversationMenu";
 
 /** The one room a conversation is in, as a small chip: its dot when pinned, else a folder. */
 export function RoomChip({ room }: { room: Room }) {
@@ -24,8 +23,8 @@ export function RoomChip({ room }: { room: Room }) {
 /**
  * A conversation in the Journal: one 30px line, the agent's mark and the title, and a room chip
  * when it is in a room. A click opens it in a tab like an artifact (⌘-click or a middle click in a
- * new one); hover or focus shows the continue pill and a ⋯ for the menu, which right-click also
- * opens. It drags onto a sidebar room.
+ * new one); hover or focus shows a ⋯ for the room menu, which right-click also opens. It drags
+ * onto a sidebar room.
  */
 export function ConversationRow({ conversation, room, entryKey }: {
   conversation: Conversation;
@@ -35,6 +34,7 @@ export function ConversationRow({ conversation, room, entryKey }: {
 }) {
   const readOnly = useReadOnly();
   const viewer = useViewerStore();
+  const hasMenu = useCanMoveConversation();
   const title = conversationTitle(conversation);
   const open = (newTab: boolean) => viewer.go(conversationTab(conversation.id), newTab);
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -65,19 +65,20 @@ export function ConversationRow({ conversation, room, entryKey }: {
         <AgentMark agent={conversation.id.agent} className="text-ink-2" />
         <span className="min-w-0 flex-1 truncate text-body text-ink">{title}</span>
         {room ? <RoomChip room={room} /> : null}
-        <ContinueButton conversation={conversation} className="hidden group-focus-within:inline-flex group-hover:inline-flex" />
         {/* While the menu is open the ⋯ stays, so focus can come back to it. */}
-        <button
-          type="button"
-          aria-label={`More for ${title}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            openConversationMenu(e.currentTarget);
-          }}
-          className="-ml-2 hidden size-6 shrink-0 place-items-center rounded-md text-ink-2 outline-none group-focus-within:grid group-hover:grid group-data-[state=open]:grid hover:bg-surface-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
-        >
-          <Ellipsis size={15} strokeWidth={1.75} aria-hidden />
-        </button>
+        {hasMenu ? (
+          <button
+            type="button"
+            aria-label={`More for ${title}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              openConversationMenu(e.currentTarget);
+            }}
+            className="-ml-1 hidden size-6 shrink-0 place-items-center rounded-md text-ink-2 outline-none group-focus-within:grid group-hover:grid group-data-[state=open]:grid hover:bg-surface-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+          >
+            <Ellipsis size={15} strokeWidth={1.75} aria-hidden />
+          </button>
+        ) : null}
       </div>
     </ConversationMenu>
   );

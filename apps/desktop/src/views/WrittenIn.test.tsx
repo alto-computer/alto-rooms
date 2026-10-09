@@ -1,5 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { localDate } from "@/lib/dates";
 import { continueConversation } from "@/lib/native";
@@ -37,30 +37,24 @@ const artifact = (id: string, extra: Partial<Artifact> = {}): Artifact => ({
 });
 
 describe("Doc: written in", () => {
-  it("names the conversation that wrote the artifact and continues it from its card", async () => {
+  it("names the session that wrote the artifact and opens its tab on a click, ⌘-click in a new one, with no Continue", async () => {
     const c = conversation("s7", { title: "Why is cold start slow?", roomId: "p" });
-    await renderWithStores(<DocView roomId="p" artifactId="a1" />, {
-      rooms: [room("p", "벤치마크", { artifactCount: 1 })],
-      artifacts: { p: [artifact("a1", { source: { agent: "claude-code", session: "s7", cwd: null, machine: null } })] },
-      days: { [today]: { conversations: [{ at: `${today}T01:00:00Z`, conversation: c }] } },
-    });
-    fireEvent.click(await screen.findByRole("button", { name: /^Written in/ }));
-    const card = within(await screen.findByRole("dialog", { name: "Written in" }));
-    fireEvent.click(card.getByRole("button", { name: "Continue in Claude Code" }));
-    expect(continueConversation).toHaveBeenCalledWith(c);
-  });
-
-  it("opens the session's tab from the card's title", async () => {
-    const c = conversation("s7", { title: "Why is cold start slow?" });
     const h = await renderWithStores(<DocView roomId="p" artifactId="a1" />, {
       rooms: [room("p", "벤치마크", { artifactCount: 1 })],
       artifacts: { p: [artifact("a1", { source: { agent: "claude-code", session: "s7", cwd: null, machine: null } })] },
       days: { [today]: { conversations: [{ at: `${today}T01:00:00Z`, conversation: c }] } },
     });
-    fireEvent.click(await screen.findByRole("button", { name: /^Written in/ }));
-    const card = within(await screen.findByRole("dialog", { name: "Written in" }));
-    fireEvent.click(card.getByRole("button", { name: "Why is cold start slow?" }));
+    const sessions = () => h.viewer.getState().tabs.filter((t) => t.kind === "conversation");
+    const tabsBefore = h.viewer.getState().tabs.length;
+    const writtenIn = await screen.findByRole("button", { name: "Written in Why is cold start slow?" });
+    fireEvent.click(writtenIn, { metaKey: true });
+    expect(h.viewer.getState().tabs).toHaveLength(tabsBefore + 1);
+    expect(sessions()).toEqual([expect.objectContaining({ agent: "claude-code", session: "s7" })]);
+    fireEvent.click(writtenIn);
     expect(h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId)).toMatchObject({ kind: "conversation", agent: "claude-code", session: "s7" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Continue in/ })).toBeNull();
+    expect(continueConversation).not.toHaveBeenCalled();
   });
 
   it("stays out of the toolbar when the artifact names no session", async () => {

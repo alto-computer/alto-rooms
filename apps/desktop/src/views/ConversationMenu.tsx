@@ -2,7 +2,6 @@ import { Fragment, type ReactNode } from "react";
 import type { Conversation, Room } from "@alto-rooms/protocol-ts";
 import { ArrowRight, ChevronDown, Folder, FolderMinus, FolderPlus } from "lucide-react";
 import { toast } from "sonner";
-import { AgentMark } from "@/components/AgentMark";
 import { RoomDot } from "@/components/RoomDot";
 import {
   ContextMenu,
@@ -29,11 +28,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useClient, useReadOnly, useRoomList, useViewerStore } from "@/data/hooks";
-import { AGENT_NAMES } from "@/lib/agents";
 import { conversationRooms, conversationTitle } from "@/lib/conversations";
 import { errorCopy } from "@/lib/errors";
 import { wantsNewTab } from "@/lib/nav";
-import { continueIn } from "./ContinueButton";
 
 const TOAST_ID = "conversation-menu";
 
@@ -56,10 +53,17 @@ function RoomItem({ room }: { room: Room }) {
   );
 }
 
+/** Whether this viewer can put a conversation in a room: not read-only, and some room besides the inbox exists. */
+export function useCanMoveConversation(): boolean {
+  const readOnly = useReadOnly();
+  const { pinned, others } = conversationRooms(useRoomList());
+  return !readOnly && pinned.length + others.length > 0;
+}
+
 /** The rooms a conversation can go to, and the call that puts it in one (or none, with `null`). */
 function useConversationRoom(conversation: Conversation) {
   const client = useClient();
-  const readOnly = useReadOnly();
+  const movable = useCanMoveConversation();
   const { pinned, others } = conversationRooms(useRoomList());
   const setRoom = (roomId: string | null) => {
     if (roomId === conversation.roomId) return;
@@ -68,17 +72,19 @@ function useConversationRoom(conversation: Conversation) {
       toast.error(errorCopy(e), { id: TOAST_ID });
     });
   };
-  return { pinned, others, setRoom, movable: !readOnly && pinned.length + others.length > 0 };
+  return { pinned, others, setRoom, movable };
 }
 
 /**
- * Right-click on a conversation (or its ⋯, or Shift-F10 on it): continue it, and put it in a room. A conversation is in
- * at most one room, so the menu offers "Add to Room" until it is in one, then "Move to Room" and
- * "Remove from Room". The room list puts pinned rooms first and scrolls when long.
+ * Right-click on a conversation (or its ⋯, or Shift-F10 on it) puts it in a room. A conversation is
+ * in at most one room, so the menu offers "Add to Room" until it is in one, then "Move to Room" and
+ * "Remove from Room". The room list puts pinned rooms first and scrolls when long. With nowhere to
+ * move it, there is no menu. Continuing it is the session tab's job.
  */
 export function ConversationMenu({ conversation, children }: { conversation: Conversation; children: ReactNode }) {
   const { pinned, others, setRoom, movable } = useConversationRoom(conversation);
   const inRoom = conversation.roomId !== null;
+  if (!movable) return children;
 
   return (
     <ContextMenu>
@@ -93,37 +99,28 @@ export function ConversationMenu({ conversation, children }: { conversation: Con
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent aria-label={`${conversationTitle(conversation)} menu`} className="w-[220px]">
-        <ContextMenuItem onSelect={() => continueIn(conversation)}>
-          <AgentMark agent={conversation.id.agent} />
-          Continue in {AGENT_NAMES[conversation.id.agent]}
-        </ContextMenuItem>
-        {!movable ? null : (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuSub>
-              <ContextMenuSubTrigger>{inRoom ? "Move to Room" : "Add to Room"}</ContextMenuSubTrigger>
-              <ContextMenuSubContent
-                className="max-h-[min(360px,var(--radix-context-menu-content-available-height))] w-[208px] overflow-y-auto"
-              >
-                <ContextMenuRadioGroup value={conversation.roomId ?? ""} onValueChange={setRoom}>
-                  {pinned.map((r) => (
-                    <RoomItem key={r.id} room={r} />
-                  ))}
-                  {pinned.length && others.length ? <ContextMenuSeparator /> : null}
-                  {others.map((r) => (
-                    <RoomItem key={r.id} room={r} />
-                  ))}
-                </ContextMenuRadioGroup>
-              </ContextMenuSubContent>
-            </ContextMenuSub>
-            {inRoom ? (
-              <ContextMenuItem onSelect={() => setRoom(null)}>
-                <FolderMinus />
-                Remove from Room
-              </ContextMenuItem>
-            ) : null}
-          </>
-        )}
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>{inRoom ? "Move to Room" : "Add to Room"}</ContextMenuSubTrigger>
+          <ContextMenuSubContent
+            className="max-h-[min(360px,var(--radix-context-menu-content-available-height))] w-[208px] overflow-y-auto"
+          >
+            <ContextMenuRadioGroup value={conversation.roomId ?? ""} onValueChange={setRoom}>
+              {pinned.map((r) => (
+                <RoomItem key={r.id} room={r} />
+              ))}
+              {pinned.length && others.length ? <ContextMenuSeparator /> : null}
+              {others.map((r) => (
+                <RoomItem key={r.id} room={r} />
+              ))}
+            </ContextMenuRadioGroup>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        {inRoom ? (
+          <ContextMenuItem onSelect={() => setRoom(null)}>
+            <FolderMinus />
+            Remove from Room
+          </ContextMenuItem>
+        ) : null}
       </ContextMenuContent>
     </ContextMenu>
   );

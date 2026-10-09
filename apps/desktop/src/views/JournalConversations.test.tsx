@@ -80,18 +80,27 @@ describe("Journal: conversations", () => {
     expect(continueConversation).not.toHaveBeenCalled();
   });
 
-  it("the ink pill continues the conversation through the native bridge", async () => {
-    const c = conversation("s1", { id: { agent: "codex", session: "s1" } });
-    await renderWithStores(<Journal />, day([c]));
-    fireEvent.click(within(rows()[0]).getByRole("button", { name: "Continue in Codex" }));
-    expect(continueConversation).toHaveBeenCalledWith(c);
+  it("a row offers no Continue: only its ⋯, whose menu is about rooms", async () => {
+    await renderWithStores(<Journal />, day([conversation("s1", { id: { agent: "codex", session: "s1" } })]));
+    const row = within(rows()[0]);
+    expect(row.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([expect.stringMatching(/^More for/)]);
+    fireEvent.click(row.getByRole("button", { name: /^More for/ }));
+    expect(within(await menu()).queryByRole("menuitem", { name: /^Continue in/ })).toBeNull();
+    expect(continueConversation).not.toHaveBeenCalled();
+  });
+
+  it("read-only, a row has no ⋯ and right-click opens no menu", async () => {
+    await renderWithStores(<Journal />, { ...day([conversation("s1")]), readOnly: true });
+    expect(within(rows()[0]).queryByRole("button")).toBeNull();
+    fireEvent.contextMenu(rows()[0]);
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 
   it("offers Add to Room for a conversation in no room, pinned rooms first and never the inbox", async () => {
     const h = await renderWithStores(<Journal />, day([conversation("s1")]));
     fireEvent.contextMenu(rows()[0]);
     const m = within(await menu());
-    expect(m.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Continue in Claude Code", "Add to Room"]);
+    expect(m.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Add to Room"]);
     fireEvent.click(m.getByRole("menuitem", { name: "Add to Room" }));
     const list = within(await screen.findByRole("menu", { name: "Add to Room" }));
     expect(list.getAllByRole("menuitemradio").map((i) => i.textContent)).toEqual(["벤치마크", "리서치"]);
@@ -104,7 +113,7 @@ describe("Journal: conversations", () => {
     const h = await renderWithStores(<Journal />, day([c]));
     fireEvent.click(within(rows()[0]).getByRole("button", { name: /^More for/ }));
     const m = within(await menu());
-    expect(m.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Continue in Claude Code", "Move to Room", "Remove from Room"]);
+    expect(m.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Move to Room", "Remove from Room"]);
     await act(async () => void fireEvent.click(m.getByRole("menuitem", { name: "Remove from Room" })));
     expect(h.client.setConversationRoom).toHaveBeenCalledWith(c.id, null);
 
