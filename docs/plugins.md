@@ -142,7 +142,7 @@ A plugin that declares `artifact.content` can list scripts under `contentScripts
 
 Scripts load in the listed order, so each path may appear once; a repeated path makes the manifest invalid. A plugin with content scripts needs no slot. The user sees "Can read the text of documents and use the network inside them" before it runs, and a changed content script changes the plugin's `rev`.
 
-Rooms loads content scripts into the document a doc tab shows, as `<script src>` tags spliced in right after `<head>`, after its own selection bridge and before anything the document declares, including a `<meta http-equiv="Content-Security-Policy">`. Card previews in a room grid get no content scripts. Turning the plugin on or off, or changing a script, reloads open doc tabs.
+Rooms loads content scripts into the document a doc tab shows, as `<script src>` tags after its own selection bridge. The block is spliced in where the HTML parser opens the head. That is right after `<head>`, or, when the document has no `<head>` before its first other tag or text, before that tag or text. So the scripts run before any `<meta http-equiv="Content-Security-Policy">` the document declares in its head, including a policy of `script-src 'none'`. A UTF-16 document gets no scripts. Card previews in a room grid get no content scripts. Turning the plugin on or off reloads open doc tabs. A changed script loads the next time a doc tab loads, since its URL carries the plugin's `rev`.
 
 A content script runs inside the document's sandbox with the document's own powers, not the plugin frame's:
 
