@@ -91,6 +91,7 @@ impl ScopeKey for AskScope {
 pub enum AskError {
     #[error("{0}")] BadRequest(String),
     #[error("Can't find this doc")] NotFound,
+    #[error("Can't find this room")] RoomNotFound,
     #[error("Waiting for an answer")] Busy,
     #[error("Too many questions running — try again when one finishes")] Capacity,
     #[error("Couldn't read agent settings: {0}")] AgentConfig(String),
@@ -101,7 +102,7 @@ impl AskError {
     pub fn code(&self) -> &'static str {
         match self {
             AskError::BadRequest(_) => "bad_request",
-            AskError::NotFound => "not_found",
+            AskError::NotFound | AskError::RoomNotFound => "not_found",
             AskError::Busy => "ask_busy",
             AskError::Capacity => "ask_capacity",
             AskError::AgentConfig(_) => "agent_config",
@@ -112,7 +113,7 @@ impl AskError {
     pub fn status(&self) -> u16 {
         match self {
             AskError::BadRequest(_) => 400,
-            AskError::NotFound => 404,
+            AskError::NotFound | AskError::RoomNotFound => 404,
             AskError::Busy | AskError::Capacity => 409,
             AskError::AgentConfig(_) => 422,
             AskError::Io(_) => 500,
@@ -269,7 +270,7 @@ impl Asks {
             AskScope::Doc { file_key } => return self.resolve_doc(file_key),
             AskScope::Room { room_id } => {
                 let (name, entries) = core.room_context(room_id).map_err(|e| match e {
-                    CoreError::RoomNotFound => AskError::NotFound,
+                    CoreError::RoomNotFound => AskError::RoomNotFound,
                     e => AskError::Io(e.to_string()),
                 })?;
                 (format!("Room: {name}"), entries)
@@ -548,6 +549,7 @@ mod tests {
         let wire = |e: AskError| (e.status(), e.code(), e.to_string());
         assert_eq!(wire(AskError::BadRequest("why".into())), (400, "bad_request", "why".into()));
         assert_eq!(wire(AskError::NotFound), (404, "not_found", "Can't find this doc".into()));
+        assert_eq!(wire(AskError::RoomNotFound), (404, "not_found", "Can't find this room".into()));
         assert_eq!(wire(AskError::Busy), (409, "ask_busy", "Waiting for an answer".into()));
         assert_eq!(wire(AskError::Capacity), (409, "ask_capacity", "Too many questions running — try again when one finishes".into()));
         assert_eq!(wire(AskError::AgentConfig("x".into())), (422, "agent_config", "Couldn't read agent settings: x".into()));
@@ -628,8 +630,8 @@ mod tests {
         assert!(asks.reserve(&AskScope::Day { date: "2026-10-09".into() }).is_ok());
         assert_eq!(asks.thread(&room_like).unwrap().len(), 0);
         assert_eq!(asks.thread(&doc).unwrap()[0].id, t.id);
-        assert!(matches!(asks.start(&room_like, "q", None), Err(AskError::NotFound)));
-        assert!(matches!(asks.target(&room_like), Err(AskError::NotFound)));
+        assert!(matches!(asks.start(&room_like, "q", None), Err(AskError::RoomNotFound)));
+        assert!(matches!(asks.target(&room_like), Err(AskError::RoomNotFound)));
         asks.shutdown().await;
     }
 
