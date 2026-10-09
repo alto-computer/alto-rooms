@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { RoomsApiError, type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
+import { AskBar } from "@/ask/AskBar";
+import { useFrameAfter } from "@/ask/useFrameAfter";
 import { useClient, useJournalDay, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
@@ -8,6 +10,7 @@ import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { viewerInitial } from "@/lib/native";
 import { wantsNewTab } from "@/lib/nav";
 import { useScrollMemory } from "@/lib/scrollMemory";
+import { cn } from "@/lib/utils";
 import { useCurrentTabId } from "@/shell/currentTab";
 import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from "@/lib/notes";
 import otterAvatar from "@/assets/otter-avatar.svg";
@@ -158,6 +161,16 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const initial = useViewerInitial();
   const readOnly = useReadOnly();
+  // The ask bar never delays the cards and never asks about a day other than the one shown. It first mounts
+  // a frame after the first day's cards paint (useFrameAfter). On a day change it unmounts at once, since
+  // barDate no longer matches, and the barDate effect brings it back after the new day's cards commit.
+  const settled = day !== undefined || !!loadError;
+  const barReady = useFrameAfter(settled);
+  const [barDate, setBarDate] = useState(date);
+  useEffect(() => {
+    if (settled) setBarDate(date);
+  }, [settled, date]);
+  const bar = useMemo(() => <AskBar subject={{ kind: "day", date: barDate }} />, [barDate]);
 
   // New-doc dots: per artifact, against its own room's last visit — as in RoomView.
   const visits = useVisitsAtArrival();
@@ -235,15 +248,22 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   }
 
   return (
-    <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto bg-white px-12 pt-9 pb-6">
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>
-          {isToday ? <span className="text-[17px] text-ink-2">Today</span> : null}
-        </div>
-        <WeekStrip date={date} onChange={setDate} />
-      </header>
-      {body}
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
+      <div
+        ref={scrollRef}
+        // The ask bar floats over the bottom of the tab: the notes row scrolls clear of it.
+        className={cn("flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto px-12 pt-9", readOnly ? "pb-6" : "pb-28")}
+      >
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-baseline gap-3">
+            <h1 className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>
+            {isToday ? <span className="text-[17px] text-ink-2">Today</span> : null}
+          </div>
+          <WeekStrip date={date} onChange={setDate} />
+        </header>
+        {body}
+      </div>
+      {barReady && !readOnly && barDate === date ? bar : null}
     </div>
   );
 }

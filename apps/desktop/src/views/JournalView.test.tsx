@@ -6,6 +6,7 @@ import { useViewer } from "@/data/hooks";
 import { ViewerStore } from "@/data/viewerStore";
 import { addDays, localDate } from "@/lib/dates";
 import { takeNoteBodyFocus } from "@/lib/notes";
+import { AppShell } from "@/shell/AppShell";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { JournalView } from "./JournalView";
 
@@ -161,6 +162,16 @@ describe("JournalView: header and week strip", () => {
     expect(screen.getByRole("button", { name: "Oct 3" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Saturday, Oct 3");
     expect(viewer.getState().tabs.length).toBe(count);
+  });
+
+  it("⌘J toggles the day's ask bar on the Journal tab", async () => {
+    await renderWithStores(<AppShell />, { viewer: journalViewer() });
+    const cmdJ = () => fireEvent.keyDown(window, { key: "j", code: "KeyJ", metaKey: true });
+    await screen.findByPlaceholderText("Ask about this day…");
+    act(cmdJ);
+    expect(screen.queryByPlaceholderText("Ask about this day…")).toBeNull();
+    act(cmdJ);
+    expect(await screen.findByPlaceholderText("Ask about this day…")).toHaveFocus();
   });
 
   it("shows 오늘 only for the local today", async () => {

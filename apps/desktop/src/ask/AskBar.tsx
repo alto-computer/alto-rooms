@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
-import { frameSubject, type AskSubject } from "./askSubjects";
+import { frameSubject, type AskSubject, type SubjectFraming } from "./askSubjects";
 import { Composer } from "./Composer";
 import { AgentChip, ModelPicker, ReadScopeHint } from "./ModelPicker";
 import { ThreadSheet } from "./ThreadSheet";
@@ -15,15 +15,20 @@ import { useComposer } from "./useComposer";
 const PART_OF_THE_BAR = "[data-slot=dropdown-menu-content], [data-slot=dialog-content], [data-slot=dialog-overlay], [data-selection-ask]";
 
 /**
- * The ask bar at the bottom of a doc or room tab (⌘J): the subject's thread, and the input that
+ * The ask bar at the bottom of a doc, room or Journal tab (⌘J): the subject's thread, and the input that
  * asks about it. The thread folds on Esc or a click elsewhere, and unfolds when the input is focused.
  */
 export function AskBar({ subject }: { subject: AskSubject }) {
+  const framing = frameSubject(subject);
+  // The pending question, images and error belong to one scope; a new subject in the same tab starts fresh.
+  return <ScopedAskBar key={scopeKey(framing.scope)} framing={framing} />;
+}
+
+function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const store = useAsksStore();
   const { open, threads, live } = useAsks();
   const readOnly = useReadOnly();
   const shown = open && !readOnly;
-  const framing = frameSubject(subject);
   const { scope } = framing;
   const key = scopeKey(scope);
   const thread = threads[key];

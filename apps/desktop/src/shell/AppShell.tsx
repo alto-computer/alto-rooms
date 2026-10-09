@@ -20,7 +20,7 @@ const QuickFind = lazy(() => import("@/views/QuickFind").then((m) => ({ default:
 const SIDEBAR_STYLE = { "--sidebar-width": "232px" } as CSSProperties;
 
 /** Tab kinds with an ask bar for ⌘J to toggle. */
-const ASKABLE = new Set<Tab["kind"]>(["doc", "room"]);
+const ASKABLE = new Set<Tab["kind"]>(["doc", "room", "journal"]);
 
 export function AppShell() {
   const { tabs, activeId, sidebarOpen } = useViewer();

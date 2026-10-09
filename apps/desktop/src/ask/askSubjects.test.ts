@@ -40,4 +40,14 @@ describe("frameSubject", () => {
     expect(f.hint(target(false))).toBeNull();
     expect(f.hint(null)).toBeNull();
   });
+
+  it("frames a day by its date, like a room but reading only that day's items", () => {
+    const f = frameSubject({ kind: "day", date: "2026-10-09" });
+    expect(scopeKey(f.scope)).toBe("day:2026-10-09");
+    expect(f.placeholder).toBe("Ask about this day…");
+    expect(f.agent).toBe("Default agent");
+    expect(f.header(turn({ mode: "new" }))).toEqual({ text: "claude-code · Haiku" });
+    expect(f.hint(target(true))).toBe("Reads only this day's items");
+    expect(f.hint(target(false))).toBeNull();
+  });
 });
