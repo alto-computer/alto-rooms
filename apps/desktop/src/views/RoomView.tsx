@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AskBar } from "@/ask/AskBar";
 import { CircleAlert } from "lucide-react";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { useCurrentTabId } from "@/shell/currentTab";
@@ -11,6 +12,7 @@ import { EmptyRoom } from "./EmptyRoom";
 import { SortBar } from "./SortBar";
 import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { INBOX_ID } from "@/lib/drag";
+import { cn } from "@/lib/utils";
 
 function Centered({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center p-12 text-center text-[17px] text-ink-2">{children}</div>;
@@ -55,7 +57,11 @@ export function RoomView({ roomId }: { roomId: string }) {
         ref={gridRef}
         data-grid
         data-scroll-root
-        className="-mx-12 -mt-2.5 grid min-h-0 flex-1 grid-cols-[repeat(auto-fill,300px)] content-start gap-x-7 gap-y-9 overflow-y-auto px-12 pt-2.5 pb-6 [scrollbar-color:#dddddd_transparent] [scrollbar-width:thin]"
+        className={cn(
+          "-mx-12 -mt-2.5 grid min-h-0 flex-1 grid-cols-[repeat(auto-fill,300px)] content-start gap-x-7 gap-y-9 overflow-y-auto px-12 pt-2.5 [scrollbar-color:#dddddd_transparent] [scrollbar-width:thin]",
+          // The ask bar floats over the bottom of the panel: the last row scrolls clear of it.
+          readOnly ? "pb-6" : "pb-28",
+        )}
       >
         {info
           ? [...artifacts]
@@ -78,7 +84,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-surface px-12 pt-10">
+    <div className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-surface px-12 pt-10">
       <header className="flex flex-col gap-1">
         <EditableTitle
           key={room.id}
@@ -105,6 +111,7 @@ export function RoomView({ roomId }: { roomId: string }) {
         ) : null}
       </header>
       {body}
+      <AskBar subject={{ kind: "room", roomId }} />
     </div>
   );
 }

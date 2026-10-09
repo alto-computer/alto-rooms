@@ -32,7 +32,7 @@ export function AppShell() {
   const active = tabs.find((t) => t.id === activeId);
   const activeKind = active?.kind;
   const toggleAsk = useCallback(() => {
-    if (activeKind === "doc" && !readOnly) asks.toggle();
+    if ((activeKind === "doc" || activeKind === "room") && !readOnly) asks.toggle();
   }, [activeKind, readOnly, asks]);
   useShellKeys(viewer, openFind, toggleAsk);
   const mounted = useMountedTabs(tabs, active);
