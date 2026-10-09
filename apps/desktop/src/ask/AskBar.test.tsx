@@ -13,7 +13,7 @@ const doc: Artifact = {
 };
 const turn = (extra: Partial<AskTurn>): AskTurn => ({
   id: "t1", fileKey: "k1", question: "왜?", answer: "", agent: "claude-code", model: null, mode: "resume", status: "running",
-  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, ...extra,
+  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], ...extra,
 });
 
 let store: ReturnType<typeof useAsksStore>;
@@ -178,7 +178,8 @@ describe("AskBar", () => {
     try {
       await setup();
       const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
-      const pill = input.parentElement!;
+      // The textarea's row sits in the bordered bar, under the attached images when there are any.
+      const pill = input.parentElement!.parentElement!;
       expect(input.style.height).toBe("20px");
       expect(pill).toHaveClass("rounded-full");
       // Focus is ink, not the thread red the send button uses.
@@ -200,6 +201,46 @@ describe("AskBar", () => {
     } finally {
       vi.restoreAllMocks();
     }
+  });
+
+  it("pasted, dropped or picked images upload at once, go out with the question, and show on it", async () => {
+    const createObjectURL = vi.fn(() => "blob:preview");
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    const { client } = await setup();
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const shot = new File(["png"], "shot.png", { type: "image/png" });
+    fireEvent.paste(input, { clipboardData: { files: [shot] } });
+    await waitFor(() => expect(client.uploadAskImage).toHaveBeenCalledWith(shot));
+    expect(await screen.findByRole("img", { name: "shot.png" })).toHaveAttribute("src", "blob:preview");
+    const drop = new File(["gif"], "drop.gif", { type: "image/gif" });
+    const svg = new File(["<svg/>"], "x.svg", { type: "image/svg+xml" });
+    fireEvent.drop(input, { dataTransfer: { files: [drop, svg], types: ["Files"] } });
+    await screen.findByRole("img", { name: "drop.gif" });
+    expect(screen.queryByRole("img", { name: "x.svg" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove drop.gif" }));
+    expect(screen.queryByRole("img", { name: "drop.gif" })).toBeNull();
+    fireEvent.change(input, { target: { value: "이 화면 뭐야?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ question: "이 화면 뭐야?", images: ["img-shot.png"] })));
+    await waitFor(() => expect(screen.queryByRole("list", { name: "Attached images" })).toBeNull());
+    expect(await screen.findByRole("button", { name: "Open image" })).toBeInTheDocument();
+    expect(document.querySelector('img[src$="/_asks/images/img-shot.png"]')).not.toBeNull();
+  });
+
+  it("a failed upload shows on its thumbnail and holds the question until it's removed", async () => {
+    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:p"), revokeObjectURL: vi.fn() });
+    const { client } = await setup();
+    client.uploadAskImage.mockRejectedValueOnce(new RoomsApiError(400, "Only PNG, JPEG, GIF and WebP images can be attached", "bad_request"));
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    fireEvent.paste(input, { clipboardData: { files: [new File(["x"], "bad.png", { type: "image/png" })] } });
+    expect(await screen.findByLabelText("Only PNG, JPEG, GIF and WebP images can be attached")).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "q" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("Remove the images that couldn't be attached")).toBeInTheDocument();
+    expect(client.startAsk).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove bad.png" }));
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.not.objectContaining({ images: expect.anything() })));
   });
 
   it("while an answer runs you can type ahead, but Enter doesn't send", async () => {

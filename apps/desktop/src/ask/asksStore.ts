@@ -2,7 +2,7 @@
  * Ask threads by file key, kept in step with roomsd by `ask.started` / `ask.done`
  * events, plus whether the ask bar is open (global, starts open, not saved).
  */
-import type { AskTarget, AskTurn, RoomsEvent, StartAsk } from "@alto-rooms/protocol-ts";
+import type { AskImage, AskTarget, AskTurn, RoomsEvent, StartAsk } from "@alto-rooms/protocol-ts";
 
 export type Thread = { turns: AskTurn[]; loaded: boolean; error: boolean };
 /** A running turn's answer so far and what the agent is doing, from `ask.progress`. */
@@ -15,6 +15,7 @@ type Client = {
   askTarget(roomId: string, artifactId: string): Promise<AskTarget>;
   askThread(fileKey: string): Promise<AskTurn[]>;
   cancelAsk(askId: string): Promise<void>;
+  uploadAskImage(image: Blob): Promise<AskImage>;
 };
 type Signals = { onSignal(fn: (type: RoomsEvent["type"], e: RoomsEvent) => void): () => void };
 
@@ -103,10 +104,16 @@ export class AsksStore {
   }
 
   /** Throws the API error (e.g. ask_busy) for the bar to show. `model` null = the agent's default. */
-  async ask(a: { roomId: string; artifactId: string }, question: string, model: string | null = null): Promise<void> {
+  async ask(a: { roomId: string; artifactId: string }, question: string, model: string | null = null, images: string[] = []): Promise<void> {
     if (!this.client) return;
-    const t = await this.client.startAsk({ roomId: a.roomId, artifactId: a.artifactId, question, model });
+    const t = await this.client.startAsk({ roomId: a.roomId, artifactId: a.artifactId, question, model, ...(images.length ? { images } : {}) });
     this.apply(t);
+  }
+
+  /** Stores an image for a question; resolves to its id. Throws the API error for the bar to show. */
+  async uploadImage(image: Blob): Promise<string> {
+    if (!this.client) throw new Error("no roomsd");
+    return (await this.client.uploadAskImage(image)).id;
   }
 
   cancel(askId: string): void {

@@ -1,6 +1,7 @@
 //! v2 ask: send a question about a doc to the agent CLI that made it (spec 2026-10-06 v2 ask).
 //! `Asks` is the only entry point; templates, prompt, log and process stay inside this module.
 pub(crate) mod agents;
+pub mod images;
 pub(crate) mod log;
 pub(crate) mod prompt;
 pub(crate) mod run;
@@ -89,6 +90,7 @@ struct Resolved {
 struct Inner {
     core: RoomsCore,
     log: AskLog,
+    images: images::Images,
     /// Filled once the login shell answers; until then agents get roomsd's own PATH.
     login_path: OnceLock<String>,
     limits: Limits,
@@ -153,10 +155,11 @@ impl Asks {
 
     pub fn with_limits(core: RoomsCore, login_path: Option<String>, limits: Limits) -> Self {
         let log = AskLog::new(core.home().join(".rooms/asks"));
+        let images = images::Images::new(core.home().join(".rooms/asks/images"));
         let cell = OnceLock::new();
         if let Some(p) = login_path { let _ = cell.set(p); }
         Self(Arc::new(Inner {
-            core, log, login_path: cell, limits, running: Mutex::new(HashMap::new()),
+            core, log, images, login_path: cell, limits, running: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false), rt: tokio::runtime::Handle::try_current().ok(),
         }))
     }
@@ -201,11 +204,31 @@ impl Asks {
     /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
     /// `model` must be one of the target's models; `None` or "" leaves the agent's default.
     pub fn start(&self, room: &str, artifact_id: &str, question: &str, model: Option<&str>) -> Result<AskTurn, AskError> {
+        self.start_with(room, artifact_id, question, model, &[])
+    }
+
+    /// Stores an attached image; the id goes in `StartAsk::images`. Blocking (file IO).
+    pub fn save_image(&self, bytes: &[u8]) -> Result<String, AskError> {
+        self.0.images.save(bytes).map_err(AskError::BadRequest)
+    }
+
+    /// The stored image `id`, for serving it back.
+    pub fn image_path(&self, id: &str) -> Option<PathBuf> { self.0.images.path(id) }
+
+    /// `start` with images (ids from `save_image`): their paths reach the agent through the template's
+    /// `{image}` / `{image_dir}` and a line in the prompt, so an agent without an image flag can open them.
+    pub fn start_with(&self, room: &str, artifact_id: &str, question: &str, model: Option<&str>, image_ids: &[String]) -> Result<AskTurn, AskError> {
         let _rt = self.0.rt.as_ref().map(|h| h.enter());
         let q = question.trim();
         if q.is_empty() || q.chars().count() > MAX_QUESTION_CHARS {
             return Err(AskError::BadRequest(format!("A question must be 1–{MAX_QUESTION_CHARS} characters")));
         }
+        if image_ids.len() > images::MAX_IMAGES {
+            return Err(AskError::BadRequest(format!("At most {} images per question", images::MAX_IMAGES)));
+        }
+        let image_paths: Vec<String> = image_ids.iter()
+            .map(|id| self.0.images.path(id).map(|p| p.to_string_lossy().into_owned()).ok_or_else(|| AskError::BadRequest("An attached image is missing — attach it again".into())))
+            .collect::<Result<_, _>>()?;
         let core = &self.0.core;
         let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(room, artifact_id)?;
         let model = model.filter(|m| !m.is_empty());
@@ -221,14 +244,19 @@ impl Asks {
         if running.values().any(|e| e.file_key == artifact.file_key) { return Err(AskError::Busy); }
         if running.len() >= MAX_RUNNING { return Err(AskError::Capacity); }
         let prior = self.read_thread(&running, &artifact.file_key)?;
-        let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, &prior, q);
+        let asked = if image_paths.is_empty() { q.to_string() } else {
+            format!("{q}\n\nAttached images (open each one to see it):\n{}", image_paths.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n"))
+        };
+        let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, &prior, &asked);
+        let image_dir = if image_paths.is_empty() { String::new() } else { self.0.images.dir().to_string_lossy().into_owned() };
         // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
         let mcp = core.home().join(".rooms/mcp.json");
         let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
-        let argv = plan.render(&Vars { prompt: &prompt, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s, model: model.unwrap_or("") });
+        let argv = plan.render(&Vars { prompt: &prompt, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s, model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir });
         let turn = AskTurn {
             id: nanoid::nanoid!(16), file_key: artifact.file_key.clone(), question: q.to_string(), answer: String::new(),
             agent: plan.agent.clone(), model: model.map(str::to_string), mode: plan.mode, status: AskStatus::Running, error: None, started_at: now(), ended_at: None,
+            images: image_ids.to_vec(),
         };
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
         core.emit_ask(EventKind::AskStarted { turn: turn.clone() });

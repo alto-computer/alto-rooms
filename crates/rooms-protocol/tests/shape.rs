@@ -50,6 +50,7 @@ fn export_typescript_bindings() {
     AskTurn::export_all().unwrap();
     StartAsk::export_all().unwrap();
     AskTarget::export_all().unwrap();
+    AskImage::export_all().unwrap();
 }
 
 #[test]
@@ -57,7 +58,7 @@ fn ask_events_are_camel_and_tagged() {
     let turn = AskTurn {
         id: "a1".into(), file_key: "0123456789abcdef".into(), question: "q".into(), answer: "".into(),
         agent: "claude-code".into(), model: None, mode: AskMode::Resume, status: AskStatus::Running,
-        error: None, started_at: "2026-10-06T10:00:00+09:00".into(), ended_at: None,
+        error: None, started_at: "2026-10-06T10:00:00+09:00".into(), ended_at: None, images: vec![],
     };
     let v = serde_json::to_value(&RoomsEvent { seq: 3, kind: EventKind::AskStarted { turn: turn.clone() } }).unwrap();
     assert_eq!(v["type"], "ask.started");

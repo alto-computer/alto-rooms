@@ -46,7 +46,7 @@ mod tests {
 
     fn turn(q: &str, a: &str, status: AskStatus) -> AskTurn {
         AskTurn { id: q.into(), file_key: "k".into(), question: q.into(), answer: a.into(), agent: "x".into(), model: None,
-            mode: AskMode::New, status, error: None, started_at: "t".into(), ended_at: None }
+            mode: AskMode::New, status, error: None, started_at: "t".into(), ended_at: None, images: vec![] }
     }
 
     #[test]

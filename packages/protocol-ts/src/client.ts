@@ -1,5 +1,6 @@
 import type { ApiError } from "./generated/ApiError";
 import type { Artifact } from "./generated/Artifact";
+import type { AskImage } from "./generated/AskImage";
 import type { AskTarget } from "./generated/AskTarget";
 import type { AskTurn } from "./generated/AskTurn";
 import type { Info } from "./generated/Info";
@@ -82,6 +83,13 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     askTarget: async (roomId: string, artifactId: string) =>
       (await get<AskTarget>(`/v1/asks/target?roomId=${encodeURIComponent(roomId)}&artifactId=${encodeURIComponent(artifactId)}`)).data,
     askThread: async (fileKey: string) => (await get<AskTurn[]>(`/v1/asks?fileKey=${encodeURIComponent(fileKey)}`)).data,
+    /** Stores an image to attach to a question; roomsd reads its type from the bytes. */
+    uploadAskImage: async (image: Blob): Promise<AskImage> => {
+      const r = await fetch(baseUrl + "/v1/asks/images", { method: "POST", headers: { "content-type": image.type || "application/octet-stream", ...auth() }, body: image });
+      if (!r.ok) throw await failure(r);
+      return (await r.json()) as AskImage;
+    },
+    askImageUrl: (info: Info, id: string) => `${info.filesOrigin}/_asks/images/${encodeURIComponent(id)}`,
     cancelAsk: (askId: string) => write<void>("DELETE", `/v1/asks/${encodeURIComponent(askId)}`, ""),
     listPlugins: async () => (await get<PluginInfo[]>("/v1/plugins")).data,
     /** Turning on grants `permissions` (what the user was shown) that the manifest still declares; off keeps the approval. */

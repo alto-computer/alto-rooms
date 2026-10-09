@@ -4,4 +4,8 @@ export type StartAsk = { roomId: string, artifactId: string, question: string,
 /**
  * One of `AskTarget::models`; `None` or empty = the agent's own default.
  */
-model: string | null, };
+model: string | null, 
+/**
+ * Ids from `POST /v1/asks/images`, at most 5.
+ */
+images?: Array<string>, };

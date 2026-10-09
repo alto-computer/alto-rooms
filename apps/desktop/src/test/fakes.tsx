@@ -160,15 +160,17 @@ export function fakeClient(
       if (!a) throw new RoomsApiError(404, "not found", "not_found");
       return { ...a, roomId: toRoomId };
     }),
-    startAsk: vi.fn(async (req: { roomId: string; artifactId: string; question: string; model: string | null }): Promise<AskTurn> => {
+    startAsk: vi.fn(async (req: { roomId: string; artifactId: string; question: string; model: string | null; images?: string[] }): Promise<AskTurn> => {
       const a = state.artifacts[req.roomId]?.find((x) => x.id === req.artifactId);
       if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
       return {
         id: `ask-${req.question}`, fileKey: a.fileKey, question: req.question, answer: "", agent: a.source.agent ?? "claude-code",
         model: req.model, mode: a.source.session ? "resume" : "new", status: "running", error: null,
-        startedAt: "2026-10-06T10:00:00+09:00", endedAt: null,
+        startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: req.images ?? [],
       };
     }),
+    uploadAskImage: vi.fn(async (image: Blob) => ({ id: `img-${(image as File).name ?? "blob"}` })),
+    askImageUrl: (i: Info, id: string) => `${i.filesOrigin}/_asks/images/${id}`,
     askTarget: vi.fn(async (roomId: string, artifactId: string): Promise<AskTarget> => {
       const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);
       if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");

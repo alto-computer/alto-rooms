@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, CircleAlert, Square } from "lucide-react";
+import { ArrowUp, CircleAlert, ImagePlus, Square } from "lucide-react";
 import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -12,6 +12,7 @@ import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThinkingLine } from "./ThinkingLine";
 import { useStickToBottom } from "./useStickToBottom";
 import type { Live } from "./asksStore";
+import { AttachmentStrip, IMAGE_TYPES, TurnImages, useAttachments } from "./attachments";
 
 /** The Markdown chain is heavy and only needed once an answer arrives. */
 const loadAnswerMarkdown = () => import("./AnswerMarkdown");
@@ -77,6 +78,7 @@ const TEXT_BUTTON = "-ml-2 inline-flex min-h-7 items-center rounded-md px-2 text
 function Turn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: () => void }) {
   return (
     <div data-turn-id={t.id} className="space-y-2">
+      <TurnImages ids={t.images ?? []} />
       <div className="ml-auto w-fit max-w-[80%] rounded-[10px] bg-[#f2f2f2] px-3 py-1.5 whitespace-pre-wrap">{t.question}</div>
       {t.status === "running" ? (
         <>
@@ -125,6 +127,9 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const [sheet, setSheet] = useState(true);
   const [sendError, setSendError] = useState<string | null>(null);
   const [multiline, setMultiline] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const attachments = useAttachments((m) => setSendError(m));
+  const filePicker = useRef<HTMLInputElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -196,8 +201,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
     if (!shown) return;
     const onPointerDown = (e: PointerEvent) => {
       if (!(e.target instanceof Element) || container.current?.contains(e.target)) return;
-      // The model menu is portaled out of the bar but still belongs to it.
-      if (!e.target.closest("[data-slot=dropdown-menu-content]")) setSheet(false);
+      // The model menu and the image viewer are portaled out of the bar but still belong to it.
+      if (!e.target.closest("[data-slot=dropdown-menu-content], [data-slot=dialog-content], [data-slot=dialog-overlay]")) setSheet(false);
     };
     const onBlur = () => {
       if (document.activeElement?.tagName === "IFRAME") setSheet(false);
@@ -216,16 +221,24 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
 
   /** A retry keeps its turn's model while the agent still offers it. */
   const retryModel = (t: AskTurn) => (t.model && target?.models.includes(t.model) ? t.model : model);
-  const send = async (question: string, withModel: string | null = model) => {
+  /** The draft's images, ready to go: null while one is still uploading or one failed. */
+  const readyImages = () => (attachments.uploading || attachments.failed ? null : attachments.items);
+  const send = async (question: string, withModel: string | null = model, images: string[] | null = null) => {
     const q = question.trim();
     // Typing ahead is fine while an answer runs; sending waits for it.
     if (!q || running || sending.current) return;
+    const picked = images ? null : readyImages();
+    if (!images && !picked) {
+      setSendError(attachments.failed ? "Remove the images that couldn't be attached" : "Wait for the images to finish uploading");
+      return;
+    }
     sending.current = true;
     setSendError(null);
     try {
-      await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, q, withModel);
+      await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, q, withModel, images ?? picked!.map((a) => a.id!));
       // Only clear what was sent: the next question may have been typed in the meantime.
       setDraft((d) => (d.trim() === q ? "" : d));
+      if (picked) attachments.clear(picked.map((a) => a.key));
       setSheet(true);
     } catch (e) {
       setSendError(e instanceof RoomsApiError ? e.message : GENERIC_ERROR);
@@ -245,7 +258,24 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   };
 
   return (
-    <div ref={container} className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-4 pb-4">
+    <div
+      ref={container}
+      className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-4 pb-4"
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        setDragging(false);
+        if (e.dataTransfer.files.length === 0) return;
+        e.preventDefault();
+        if (attachments.add(e.dataTransfer.files)) input.current?.focus();
+      }}
+    >
       {showSheet ? (
         <div ref={sheetRef} className="pointer-events-auto max-h-[50vh] w-full max-w-[720px] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
           {head ? (
@@ -259,7 +289,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           ) : null}
           <div className="space-y-4">
             {turns.map((t) => (
-              <Turn key={t.id} t={t} live={live[t.id]} onRetry={() => void send(t.question, retryModel(t))} />
+              <Turn key={t.id} t={t} live={live[t.id]} onRetry={() => void send(t.question, retryModel(t), t.images ?? [])} />
             ))}
           </div>
         </div>
@@ -267,11 +297,14 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       {sendError ? <div className="pointer-events-auto"><ErrorText>{sendError}</ErrorText></div> : null}
       <div
         className={cn(
-          "pointer-events-auto flex w-full max-w-[720px] gap-2.5 border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
+          "pointer-events-auto flex w-full max-w-[720px] flex-col border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
           // A full pill only suits one line; taller, round the corners less and keep the buttons at the bottom.
-          multiline ? "items-end rounded-[20px]" : "items-center rounded-full",
+          multiline || attachments.items.length > 0 ? "rounded-[20px]" : "rounded-full",
+          dragging && "border-ink/60 ring-4 ring-ink/10",
         )}
       >
+        <AttachmentStrip items={attachments.items} onRemove={attachments.remove} />
+        <div className={cn("flex gap-2.5", multiline ? "items-end" : "items-center")}>
         <textarea
           ref={input}
           rows={1}
@@ -280,8 +313,31 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
           onFocus={() => setSheet(true)}
+          onPaste={(e) => {
+            if (attachments.add(e.clipboardData.files)) e.preventDefault();
+          }}
           className="max-h-32 flex-1 resize-none overflow-y-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-[13.5px] leading-5 outline-none placeholder:text-[#9a9a9a]"
         />
+        <input
+          ref={filePicker}
+          type="file"
+          accept={IMAGE_TYPES.join(",")}
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files) attachments.add(e.target.files);
+            e.target.value = "";
+            input.current?.focus();
+          }}
+        />
+        <button
+          type="button"
+          aria-label="Attach images"
+          onClick={() => filePicker.current?.click()}
+          className="flex size-7 shrink-0 items-center justify-center rounded-full text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+        >
+          <ImagePlus className="size-4" />
+        </button>
         {target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={artifact.source.agent ?? "Default agent"} />}
         <TooltipProvider>
           <Tooltip>
@@ -289,9 +345,9 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
               <button
                 type="button"
                 aria-label={running ? "Stop" : "Send"}
-                disabled={!running && !draft.trim()}
+                disabled={!running && (!draft.trim() || attachments.uploading)}
                 onClick={() => (running ? store.cancel(running.id) : void send(draft))}
-                className={cn("flex size-[30px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground focus-visible:outline-2 focus-visible:outline-ink", !running && !draft.trim() && "opacity-40")}
+                className={cn("flex size-[30px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground focus-visible:outline-2 focus-visible:outline-ink", !running && (!draft.trim() || attachments.uploading) && "opacity-40")}
               >
                 {running ? <Square className="size-3 fill-current" /> : <ArrowUp className="size-4" />}
               </button>
@@ -300,6 +356,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
             {running ? <TooltipContent side="top">Stop (Esc)</TooltipContent> : null}
           </Tooltip>
         </TooltipProvider>
+        </div>
       </div>
     </div>
   );

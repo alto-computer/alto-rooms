@@ -14,4 +14,8 @@ answer: string, agent: string,
 /**
  * The model picked for this turn; `None` = the agent's own default.
  */
-model: string | null, mode: AskMode, status: AskStatus, error: string | null, startedAt: string, endedAt: string | null, };
+model: string | null, mode: AskMode, status: AskStatus, error: string | null, startedAt: string, endedAt: string | null, 
+/**
+ * Ids of the images attached to the question (`<home>/.rooms/asks/images/<id>`).
+ */
+images: Array<string>, };

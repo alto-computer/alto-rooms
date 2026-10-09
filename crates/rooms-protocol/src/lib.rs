@@ -169,6 +169,9 @@ pub struct AskTurn {
     pub error: Option<String>,
     pub started_at: String,
     pub ended_at: Option<String>,
+    /// Ids of the images attached to the question (`<home>/.rooms/asks/images/<id>`).
+    #[serde(default)]
+    pub images: Vec<String>,
 });
 
 wire!(
@@ -200,6 +203,16 @@ wire!(pub struct StartAsk {
     pub question: String,
     /// One of `AskTarget::models`; `None` or empty = the agent's own default.
     pub model: Option<String>,
+    /// Ids from `POST /v1/asks/images`, at most 5.
+    #[serde(default)]
+    #[ts(optional)]
+    pub images: Option<Vec<String>>,
+});
+
+wire!(
+/// A stored question image (`POST /v1/asks/images`); its file is served at `<filesOrigin>/_asks/images/<id>`.
+pub struct AskImage {
+    pub id: String,
 });
 
 wire!(

@@ -31,7 +31,7 @@ impl IntoResponse for AskErr {
 
 pub async fn start_ask(State(st): State<AppState>, b: Result<Json<StartAsk>, JsonRejection>) -> Result<(StatusCode, Json<AskTurn>), AskErr> {
     let Json(b) = b.map_err(|e| AskError::BadRequest(e.body_text()))?;
-    let turn = ask_blocking(&st, move |a| a.start(&b.room_id, &b.artifact_id, &b.question, b.model.as_deref())).await?;
+    let turn = ask_blocking(&st, move |a| a.start_with(&b.room_id, &b.artifact_id, &b.question, b.model.as_deref(), &b.images.unwrap_or_default())).await?;
     Ok((StatusCode::ACCEPTED, Json(turn)))
 }
 
@@ -61,6 +61,20 @@ pub struct TargetQuery { room_id: String, artifact_id: String }
 pub async fn ask_target(State(st): State<AppState>, q: Result<Query<TargetQuery>, QueryRejection>) -> Result<Json<AskTarget>, AskErr> {
     let Query(q) = q.map_err(|e| AskError::BadRequest(e.body_text()))?;
     Ok(Json(ask_blocking(&st, move |a| a.target(&q.room_id, &q.artifact_id)).await?))
+}
+
+/// The raw image bytes; the type is read from them, not from content-type.
+pub async fn upload_ask_image(State(st): State<AppState>, body: axum::body::Bytes) -> Result<(StatusCode, Json<AskImage>), AskErr> {
+    let id = ask_blocking(&st, move |a| a.save_image(&body)).await?;
+    Ok((StatusCode::CREATED, Json(AskImage { id })))
+}
+
+/// A question image on the files origin. Named by its hash, so it never changes: cache it for good.
+pub async fn ask_image(State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(path) = st.asks.image_path(&id) else { return ApiErr(CoreError::NotFound).into_response() };
+    let Ok(body) = file_body(&path).await else { return ApiErr(CoreError::NotFound).into_response() };
+    let ct = rooms_core::asks::images::content_type(&id);
+    ([("content-type", ct), ("x-content-type-options", "nosniff"), ("cache-control", "private, max-age=31536000, immutable")], body).into_response()
 }
 
 pub async fn cancel_ask(State(st): State<AppState>, Path(ask_id): Path<String>) -> StatusCode {

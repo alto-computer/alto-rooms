@@ -384,3 +384,31 @@ async fn json_lines_stream_as_progress_then_the_final_answer() {
     assert_eq!((done.status, done.answer.as_str()), (AskStatus::Done, "표는 이렇게 읽어요."));
     assert_eq!(asks.thread(&t.file_key).unwrap()[0].answer, "표는 이렇게 읽어요.");
 }
+
+#[tokio::test]
+async fn images_reach_the_template_and_the_prompt_and_stay_on_the_turn() {
+    let (d, core, room, art) = setup("");
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--dir\", \"{{image_dir}}\", \"-i\", \"{{image}}\", \"{{prompt}}\"]\n")).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let id = asks.save_image(b"\x89PNG\r\n\x1a\none").unwrap();
+    let id2 = asks.save_image(b"GIF89a-two").unwrap();
+    let mut rx = core.subscribe();
+    let t = asks.start_with(&room, &art, "이 화면 뭐야?", None, &[id.clone(), id2.clone()]).unwrap();
+    assert_eq!(t.images, vec![id.clone(), id2.clone()]);
+    let done = wait_done(&mut rx, &t.id).await;
+    let dir = d.path().join(".rooms/asks/images");
+    let (p1, p2) = (dir.join(&id), dir.join(&id2));
+    assert!(done.answer.contains(&format!("[--dir] [{}] [-i] [{}] [-i] [{}]", dir.display(), p1.display(), p2.display())), "{}", done.answer);
+    assert!(done.answer.contains(&format!("Attached images (open each one to see it):\n- {}\n- {}", p1.display(), p2.display())), "{}", done.answer);
+    assert_eq!(asks.thread(&t.file_key).unwrap()[0].images, vec![id.clone(), id2]);
+    // Without images the flags go away.
+    let t = asks.start(&room, &art, "no images", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    let argv = done.answer.lines().next().unwrap();
+    assert!(!argv.contains("[-i]") && !argv.contains("[--dir]"), "{argv}");
+    // Unknown or too many images are refused before anything runs.
+    let missing = "0123456789abcdef0123456789abcdef.png".to_string();
+    assert!(matches!(asks.start_with(&room, &art, "q", None, &[missing]), Err(AskError::BadRequest(_))));
+    assert!(matches!(asks.start_with(&room, &art, "q", None, &vec![id; 6]), Err(AskError::BadRequest(_))));
+}

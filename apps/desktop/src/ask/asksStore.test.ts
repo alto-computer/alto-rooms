@@ -6,7 +6,7 @@ type EventInput = RoomsEvent extends infer T ? (T extends RoomsEvent ? Omit<T, "
 
 const turn = (id: string, status: AskTurn["status"], extra: Partial<AskTurn> = {}): AskTurn => ({
   id, fileKey: "k1", question: "q", answer: "", agent: "claude-code", model: null, mode: "resume", status,
-  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, ...extra,
+  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], ...extra,
 });
 
 function setup(thread: AskTurn[] = []) {
@@ -16,6 +16,7 @@ function setup(thread: AskTurn[] = []) {
     askThread: vi.fn(async () => thread),
     askTarget: vi.fn(async (): Promise<AskTarget> => ({ agent: "codex", mode: "new", models: ["gpt-6-sol"] })),
     cancelAsk: vi.fn(async () => {}),
+    uploadAskImage: vi.fn(async () => ({ id: "img.png" })),
   };
   const store = new AsksStore(client, { onSignal: (fn) => ((signal = fn), () => {}) });
   store.start();
