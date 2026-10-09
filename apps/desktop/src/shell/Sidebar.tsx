@@ -11,23 +11,23 @@ import {
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type { Room } from "@alto-rooms/protocol-ts";
-import { Calendar, CircleAlert, PanelLeft, Plus, Search } from "lucide-react";
+import { BookOpen, CircleAlert, Inbox, PanelLeft, Plus, Search } from "lucide-react";
 import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
 import { useClient, useReadOnly, useRoomList, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
-import { localDate } from "@/lib/dates";
+import { isNewSince, localDate } from "@/lib/dates";
 import { INBOX_ID, type ArtifactDragPayload } from "@/lib/drag";
 import { moveErrorCopy } from "@/lib/errors";
 import { wantsNewTab } from "@/lib/nav";
 import { IconTip } from "@/components/IconTip";
 import { cn } from "@/lib/utils";
 import { useBriefError } from "@/views/briefError";
-import logo from "@/assets/logo.svg";
 import { DRAG_KEYBOARD_CODES } from "./dragKeys";
+import { BrandMenu } from "./BrandMenu";
 import { NewRoomRow } from "./NewRoomRow";
 import { PluginItems } from "./PluginItems";
 import { RoomRow } from "./RoomRow";
-import { ICON, ITEM, ITEM_INTERACTIVE } from "./sidebarItem";
+import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE, SECTION } from "./sidebarItem";
 
 /** Opens (or activates) the single journal tab, pointed at today's local date. */
 export function openJournal(viewer: ViewerStore) {
@@ -43,7 +43,7 @@ export function openJournal(viewer: ViewerStore) {
 
 export function Sidebar({ onFind }: { onFind: () => void }) {
   const rooms = useRoomList();
-  const { tabs, activeId, sidebarOpen } = useViewer();
+  const { tabs, activeId, sidebarOpen, lastVisit, firstRunAt } = useViewer();
   const viewer = useViewerStore();
   const readOnly = useReadOnly();
   const client = useClient();
@@ -98,7 +98,10 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
   const active = tabs.find((t) => t.id === activeId);
   const activeRoomId = active?.kind === "room" ? active.roomId : null;
   // The empty inbox stays out of the sidebar, unless it is the room being viewed.
-  const listed = shown.filter((r) => r.id !== INBOX_ID || r.artifactCount > 0 || r.id === activeRoomId);
+  const inbox = shown.find((r) => r.id === INBOX_ID && (r.artifactCount > 0 || r.id === activeRoomId));
+  const listed = shown.filter((r) => r.id !== INBOX_ID);
+  // Something arrived since you last left the room; the room you are in never counts.
+  const unread = (r: Room) => r.id !== activeRoomId && r.updatedAt !== null && isNewSince(r.updatedAt, lastVisit[r.id] ?? firstRunAt);
 
   return (
     <ShadcnSidebar
@@ -110,64 +113,70 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
       aria-hidden={sidebarOpen ? undefined : true}
     >
       {/* App chrome: labels don't select on drag or double click (the rename field still does). */}
-      <div className="flex h-full min-h-0 flex-col px-[10px] py-4 select-none [&_input]:select-text">
-        <div className="flex items-center gap-2.5 pl-2.5">
-          <button
-            type="button"
-            aria-label="Home"
-            // Browser style: the home page replaces this tab; ⌘/middle click opens it in a new one.
-            onClick={(e) => viewer.go({ kind: "new" }, wantsNewTab(e))}
-            onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "new" }, true)}
-            className="-my-1 -ml-1.5 flex items-center gap-2.5 rounded-lg py-1 pr-2 pl-1.5 hover:bg-surface focus-visible:outline-2 focus-visible:outline-ink"
-          >
-            <img src={logo} alt="" width={26} height={26} className="size-[26px] shrink-0" />
-            <span className="text-heading font-medium text-ink">Rooms</span>
-          </button>
+      <div className="flex h-full min-h-0 flex-col bg-linear-to-b from-(--sidebar-sheen-top) to-(--sidebar-sheen-bottom) px-2.5 pt-3 pb-2.5 select-none [&_input]:select-text">
+        <div className="mb-2.5 flex items-center">
+          <BrandMenu />
           <IconTip label="Hide sidebar" shortcut="⌘B">
             <button
               type="button"
               aria-label="Hide sidebar (⌘B)"
               onClick={() => viewer.setSidebarOpen(false)}
-              className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+              className="ml-auto grid size-7 shrink-0 place-items-center rounded-lg text-ink-3 hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
             >
               <PanelLeft {...ICON} />
             </button>
           </IconTip>
         </div>
 
-        <nav className="mt-4 flex flex-col gap-0.5">
+        <nav className="flex flex-col gap-px">
           <button type="button" onClick={onFind} className={cn(ITEM, ITEM_INTERACTIVE)}>
             <Search {...ICON} className="shrink-0 text-ink-2" />
             <span className="truncate">Find</span>
+            <kbd aria-hidden className="ml-auto pl-2 font-sans text-caption text-ink-3">⌘K</kbd>
           </button>
           <button
             type="button"
             onClick={() => openJournal(viewer)}
             aria-current={active?.kind === "journal" ? "page" : undefined}
-            className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "journal" && "bg-surface-strong hover:bg-surface-strong")}
+            className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "journal" && ITEM_CURRENT)}
           >
-            <Calendar {...ICON} className="shrink-0 text-ink" />
+            <BookOpen {...ICON} className={cn("shrink-0", active?.kind === "journal" ? "text-ink" : "text-ink-2")} />
             <span className="truncate">Journal</span>
           </button>
+          {inbox ? (
+            <button
+              type="button"
+              onClick={(e) => viewer.go({ kind: "room", roomId: inbox.id }, wantsNewTab(e))}
+              onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "room", roomId: inbox.id }, true)}
+              aria-current={inbox.id === activeRoomId ? "page" : undefined}
+              className={cn(ITEM, ITEM_INTERACTIVE, inbox.id === activeRoomId && ITEM_CURRENT)}
+            >
+              <Inbox {...ICON} className={cn("shrink-0", inbox.id === activeRoomId ? "text-ink" : "text-ink-2")} />
+              <span className="truncate">Inbox</span>
+              {inbox.artifactCount > 0 ? (
+                <span className="ml-auto pl-2 text-caption font-normal text-ink-3 tabular-nums">{inbox.artifactCount}</span>
+              ) : null}
+            </button>
+          ) : null}
         </nav>
 
-        <div className="mt-5 flex min-h-7 items-center justify-between pl-2.5">
-          <span className="text-small text-ink-3">Your rooms</span>
+        <div className={cn(SECTION, "mt-3")}>
+          <span>Rooms</span>
           {readOnly ? null : (
             <IconTip label="New room">
               <button
                 type="button"
                 aria-label="New room"
                 onClick={() => setCreating(true)}
-                className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+                className="grid size-6 place-items-center rounded-md text-ink-3 hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
               >
-                <Plus size={16} strokeWidth={1.75} aria-hidden />
+                <Plus size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </IconTip>
           )}
         </div>
 
-        <ul aria-label="Rooms" className="no-scrollbar mt-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
+        <ul aria-label="Rooms" className="no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-y-auto">
           {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
           <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[verticalOnly]} onDragEnd={onDragEnd}>
             <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
@@ -176,8 +185,9 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
                   key={room.id}
                   room={room}
                   active={room.id === activeRoomId}
+                  unread={unread(room)}
                   readOnly={readOnly}
-                  sortable={!readOnly && room.id !== INBOX_ID}
+                  sortable={!readOnly}
                   onMove={readOnly || !isDropTarget(room) ? undefined : move}
                 />
               ))}
@@ -186,8 +196,8 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
         </ul>
         <PluginItems />
         {moveFailed.shown ? (
-          <p role="status" className="mt-2 flex items-center gap-1.5 px-2.5 text-body text-error">
-            <CircleAlert size={16} aria-hidden className="shrink-0" />
+          <p role="status" className="mt-2 flex items-center gap-1.5 px-2 text-small text-error">
+            <CircleAlert size={14} aria-hidden className="shrink-0" />
             {moveError}
           </p>
         ) : null}

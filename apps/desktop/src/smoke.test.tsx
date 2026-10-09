@@ -24,7 +24,7 @@ describe("App smoke", () => {
   it("renders the Rooms placeholder once connected", async () => {
     window.__ROOMS_DEV__ = { baseUrl: "http://127.0.0.1:4317", token: "t", home: "/h" };
     render(<App />);
-    expect(await screen.findByText("Rooms")).toBeTruthy();
+    expect(await screen.findByRole("list", { name: "Rooms" })).toBeTruthy();
   });
 
   it("shows the error panel and retries", async () => {
@@ -32,6 +32,6 @@ describe("App smoke", () => {
     expect(await screen.findByText("Couldn't connect to Rooms")).toBeTruthy();
     window.__ROOMS_DEV__ = { baseUrl: "http://127.0.0.1:4317", token: "t", home: "/h" };
     fireEvent.click(screen.getByText("Try again"));
-    expect(await screen.findByText("Rooms")).toBeTruthy();
+    expect(await screen.findByRole("list", { name: "Rooms" })).toBeTruthy();
   });
 });

@@ -9,7 +9,7 @@ import { carriesArtifact, draggingFromRoom, endArtifactDrag, readArtifactPayload
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { EditableTitle } from "@/views/EditableTitle";
-import { ICON, ITEM, ITEM_INTERACTIVE } from "./sidebarItem";
+import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE } from "./sidebarItem";
 
 /** Drop handlers for a room row that accepts artifacts; `over` drives the highlight. */
 function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomId: string) => void) | undefined) {
@@ -48,12 +48,15 @@ function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomI
 export function RoomRow({
   room,
   active,
+  unread,
   readOnly,
   sortable,
   onMove,
 }: {
   room: Room;
   active: boolean;
+  /** Something arrived since the user last left the room: the name shows semibold. */
+  unread: boolean;
   readOnly: boolean;
   /** The row can be dragged up and down to reorder the rooms. */
   sortable: boolean;
@@ -70,8 +73,8 @@ export function RoomRow({
 
   if (editing && !readOnly) {
     return (
-      <li className="flex min-h-9 items-center gap-2.5 rounded-lg bg-white px-2.5 py-1.5 text-lead shadow-[0_0_0_2px_#222]">
-        <Folder {...ICON} className="shrink-0" />
+      <li className={cn(ITEM, "h-auto min-h-7 bg-sheet py-1 shadow-sheet ring-[1.5px] ring-ink/40 ring-inset")}>
+        <Folder {...ICON} className="shrink-0 text-ink-2" />
         <div className="min-w-0 flex-1">
           <EditableTitle
             value={room.name}
@@ -82,7 +85,7 @@ export function RoomRow({
             }}
             onSaved={() => setEditing(false)}
             onCancel={() => setEditing(false)}
-            className="w-full text-lead text-ink"
+            className="w-full text-body text-ink"
             inputClassName="bg-transparent p-0"
           />
         </div>
@@ -102,14 +105,14 @@ export function RoomRow({
       className={cn(
         ITEM,
         ITEM_INTERACTIVE,
-        active && "bg-surface-strong hover:bg-surface-strong",
-        drop.over && "bg-surface-strong outline-1 outline-ink outline-solid hover:bg-surface-strong",
-        sort.isDragging && "cursor-grabbing bg-white shadow-float hover:bg-white",
+        active && ITEM_CURRENT,
+        drop.over && "bg-surface-strong outline-1 -outline-offset-1 outline-ink outline-solid hover:bg-surface-strong",
+        sort.isDragging && "cursor-grabbing bg-sheet font-medium shadow-lift hover:bg-sheet",
       )}
     >
-      <Folder {...ICON} className={cn("shrink-0", active ? "fill-[#fff0f3]" : "fill-none")} />
-      {/* The native title shows a name the 232px sidebar cuts off (unavailable rows have their own tooltip). */}
-      <span title={unavailable ? undefined : room.name} className={cn("truncate", unavailable && "opacity-50")}>
+      <Folder {...ICON} className={cn("shrink-0", active ? "text-ink-2" : "text-ink-3")} />
+      {/* The native title shows a name the sidebar cuts off (unavailable rows have their own tooltip). */}
+      <span title={unavailable ? undefined : room.name} className={cn("truncate", unread && "font-semibold", unavailable && "opacity-50")}>
         {room.name}
       </span>
     </button>

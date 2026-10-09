@@ -47,13 +47,14 @@ test("dragging a tab reorders the tab bar and activates the dragged tab", async 
   await expect.poll(() => tabNames(page)).toEqual(["Alpha", "Beta", "Gamma"]);
 });
 
-test("the logo is a Home button: it turns this tab into the New tab page", async ({ page, daemon }) => {
+test("Home in the Rooms menu turns this tab into the New tab page", async ({ page, daemon }) => {
   await daemon.createRoom("Alpha");
   await page.goto("/");
   await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "Alpha" }).click();
   await expect(tab(page, "Alpha")).toHaveAttribute("aria-selected", "true");
 
-  await page.getByRole("button", { name: "Home" }).click();
+  await page.getByRole("button", { name: "Rooms", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Home" }).click();
   await expect(tab(page, "New tab")).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "Since your last visit" })).toBeVisible();
   await expect(tabs(page)).toHaveCount(1); // replaced in place, not a second tab

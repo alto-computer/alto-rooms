@@ -52,6 +52,8 @@ function stubTransfer(init: Record<string, string> = {}) {
 }
 
 const sidebarRow = (name: string) => within(screen.getByRole("list", { name: "Rooms" })).getByRole("button", { name });
+/** The inbox sits with Find and Journal, labelled with its count. */
+const inboxRow = () => screen.queryByRole("button", { name: /^Inbox\d*$/ });
 
 async function dropOn(target: HTMLElement, dt: ReturnType<typeof stubTransfer>) {
   fireEvent.dragEnter(target, { dataTransfer: dt });
@@ -86,9 +88,8 @@ describe("Sidebar: drag to move", () => {
   it("linked, unavailable and inbox rows (and the source room) are not drop targets", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: ROOMS, artifacts: ARTIFACTS });
     const payload = JSON.stringify({ roomId: "inbox", artifactId: "x1" });
-    for (const name of ["연결된 폴더", "없는 폴더", "Inbox"]) {
+    for (const target of [sidebarRow("연결된 폴더"), sidebarRow("없는 폴더"), inboxRow()!]) {
       const dt = stubTransfer({ [ARTIFACT_DRAG_TYPE]: payload });
-      const target = sidebarRow(name);
       await dropOn(target, dt);
       expect(target).not.toHaveClass("outline-ink");
     }
@@ -147,16 +148,16 @@ describe("Sidebar: reorder rooms", () => {
   const four = () => [room("inbox", "Inbox", { artifactCount: 1 }), room("a", "A"), room("b", "B"), room("c", "C")];
   const names = () => within(screen.getByRole("list", { name: "Rooms" })).getAllByRole("button").map((b) => b.textContent);
 
-  it("rooms below the inbox are sortable; the inbox stays put", async () => {
+  it("rooms are sortable; the inbox stays put", async () => {
     await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] } });
-    expect(sidebarRow("Inbox")).not.toHaveAttribute("aria-roledescription", "sortable");
+    expect(inboxRow()).not.toHaveAttribute("aria-roledescription", "sortable");
     for (const n of ["A", "B", "C"]) expect(sidebarRow(n)).toHaveAttribute("aria-roledescription", "sortable");
   });
 
   it("follows rooms.reordered from the core", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] } });
     act(() => h.emit({ type: "rooms.reordered", roomIds: ["inbox", "c", "a", "b"] }));
-    expect(names()).toEqual(["Inbox", "C", "A", "B"]);
+    expect(names()).toEqual(["C", "A", "B"]);
   });
 
   it("is off when read-only", async () => {
@@ -168,17 +169,65 @@ describe("Sidebar: reorder rooms", () => {
 describe("Sidebar: inbox", () => {
   const rows = () => within(screen.getByRole("list", { name: "Rooms" })).getAllByRole("button").map((b) => b.textContent);
 
-  it("hides the inbox while it is empty and shows it once a doc waits there", async () => {
+  it("sits above the rooms and hides while it is empty; once a doc waits there it shows with its count", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox", { artifactCount: 0 }), room("a", "A")] });
-    expect(rows()).toEqual(["A"]);
+    expect(inboxRow()).toBeNull();
     act(() => h.emit({ type: "artifact.added", artifact: doc("x1", "inbox", "떠도는 문서") }));
-    expect(rows()).toEqual(["Inbox", "A"]);
+    expect(inboxRow()).toHaveTextContent("Inbox1");
+    expect(rows()).toEqual(["A"]);
   });
 
   it("keeps an empty inbox listed while its tab is the one being viewed", async () => {
     const viewer = new ViewerStore(memoryStorage());
     viewer.open({ kind: "room", roomId: "inbox" });
     await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox", { artifactCount: 0 }), room("a", "A")], viewer });
-    expect(rows()).toEqual(["Inbox", "A"]);
+    expect(inboxRow()).toHaveAttribute("aria-current", "page");
+  });
+});
+
+describe("Sidebar: unread rooms", () => {
+  // firstRunAt is "now" (2026-10), so a room counts as unread when something arrived after it.
+  const later = "2099-01-01T00:00:00Z";
+  const nameOf = (n: string) => within(sidebarRow(n)).getByText(n);
+
+  it("shows a room semibold once something arrives after the last visit, with no dot", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("a", "A", { updatedAt: later }), room("b", "B", { updatedAt: "2000-01-01T00:00:00Z" }), room("c", "C")] });
+    expect(nameOf("A")).toHaveClass("font-semibold");
+    expect(nameOf("B")).not.toHaveClass("font-semibold");
+    expect(nameOf("C")).not.toHaveClass("font-semibold");
+    expect(sidebarRow("A").querySelector("[class*=bg-thread]")).toBeNull();
+  });
+
+  it("never shows the room you are in as unread", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "room", roomId: "a" });
+    await renderWithStores(<AppShell />, { rooms: [room("a", "A", { updatedAt: later })], viewer });
+    expect(nameOf("A")).not.toHaveClass("font-semibold");
+  });
+});
+
+describe("Sidebar: Rooms menu", () => {
+  const openMenu = () => fireEvent.keyDown(screen.getByRole("button", { name: "Rooms" }), { key: "Enter" });
+
+  it("offers System, Light and Dark, defaulting to System and saying what System resolves to", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("a", "A")] });
+    openMenu();
+    const group = await screen.findByRole("group", { name: "Appearance" });
+    expect(within(group).getAllByRole("menuitemradio").map((r) => [r.textContent, r.getAttribute("aria-checked")])).toEqual([
+      ["System", "true"],
+      ["Light", "false"],
+      ["Dark", "false"],
+    ]);
+    expect(screen.getByText("Follows macOS, which is light right now.")).toBeInTheDocument();
+  });
+
+  it("picking Dark saves it and keeps the menu open", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    await renderWithStores(<AppShell />, { rooms: [room("a", "A")], viewer });
+    openMenu();
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Dark" }));
+    expect(viewer.getState().appearance).toBe("dark");
+    expect(screen.getByRole("menuitemradio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByText(/Follows macOS/)).toBeNull();
   });
 });

@@ -18,6 +18,8 @@
   --hairline:rgb(70 48 30 / .11); --hairline-strong:rgb(70 48 30 / .18);
   --ink:#27211e; --ink-2:#6b625b; --ink-3:#958b83;
   --menu:rgb(252 249 245 / .94);
+  /* The sidebar's material: a faint sheen over the desk, so it reads as translucent. */
+  --sidebar-sheen-top:rgb(255 250 244 / .3); --sidebar-sheen-bottom:rgb(255 250 244 / .1);
 
   /* The one colour */
   --thread:#ff385c;        /* Rausch: the thread, knots, live status */
@@ -62,6 +64,7 @@
   --hairline:rgb(255 235 215 / .08); --hairline-strong:rgb(255 235 215 / .14);
   --ink:#efe7df; --ink-2:#b3a89e; --ink-3:#8a7f76;
   --menu:rgb(44 38 34 / .95);
+  --sidebar-sheen-top:rgb(255 240 225 / .035); --sidebar-sheen-bottom:rgb(255 240 225 / .012);
   --thread:#ff5a76; --thread-deep:#ff7088; --thread-deeper:#ff8a9e; --thread-soft:rgb(255 90 118 / .32);
   --on-thread:#1c1714;
   --error:#ff7a5c; --success:#4cc35a;

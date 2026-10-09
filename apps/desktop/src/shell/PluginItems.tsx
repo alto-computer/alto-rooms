@@ -8,7 +8,7 @@ import { usePlugins, usePluginsStore, useReadOnly, useViewer, useViewerStore } f
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { pluginIcon } from "@/plugins/icons";
-import { ITEM, ITEM_INTERACTIVE } from "./sidebarItem";
+import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE, SECTION } from "./sidebarItem";
 
 export function PluginItems() {
   const { list } = usePlugins();
@@ -36,9 +36,9 @@ export function PluginItems() {
   const active = tabs.find((t) => t.id === activeId);
 
   return (
-    <div className="mt-4 flex flex-col">
-      <span className="flex min-h-7 items-center pl-2.5 text-small text-ink-3">Plugins</span>
-      <ul aria-label="Plugins" className="flex flex-col gap-0.5 p-0.5">
+    <div className="mt-3 flex flex-col">
+      <span className={SECTION}>Plugins</span>
+      <ul aria-label="Plugins" className="flex flex-col gap-px">
         {items.map((p) => {
           const Icon = pluginIcon(p.slots.tab?.icon);
           const current = active?.kind === "plugin" && active.pluginId === p.id;
@@ -57,9 +57,9 @@ export function PluginItems() {
                   onClick={(e) => viewer.go({ kind: "plugin", pluginId: p.id }, wantsNewTab(e))}
                   onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "plugin", pluginId: p.id }, true)}
                   onContextMenu={onContextMenu}
-                  className={cn(ITEM, ITEM_INTERACTIVE, current && "bg-surface-strong hover:bg-surface-strong")}
+                  className={cn(ITEM, ITEM_INTERACTIVE, current && ITEM_CURRENT)}
                 >
-                  <Icon size={17} strokeWidth={1.75} aria-hidden className="shrink-0" />
+                  <Icon {...ICON} className="shrink-0 text-ink-2" />
                   <span className="truncate">{p.slots.tab!.title}</span>
                 </button>
               ) : (
@@ -68,9 +68,9 @@ export function PluginItems() {
                   title={p.enabled && p.slots.artifactSidePanel ? `Opens beside documents: ${p.slots.artifactSidePanel.title}` : undefined}
                   className={cn(ITEM, !p.enabled && "text-ink-3")}
                 >
-                  <Icon size={17} strokeWidth={1.75} aria-hidden className="shrink-0" />
+                  <Icon {...ICON} className="shrink-0 text-ink-2" />
                   <span className="truncate">{p.slots.tab?.title ?? p.name}</span>
-                  {p.enabled ? null : <span className="ml-auto shrink-0 text-small">Off</span>}
+                  {p.enabled ? null : <span className="ml-auto shrink-0 text-caption">Off</span>}
                 </div>
               )}
             </li>
@@ -97,7 +97,7 @@ export function PluginItems() {
                   const done = on ? store.setEnabled(p.id, false) : store.setEnabled(p.id, true, p.permissions);
                   done.catch((e: unknown) => console.warn(`could not turn ${p.id} ${on ? "off" : "on"}`, e));
                 }}
-                className="w-full rounded-md px-2.5 py-1.5 text-left text-ink hover:bg-surface"
+                className="flex h-7 w-full items-center rounded-md px-2 text-left text-ink hover:bg-surface-strong"
               >
                 {on ? "Turn off" : "Turn on"}
               </button>

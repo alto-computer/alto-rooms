@@ -16,7 +16,7 @@ import { useShellKeys } from "./useShellKeys";
 /** cmdk + dialog load on the first ⌘K, then stay mounted. */
 const QuickFind = lazy(() => import("@/views/QuickFind").then((m) => ({ default: m.QuickFind })));
 
-const SIDEBAR_STYLE = { "--sidebar-width": "232px" } as CSSProperties;
+const SIDEBAR_STYLE = { "--sidebar-width": "248px" } as CSSProperties;
 
 export function AppShell() {
   const { tabs, activeId, sidebarOpen } = useViewer();
