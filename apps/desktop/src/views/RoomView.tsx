@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
-import { AskBar } from "@/ask/AskBar";
+import { useEffect, useState, type ReactNode } from "react";
 import { CircleAlert } from "lucide-react";
+import { AskBar } from "@/ask/AskBar";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { useCurrentTabId } from "@/shell/currentTab";
 import { useArtifacts, useClient, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
@@ -13,6 +13,17 @@ import { SortBar } from "./SortBar";
 import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { INBOX_ID } from "@/lib/drag";
 import { cn } from "@/lib/utils";
+
+/** False until the frame after `when` first holds. */
+function useFrameAfter(when: boolean): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (!when || ready) return;
+    const id = requestAnimationFrame(() => setReady(true));
+    return () => cancelAnimationFrame(id);
+  }, [when, ready]);
+  return ready;
+}
 
 function Centered({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center p-12 text-center text-[17px] text-ink-2">{children}</div>;
@@ -37,6 +48,8 @@ export function RoomView({ roomId }: { roomId: string }) {
   const gridRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:room:${roomId}`, !!artifacts?.length && !!info);
 
   const baseline = useVisitsAtArrival().since(roomId);
+  // The ask bar mounts once the cards have painted, so it never delays them.
+  const barReady = useFrameAfter(artifacts !== undefined);
 
   if (!room) {
     // Before the first sync we can't tell; afterwards the room is gone.
@@ -111,7 +124,7 @@ export function RoomView({ roomId }: { roomId: string }) {
         ) : null}
       </header>
       {body}
-      <AskBar subject={{ kind: "room", roomId }} />
+      {barReady ? <AskBar subject={{ kind: "room", roomId }} /> : null}
     </div>
   );
 }
