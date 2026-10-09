@@ -53,6 +53,12 @@ pub fn validate_room_name(name: &str) -> Result<String, CoreError> {
     Ok(t.to_string())
 }
 
+/// A room id as `create_room` and `link_folder` mint them: nanoid's alphabet (`A-Za-z0-9_-`,
+/// so `-` and `_` can lead), 12 chars today, up to 64 for ids from other homes.
+pub fn valid_room_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
 pub fn room_slug(name: &str) -> String {
     name.trim().nfc().map(|c| if c.is_whitespace() { '-' } else { c }).collect()
 }

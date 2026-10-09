@@ -695,19 +695,21 @@ async fn ask_routes_take_a_scope_key() {
     for path in ["/v1/asks", "/v1/asks/target"] {
         let r = app.clone().oneshot(get(&format!("{path}?scope=doc:{}", art.file_key), API_HOST)).await.unwrap();
         assert_eq!(r.status(), StatusCode::OK, "{path}");
-        for bad in ["doc:..%2Fx", "room:journal", "day:2026-13-01", "nope", &format!("doc:{}", "a".repeat(65))] {
+        for bad in ["doc:..%2Fx", "room:journal", "room:Journal", "room:a.b", "day:2026-13-01", "nope", &format!("doc:{}", "a".repeat(65))] {
             let r = app.clone().oneshot(get(&format!("{path}?scope={bad}"), API_HOST)).await.unwrap();
             assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{path} {bad}");
             assert_eq!(body_json(r).await["error"], "bad_request");
         }
-        // a room scope until F1-2
-        let r = app.clone().oneshot(get(&format!("{path}?scope=room:{}", room.id), API_HOST)).await.unwrap();
-        assert_eq!(r.status(), if path == "/v1/asks" { StatusCode::OK } else { StatusCode::BAD_REQUEST }, "{path}");
+        // a room scope until F1-2; room ids are nanoids, which can start with `-` or `_`
+        for id in ["-Ab3_xYz9Q-0", "_abc", "abc"] {
+            let r = app.clone().oneshot(get(&format!("{path}?scope=room:{id}"), API_HOST)).await.unwrap();
+            assert_eq!(r.status(), if path == "/v1/asks" { StatusCode::OK } else { StatusCode::BAD_REQUEST }, "{path} room:{id}");
+        }
         let r = app.clone().oneshot(get(&format!("{path}?fileKey={}", art.file_key), API_HOST)).await.unwrap();
         assert_eq!(r.status(), StatusCode::BAD_REQUEST, "the old query is gone");
     }
     for (scope, status) in [
-        (format!(r#"{{"kind":"room","roomId":"{}"}}"#, room.id), StatusCode::BAD_REQUEST),
+        (r#"{"kind":"room","roomId":"-Ab3_xYz9Q-0"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"day","date":"2026-10-09"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"room","roomId":"journal"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"doc","fileKey":"../x"}"#.to_string(), StatusCode::BAD_REQUEST),

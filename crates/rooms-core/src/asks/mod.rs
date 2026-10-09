@@ -12,7 +12,7 @@ pub(crate) mod stream;
 pub use run::Limits;
 
 use crate::lock::lock;
-use crate::rules::validate_iso_date;
+use crate::rules::{slug_key, valid_room_id, validate_iso_date};
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
@@ -78,7 +78,7 @@ impl ScopeKey for AskScope {
     fn validate(&self) -> Result<(), AskError> {
         let ok = match self {
             AskScope::Doc { file_key } => valid_file_key(file_key),
-            AskScope::Room { room_id } => valid_ident(room_id) && room_id != JOURNAL_ROOM_ID,
+            AskScope::Room { room_id } => valid_room_id(room_id) && slug_key(room_id) != JOURNAL_ROOM_ID,
             AskScope::Day { date } => validate_iso_date(date).is_ok(),
         };
         if ok { Ok(()) } else { Err(AskError::BadRequest("bad scope key".into())) }
@@ -549,7 +549,10 @@ mod tests {
     fn scope_keys_round_trip_and_reject_bad_input() {
         let good = [
             (AskScope::Doc { file_key: "0123456789abcdef".into() }, "doc:0123456789abcdef"),
-            (AskScope::Room { room_id: "my-room.2".into() }, "room:my-room.2"),
+            (AskScope::Room { room_id: "my-room_2".into() }, "room:my-room_2"),
+            // nanoid ids can start with either
+            (AskScope::Room { room_id: "-abc".into() }, "room:-abc"),
+            (AskScope::Room { room_id: "_abc".into() }, "room:_abc"),
             (AskScope::Day { date: "2026-10-09".into() }, "day:2026-10-09"),
         ];
         for (scope, key) in good {
@@ -557,7 +560,8 @@ mod tests {
             assert_eq!(AskScope::parse_key(key).unwrap(), scope);
         }
         let long_doc = format!("doc:{}", "a".repeat(65));
-        for bad in ["../x", "doc:../x", "room:journal", "room:-flag", "room:a b", "day:2026-13-01", "day:2026-1-1", long_doc.as_str(), "doc:", "room:", "0123456789abcdef", "week:2026-10-09", ""] {
+        let long_room = format!("room:{}", "a".repeat(65));
+        for bad in ["../x", "doc:../x", "room:journal", "room:Journal", "room:JOURNAL", "room:a b", "room:a.b", "room:a/b", "day:2026-13-01", "day:2026-1-1", long_doc.as_str(), long_room.as_str(), "doc:", "room:", "0123456789abcdef", "week:2026-10-09", ""] {
             assert!(matches!(AskScope::parse_key(bad), Err(AskError::BadRequest(_))), "{bad}");
         }
         assert!(AskScope::Room { room_id: JOURNAL_ROOM_ID.into() }.validate().is_err());
