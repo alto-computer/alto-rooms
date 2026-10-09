@@ -23,6 +23,7 @@ tauri-build = { version = "2.7.1", features = [] }
 [dependencies]
 ctrlc = { version = "3.5.2", features = ["termination"] }
 libc = "0.2.190"
+rooms-protocol = { path = "../../../crates/rooms-protocol" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tauri = { version = "2.12.1", features = [] }

@@ -1,4 +1,5 @@
 mod collector;
+mod conversation;
 mod daemon;
 mod drafts;
 mod flush;
@@ -100,6 +101,7 @@ fn invoke_handler() -> InvokeHandler {
         share::doc_original,
         share::reveal_doc,
         share::open_doc,
+        conversation::continue_conversation,
         sorter::sort_state,
         sorter::sort_set_key,
         sorter::sort_clear_key,
@@ -120,6 +122,7 @@ fn invoke_handler() -> InvokeHandler {
         share::doc_original,
         share::reveal_doc,
         share::open_doc,
+        conversation::continue_conversation,
         sorter::sort_state,
         sorter::sort_set_key,
         sorter::sort_clear_key,
