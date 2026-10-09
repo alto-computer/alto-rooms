@@ -46,18 +46,20 @@ pub fn read_data(dir: &Path, rel: &str) -> Result<Option<String>, CoreError> {
     }
 }
 
-/// Writes atomically (a hidden temp file in the same folder, then rename).
+/// Writes atomically (a hidden temp file of its own in the same folder, then rename), so
+/// concurrent writes to one path each succeed and the last rename wins.
 pub fn write_data(dir: &Path, rel: &str, text: &str) -> Result<(), CoreError> {
+    use std::io::Write;
     let p = data_file(dir, rel)?;
     if text.len() > MAX_DATA_BYTES { return Err(CoreError::TooLarge); }
     let parent = p.parent().ok_or(CoreError::InvalidPath)?;
     std::fs::create_dir_all(parent)?;
     let name = p.file_name().ok_or(CoreError::InvalidPath)?.to_string_lossy().to_string();
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let tmp = parent.join(format!(".{name}.{}-{nanos}.part", std::process::id()));
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, &p).inspect_err(|_| { let _ = std::fs::remove_file(&tmp); })?;
-    Ok(())
+    let tmp = parent.join(format!(".{name}.{}.part", nanoid::nanoid!(8)));
+    let mut f = std::fs::OpenOptions::new().create_new(true).write(true).open(&tmp)?;
+    let written = f.write_all(text.as_bytes()).and_then(|_| std::fs::rename(&tmp, &p));
+    if written.is_err() { let _ = std::fs::remove_file(&tmp); }
+    Ok(written?)
 }
 
 /// Appends `line` (which carries its own newline) to a data file with one `O_APPEND` write, so
