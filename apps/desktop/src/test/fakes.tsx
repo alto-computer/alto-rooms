@@ -182,7 +182,7 @@ export function fakeClient(
       if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
       const t = opts.askTargets?.[a.fileKey];
       if (t instanceof Error) throw t;
-      return t ?? { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new", models: [] };
+      return t ?? { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new", models: [], scoped: false };
     }),
     askThread: vi.fn(async (scope: AskScope) => (scope.kind === "doc" ? state.asks[scope.fileKey] : state.asks[scopeKey(scope)]) ?? []),
     cancelAsk: vi.fn(async () => {}),

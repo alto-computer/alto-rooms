@@ -17,7 +17,7 @@ fn setup(meta: &str) -> (tempfile::TempDir, RoomsCore, AskScope, String) {
     core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
     std::fs::write(d.path().join(".rooms/agents.toml"), format!(
-        "[agents.claude-code]\nresume = [\"{FAKE}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\"]\n"
+        "[agents.claude-code]\nresume = [\"{FAKE}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n"
     )).unwrap();
     let a = core.list_artifacts(&room.id).unwrap().remove(0);
     (d, core, AskScope::Doc { file_key: a.file_key }, room.id)
@@ -66,7 +66,7 @@ async fn resume_turn_runs_template_and_records() {
 async fn mcp_config_arg_is_passed_only_when_the_file_exists() {
     let (d, core, doc, _room) = setup("");
     std::fs::write(d.path().join(".rooms/agents.toml"), format!(
-        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--mcp-config\", \"{{mcp_config}}\", \"{{prompt}}\"]\n")).unwrap();
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--mcp-config\", \"{{mcp_config}}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
     let t = asks.start(&doc, "one", None).unwrap();
@@ -154,7 +154,7 @@ async fn bad_config_and_missing_program() {
     let asks = Asks::new(core.clone(), None);
     std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = []\n").unwrap();
     match asks.start(&doc, "q", None) { Err(AskError::AgentConfig(m)) => assert!(m.contains("agents.claude-code.new")), other => panic!("{other:?}") }
-    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"no-such-cli-xyz\", \"{prompt}\"]\n").unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"no-such-cli-xyz\", \"{prompt}\", \"--settings\", \"{scope_settings}\"]\n").unwrap();
     let mut rx = core.subscribe();
     let t = asks.start(&doc, "q", None).unwrap();
     let done = wait_done(&mut rx, &t.id).await;
@@ -194,7 +194,7 @@ async fn capacity_is_four() {
     for i in 0..5 { std::fs::write(core.room_root(&room.id).unwrap().0.join(format!("d{i}.html")), format!("<title>d{i}</title>")).unwrap(); }
     core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"{{prompt}}\"]\n")).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
     let asks = Asks::new(core.clone(), None);
     let arts = core.list_artifacts(&room.id).unwrap();
     let scope = |a: &rooms_protocol::Artifact| AskScope::Doc { file_key: a.file_key.clone() };
@@ -285,7 +285,7 @@ async fn corrupt_sidecar_means_new_mode_without_error() {
 
 fn with_models(home: &std::path::Path) {
     std::fs::write(home.join(".rooms/agents.toml"), format!(
-        "[agents.claude-code]\nresume = [\"{FAKE}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"-m\", \"{{model}}\", \"{{prompt}}\"]\nmodels = [\"m1\", \"m2\"]\n[agents.codex]\nnew = [\"{FAKE}\", \"codex\", \"{{prompt}}\"]\n"
+        "[agents.claude-code]\nresume = [\"{FAKE}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"-m\", \"{{model}}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\nmodels = [\"m1\", \"m2\"]\n[agents.codex]\nnew = [\"{FAKE}\", \"codex\", \"{{prompt}}\"]\n"
     )).unwrap();
 }
 
@@ -330,6 +330,20 @@ async fn target_lists_models_only_for_a_template_that_takes_one() {
     assert!(matches!(asks.target(&doc), Err(AskError::AgentConfig(_))));
 }
 
+/// `scoped` says whether the agent itself is held to the listed files, not just told to read them.
+#[tokio::test]
+async fn target_is_scoped_only_for_a_room_or_day_ask_whose_argv_carries_the_settings() {
+    let (d, core, doc, room_id) = setup("");
+    let asks = Asks::new(core.clone(), None);
+    let room = AskScope::Room { room_id };
+    let day = AskScope::Day { date: "2026-10-09".into() };
+    assert!(asks.target(&room).unwrap().scoped && asks.target(&day).unwrap().scoped);
+    assert!(!asks.target(&doc).unwrap().scoped);
+    std::fs::write(d.path().join(".rooms/agents.toml"), "default = \"codex\"\n").unwrap();
+    let codex = asks.target(&room).unwrap();
+    assert_eq!((codex.agent.as_str(), codex.scoped), ("codex", false));
+}
+
 #[tokio::test]
 async fn model_is_passed_and_recorded() {
     let (d, core, doc, _room) = setup("");
@@ -366,7 +380,7 @@ async fn json_lines_stream_as_progress_then_the_final_answer() {
     )).unwrap();
     std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
-        "[agents.claude-code]\nnew = [\"{}\", \"{{prompt}}\"]\n",
+        "[agents.claude-code]\nnew = [\"{}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n",
         "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"tool\" }}\nactivity = [\"/name\", \"/path\"]\n",
         "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"delta\" }}\ndelta = \"/text\"\n",
         "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"result\" }}\nanswer = \"/result\"\n",
@@ -397,7 +411,7 @@ async fn json_lines_stream_as_progress_then_the_final_answer() {
 async fn images_reach_the_template_and_the_prompt_and_stay_on_the_turn() {
     let (d, core, doc, _room) = setup("");
     std::fs::write(d.path().join(".rooms/agents.toml"), format!(
-        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--dir\", \"{{image_dir}}\", \"-i\", \"{{image}}\", \"{{prompt}}\"]\n")).unwrap();
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--dir\", \"{{image_dir}}\", \"-i\", \"{{image}}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
     let asks = Asks::new(core.clone(), None);
     let id = asks.save_image(b"\x89PNG\r\n\x1a\none").unwrap();
     let id2 = asks.save_image(b"GIF89a-two").unwrap();
@@ -469,7 +483,7 @@ async fn doc_scope_skips_a_dangling_link_and_uses_the_next_room() {
     std::os::unix::fs::symlink(outside.path().join("o.html"), d.path().join("b/o.html")).unwrap();
     core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\"]\n")).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
     let key = core.list_artifacts(&a).unwrap().remove(0).file_key;
     assert_eq!(core.artifacts_by_file_key(&key).iter().map(|x| x.room_id.as_str()).collect::<Vec<_>>(), [a.as_str(), b.as_str()]);
     let doc = AskScope::Doc { file_key: key.clone() };
@@ -486,5 +500,61 @@ async fn doc_scope_skips_a_dangling_link_and_uses_the_next_room() {
     // both links gone: nothing resolves
     std::fs::remove_file(d.path().join("b/o.html")).unwrap();
     assert!(matches!(asks.target(&doc), Err(AskError::NotFound)));
+    asks.shutdown().await;
+}
+
+#[tokio::test]
+async fn room_ask_streams_progress_under_its_scope() {
+    let (d, core, _doc, room_id) = setup("");
+    let script = d.path().join("stream-agent.sh");
+    std::fs::write(&script, concat!(
+        "#!/bin/sh\n",
+        "echo '{\"t\":\"d\",\"x\":\"one \"}'; sleep 0.3\n",
+        "echo '{\"t\":\"d\",\"x\":\"two\"}'; sleep 0.3\n",
+    )).unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
+        "[agents.claude-code]\nnew = [\"{}\", \"--settings\", \"{{scope_settings}}\"]\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/t\" = \"d\" }}\ndelta = \"/x\"\n",
+    ), script.display())).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let room = AskScope::Room { room_id };
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, "q", None).unwrap();
+    let mut progress = Vec::new();
+    let done = loop {
+        let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("events in time").unwrap();
+        match ev.kind {
+            EventKind::AskProgress { id, scope, answer, .. } if id == t.id => progress.push((scope, answer)),
+            EventKind::AskDone { turn } if turn.id == t.id => break turn,
+            _ => {}
+        }
+    };
+    assert!(!progress.is_empty() && progress.iter().all(|(s, _)| *s == room), "{progress:?}");
+    assert_eq!(progress.last().map(|(_, a)| a.as_str()), Some("one two"), "{progress:?}");
+    assert_eq!((done.status, done.answer.as_str(), &done.scope), (AskStatus::Done, "one two", &room));
+    while let Ok(ev) = rx.try_recv() {
+        assert!(!matches!(ev.kind, EventKind::AskProgress { ref id, .. } if *id == t.id), "no progress after ask.done");
+    }
+    assert_eq!(asks.thread(&room).unwrap().len(), 1);
+}
+
+/// A room ask hands the default claude template its listed realpaths as read rules; a doc ask in
+/// the same room gets no `--settings`.
+#[tokio::test]
+async fn room_ask_limits_reads_to_its_listed_files() {
+    let (d, core, doc, room_id) = setup("");
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--settings\", \"{{scope_settings}}\", \"{{prompt}}\"]\n")).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t = asks.start(&AskScope::Room { room_id: room_id.clone() }, "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    let real = core.room_root(&room_id).unwrap().0.join("doc.html").canonicalize().unwrap();
+    let argv = done.answer.lines().next().unwrap();
+    assert!(argv.starts_with(&format!(r#"ARGV: [--settings] [{{"permissions":{{"allow":["Read(/{})"],"defaultMode":"dontAsk"}}}}] ["#, real.display())), "{argv}");
+    let t = asks.start(&doc, "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(!done.answer.contains("[--settings]") && !done.answer.contains("dontAsk"), "{}", done.answer);
     asks.shutdown().await;
 }
