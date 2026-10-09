@@ -144,7 +144,7 @@ test("a content-script plugin says it reads documents, and turning it on adds no
 
   const card = page.getByRole("dialog", { name: "New plugin: Marker" });
   await expect(card).toBeVisible({ timeout: 5000 });
-  await expect(card.getByRole("listitem")).toHaveText(["Can read the text of artifacts and use the network inside them"]);
+  await expect(card.getByRole("listitem")).toHaveText(["Adds scripts inside artifacts", "Can read the text of artifacts and use the network inside them"]);
   await card.getByRole("button", { name: "Turn on" }).click();
   await expect(card).toBeHidden();
 

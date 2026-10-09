@@ -5,6 +5,7 @@ import { useViewer, useViewerStore } from "@/data/hooks";
 import { isAppearance, type Appearance } from "@/lib/appearance";
 import { onSettingsSection, settingsSectionId, takeSettingsSection } from "@/lib/settings";
 import { AutoSortSettings } from "./AutoSortSettings";
+import { PluginSettings } from "./PluginSettings";
 import { Row, Section } from "./settingsUi";
 
 /** The Settings tab: Appearance, Auto-sort and Plugins in one column. */
@@ -27,6 +28,7 @@ export function SettingsView() {
         <h1 className="px-1 font-display text-display font-medium tracking-[-0.015em] text-ink">Settings</h1>
         <AppearanceSection />
         <AutoSortSettings />
+        <PluginSettings />
       </div>
     </div>
   );

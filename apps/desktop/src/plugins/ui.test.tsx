@@ -364,6 +364,7 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "New plugin: Marker" });
     expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Adds scripts inside artifacts",
       "Can see your rooms and artifacts",
       "Can read the text of artifacts and use the network inside them",
     ]);
@@ -552,5 +553,80 @@ describe("an open plugin when the plugin changes", () => {
     expect(close).toBeTruthy();
     fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
     await flushing;
+  });
+});
+
+describe("Settings › Plugins", () => {
+  const openSettings = async (plugins: PluginInfo[]) => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "settings" });
+    const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins, viewer });
+    await act(async () => {});
+    return h;
+  };
+  const section = () => screen.getByRole("region", { name: "Plugins" });
+
+  it("lists every plugin with what it adds and the permissions it holds, in the enable card's words", async () => {
+    await openSettings([
+      echoTab({ permissions: ["rooms.read", "clipboard"], granted: ["rooms.read", "clipboard"], description: "Echoes things." }),
+      plugin({ id: "marker", name: "Marker", slots: { artifactSidePanel: null, tab: null }, permissions: ["artifact.content"], granted: ["artifact.content"], enabled: false }),
+    ]);
+    expect(within(section()).getByText("Echoes things.")).toBeInTheDocument();
+    expect(within(section()).getByRole("list", { name: "Echo: what it adds and can do" }).textContent).toBe(
+      "Adds a tabCan see your rooms and artifactsCan copy and paste",
+    );
+    expect(within(section()).getByRole("list", { name: "Marker: what it adds and can do" }).textContent).toBe(
+      "Adds scripts inside artifactsCan read the text of artifacts and use the network inside them",
+    );
+    expect(within(section()).getByRole("switch", { name: "Echo" })).toBeChecked();
+    expect(within(section()).getByRole("switch", { name: "Marker" })).not.toBeChecked();
+  });
+
+  it("the switch turns a plugin off, keeping its approval, and on again with what the row lists", async () => {
+    const h = await openSettings([echoTab({ permissions: ["rooms.read"], granted: ["rooms.read"] })]);
+    await act(async () => {
+      fireEvent.click(within(section()).getByRole("switch", { name: "Echo" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenLastCalledWith("echo", false, undefined);
+    expect(within(section()).getByRole("switch", { name: "Echo" })).not.toBeChecked();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(async () => {
+      fireEvent.click(within(section()).getByRole("switch", { name: "Echo" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenLastCalledWith("echo", true, ["rooms.read"]);
+    expect(within(section()).getByRole("switch", { name: "Echo" })).toBeChecked();
+  });
+
+  it("an update waiting for approval is off, with its new permissions marked; turning it on approves them", async () => {
+    const h = await openSettings([echoTab({ permissions: ["rooms.read", "clipboard"], granted: ["rooms.read"], needsApproval: true })]);
+    const sw = within(section()).getByRole("switch", { name: "Echo" });
+    expect(sw).not.toBeChecked();
+    expect(within(section()).getByText("Can copy and paste (new)")).toBeInTheDocument();
+    expect(within(section()).getByText("Can see your rooms and artifacts")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(sw);
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", true, ["rooms.read", "clipboard"]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a plugin that can't run says why and has no switch", async () => {
+    await openSettings([
+      plugin({ id: "broken", name: "", status: "invalid", reason: "manifest.json: missing id" }),
+      plugin({ id: "future", name: "Future", minAppVersion: "99.0.0" }),
+    ]);
+    expect(within(section()).getByText("Couldn't load: manifest.json: missing id")).toBeInTheDocument();
+    expect(within(section()).getByText("Needs Rooms 99.0.0 or later")).toBeInTheDocument();
+    expect(within(section()).queryByRole("switch")).toBeNull();
+  });
+
+  it("says why when turning a plugin off fails, and leaves it on", async () => {
+    const h = await openSettings([echoTab()]);
+    h.client.setPluginEnabled.mockRejectedValueOnce(new Error("boom"));
+    await act(async () => {
+      fireEvent.click(within(section()).getByRole("switch", { name: "Echo" }));
+    });
+    expect(within(section()).getByRole("alert")).toHaveTextContent("Couldn't turn it off");
+    expect(within(section()).getByRole("switch", { name: "Echo" })).toBeChecked();
   });
 });

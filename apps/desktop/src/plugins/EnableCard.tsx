@@ -5,7 +5,7 @@
  */
 import { useState } from "react";
 import { usePlugins, usePluginsStore } from "@/data/hooks";
-import { permissionLine } from "./permissions";
+import { addsLines, permissionLine } from "./permissions";
 import type { HostPlugin } from "./pluginsStore";
 
 export function EnableCard() {
@@ -23,12 +23,7 @@ function Card({ plugin: p }: { plugin: HostPlugin }) {
   const [failed, setFailed] = useState(false);
   const updated = p.granted !== null;
   // A re-ask shows only what is new; a first ask shows everything the plugin adds and can do.
-  const adds = updated
-    ? []
-    : [
-        p.slots.tab?.sidebar ? "Adds a sidebar item and a tab" : p.slots.tab ? "Adds a tab" : null,
-        p.slots.artifactSidePanel ? "Adds a panel beside artifacts" : null,
-      ].filter((x): x is string => x !== null);
+  const adds = updated ? [] : addsLines(p);
   const asked = updated ? p.permissions.filter((x) => !p.granted!.includes(x)) : p.permissions;
   const can = asked.map(permissionLine);
   const title = `${updated ? "Updated plugin" : "New plugin"}: ${p.name}`;
