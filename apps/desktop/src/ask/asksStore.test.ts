@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AskTarget, AskTurn, RoomsEvent } from "@alto-rooms/protocol-ts";
-import { AsksStore, MAX_THREADS, upsert } from "./asksStore";
+import { RoomsApiError } from "@alto-rooms/protocol-ts";
+import { AsksStore, MAX_THREADS, STALE_MS, STOP_CHECK_MS, upsert } from "./asksStore";
 
 type EventInput = RoomsEvent extends infer T ? (T extends RoomsEvent ? Omit<T, "seq"> : never) : never;
 
@@ -179,5 +180,52 @@ describe("AsksStore", () => {
     client.cancelAsk.mockRejectedValueOnce(new Error("gone"));
     store.cancel("t1");
     expect(client.cancelAsk).toHaveBeenCalledWith("t1");
+  });
+
+  describe("a turn that ended unheard", () => {
+    afterEach(() => vi.useRealTimers());
+    const stale = turn("t1", "running");
+    const ended = turn("t1", "failed", { error: "Stopped because Rooms restarted" });
+
+    it("Stop on a turn roomsd no longer runs reloads the thread", async () => {
+      const { store, client, emit } = setup();
+      emit({ type: "ask.started", turn: stale });
+      client.askThread.mockResolvedValueOnce([ended]);
+      client.cancelAsk.mockRejectedValueOnce(new RoomsApiError(404, "Not Found"));
+      store.cancel("t1");
+      await vi.waitFor(() => expect(store.getState().threads.k1.turns).toEqual([ended]));
+    });
+
+    it("a turn still running a while after Stop is reloaded", async () => {
+      vi.useFakeTimers();
+      const { store, client, emit } = setup();
+      emit({ type: "ask.started", turn: stale });
+      client.askThread.mockResolvedValueOnce([ended]);
+      store.cancel("t1");
+      await vi.advanceTimersByTimeAsync(STOP_CHECK_MS);
+      expect(client.askThread).toHaveBeenCalledWith("k1");
+      expect(store.getState().threads.k1.turns).toEqual([ended]);
+    });
+
+    it("a shown thread whose running turn goes quiet is reloaded; a hidden one isn't", async () => {
+      vi.useFakeTimers();
+      const { store, client, emit } = setup();
+      emit({ type: "ask.started", turn: stale });
+      emit({ type: "ask.started", turn: turn("h1", "running", { fileKey: "hidden" }) });
+      const release = store.hold("k1");
+      await vi.advanceTimersByTimeAsync(STALE_MS / 2);
+      expect(client.askThread).not.toHaveBeenCalled();
+      // progress keeps it fresh
+      emit({ type: "ask.progress", id: "t1", fileKey: "k1", answer: "a", activity: null });
+      await vi.advanceTimersByTimeAsync(STALE_MS / 2);
+      expect(client.askThread).not.toHaveBeenCalled();
+      client.askThread.mockResolvedValueOnce([ended]);
+      await vi.advanceTimersByTimeAsync(STALE_MS);
+      expect(client.askThread).toHaveBeenCalledTimes(1);
+      expect(client.askThread).toHaveBeenCalledWith("k1");
+      expect(store.getState().threads.k1.turns).toEqual([ended]);
+      release();
+      store.stop();
+    });
   });
 });

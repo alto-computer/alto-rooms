@@ -664,8 +664,9 @@ async fn ask_routes() {
     assert_eq!(body_json(r).await["error"], "agent_config");
     let r = app.clone().oneshot(get("/v1/asks?fileKey=..%2Fx", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    // nothing running under that id: the app's "running" turn is stale
     let r = app.clone().oneshot(delete("/v1/asks/whatever", Some("t0k"), API_HOST)).await.unwrap();
-    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
     let r = app.clone().oneshot(post("/v1/asks", &body, None, API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
 }

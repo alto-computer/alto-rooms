@@ -2,14 +2,15 @@
  * Ask threads by file key, kept in step with roomsd by `ask.started` / `ask.done`
  * events, plus whether the ask bar is open (global, starts open, not saved).
  */
-import type { AskImage, AskTarget, AskTurn, RoomsEvent, StartAsk } from "@alto-rooms/protocol-ts";
+import type { AskImage, AskKind, AskTarget, AskTurn, RoomsEvent, StartAsk } from "@alto-rooms/protocol-ts";
+import { RoomsApiError } from "@alto-rooms/protocol-ts";
 
 export type Thread = { turns: AskTurn[]; loaded: boolean; error: boolean };
 /** A running turn's answer so far and what the agent is doing, from `ask.progress`. */
 export type Live = { answer: string; activity: string | null };
 /** `quotes`: text picked with "Ask" in a doc or an answer, waiting to go out with the next question, by file key. */
 /** A question typed while an answer runs: it goes out by itself when that answer ends (Codex's queued follow-ups). */
-export type Queued = { id: string; roomId: string; artifactId: string; text: string; model: string | null; images: string[]; error: string | null };
+export type Queued = { id: string; roomId: string; artifactId: string; text: string; model: string | null; images: string[]; kind: AskKind; error: string | null };
 export type AsksState = {
   open: boolean;
   threads: Record<string, Thread>;
@@ -51,6 +52,14 @@ export function upsert(turns: AskTurn[], t: AskTurn): AskTurn[] {
   return next;
 }
 
+/**
+ * A shown thread with a running turn and no event for this long is reloaded from roomsd, so a
+ * missed `ask.done` (roomsd restarted, the event stream dropped) can't leave it "Thinking" forever.
+ */
+export const STALE_MS = 20_000;
+/** After Stop, the turn should end at once; if it still runs after this, reload it. */
+export const STOP_CHECK_MS = 5_000;
+
 /** Threads kept in memory; a dropped one reloads from roomsd when its doc is shown again. */
 export const MAX_THREADS = 20;
 
@@ -65,6 +74,9 @@ export class AsksStore {
   /** File keys an ask bar is showing, with a count per bar. */
   private held = new Map<string, number>();
   private stopSignals: (() => void) | null = null;
+  private watchdog: ReturnType<typeof setInterval> | null = null;
+  /** When each file key last heard from roomsd (an event or a load). */
+  private heard = new Map<string, number>();
 
   constructor(
     private readonly client: Client | undefined,
@@ -87,11 +99,23 @@ export class AsksStore {
         for (const [key, th] of Object.entries(this.state.threads)) if (th.loaded) void this.load(key);
       }
     });
+    this.watchdog = setInterval(() => this.reloadStale(), STALE_MS / 2);
   }
 
   stop(): void {
     this.stopSignals?.();
     this.stopSignals = null;
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = null;
+  }
+
+  /** Reloads shown threads whose running turn has gone quiet for STALE_MS. */
+  private reloadStale(): void {
+    const now = Date.now();
+    for (const key of this.held.keys()) {
+      const running = this.state.threads[key]?.turns.some((t) => !finished(t));
+      if (running && now - (this.heard.get(key) ?? 0) >= STALE_MS) void this.load(key);
+    }
   }
 
   toggle(): void {
@@ -105,10 +129,13 @@ export class AsksStore {
   async load(fileKey: string): Promise<void> {
     if (!this.client) return;
     try {
+      this.heard.set(fileKey, Date.now());
       const loaded = await this.client.askThread(fileKey);
       const current = this.state.threads[fileKey]?.turns ?? [];
       const turns = current.reduce(upsert, loaded);
       this.setThread(fileKey, { turns, loaded: true, error: false });
+      // A turn that ended while we weren't hearing about it frees the queue too.
+      void this.drain(fileKey);
     } catch (e) {
       console.warn("rooms: could not load ask thread", e);
       this.setThread(fileKey, { ...(this.state.threads[fileKey] ?? EMPTY), loaded: true, error: true });
@@ -127,15 +154,17 @@ export class AsksStore {
   }
 
   /** Throws the API error (e.g. ask_busy) for the bar to show. `model` null = the agent's default. */
-  async ask(a: { roomId: string; artifactId: string }, question: string, model: string | null = null, images: string[] = []): Promise<void> {
+  async ask(a: { roomId: string; artifactId: string }, question: string, model: string | null = null, images: string[] = [], kind: AskKind = "question"): Promise<void> {
     if (!this.client) return;
-    const t = await this.client.startAsk({ roomId: a.roomId, artifactId: a.artifactId, question, model, ...(images.length ? { images } : {}) });
+    const t = await this.client.startAsk({
+      roomId: a.roomId, artifactId: a.artifactId, question, model, ...(images.length ? { images } : {}), ...(kind !== "question" ? { kind } : {}),
+    });
     this.apply(t);
   }
 
   /** Queues a question behind the running answer for `a.fileKey`; it is sent when that answer ends. */
-  enqueue(a: { roomId: string; artifactId: string; fileKey: string }, text: string, model: string | null, images: string[] = []): string {
-    const item: Queued = { id: `q${++this.queueSeq}`, roomId: a.roomId, artifactId: a.artifactId, text, model, images, error: null };
+  enqueue(a: { roomId: string; artifactId: string; fileKey: string }, text: string, model: string | null, images: string[] = [], kind: AskKind = "question"): string {
+    const item: Queued = { id: `q${++this.queueSeq}`, roomId: a.roomId, artifactId: a.artifactId, text, model, images, kind, error: null };
     this.setQueue(a.fileKey, [...(this.state.queues[a.fileKey] ?? []), item]);
     void this.drain(a.fileKey);
     return item.id;
@@ -166,7 +195,7 @@ export class AsksStore {
     if (!head || this.draining.has(fileKey) || this.state.threads[fileKey]?.turns.some((t) => !finished(t))) return;
     this.draining.add(fileKey);
     try {
-      await this.ask(head, head.text, head.model, head.images);
+      await this.ask(head, head.text, head.model, head.images, head.kind);
       this.setQueue(fileKey, (this.state.queues[fileKey] ?? []).filter((q) => q.id !== head.id));
     } catch (e) {
       const error = e instanceof Error && e.message ? e.message : "Couldn't send";
@@ -206,8 +235,23 @@ export class AsksStore {
     return (await this.client.uploadAskImage(image)).id;
   }
 
+  /**
+   * Stops a running turn. roomsd answers 404 when it isn't running there (it ended unheard, or
+   * roomsd restarted): the thread reloads and shows how it really ended. So does a turn still
+   * running STOP_CHECK_MS after Stop.
+   */
   cancel(askId: string): void {
-    void this.client?.cancelAsk(askId).catch((e) => console.warn("rooms: could not cancel ask", e));
+    const client = this.client;
+    if (!client) return;
+    const fileKey = Object.entries(this.state.threads).find(([, th]) => th.turns.some((t) => t.id === askId))?.[0];
+    const stillRunning = () => !!fileKey && !!this.state.threads[fileKey]?.turns.some((t) => t.id === askId && !finished(t));
+    client.cancelAsk(askId).then(
+      () => setTimeout(() => { if (stillRunning()) void this.load(fileKey!); }, STOP_CHECK_MS),
+      (e) => {
+        if (fileKey && e instanceof RoomsApiError && e.status === 404) void this.load(fileKey);
+        else console.warn("rooms: could not cancel ask", e);
+      },
+    );
   }
 
   /** Keeps `fileKey`'s thread from being pruned while an ask bar shows it; returns the release. */
@@ -221,6 +265,7 @@ export class AsksStore {
   }
 
   private apply(t: AskTurn) {
+    this.heard.set(t.fileKey, Date.now());
     if (finished(t) && t.id in this.state.live) {
       const { [t.id]: _done, ...live } = this.state.live;
       this.state = { ...this.state, live };
@@ -233,6 +278,7 @@ export class AsksStore {
 
   /** Progress for a turn already known to be finished is late and dropped. */
   private progress(e: Progress) {
+    this.heard.set(e.fileKey, Date.now());
     const turn = this.state.threads[e.fileKey]?.turns.find((t) => t.id === e.id);
     if (turn && finished(turn)) return;
     this.set({ ...this.state, live: { ...this.state.live, [e.id]: { answer: e.answer, activity: e.activity } } });

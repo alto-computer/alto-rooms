@@ -27,6 +27,9 @@ use std::time::Duration;
 pub const MAX_RUNNING: usize = 4;
 const MAX_QUESTION_CHARS: usize = 8_000;
 const RESTARTED: &str = "Stopped because Rooms restarted";
+/// JSON-lines output carries every streamed chunk and tool result around the answer, so a profile
+/// with event rules may print this many times `Limits::max_stdout` (16 MB by default).
+const JSON_STDOUT_FACTOR: usize = 16;
 /// `ask.progress` goes out at most this often per turn.
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 
@@ -283,7 +286,9 @@ impl Asks {
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
         core.emit_ask(EventKind::AskStarted { turn: turn.clone() });
         let (tap, chunks) = tokio::sync::mpsc::unbounded_channel();
-        let spawned = spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.get().cloned(), limits: self.0.limits, tap: Some(tap) });
+        let mut limits = self.0.limits;
+        if !plan.events.is_empty() { limits.max_stdout = limits.max_stdout.saturating_mul(JSON_STDOUT_FACTOR); }
+        let spawned = spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.get().cloned(), limits, tap: Some(tap) });
         match spawned {
             Err(e) => {
                 drop(running);
@@ -385,8 +390,12 @@ impl Asks {
         self.read_thread(&running, file_key)
     }
 
-    pub fn cancel(&self, ask_id: &str) {
-        if let Some(e) = lock(&self.0.running).get(ask_id) { e.killer.kill(Reason::Cancelled); }
+    /// Stops a running turn; false when it isn't running here (it already ended, or roomsd restarted).
+    pub fn cancel(&self, ask_id: &str) -> bool {
+        match lock(&self.0.running).get(ask_id) {
+            Some(e) => { e.killer.kill(Reason::Cancelled); true }
+            None => false,
+        }
     }
 
     /// Kill everything still running (roomsd is stopping; the app gives it 1 s). Waits ≤ 700 ms

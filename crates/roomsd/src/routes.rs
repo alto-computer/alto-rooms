@@ -78,8 +78,8 @@ pub async fn ask_image(State(st): State<AppState>, Path(id): Path<String>) -> Re
 }
 
 pub async fn cancel_ask(State(st): State<AppState>, Path(ask_id): Path<String>) -> StatusCode {
-    st.asks.cancel(&ask_id);
-    StatusCode::NO_CONTENT
+    // 404 tells the app its "running" turn is stale, so it reloads the thread.
+    if st.asks.cancel(&ask_id) { StatusCode::NO_CONTENT } else { StatusCode::NOT_FOUND }
 }
 
 /// Runs a core call on the blocking pool: core does filesystem/SQLite IO under a std Mutex,
