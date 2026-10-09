@@ -5,6 +5,7 @@ export const PERMISSION_COPY: Record<string, string> = {
   "rooms.read": "Can see your rooms and documents",
   clipboard: "Can copy and paste",
   downloads: "Can save files you export",
+  "artifact.content": "Can read the text of documents and use the network inside them",
 };
 
 /** iframe attributes from the declared permissions only: never same-origin, popups or top navigation. */

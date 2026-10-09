@@ -47,11 +47,15 @@ describe("frameAttrs", () => {
       allow: "clipboard-read; clipboard-write",
     });
   });
+  it("opens nothing in the plugin frame for artifact.content", () => {
+    expect(frameAttrs(plugin({ permissions: ["artifact.content"] }))).toEqual({ sandbox: "allow-scripts", allow: undefined });
+  });
   it("has plain words for every permission", () => {
     expect(PERMISSION_COPY).toEqual({
       "rooms.read": "Can see your rooms and documents",
       clipboard: "Can copy and paste",
       downloads: "Can save files you export",
+      "artifact.content": "Can read the text of documents and use the network inside them",
     });
   });
 });

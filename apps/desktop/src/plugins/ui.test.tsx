@@ -346,6 +346,33 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     expect(screen.getByRole("tab", { name: "Missing plugin" })).toBeInTheDocument();
   });
 
+  it("lists artifact.content under the other permissions, and a content-only plugin adds nothing", async () => {
+    const h = await renderWithStores(<AppShell />, {
+      rooms: [room("r1", "Bench")],
+      plugins: [
+        plugin({
+          id: "marker",
+          name: "Marker",
+          slots: { artifactSidePanel: null, tab: null },
+          enabled: false,
+          granted: null,
+          needsApproval: true,
+          permissions: ["rooms.read", "artifact.content"],
+        }),
+      ],
+    });
+    await act(async () => {});
+    const card = screen.getByRole("dialog", { name: "New plugin: Marker" });
+    expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Can see your rooms and documents",
+      "Can read the text of documents and use the network inside them",
+    ]);
+    await act(async () => {
+      fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("marker", true, ["rooms.read", "artifact.content"]);
+  });
+
   it("asks before a new plugin runs, in plain words; Turn on enables it", async () => {
     const h = await renderWithStores(<AppShell />, {
       rooms: [room("r1", "Bench")],
