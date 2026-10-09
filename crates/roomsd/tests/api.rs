@@ -539,6 +539,38 @@ fn put_note(app: &axum::Router, name: &str, body: &str) -> impl std::future::Fut
     async move { app.oneshot(req).await.unwrap().status() }
 }
 
+fn put_color(room_id: &str, json: &str, token: Option<&str>) -> Request<Body> {
+    let mut b = Request::put(format!("/v1/rooms/{room_id}/color")).header("content-type", "application/json").header("host", API_HOST);
+    if let Some(t) = token { b = b.header("authorization", format!("Bearer {t}")); }
+    b.body(Body::from(json.to_string())).unwrap()
+}
+
+#[tokio::test]
+async fn room_color_pins_and_unpins_and_the_list_follows() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    for n in ["a", "b"] { st.core.create_room(n).unwrap(); }
+    let b = st.core.list_rooms().into_iter().find(|r| r.name == "b").unwrap().id;
+    let names = || async {
+        let v = body_json(app.clone().oneshot(get("/v1/rooms", API_HOST)).await.unwrap()).await;
+        v.as_array().unwrap().iter().map(|r| format!("{}:{}", r["name"].as_str().unwrap(), r["color"])).collect::<Vec<_>>()
+    };
+    assert_eq!(names().await, ["inbox:null", "a:null", "b:null"]);
+
+    let r = app.clone().oneshot(put_color(&b, r#"{"color":"sage"}"#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!((v["id"].as_str().unwrap(), v["color"].as_str().unwrap()), (b.as_str(), "sage"));
+    assert_eq!(names().await, ["inbox:null", "b:\"sage\"", "a:null"]);
+
+    let r = app.clone().oneshot(put_color(&b, r#"{"color":null}"#, Some("t0k"))).await.unwrap();
+    assert!(body_json(r).await["color"].is_null());
+    assert_eq!(names().await, ["inbox:null", "b:null", "a:null"]);
+
+    let r = app.clone().oneshot(put_color(&b, r#"{"color":"sage"}"#, None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert_eq!(names().await, ["inbox:null", "b:null", "a:null"]);
+}
+
 #[tokio::test]
 async fn note_rename_returns_the_note_and_moves_the_body() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
