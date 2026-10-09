@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rooms-sort Spec</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column (~760px) with a sticky section index on wide screens; tables and code scroll in place. */
+:root{
+  --bg:#f7f8f6; --surface:#ffffff; --fg:#1d211f; --muted:#5f6862; --line:#dde2de;
+  --accent:#1f6f5c; --accent-bg:#e5f1ec; --code-bg:#eef1ef; --pre-bg:#18201c; --pre-fg:#e6ece8;
+  --warn-bg:#fff4d6; --warn-fg:#6b4a00;
+  --body:'IBM Plex Sans KR',-apple-system,'Apple SD Gothic Neo',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121614; --surface:#1a201d; --fg:#e3e8e5; --muted:#99a39d; --line:#2c3531;
+  --accent:#5fc3a6; --accent-bg:#1c2e28; --code-bg:#232b27; --pre-bg:#0c100e; --pre-fg:#dfe6e2;
+  --warn-bg:#3a2f10; --warn-fg:#f3d58a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121614; --surface:#1a201d; --fg:#e3e8e5; --muted:#99a39d; --line:#2c3531;
+  --accent:#5fc3a6; --accent-bg:#1c2e28; --code-bg:#232b27; --pre-bg:#0c100e; --pre-fg:#dfe6e2;
+  --warn-bg:#3a2f10; --warn-fg:#f3d58a; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.7}
+.wrap{max-width:1100px;margin:0 auto;padding-inline:20px;padding-block:40px 80px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:48px}
+nav{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;font-size:13px}
+nav ol{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+nav a{color:var(--muted);text-decoration:none}nav a:hover,nav a:focus-visible{color:var(--accent)}
+main{min-width:0;max-width:760px}
+@media (max-width:860px){.wrap{grid-template-columns:minmax(0,1fr)}nav{display:none}}
+h1{font-size:30px;line-height:1.3;margin:0 0 8px;text-wrap:balance}
+h2{font-size:20px;margin:52px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line);text-wrap:balance;scroll-margin-top:20px}
+h3{font-size:16px;margin:26px 0 8px}
+p,li{max-width:68ch}
+a{color:var(--accent)}
+.meta{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:4px 14px}
+.lede{font-size:17px;margin:20px 0}
+code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{background:var(--pre-bg);color:var(--pre-fg);padding:14px 18px;border-radius:8px;overflow-x:auto;font-size:12.5px;line-height:1.6;margin:14px 0}
+pre code{background:none;padding:0;color:inherit;overflow-wrap:normal}
+.tbl{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.04em;text-transform:uppercase}
+td:first-child{font-family:var(--mono);font-size:12.5px;white-space:nowrap;color:var(--accent)}
+.box{background:var(--accent-bg);border-radius:8px;padding:14px 18px;margin:18px 0}
+.box p{margin:6px 0}
+.q{background:var(--warn-bg);color:var(--warn-fg);border-radius:4px;padding:1px 6px;font-size:.92em}
+.flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:16px 0}
+.flow div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:13.5px}
+.flow b{display:block;font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.04em;margin-bottom:4px}
+</style>
+
+<div class="wrap">
+<nav aria-label="Sections"><ol>
+<li><a href="#s0">0. 개요</a></li><li><a href="#s1">1. 사용자 경험</a></li><li><a href="#s2">2. 결정</a></li>
+<li><a href="#s3">3. 구조</a></li><li><a href="#s4">4. 한 번의 실행</a></li><li><a href="#s5">5. Jev 호출</a></li>
+<li><a href="#s6">6. 새 룸 규칙</a></li><li><a href="#s7">7. 저장소와 설정</a></li><li><a href="#s8">8. API 키</a></li>
+<li><a href="#s9">9. 앱 연결</a></li><li><a href="#s10">10. 장애와 안전장치</a></li><li><a href="#s11">11. 테스트</a></li>
+<li><a href="#s12">12. 구현 순서</a></li><li><a href="#s13">13. 열린 질문</a></li>
+</ol></nav>
+<main>
+<h1>rooms-sort — inbox를 비우는 분류기</h1>
+<div class="meta"><span>Spec · 2026-10-09</span><span>author: jun-hash</span><span>선행: rooms-collect-spec, v1-spec (artifacts/move)</span><span>모델: TypeSafe Jev</span></div>
+
+<p class="lede">rooms-collect가 자동으로 모은 문서가 inbox에 쌓인다. <code>rooms-sort</code>는 사용자가 TypeSafe API 키를 한 번 넣으면 inbox 문서를 기존 룸으로 옮기는 별도 CLI다. 모델은 보기 중 하나를 고르기만 하고, 옮기는 일은 확신이 높을 때 결정적인 코드가 한다.</p>
+
+<h2 id="s0">0. 개요</h2>
+<div class="box">
+<p><b>바뀐 결정 (사용자)</b>: rooms-collect 스펙 §0은 "Rooms는 AI를 부르지 않는다, 분류는 스킬의 일"이었다. 수집이 자동이 되면서 inbox가 쌓이므로, artifact 싱크·분류·관리를 Rooms의 역할로 보고 <b>사용자가 키를 넣었을 때만</b> 분류를 켠다. 코어(roomsd)와 rooms-collect는 여전히 AI를 모른다.</p>
+<p><b>결합</b>: rooms-sort는 roomsd의 <b>이미 있는 공개 API</b>(rooms-mcp가 쓰는 것과 같은 것)와 <code>~/rooms</code> 폴더, <code>sources.json</code>만 읽는다. 새 API, collect 코드 변경은 없다.</p>
+</div>
+<h3>Goal</h3>
+<ul>
+<li>키를 넣은 뒤로 inbox에 들어온 문서 중 확신 높은 것은 몇 분 안에 맞는 룸으로 옮겨진다.</li>
+<li>애매한 문서는 inbox에 남는다. 틀린 이동보다 안 옮기는 쪽을 택한다.</li>
+<li>같은 repo나 폴더에서 온 문서가 쌓이면 그 이름으로 룸을 만든다(§6).</li>
+<li>모든 이동은 기록되고 되돌릴 수 있다. 사용자가 손댄 문서는 다시 건드리지 않는다.</li>
+<li>상주 메모리 0. 앱이 필요할 때만 실행하고 끝난다.</li>
+</ul>
+<h3>Out of scope</h3>
+<ul>
+<li>주제로 새 룸 이름 짓기(예: "디자인 리서치"). Jev는 고르기만 한다. 사람이나 온보딩 스킬이 만든다.</li>
+<li>inbox 밖 문서 재분류, 룸 간 이동, 룸 병합.</li>
+<li>TypeSafe 외 제공자, 로컬 모델. 호출부를 한 함수로 가둬 나중에 붙일 수 있게만 한다.</li>
+<li>앱 안 분류 기록 화면. 이번에는 설정의 상태 한 줄과 "마지막 분류 되돌리기" 버튼까지.</li>
+</ul>
+
+<h2 id="s1">1. 사용자 경험</h2>
+<h3>처음 한 번</h3>
+<ol>
+<li>설정 → 자동 분류. "키 받기"를 누르면 <code>console.typesafe.ai/keys</code>가 열린다.</li>
+<li>키를 붙여 넣고 저장. 앱이 작은 테스트 호출로 확인하고 "연결됨"을 보여준다. 401이면 "키가 맞지 않아요. 콘솔에서 다시 복사해 주세요."</li>
+<li>설명 한 줄: "inbox 문서의 제목과 본문 앞부분이 TypeSafe로 보내져요. 확신이 높을 때만 옮기고, 언제든 되돌릴 수 있어요."</li>
+</ol>
+<h3>평소</h3>
+<p>사용자는 아무것도 하지 않는다. 문서가 inbox에 잠깐 보였다가 룸으로 옮겨진다. 설정에는 "오늘 12개 분류, 3개는 inbox에 남김 · 2분 전" 같은 상태 한 줄이 있다.</p>
+<h3>되돌리기</h3>
+<p>설정의 "마지막 분류 되돌리기" 또는 <code>rooms-sort undo</code>. 그 실행에서 옮긴 문서가 아직 옮겨 간 룸에 있으면 inbox로 돌아가고, 다시는 자동으로 옮기지 않는다. 그 실행이 만든 룸이 비면 지운다.</p>
+
+<h2 id="s2">2. 결정</h2>
+<div class="tbl"><table>
+<tr><th>항목</th><th>결정</th><th>이유</th></tr>
+<tr><td>위치</td><td>collect 밖, 별도 바이너리 <code>rooms-sort</code></td><td>collect는 모든 에이전트 로그를 읽는 오프라인 프로세스다. 네트워크와 키를 넣으면 로그 전체가 외부로 나갈 수 있는 프로세스가 된다. 밖에 두면 분류기는 inbox 문서만 본다. API 장애가 수집에 번지지 않고, collect에 TLS 스택이 안 들어간다.</td></tr>
+<tr><td>모델</td><td>TypeSafe Jev, Choice 질문</td><td>생성하지 않고 보기 중 하나와 확률, confidence를 돌려준다. 잘못된 룸 이름이나 JSON 파싱 실패가 없다. 출력 무료, 입력 $0.042/1M 토큰, 70~500ms.</td></tr>
+<tr><td>이동 기준</td><td>confidence ≥ 0.85면 이동, 아니면 inbox에 둠</td><td>사용자 선택("확신 높으면 이동"). 기준값은 설정 가능.</td></tr>
+<tr><td>실행 방식</td><td>일회성 CLI. 앱이 5분마다, 그리고 시작할 때 실행</td><td>상주 메모리 0. 할 일이 없으면 API 한 번 묻고 바로 끝난다.</td></tr>
+<tr><td>이동 방법</td><td>roomsd <code>POST /v1/artifacts/move</code></td><td>코어의 이동은 createdAt과 Journal 날짜를 지킨다. 폴더에서 직접 rename하면 새 문서처럼 보인다.</td></tr>
+<tr><td>룸 만들기</td><td>roomsd <code>POST /v1/rooms</code></td><td>같은 이유. 코어가 룸을 기록하고 이벤트를 낸다.</td></tr>
+<tr><td>키 저장</td><td>macOS 키체인, <code>TYPESAFE_API_KEY</code> env 우선</td><td>§8. Zed와 같은 규칙.</td></tr>
+</table></div>
+
+<h2 id="s3">3. 구조</h2>
+<div class="flow">
+<div><b>rooms-collect</b>문서를 <code>inbox</code>에 링크하고 출처를 <code>sources.json</code>에 적는다.</div>
+<div><b>앱 (Tauri)</b>키가 있으면 5분마다 <code>rooms-sort run</code>을 실행. 키는 env로 넘긴다.</div>
+<div><b>rooms-sort</b>roomsd API로 룸과 inbox를 읽고, Jev에 묻고, 옮긴다.</div>
+<div><b>roomsd</b>이동과 룸 생성을 평소처럼 처리. 분류기를 모른다.</div>
+</div>
+<p>크레이트: <code>crates/rooms-sort</code>. 의존: <code>rooms-protocol</code>(Artifact, Room 타입, 기본 포트), <code>rusqlite</code>, <code>ureq</code>(rustls, 동기 HTTP. tokio 없이 작게), <code>serde_json</code>, <code>toml</code>. <code>rooms-core</code>에는 의존하지 않는다.</p>
+<p>환경변수는 rooms-mcp와 같은 이름을 쓴다: <code>ROOMS_HOME</code>(기본 <code>~/rooms</code>), <code>ROOMS_API_PORT</code>(기본 4317), 토큰은 <code>&lt;home&gt;/.rooms/token</code>. 여기에 <code>TYPESAFE_API_KEY</code>.</p>
+
+<h2 id="s4">4. 한 번의 실행</h2>
+<div class="tbl"><table>
+<tr><th>단계</th><th>하는 일</th></tr>
+<tr><td>R1</td><td>잠금 <code>&lt;data&gt;/sort.lock</code>을 비차단으로 잡는다. 이미 돌고 있으면 바로 끝난다.</td></tr>
+<tr><td>R2</td><td>키가 없거나 <code>sort.toml</code>의 <code>enabled = false</code>면 끝난다.</td></tr>
+<tr><td>R3</td><td><code>GET /v1/rooms/inbox/artifacts</code>. DB에 결정이 있는 <code>file_key</code>는 뺀다. 남은 게 없으면 끝난다(평소 대부분 여기서 끝남).</td></tr>
+<tr><td>R4</td><td>방금 들어온 문서는 기다린다: <code>created_at</code>이 60초 안이면 다음 실행으로 미룬다(에이전트가 아직 쓰는 중일 수 있음).</td></tr>
+<tr><td>R5</td><td><code>GET /v1/rooms</code>로 보기를 만든다: owned 룸 중 inbox, journal 제외. 각 룸의 설명은 이름 + 최근 문서 제목 최대 8개(§5).</td></tr>
+<tr><td>R6</td><td>문서마다 state를 만든다: 제목, 원본 경로, repo 이름(<code>sources.json</code>의 cwd와 경로로 판단), 본문 앞 12KB의 보이는 텍스트(script/style 제거).</td></tr>
+<tr><td>R7</td><td>문서마다 Jev 호출, 동시 4개, 한 실행에 최대 50개.</td></tr>
+<tr><td>R8</td><td>결과 처리: 기존 룸이 뽑히고 confidence ≥ 기준이면 이동. "맞는 룸 없음"이 뽑히거나 기준 미만이면 inbox에 두고, repo가 있으면 그 repo 후보에 표를 준다(§6).</td></tr>
+<tr><td>R9</td><td>표가 3개 이상 모인 후보는 룸을 만들고 그 문서들을 옮긴다.</td></tr>
+<tr><td>R10</td><td>모든 결정을 DB에 적고 <code>&lt;data&gt;/sort-status.json</code>에 요약을 쓴다(앱 상태 줄용).</td></tr>
+</table></div>
+<p>한 번 결정한 문서는 다시 묻지 않는다. 남겨 둔 문서도 마찬가지다. 단, 룸 목록이 바뀌면(새 룸이 생기거나 이름이 바뀌면) 남겨 둔 문서를 한 번 더 묻는다.</p>
+
+<h2 id="s5">5. Jev 호출</h2>
+<pre><code>POST https://api.typesafe.ai/v1/systemone
+Authorization: Bearer $TYPESAFE_API_KEY
+
+{
+  "model": "jev-1.13.0",
+  "state": "제목: Canvas 렌더 성능 메모\n경로: ~/code/rooms-plugin-excalidraw/notes/canvas-perf.html\nrepo: rooms-plugin-excalidraw\n\n본문: ...",
+  "questions": {
+    "room": {
+      "type": "choice",
+      "instructions": "이 문서를 어느 룸에 두면 사용자가 나중에 찾기 쉬운가?",
+      "criteria": {
+        "r_9f2c": "alto-rooms — 포함: rooms-collect 스펙; v2 ask 스펙; 플러그인 도구 스펙",
+        "r_41aa": "디자인 리서치 — 포함: 경쟁사 온보딩 분석; 컬러 시스템 비교",
+        "none":   "위 어느 룸에도 뚜렷이 맞지 않음"
+      }
+    }
+  }
+}</code></pre>
+<ul>
+<li>보기 키는 룸 id. 이름이 바뀌어도 결정과 연결이 유지된다. Choice는 최대 255개라 룸이 254개를 넘으면 최근 활동순 254개만 넣는다.</li>
+<li>모델은 버전을 고정한다(<code>jev-latest</code>는 쓰지 않음). 바꿀 땐 <code>sort.toml</code>의 <code>model</code>.</li>
+<li>응답의 <code>choice</code>, <code>confidence</code>, <code>probabilities</code>를 그대로 DB에 남긴다. 기준값을 나중에 조정할 근거가 된다.</li>
+<li>429, 529는 지수 백오프로 최대 3번. 401은 실행을 멈추고 상태에 "키 오류"를 적는다.</li>
+</ul>
+
+<h2 id="s6">6. 새 룸 규칙</h2>
+<p>새 룸 이름은 모델이 짓지 않고 문서 출처에서 가져온다.</p>
+<div class="tbl"><table>
+<tr><th>규칙</th><th>내용</th></tr>
+<tr><td>N1</td><td>후보 이름은 문서의 repo 이름(collect의 <code>repo_info</code>와 같은 규칙, worktree는 본 repo 이름). repo가 없으면 후보 없음.</td></tr>
+<tr><td>N2</td><td>일반 폴더 이름은 후보가 아니다: Downloads, Desktop, Documents, tmp, docs, notes, out, dist, build, scratch, untitled. 목록은 <code>sort.toml</code>에서 늘릴 수 있다.</td></tr>
+<tr><td>N3</td><td>문서가 기존 룸으로 옮겨지지 않았고 후보가 있으면 그 후보에 표 1개.</td></tr>
+<tr><td>N4</td><td>한 후보의 표가 3개(<code>new_room_min_docs</code>)가 되면 그 이름으로 룸을 만들고 표를 준 문서를 모두 옮긴다.</td></tr>
+<tr><td>N5</td><td>만든 룸은 <code>repo_rooms(repo_key → room_id)</code>에 기억한다. 사용자가 이름을 바꿔도 같은 repo 문서는 그 룸으로 간다. 룸이 지워졌으면 연결을 지우고, 다시 만들지 않는다(사용자가 지운 것으로 본다).</td></tr>
+<tr><td>N6</td><td>사용자가 룸 이름을 repo 이름과 같게 만들면 collect가 처음부터 그 룸에 넣으므로 분류기는 개입하지 않는다.</td></tr>
+</table></div>
+<h3>예시</h3>
+<p>기존 룸 <code>alto-rooms</code>, <code>디자인 리서치</code>. 하루 동안:</p>
+<ol>
+<li><code>~/code/alto-rooms/docs/sort-spec.html</code>: collect가 바로 <code>alto-rooms</code>에 넣는다. 분류기는 보지 않는다.</li>
+<li><code>~/code/rooms-plugin-excalidraw/notes/</code>의 HTML 3개: Jev가 "none"을 고르고 후보 <code>rooms-plugin-excalidraw</code>에 표가 쌓인다. 세 번째에 룸이 생기고 셋이 옮겨진다.</li>
+<li><code>~/Downloads/competitor-onboarding-teardown.html</code>: 후보 없음(N2). Jev가 <code>디자인 리서치</code>를 0.86으로 고르면 옮긴다.</li>
+<li><code>/tmp/claude-…/report.html</code>: 후보 없음, 기준 미만. inbox에 남는다.</li>
+</ol>
+
+<h2 id="s7">7. 저장소와 설정</h2>
+<p>데이터 폴더는 collect와 같은 곳(<code>~/Library/Application Support/computer.alto.rooms</code>, <code>ROOMS_SORT_DATA</code>로 바꿀 수 있음)에 <code>sort.db</code>를 따로 둔다. collect의 DB는 읽지 않는다.</p>
+<pre><code>decisions(file_key PK, artifact_id, title, repo_key, run_id, at,
+          choice, confidence, probabilities_json, model,
+          action TEXT CHECK(action IN ('moved','kept','voted','created','undone')),
+          to_room_id, rooms_hash)
+repo_rooms(repo_key PK, room_id, created_at)
+votes(repo_key, file_key, PRIMARY KEY(repo_key, file_key))
+runs(run_id PK, started_at, ended_at, asked, moved, kept, created_rooms, error)</code></pre>
+<p><code>rooms_hash</code>는 그때 보기로 쓴 룸 id 목록의 해시. 룸 목록이 바뀌면 <code>kept</code> 문서를 다시 묻는 데 쓴다.</p>
+<p><code>&lt;home&gt;/.rooms/sort.toml</code>(없으면 기본값, 깨졌으면 무시하고 경고):</p>
+<pre><code>enabled = true
+min_confidence = 0.85
+new_room_min_docs = 3
+model = "jev-1.13.0"
+max_docs_per_run = 50
+max_state_bytes = 12288
+ignore_folder_names = []   # N2 목록에 더함</code></pre>
+<p>키는 이 파일에 절대 쓰지 않는다.</p>
+
+<h2 id="s8">8. API 키</h2>
+<div class="tbl"><table>
+<tr><th>규칙</th><th>내용</th></tr>
+<tr><td>K1</td><td>앱 설정에서 받은 키는 macOS 키체인에 저장한다. service <code>computer.alto.rooms</code>, account <code>typesafe-api-key</code>. 평문 파일에는 두지 않는다.</td></tr>
+<tr><td>K2</td><td>앱 프로세스에 비어 있지 않은 <code>TYPESAFE_API_KEY</code>가 있으면 그게 우선이고, 설정에 "환경변수 사용 중"이라고 보인다(입력칸 비활성).</td></tr>
+<tr><td>K3</td><td>분류기는 키체인을 읽지 않는다. 앱이 꺼내서 실행할 때 env로 넘긴다. 키체인 권한 팝업은 앱에서만 뜨고, CLI는 env만 아는 단순한 프로그램으로 남는다. 터미널에서 직접 돌릴 때도 같은 이름이 TypeSafe SDK 표준이다.</td></tr>
+<tr><td>K4</td><td>저장할 때 검증 호출 1번(보기 2개짜리 Choice). 200이면 저장, 401이면 저장하지 않고 안내.</td></tr>
+<tr><td>K5</td><td>"키 지우기"는 키체인 항목을 지운다. 이후 분류는 실행되지 않는다. 기록(DB)은 남는다.</td></tr>
+</table></div>
+<p>셸 env만 받는 방식은 쓰지 않는다. Finder나 Dock에서 띄운 앱은 셸 설정을 읽지 않아서 "등록했는데 안 되는" 상태가 생긴다.</p>
+
+<h2 id="s9">9. 앱 연결</h2>
+<ul>
+<li><code>apps/desktop/src-tauri/src/sorter.rs</code>: collector.rs와 같은 구조. roomsd가 응답한 뒤, 키가 있으면 시작 시 1번 + 5분 간격으로 <code>rooms-sort run</code>을 sidecar로 실행. 실행 중이면 건너뛴다. env: <code>ROOMS_HOME</code>, <code>ROOMS_API_PORT</code>, <code>TYPESAFE_API_KEY</code>.</li>
+<li>Tauri 명령: <code>sort_key_status</code>(없음/키체인/환경변수), <code>sort_set_key</code>(검증 후 저장), <code>sort_clear_key</code>, <code>sort_status</code>(<code>sort-status.json</code> 읽기), <code>sort_undo_last</code>(<code>rooms-sort undo</code> 실행).</li>
+<li>설정 화면에 "자동 분류" 섹션: 키 입력, 키 받기 링크, 연결 상태, 상태 한 줄, 되돌리기 버튼, 보내는 내용 설명.</li>
+<li>번들: <code>externalBin</code>에 <code>rooms-sort</code> 추가, 릴리스 스크립트에 빌드 추가.</li>
+</ul>
+<h3>CLI</h3>
+<pre><code>rooms-sort run [--dry-run]   # dry-run: 묻기만 하고 옮기지 않고 계획을 출력
+rooms-sort undo [--run ID]   # 기본: 마지막 실행
+rooms-sort log [-n 20]       # 최근 결정과 confidence</code></pre>
+
+<h2 id="s10">10. 장애와 안전장치</h2>
+<ul>
+<li>roomsd가 응답하지 않으면 아무것도 하지 않고 끝난다.</li>
+<li>이동 직전 문서가 아직 inbox에 있는지 확인한다. 사용자가 그 사이 옮겼으면 <code>kept</code>로 적고 건드리지 않는다.</li>
+<li>사용자가 분류기가 옮긴 문서를 inbox로 되돌리면 <code>file_key</code>가 이미 DB에 있으므로 다시 옮기지 않는다.</li>
+<li>보내는 내용은 문서 제목, 경로, repo 이름, 본문 앞 12KB뿐. 에이전트 대화 로그는 읽지도 보내지도 않는다.</li>
+<li>한 실행 최대 50개 × 12KB. 일반적인 하루 사용 비용은 1센트 미만.</li>
+<li>오류는 stderr와 <code>runs.error</code>, 상태 파일에 남는다. 연속 401이면 앱이 다음 키 저장까지 실행을 멈춘다.</li>
+</ul>
+
+<h2 id="s11">11. 테스트</h2>
+<ul>
+<li>단위: state 만들기(텍스트 추출, 12KB 자르기), 보기 만들기(255개 제한, none 포함), 결과 처리(기준 이상/미만/none), 표와 룸 생성(N1~N6), 일반 폴더 제외.</li>
+<li>통합: 임시 home으로 roomsd를 띄우고 Jev는 가짜 HTTP 서버로 대신한다. 이동이 <code>createdAt</code>을 지키는지, undo가 되돌리는지, 사용자가 옮긴 문서를 건드리지 않는지, 룸 이름을 바꿔도 repo 연결이 유지되는지.</li>
+<li>앱: 키 상태 3가지, 검증 실패 시 저장 안 됨.</li>
+<li>실제 키로 <code>--dry-run</code>을 사용자 inbox에 돌려 confidence 분포를 보고 기본 기준값을 정한다.</li>
+</ul>
+
+<h2 id="s12">12. 구현 순서</h2>
+<ol>
+<li><code>crates/rooms-sort</code>: roomsd 클라이언트, Jev 클라이언트, DB, run/undo/log, <code>--dry-run</code>.</li>
+<li>새 룸 규칙과 repo 연결.</li>
+<li>앱: 키체인, 설정 섹션, 주기 실행, 번들.</li>
+<li>실제 inbox로 dry-run, 기준값 조정, 릴리스.</li>
+</ol>
+
+<h2 id="s13">13. 열린 질문</h2>
+<ul>
+<li><span class="q">기준값</span> 0.85는 출발점이다. TypeSafe 쿡북은 0.9를 썼다. dry-run 결과로 정한다.</li>
+<li><span class="q">본문 범위</span> 12KB면 대부분의 스펙 문서 앞부분이 들어간다. 더 줄여도 정확도가 유지되는지 dry-run으로 본다.</li>
+<li><span class="q">컨텍스트</span> 공개 자료마다 32k, 64k로 다르게 적혀 있다. 보기 설명과 본문을 합쳐 8k 토큰 안으로 유지해 어느 쪽이든 안전하게 한다.</li>
+</ul>
+</main>
+</div>
+
+</html>
