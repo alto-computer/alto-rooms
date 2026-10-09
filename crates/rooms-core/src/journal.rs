@@ -129,3 +129,33 @@ impl RoomsCore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rules::local_day;
+
+    #[test]
+    fn day_context_maps_every_journal_day_item() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let day = local_day(&chrono::Local::now().to_rfc3339()).unwrap();
+        let room = core.create_room("Research").unwrap();
+        std::fs::write(core.room_root(&room.id).unwrap().0.join("a.html"), "<title>Room doc</title>").unwrap();
+        let jdir = d.path().join("journal").join(&day);
+        std::fs::create_dir_all(&jdir).unwrap();
+        std::fs::write(jdir.join("dream.html"), "<title>Dream</title>").unwrap();
+        std::fs::write(jdir.join("other.html"), "<title>Other</title>").unwrap();
+        core.backfill_all().unwrap();
+        core.save_note(&day, "회고.md", "x").unwrap();
+
+        let entries = core.day_context(&day).unwrap();
+        let JournalDay { artifacts, notes, .. } = core.journal_day(&day).unwrap();
+        assert_eq!(entries.len(), artifacts.len() + notes.len());
+        let mut got: Vec<(&str, &str)> = entries.iter().map(|e| (e.label.as_str(), e.title.as_str())).collect();
+        got.sort();
+        assert_eq!(got, vec![("Journal", "Other"), ("Note", "회고.md"), ("Research", "Room doc"), ("Review", "Dream")]);
+        assert!(entries.iter().all(|e| e.day == day && e.path == std::fs::canonicalize(&e.path).unwrap()), "{entries:?}");
+        assert_eq!(entries.last().unwrap().label, "Note", "artifacts first, notes last");
+    }
+}

@@ -173,6 +173,36 @@ mod tests {
         assert_eq!((ctx.turns.len(), ctx.left_out), (0, 1));
     }
 
+    fn entry(title: &str, label: &str, path: &str) -> ContextEntry {
+        ContextEntry { label: label.into(), title: title.into(), path: path.into(), day: "2026-10-09".into() }
+    }
+
+    #[test]
+    fn scope_prompt_is_fixed() {
+        let room = [entry("New  plan\n", "Research", "/o/b.html"), entry("Old", "Research", "/o/a.html")];
+        assert_eq!(build_scope_prompt("Room: Research", &room, &context(&[], PRIOR_CHARS_STDIN), "왜?"), format!(
+            "{SCOPE_PREAMBLE}\n\nRoom: Research\nDocuments (2):\n- New plan (Research, 2026-10-09) :: /o/b.html\n- Old (Research, 2026-10-09) :: /o/a.html\n\nQuestion: 왜?"));
+        let day = [entry("Dream", "Review", "/h/journal/2026-10-09/dream.html"), entry("n.md", "Note", "/h/journal/2026-10-09/n.md")];
+        let prior = [turn("q1", "a1", AskStatus::Done)];
+        assert_eq!(build_scope_prompt("Journal day: 2026-10-09", &day, &context(&prior, PRIOR_CHARS_STDIN), "q2"), format!(
+            "{SCOPE_PREAMBLE}\n\nJournal day: 2026-10-09\nDocuments (2):\n- Dream (Review, 2026-10-09) :: /h/journal/2026-10-09/dream.html\n- n.md (Note, 2026-10-09) :: /h/journal/2026-10-09/n.md\n\nPrevious Q&A:\nQ: q1\nA: a1\n\nQuestion: q2"));
+        let compacted = [turn("q1", "a1", AskStatus::Done), of(AskKind::Compact, "S"), turn("q2", "a2", AskStatus::Done)];
+        assert_eq!(build_scope_prompt("Room: Research", &room[..1], &context(&compacted, PRIOR_CHARS_STDIN), "q3"), format!(
+            "{SCOPE_PREAMBLE}\n\nRoom: Research\nDocuments (1):\n- New plan (Research, 2026-10-09) :: /o/b.html\n\nSummary of the earlier Q&A:\nS\n\nPrevious Q&A:\nQ: q2\nA: a2\n\nQuestion: q3"));
+        let empty = build_scope_prompt("Room: Empty", &[], &context(&[], PRIOR_CHARS_STDIN), "q");
+        assert_eq!(empty, format!("{SCOPE_PREAMBLE}\n\nRoom: Empty\nDocuments (0):\n\nQuestion: q"));
+    }
+
+    #[test]
+    fn scope_prompt_caps_entries() {
+        let many: Vec<_> = (0..450).map(|i| entry(&format!("d{i}"), "R", &format!("/o/{i}.html"))).collect();
+        let p = build_scope_prompt("Room: R", &many, &context(&[], PRIOR_CHARS_STDIN), "q");
+        assert_eq!(p.lines().filter(|l| l.starts_with("- d")).count(), MAX_LISTED);
+        assert!(p.contains("Documents (450):\n- d0 (R, 2026-10-09) :: /o/0.html\n"), "newest first, as given");
+        assert!(p.contains("- d399 (R, 2026-10-09) :: /o/399.html\n(50 older documents not listed)\n\nQuestion: q"));
+        assert!(!p.contains("d400"));
+    }
+
     #[test]
     fn ident_rules() {
         for ok in ["claude-code", "7f3a1c2e-0000-4000-8000-000000000000", "ses_01HQ7B", "a.b:c", "A"] { assert!(valid_ident(ok), "{ok}"); }

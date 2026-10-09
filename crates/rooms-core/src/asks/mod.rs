@@ -633,6 +633,93 @@ mod tests {
         asks.shutdown().await;
     }
 
+    #[tokio::test]
+    async fn room_ask_uses_default_agent_new_mode_and_empty_cwd() {
+        use rooms_protocol::AskMode;
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-agent.sh");
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let room = core.create_room("Research").unwrap();
+        let meta = r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="s1">"#;
+        std::fs::write(core.room_root(&room.id).unwrap().0.join("doc.html"), format!("<title>d</title>{meta}")).unwrap();
+        core.backfill_all().unwrap();
+        std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+        std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
+            "default = \"mine\"\npreamble = \"DOC ONLY\"\n",
+            "[agents.mine]\nresume = [\"{f}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{f}\", \"new\", \"{{file}}\", \"{{cwd}}\", \"{{prompt}}\"]\n",
+            "[agents.claude-code]\nresume = [\"{f}\", \"cc-resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{f}\", \"cc\", \"{{prompt}}\"]\n",
+        ), f = fake)).unwrap();
+        let asks = Asks::new(core.clone(), None);
+        let scope = AskScope::Room { room_id: room.id.clone() };
+        assert_eq!(asks.target(&scope).unwrap(), AskTarget { agent: "mine".into(), mode: AskMode::New, models: vec![] });
+        let mut rx = core.subscribe();
+        let t = asks.start(&scope, "q", None).unwrap();
+        assert_eq!((t.agent.as_str(), t.mode), ("mine", AskMode::New));
+        let answer = loop {
+            let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().unwrap();
+            if let EventKind::AskDone { turn } = ev.kind { break turn.answer; }
+        };
+        let cwd = std::fs::canonicalize(d.path().join(".rooms/asks/cwd")).unwrap();
+        assert!(answer.starts_with(&format!("ARGV: [new] [] [{}] [[Rooms] The user is looking at the room", core.home().join(".rooms/asks/cwd").display())), "{answer}");
+        assert!(answer.ends_with(&format!("CWD: {}", cwd.display())), "{answer}");
+        assert!(!answer.contains("resume") && !answer.contains("DOC ONLY"), "{answer}");
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&cwd).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::read_dir(&cwd).unwrap().count(), 0);
+    }
+
+    /// `cargo test -p rooms-core --release context_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn context_timing() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let originals = tempfile::tempdir().unwrap();
+        let today = crate::rules::local_day(&chrono::Local::now().to_rfc3339()).unwrap();
+        let pct = |mut v: Vec<f64>, p: f64| { v.sort_by(f64::total_cmp); v[((v.len() - 1) as f64 * p).round() as usize] };
+        let ctx = prompt::Context::default();
+        for n in [10, 100, 450] {
+            let room = core.create_room(&format!("r{n}")).unwrap();
+            let root = core.room_root(&room.id).unwrap().0;
+            for i in 0..n {
+                let o = originals.path().join(format!("r{n}-{i}.html"));
+                std::fs::write(&o, format!("<title>Doc {i} of room {n}</title>")).unwrap();
+                std::os::unix::fs::symlink(&o, root.join(format!("{i}.html"))).unwrap();
+            }
+            core.backfill_all().unwrap();
+            let mut ms = Vec::new();
+            let mut bytes = 0;
+            for _ in 0..30 {
+                let t = std::time::Instant::now();
+                let (name, entries) = core.room_context(&room.id).unwrap();
+                bytes = build_scope_prompt(&format!("Room: {name}"), &entries, &ctx, "q").len();
+                ms.push(t.elapsed().as_secs_f64() * 1e3);
+            }
+            println!("room {n:>3} docs: p50 {:.2} ms  p95 {:.2} ms  prompt {bytes} bytes", pct(ms.clone(), 0.5), pct(ms, 0.95));
+        }
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let room = core.create_room("day").unwrap();
+        let root = core.room_root(&room.id).unwrap().0;
+        for i in 0..40 {
+            let o = originals.path().join(format!("day-{i}.html"));
+            std::fs::write(&o, format!("<title>Day doc {i}</title>")).unwrap();
+            std::os::unix::fs::symlink(&o, root.join(format!("{i}.html"))).unwrap();
+        }
+        core.backfill_all().unwrap();
+        for i in 0..20 { core.save_note(&today, &format!("n{i}.md"), "x").unwrap(); }
+        let mut ms = Vec::new();
+        let mut count = 0;
+        for _ in 0..30 {
+            let t = std::time::Instant::now();
+            let entries = core.day_context(&today).unwrap();
+            count = entries.len();
+            build_scope_prompt(&format!("Journal day: {today}"), &entries, &ctx, "q");
+            ms.push(t.elapsed().as_secs_f64() * 1e3);
+        }
+        println!("day of {count} items: p50 {:.2} ms  p95 {:.2} ms", pct(ms.clone(), 0.5), pct(ms, 0.95));
+    }
+
     #[test]
     fn login_path_is_the_text_after_the_last_sentinel() {
         assert_eq!(parse_login_path(b"__ROOMS_PATH__/usr/bin:/bin").as_deref(), Some("/usr/bin:/bin"));

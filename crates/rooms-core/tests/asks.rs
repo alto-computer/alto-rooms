@@ -488,3 +488,39 @@ async fn doc_scope_skips_a_dangling_link_and_uses_the_next_room() {
     assert!(matches!(asks.target(&doc), Err(AskError::NotFound)));
     asks.shutdown().await;
 }
+
+#[tokio::test]
+async fn room_ask_streams_progress_under_its_scope() {
+    let (d, core, _doc, room_id) = setup("");
+    let script = d.path().join("stream-agent.sh");
+    std::fs::write(&script, concat!(
+        "#!/bin/sh\n",
+        "echo '{\"t\":\"d\",\"x\":\"one \"}'; sleep 0.3\n",
+        "echo '{\"t\":\"d\",\"x\":\"two\"}'; sleep 0.3\n",
+    )).unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
+        "[agents.claude-code]\nnew = [\"{}\"]\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/t\" = \"d\" }}\ndelta = \"/x\"\n",
+    ), script.display())).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let room = AskScope::Room { room_id };
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, "q", None).unwrap();
+    let mut progress = Vec::new();
+    let done = loop {
+        let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("events in time").unwrap();
+        match ev.kind {
+            EventKind::AskProgress { id, scope, answer, .. } if id == t.id => progress.push((scope, answer)),
+            EventKind::AskDone { turn } if turn.id == t.id => break turn,
+            _ => {}
+        }
+    };
+    assert!(!progress.is_empty() && progress.iter().all(|(s, _)| *s == room), "{progress:?}");
+    assert_eq!(progress.last().map(|(_, a)| a.as_str()), Some("one two"), "{progress:?}");
+    assert_eq!((done.status, done.answer.as_str(), &done.scope), (AskStatus::Done, "one two", &room));
+    while let Ok(ev) = rx.try_recv() {
+        assert!(!matches!(ev.kind, EventKind::AskProgress { ref id, .. } if *id == t.id), "no progress after ask.done");
+    }
+    assert_eq!(asks.thread(&room).unwrap().len(), 1);
+}

@@ -256,6 +256,37 @@ mod tests {
         assert_eq!(rels(&core, &r.id), vec!["a.html".to_string()]);
     }
 
+    #[test]
+    fn room_context_resolves_symlinks_and_skips_missing() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let r = core.create_room("Research").unwrap();
+        let root = core.room_root(&r.id).unwrap().0;
+        let o = tempfile::tempdir().unwrap();
+        let orig = std::fs::canonicalize(o.path()).unwrap().join("orig.html");
+        let gone = orig.with_file_name("gone.html");
+        std::fs::write(&orig, "<title>Linked</title>").unwrap();
+        std::fs::write(&gone, "<title>Gone</title>").unwrap();
+        std::os::unix::fs::symlink(&orig, root.join("link.html")).unwrap();
+        std::os::unix::fs::symlink(&gone, root.join("dangling.html")).unwrap();
+        std::fs::write(root.join("plain.html"), "<title>Plain\n  file</title>").unwrap();
+        core.backfill_all().unwrap();
+        assert_eq!(core.list_artifacts(&r.id).unwrap().len(), 3);
+        std::fs::remove_file(&gone).unwrap();
+
+        let (name, entries) = core.room_context(&r.id).unwrap();
+        assert_eq!(name, "Research");
+        let mut paths: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
+        paths.sort();
+        let mut want = vec![orig, std::fs::canonicalize(root.join("plain.html")).unwrap()];
+        want.sort();
+        assert_eq!(paths, want, "realpaths only; the dangling link is left out");
+        let today = local_day(&chrono::Local::now().to_rfc3339()).unwrap();
+        assert!(entries.iter().all(|e| e.label == "Research" && e.day == today), "{entries:?}");
+        assert!(matches!(core.room_context(&JOURNAL_ROOM_ID.into()), Err(CoreError::InvalidInput(_))));
+        assert!(matches!(core.room_context(&"nope".into()), Err(CoreError::RoomNotFound)));
+    }
+
     /// Makes the index step of `move_artifact` fail on this thread (after the filesystem move).
     fn with_failing_reassign<T>(f: impl FnOnce() -> T) -> T {
         FAIL_REASSIGN.with(|c| c.set(true));
