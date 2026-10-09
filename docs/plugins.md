@@ -174,10 +174,12 @@ rooms.ready();
 | `setActions(items)` | Replaces your buttons in the selection bar, shown after Ask: up to 6 `{ id, title, color? }`, titles cut to 24 characters with control and bidi formatting characters removed, `color` any CSS color |
 | `onAction(cb)` | Calls `cb(id, selection)` when one of your buttons is clicked. `selection` is the last `{ text, range }` selected in the document, since the click can clear the live selection |
 | `onDataChanged(cb)` | Calls `cb(path)` when another frame of your plugin changed a file in this document's folder |
-| `onReveal(cb)` | Calls `cb(anchor)` with the anchor your plugin passed to `open({ fileKey, anchor })` for this document, once per open, after `ready()` (SDK 0.4.0). The document can read it and post a fake one, so treat it as untrusted |
+| `onReveal(cb)` | Calls `cb(anchor)` with the anchor your plugin passed to `open({ fileKey, anchor })` for this document, once per open, after `ready()` (SDK 0.4.0). When a second `open` for the same document arrives before your script is ready, the script gets only the later anchor. The document can read it and post a fake one, so treat it as untrusted |
 | `ready()` | Tells the app the script is listening |
 
 Messages are `{ rooms: "content", v: 1, plugin, type, … }` posted to `window.parent`, and the SDK trusts only messages whose source is `window.parent`.
+
+The app can stop listening while your script keeps running, for example while the document's tab is in the background. When it listens again, it posts `sync`, and SDK 0.4.0 answers by repeating your last `setActions` and `ready()`. A script built with SDK 0.3 ignores `sync`, so after such a gap its buttons stay missing and anchors wait until the document reloads.
 
 ### What a hostile document can do
 

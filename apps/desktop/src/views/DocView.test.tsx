@@ -1,8 +1,11 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { Activity, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderWithStores, room } from "@/test/fakes";
+import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { plugin } from "@/test/plugins";
+import { ViewerStore } from "@/data/viewerStore";
+import { CurrentTabContext } from "@/shell/currentTab";
 import { DocView } from "./DocView";
 
 afterEach(cleanup);
@@ -195,5 +198,99 @@ describe("DocView: content scripts", () => {
     post({ roomsSelection: 1, text: "p95", rect: { x: 100, y: 200, w: 80, h: 16 } });
     await screen.findByRole("button", { name: "Mark" });
     expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+  });
+});
+
+describe("DocView: a frame that outlives its channel", () => {
+  const marker = plugin({ id: "marker", name: "Marker", permissions: ["artifact.content"], granted: ["artifact.content"], slots: { artifactSidePanel: null, tab: null } });
+  const sync = { rooms: "content", v: 1, type: "sync", plugin: "marker" };
+  const reveals = (posted: { mock: { calls: unknown[][] } }) => posted.mock.calls.map(([m]) => m as { type: string }).filter((m) => m.type === "reveal");
+
+  /** The doc in a tab that can go to the background, as AppShell keeps one. */
+  async function kept() {
+    const viewer = new ViewerStore(memoryStorage());
+    const tabId = viewer.open({ kind: "doc", roomId: "r1", artifactId: "a1" });
+    let show!: (visible: boolean) => void;
+    function Tab() {
+      const [visible, setVisible] = useState(true);
+      show = setVisible;
+      return (
+        <Activity mode={visible ? "visible" : "hidden"}>
+          <CurrentTabContext.Provider value={tabId}>
+            <DocView roomId="r1" artifactId="a1" />
+          </CurrentTabContext.Provider>
+        </Activity>
+      );
+    }
+    const h = await renderWithStores(<Tab />, { rooms: [room("r1", "방")], artifacts: { r1: [artifact("a1", "보고서")] }, plugins: [marker], viewer });
+    const frame = h.container.querySelector("iframe")!;
+    // One window for every load, as a browser's frame keeps; jsdom would make a new one per URL.
+    const win = { postMessage: vi.fn() } as unknown as Window;
+    Object.defineProperty(frame, "contentWindow", { get: () => win });
+    const posted = vi.mocked(win.postMessage);
+    const post = (data: unknown) => act(() => void window.dispatchEvent(new MessageEvent("message", { data, source: win })));
+    const reload = async () => {
+      const before = frame.getAttribute("src");
+      h.state.plugins[0].rev = `${h.state.plugins[0].rev}-2`;
+      await act(async () => void h.emit({ type: "plugins.changed" }));
+      await waitFor(() => expect(frame.getAttribute("src")).not.toBe(before));
+    };
+    return { ...h, tabId, frame, posted: () => posted, post, reload, show: (v: boolean) => act(() => show(v)) };
+  }
+
+  it("asks the frame's scripts to repeat themselves on each load and when the tab comes back, never while a new URL loads", async () => {
+    const t = await kept();
+    expect(t.posted()).not.toHaveBeenCalledWith(sync, "*");
+    fireEvent.load(t.frame);
+    expect(t.posted()).toHaveBeenCalledWith(sync, "*");
+    t.post({ rooms: "content", v: 1, plugin: "marker", type: "actions", items: [{ id: "mark", title: "Mark" }] });
+
+    t.posted().mockClear();
+    t.show(false);
+    t.show(true);
+    expect(t.posted(), "back from the background, the loaded frame is asked").toHaveBeenCalledWith(sync, "*");
+    t.post({ roomsSelection: 1, text: "p95", rect: { x: 100, y: 200, w: 80, h: 16 } });
+    await screen.findByRole("button", { name: "Ask" });
+    expect(screen.queryByRole("button", { name: "Mark" }), "the new channel knows only what the frame tells it").toBeNull();
+    t.post({ rooms: "content", v: 1, plugin: "marker", type: "actions", items: [{ id: "mark", title: "Mark" }] });
+    t.post({ roomsSelection: 1, text: "p95", rect: { x: 100, y: 200, w: 80, h: 16 } });
+    await screen.findByRole("button", { name: "Mark" });
+
+    t.posted().mockClear();
+    await t.reload();
+    expect(t.posted(), "the page on its way out is not asked").not.toHaveBeenCalledWith(sync, "*");
+    fireEvent.load(t.frame);
+    expect(t.posted()).toHaveBeenCalledWith(sync, "*");
+  });
+
+  it("asks when a tab comes back whose frame finished loading in the background", async () => {
+    const t = await kept();
+    fireEvent.load(t.frame);
+    await t.reload();
+    t.show(false);
+    fireEvent.load(t.frame);
+    t.posted().mockClear();
+    t.show(true);
+    expect(t.posted()).toHaveBeenCalledWith(sync, "*");
+  });
+
+  it("keeps the last anchor across a reload until the new page's script says ready", async () => {
+    const t = await kept();
+    fireEvent.load(t.frame);
+    act(() => t.viewer.reveal(t.tabId, { pluginId: "marker", anchor: { mark: "first" } }));
+    act(() => t.viewer.reveal(t.tabId, { pluginId: "marker", anchor: { mark: "x" } }));
+    await t.reload();
+    t.post({ rooms: "content", v: 1, plugin: "marker", type: "ready" });
+    expect(reveals(t.posted())).toEqual([{ rooms: "content", v: 1, type: "reveal", plugin: "marker", anchor: { mark: "x" } }]);
+    t.post({ rooms: "content", v: 1, plugin: "marker", type: "ready" });
+    expect(reveals(t.posted()), "handed over once").toHaveLength(1);
+  });
+
+  it("drops an anchor for a plugin that is not on in this doc", async () => {
+    const t = await kept();
+    act(() => t.viewer.reveal(t.tabId, { pluginId: "goals", anchor: 1 }));
+    const left: unknown[] = [];
+    t.viewer.takeReveal(t.tabId, (r) => (left.push(r), true));
+    expect(left).toEqual([]);
   });
 });

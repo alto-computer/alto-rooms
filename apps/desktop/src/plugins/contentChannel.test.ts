@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createContentChannel, MAX_CONTENT_WRITE_BYTES, MAX_READS_PER_SECOND, MAX_WRITES_PER_SECOND, newFrameSession, type ContentAction, type ContentChannelDeps } from "./contentChannel";
+import { createContentChannel, MAX_CONTENT_WRITE_BYTES, MAX_READS_PER_SECOND, MAX_WRITES_PER_SECOND, type ContentAction, type ContentChannelDeps } from "./contentChannel";
 import { pluginDataBus } from "./pluginDataBus";
 
 const FILE_KEY = "00000000000000aa";
@@ -24,9 +24,9 @@ function setup(over: Partial<ContentChannelDeps> = {}) {
     fileKey: FILE_KEY,
     plugins: new Set(["marker", "second"]),
     frame: () => doc.win,
-    session: newFrameSession(),
     client,
     onActions: (a) => actions.push(a),
+    onReady: () => {},
     now: () => t,
     validColor: (v) => /^#[0-9a-f]{3,8}$|^[a-z]+$/i.test(v),
     ...over,
@@ -251,40 +251,32 @@ describe("contentChannel", () => {
 describe("contentChannel reveal", () => {
   const reveals = (got: Record<string, unknown>[]) => got.filter((m) => m.type === "reveal");
 
-  it("waits for the plugin's ready, then posts the latest anchor once", () => {
+  it("asks each plugin's script in the frame to repeat itself", () => {
     const s = track(setup());
-    s.ch.reveal("marker", { mark: "old" });
-    s.ch.reveal("marker", { mark: "x" });
-    expect(reveals(s.doc.got)).toEqual([]);
+    s.ch.sync();
+    expect(s.doc.got).toEqual([
+      { rooms: "content", v: 1, type: "sync", plugin: "marker" },
+      { rooms: "content", v: 1, type: "sync", plugin: "second" },
+    ]);
+  });
+
+  it("refuses an anchor until the plugin says ready, then posts it and reports ready", () => {
+    const onReady = vi.fn();
+    const s = track(setup({ onReady }));
+    expect(s.ch.reveal("marker", { mark: "x" }), "kept by the caller until ready").toBe(false);
     s.send({ plugin: "second", type: "ready" });
-    expect(reveals(s.doc.got)).toEqual([]);
+    expect(s.ch.reveal("marker", { mark: "x" })).toBe(false);
     s.send({ plugin: "marker", type: "ready" });
-    s.send({ plugin: "marker", type: "ready" });
+    expect(onReady).toHaveBeenCalledTimes(2);
+    expect(s.ch.reveal("marker", { mark: "x" })).toBe(true);
     expect(reveals(s.doc.got)).toEqual([{ rooms: "content", v: 1, type: "reveal", plugin: "marker", anchor: { mark: "x" } }]);
   });
 
-  it("posts at once to a ready script, only to the named plugin, and never to one outside the set", () => {
+  it("uses up an anchor for a plugin outside the set at once, and posts nothing", () => {
     const s = track(setup());
-    s.send({ plugin: "marker", type: "ready" });
-    s.send({ plugin: "second", type: "ready" });
-    s.ch.reveal("marker", 1);
-    s.ch.reveal("goals", 2);
+    expect(s.ch.reveal("goals", 2)).toBe(true);
     s.send({ plugin: "goals", type: "ready" });
-    expect(reveals(s.doc.got)).toEqual([{ rooms: "content", v: 1, type: "reveal", plugin: "marker", anchor: 1 }]);
-  });
-
-  it("a new channel for the same frame load knows which scripts are ready and what they declared", () => {
-    const session = newFrameSession();
-    const first = setup({ session });
-    first.send({ plugin: "marker", type: "ready" });
-    first.send({ plugin: "marker", type: "actions", items: [{ id: "mark", title: "Mark" }] });
-    first.ch.dispose();
-    const again = track(setup({ session }));
-    again.ch.reveal("marker", "back");
-    again.ch.runAction("marker", "mark");
-    expect(again.doc.got.map((m) => m.type)).toEqual(["reveal", "selection.action"]);
-    const reloaded = track(setup({ session: newFrameSession() }));
-    reloaded.ch.reveal("marker", "fresh");
-    expect(reveals(reloaded.doc.got), "a reloaded frame waits for its script again").toEqual([]);
+    expect(s.ch.reveal("goals", 2)).toBe(true);
+    expect(reveals(s.doc.got)).toEqual([]);
   });
 });

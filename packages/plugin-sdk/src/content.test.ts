@@ -83,6 +83,28 @@ describe("onReveal", () => {
   });
 });
 
+describe("sync", () => {
+  const sync = { rooms: "content", v: 1, plugin: "marker", type: "sync" };
+
+  it("says ready and the last actions again when the app asks, and only what the script said", () => {
+    const c = connectContent("marker");
+    host.deliver(sync);
+    expect(host.sent, "nothing said yet, nothing to repeat").toEqual([]);
+    c.setActions([{ id: "old", title: "Old" }]);
+    c.setActions([{ id: "mark", title: "Mark" }]);
+    c.ready();
+    host.sent.length = 0;
+    host.deliver(sync, window);
+    host.deliver({ ...sync, plugin: "other" });
+    expect(host.sent, "a forged or foreign ask gets nothing").toEqual([]);
+    host.deliver(sync);
+    expect(host.sent).toEqual([
+      { rooms: "content", v: 1, plugin: "marker", type: "actions", items: [{ id: "mark", title: "Mark" }] },
+      { rooms: "content", v: 1, plugin: "marker", type: "ready" },
+    ]);
+  });
+});
+
 describe("content module", () => {
   it("loads without the panel SDK, so a content script bundle and index.ts share no import cycle", async () => {
     vi.resetModules();

@@ -192,7 +192,7 @@ export class ViewerStore {
   private lastChild: { opener: string; id: string } | null = null;
   /** Transient: recently closed tabs, oldest first. */
   private closed: { tab: TabInput; index: number; history: TabHistory }[] = [];
-  /** Transient: tab id -> the anchor waiting for the doc it shows. Dropped once handed over, or when the tab closes or moves on. */
+  /** Transient: tab id -> the anchor waiting for the doc it shows. Dropped once taken, or when the tab closes or moves on. */
   private reveals = new Map<string, Reveal>();
   private readonly storage: StorageLike | undefined;
   private readonly now: () => Date;
@@ -391,11 +391,14 @@ export class ViewerStore {
     this.emit();
   }
 
-  /** The anchor waiting for tab `id`, which is forgotten: the doc hands it over once. */
-  takeReveal(id: string): Reveal | undefined {
+  /**
+   * Offers the anchor waiting for tab `id` to `accept`, and forgets it once `accept` returns true.
+   * It stays while the doc's script is not ready yet, so a channel the tab drops and makes again
+   * does not lose it.
+   */
+  takeReveal(id: string, accept: (r: Reveal) => boolean): void {
     const r = this.reveals.get(id);
-    this.reveals.delete(id);
-    return r;
+    if (r && accept(r)) this.reveals.delete(id);
   }
 
   setPluginPanel(patch: Partial<PluginPanel>): void {

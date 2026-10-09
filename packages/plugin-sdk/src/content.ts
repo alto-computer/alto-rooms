@@ -58,7 +58,8 @@ type Inbound =
   | { type: "reply"; id: string; result?: unknown; error?: { code: PluginErrorCode; message?: string } }
   | { type: "dataChanged"; path: string }
   | { type: "selection.action"; actionId: string }
-  | { type: "reveal"; anchor: unknown };
+  | { type: "reveal"; anchor: unknown }
+  | { type: "sync" };
 
 const TIMEOUT_MS = 10_000;
 
@@ -72,6 +73,8 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
   const revealListeners = new Set<(anchor: unknown) => void>();
   let nextId = 0;
   let last: Range | null = null;
+  let isReady = false;
+  let actions: ContentAction[] | null = null;
 
   document.addEventListener("selectionchange", () => {
     const s = document.getSelection();
@@ -107,6 +110,10 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
       for (const l of [...actionListeners]) l(d.actionId, sel);
     } else if (d.type === "reveal") {
       for (const l of [...revealListeners]) l(d.anchor);
+    } else if (d.type === "sync") {
+      // The app made a new channel for this frame and missed what was said before it.
+      if (actions) post({ type: "actions", items: actions });
+      if (isReady) post({ type: "ready" });
     }
   });
 
@@ -118,7 +125,10 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
       list: (prefix = "") => request<string[]>("storage.list", { prefix }),
       delete: (path) => request<void>("storage.delete", { path }),
     },
-    setActions: (items) => post({ type: "actions", items }),
+    setActions(items) {
+      actions = items;
+      post({ type: "actions", items });
+    },
     onAction(cb) {
       actionListeners.add(cb);
       return () => void actionListeners.delete(cb);
@@ -131,6 +141,9 @@ export function connectContent(pluginId: string, opts: { timeoutMs?: number } = 
       revealListeners.add(cb);
       return () => void revealListeners.delete(cb);
     },
-    ready: () => post({ type: "ready" }),
+    ready() {
+      isReady = true;
+      post({ type: "ready" });
+    },
   };
 }
