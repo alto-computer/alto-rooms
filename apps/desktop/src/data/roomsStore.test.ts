@@ -1,4 +1,4 @@
-import type { Artifact, Info, JournalDay, Room, RoomsEvent, Snapshot } from "@alto-rooms/protocol-ts";
+import type { Artifact, Conversation, Info, JournalDay, Room, RoomsEvent, Snapshot } from "@alto-rooms/protocol-ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RoomsStore, type RoomsClientLike } from "./roomsStore";
 
@@ -560,6 +560,24 @@ describe("RoomsStore days", () => {
     c.emit({ seq: 3, type: "note.removed", date: "2026-10-05", name: "x" });
     await vi.advanceTimersByTimeAsync(150);
     expect(c.calls.journalDay).toHaveLength(3);
+    s.stop();
+  });
+
+  it("conversation.moved refetches the watched days that list the conversation", async () => {
+    vi.useFakeTimers();
+    const c = new FakeClient();
+    const talk = (session: string, roomId: string | null = null): Conversation => ({
+      id: { agent: "codex", session }, title: session, cwd: null, startedAt: "", endedAt: "", messages: 1, lastReply: null, artifactsWritten: [], roomId,
+    });
+    c.days.set("2026-10-05", { data: { ...day("2026-10-05"), conversations: [{ at: "2026-10-05T01:00:00Z", conversation: talk("s1") }] }, seq: 1 });
+    c.days.set("2026-10-04", { data: day("2026-10-04"), seq: 1 });
+    const s = await liveStore(c);
+    await s.loadDay("2026-10-05");
+    await s.loadDay("2026-10-04");
+    c.emit({ seq: 2, type: "conversation.moved", conversation: talk("s1", "r1"), fromRoomId: null });
+    c.emit({ seq: 3, type: "conversation.moved", conversation: talk("other", "r1"), fromRoomId: null });
+    await vi.advanceTimersByTimeAsync(150);
+    expect(c.calls.journalDay).toEqual(["2026-10-05", "2026-10-04", "2026-10-05"]);
     s.stop();
   });
 

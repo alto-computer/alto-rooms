@@ -1,17 +1,23 @@
 import { useEffect, useState } from "react";
-import type { Artifact, Info, JournalDay, Note, Room, RoomColor } from "@alto-rooms/protocol-ts";
+import type { Artifact, Conversation, Info, JournalDay, Note, Room, RoomColor } from "@alto-rooms/protocol-ts";
 import { RoomDot } from "@/components/RoomDot";
 import { useClient, useOpenDoc, useViewerStore } from "@/data/hooks";
+import { conversationKey } from "@/lib/conversations";
 import { clockTime } from "@/lib/dates";
 import { INBOX_ID } from "@/lib/drag";
 import { noteBase } from "@/lib/notes";
 import { wantsNewTab } from "@/lib/nav";
 import { ArtifactThumb } from "./ArtifactThumb";
+import { ConversationRow } from "./ConversationRow";
 
-/** One line of a day, at the time it happened: a note of yours, or an artifact an agent wrote (with its room's name and pin colour). */
+/**
+ * One line of a day, at the time it happened: a note of yours, an artifact an agent wrote (with
+ * its room's name and pin colour), or a conversation (at its first message that day, with its room).
+ */
 export type DayEntry =
   | { kind: "note"; at: string; key: string; note: Note }
-  | { kind: "artifact"; at: string; key: string; artifact: Artifact; label: string; color: RoomColor | null };
+  | { kind: "artifact"; at: string; key: string; artifact: Artifact; label: string; color: RoomColor | null }
+  | { kind: "conversation"; at: string; key: string; conversation: Conversation; room: Room | undefined };
 
 /** The day's entries, oldest first. An artifact is labelled with its room; the Dream (the day's dream.html in the Journal) is "Review". */
 export function dayEntries(day: JournalDay, info: Info, rooms: readonly Room[]): DayEntry[] {
@@ -23,7 +29,18 @@ export function dayEntries(day: JournalDay, info: Info, rooms: readonly Room[]):
   const color = (a: Artifact) => rooms.find((r) => r.id === a.roomId)?.color ?? null;
   const entries: DayEntry[] = [
     ...day.notes.map((note): DayEntry => ({ kind: "note", at: note.updatedAt, key: `note:${note.name}`, note })),
-    ...day.artifacts.map((artifact): DayEntry => ({ kind: "artifact", at: artifact.createdAt, key: `artifact:${artifact.id}`, artifact, label: label(artifact), color: color(artifact) })),
+    ...day.artifacts.map(
+      (artifact): DayEntry => ({ kind: "artifact", at: artifact.createdAt, key: `artifact:${artifact.id}`, artifact, label: label(artifact), color: color(artifact) }),
+    ),
+    ...day.conversations.map(
+      ({ at, conversation }): DayEntry => ({
+        kind: "conversation",
+        at,
+        key: `conversation:${conversationKey(conversation.id)}`,
+        conversation,
+        room: rooms.find((r) => r.id === conversation.roomId),
+      }),
+    ),
   ];
   return entries.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
@@ -127,21 +144,70 @@ function ArtifactEntry({ artifact, label, color, info }: { artifact: Artifact; l
   );
 }
 
-/** The day as a daybook: times in the left margin against a thin rule, your notes in serif, agents' artifacts as compact sheets. */
-export function Daybook({ entries, info }: { entries: DayEntry[]; info: Info }) {
+type ConversationEntry = Extract<DayEntry, { kind: "conversation" }>;
+
+/** The entries as the daybook stacks them: consecutive conversations make one run of tight rows. */
+type Block = { kind: "run"; key: string; run: ConversationEntry[] } | { kind: "one"; entry: Exclude<DayEntry, ConversationEntry> };
+
+function blocks(entries: DayEntry[]): Block[] {
+  const out: Block[] = [];
+  for (const e of entries) {
+    const last = out.at(-1);
+    if (e.kind !== "conversation") out.push({ kind: "one", entry: e });
+    else if (last?.kind === "run") last.run.push(e);
+    else out.push({ kind: "run", key: e.key, run: [e] });
+  }
+  return out;
+}
+
+const TIME = "pr-4 text-right text-small font-medium text-ink-3 tabular-nums";
+
+/**
+ * The day as a daybook: times in the left margin against a thin rule, your notes in serif, agents'
+ * artifacts as compact sheets, conversations as one line each. `selected` is the selected
+ * conversation's entry key.
+ */
+export function Daybook({
+  entries,
+  info,
+  selected,
+  onSelect,
+}: {
+  entries: DayEntry[];
+  info: Info;
+  selected: string | null;
+  onSelect: (key: string) => void;
+}) {
   return (
     <ol
       aria-label="Your day"
       className="relative flex flex-col gap-7 before:absolute before:top-[-4px] before:bottom-[-4px] before:left-[63px] before:w-[1.5px] before:rounded-full before:bg-thread-soft"
     >
-      {entries.map((e) => (
-        <li key={e.key} className="grid grid-cols-[64px_minmax(0,1fr)] items-start gap-x-6">
-          <time dateTime={e.at} className="pr-4 text-right text-small leading-6 font-medium text-ink-3 tabular-nums">
-            {clockTime(e.at)}
-          </time>
-          {e.kind === "note" ? <NoteEntry note={e.note} /> : <ArtifactEntry artifact={e.artifact} label={e.label} color={e.color} info={info} />}
-        </li>
-      ))}
+      {blocks(entries).map((b) =>
+        b.kind === "run" ? (
+          <li key={b.key} className="flex flex-col">
+            {b.run.map((e) => (
+              <div key={e.key} className="grid grid-cols-[64px_minmax(0,1fr)] items-center gap-x-6">
+                <time dateTime={e.at} className={`${TIME} leading-[30px]`}>
+                  {clockTime(e.at)}
+                </time>
+                <ConversationRow conversation={e.conversation} room={e.room} entryKey={e.key} selected={selected === e.key} onSelect={() => onSelect(e.key)} />
+              </div>
+            ))}
+          </li>
+        ) : (
+          <li key={b.entry.key} className="grid grid-cols-[64px_minmax(0,1fr)] items-start gap-x-6">
+            <time dateTime={b.entry.at} className={`${TIME} leading-6`}>
+              {clockTime(b.entry.at)}
+            </time>
+            {b.entry.kind === "note" ? (
+              <NoteEntry note={b.entry.note} />
+            ) : (
+              <ArtifactEntry artifact={b.entry.artifact} label={b.entry.label} color={b.entry.color} info={info} />
+            )}
+          </li>
+        ),
+      )}
     </ol>
   );
 }

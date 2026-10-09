@@ -1,8 +1,10 @@
 import { useRef, useState, type ReactNode } from "react";
-import { RoomsApiError, type Note } from "@alto-rooms/protocol-ts";
+import { RoomsApiError, type JournalDay, type Note } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
 import { useClient, useJournalDay, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
+import { AGENT_NAMES } from "@/lib/agents";
+import { conversationTitle } from "@/lib/conversations";
 import { count, daybookTitle, isoWeek, localDate, monthDay } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { useScrollMemory } from "@/lib/scrollMemory";
@@ -78,10 +80,16 @@ function WriteNoteButton({ date, notes, viewer }: { date: string; notes: readonl
   );
 }
 
-/** What the header says the day holds: `3 notes and 7 artifacts`. */
-function daySummary(notes: number, artifacts: number): string {
-  if (!notes && !artifacts) return "Nothing was written this day";
-  return [notes && count(notes, "note"), artifacts && count(artifacts, "artifact")].filter(Boolean).join(" and ");
+/** What the header says the day holds: `3 notes and 7 artifacts`, `3 notes, 7 artifacts and 2 conversations`. */
+function daySummary(day: JournalDay): string {
+  const counts: [number, string][] = [
+    [day.notes.length, "note"],
+    [day.artifacts.length, "artifact"],
+    [day.conversations.length, "conversation"],
+  ];
+  const parts = counts.filter(([n]) => n > 0).map(([n, noun]) => count(n, noun));
+  if (parts.length === 0) return "Nothing was written this day";
+  return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 /**
@@ -97,6 +105,19 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const loadError = useScopeError(`day:${date}`);
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const readOnly = useReadOnly();
+  // The selected conversation's entry key, for this date only.
+  const [selection, setSelection] = useState<{ date: string; key: string } | null>(null);
+  const selected = selection?.date === date ? selection.key : null;
+  const select = (key: string) => setSelection({ date, key });
+  /** Selects a conversation's row and brings it into view (from the tally). */
+  const reveal = (key: string) => {
+    select(key);
+    requestAnimationFrame(() => {
+      const row = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-entry-key]") ?? [])].find((el) => el.dataset.entryKey === key);
+      row?.scrollIntoView({ block: "center" });
+      row?.focus({ preventScroll: true });
+    });
+  };
 
   const setDate = (next: string) => {
     const id = tabId ?? viewer.getState().tabs.find((t) => t.kind === "journal")?.id;
@@ -108,11 +129,24 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const writeNote = readOnly || !day ? null : <WriteNoteButton date={date} notes={day.notes} viewer={viewer} />;
 
   // One cell per kind of entry; a kind joins the tally with one more line here.
-  const tallyItem = (e: DayEntry): TallyItem =>
-    e.kind === "note"
-      ? { key: e.key, title: noteBase(e.note.name), at: e.at, meta: "", open: (newTab) => viewer.go({ kind: "note", date, name: e.note.name }, newTab) }
-      : { key: e.key, title: e.artifact.title, at: e.at, meta: e.label, open: (newTab) => openDoc(e.artifact, newTab) };
+  const tallyItem = (e: DayEntry): TallyItem => {
+    switch (e.kind) {
+      case "note":
+        return { key: e.key, title: noteBase(e.note.name), at: e.at, meta: "", open: (newTab) => viewer.go({ kind: "note", date, name: e.note.name }, newTab) };
+      case "artifact":
+        return { key: e.key, title: e.artifact.title, at: e.at, meta: e.label, open: (newTab) => openDoc(e.artifact, newTab) };
+      case "conversation":
+        return {
+          key: e.key,
+          title: conversationTitle(e.conversation),
+          at: e.at,
+          meta: [AGENT_NAMES[e.conversation.id.agent], e.room?.name].filter(Boolean).join(" · "),
+          open: () => reveal(e.key),
+        };
+    }
+  };
   const cells: TallyCell[] = [
+    { noun: "conversation", items: entries.filter((e) => e.kind === "conversation").map(tallyItem) },
     { noun: "artifact", items: entries.filter((e) => e.kind === "artifact").map(tallyItem) },
     { noun: "note", items: entries.filter((e) => e.kind === "note").map(tallyItem) },
   ];
@@ -129,7 +163,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
             {entries.length ? writeNote : null}
           </div>
           {entries.length && info ? (
-            <Daybook entries={entries} info={info} />
+            <Daybook entries={entries} info={info} selected={selected} onSelect={select} />
           ) : (
             <EmptyDay date={date} rooms={rooms} writeNote={writeNote} onPick={setDate} />
           )}
@@ -145,7 +179,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
         <div className="flex flex-col">
           <p className="text-small font-semibold tracking-[0.06em] text-ink-3 uppercase">Journal · Week {isoWeek(date)}</p>
           <h1 className="mt-2.5 font-serif text-display font-medium tracking-[-0.01em] text-ink">{daybookTitle(date)}</h1>
-          <p className="mt-2 text-body text-ink-2">{day ? daySummary(day.notes.length, day.artifacts.length) : "\u00a0"}</p>
+          <p className="mt-2 text-body text-ink-2">{day ? daySummary(day) : "\u00a0"}</p>
         </div>
         <div className="ml-auto">
           <WeekStrip date={date} onChange={setDate} />

@@ -53,7 +53,7 @@ function Cell({ cell }: { cell: TallyCell }) {
           show(true);
           list.current?.querySelector("button")?.focus();
         }}
-        className="flex min-w-0 flex-col items-start px-5 pt-3.5 pb-3 text-left outline-none hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink data-[state=open]:bg-row-hover"
+        className="flex min-w-0 flex-col items-start px-4 pt-3.5 pb-3 text-left outline-none hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ink data-[state=open]:bg-row-hover"
       >
         <span className="text-title font-medium text-ink tabular-nums">{items.length}</span>
         <span className="text-body text-ink-2">{plural(items.length, cell.noun)}</span>
@@ -84,6 +84,8 @@ function Cell({ cell }: { cell: TallyCell }) {
                 <button
                   type="button"
                   onClick={(e) => {
+                    // The item takes focus where it goes; closing must not hand it back to the cell.
+                    byClick.current = false;
                     setOpen(false);
                     it.open(wantsNewTab(e));
                   }}
@@ -109,7 +111,7 @@ export function DayTally({ label, cells }: { label: string; cells: TallyCell[] }
   return (
     <section aria-label={label} className="flex flex-col gap-4">
       <h2 className="flex h-7 items-center text-small font-semibold tracking-[0.02em] text-ink-3">{label}</h2>
-      <div className="grid auto-cols-fr grid-flow-col overflow-hidden rounded-xl bg-sheet shadow-sheet [&>*+*]:border-l [&>*+*]:border-hairline">
+      <div className="grid auto-cols-[minmax(min-content,1fr)] grid-flow-col overflow-hidden rounded-xl bg-sheet shadow-sheet [&>*+*]:border-l [&>*+*]:border-hairline">
         {cells.map((c) => (
           <Cell key={c.noun} cell={c} />
         ))}
