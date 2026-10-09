@@ -176,16 +176,16 @@ fn removed_links_stay_removed_and_names_do_not_collide() {
 }
 
 #[test]
-fn repo_named_room_gets_the_link() {
+fn links_go_to_the_inbox_even_with_a_repo_named_room() {
     let e = Env::new();
     e.since(5.0);
     std::fs::create_dir_all(e.root.join("code/Alto Rooms/.git")).unwrap();
-    std::fs::create_dir_all(e.home.join("alto rooms")).unwrap(); // the room's folder, named like the repo
+    std::fs::create_dir_all(e.home.join("alto rooms")).unwrap(); // a room named like the repo: rooms-sort's R1 moves it
     let doc = e.html("code/Alto Rooms/docs/plan.html");
     let other = e.html("code/other/x.html");
     e.claude_log("s1.jsonl", &[cc("Write", &doc, 1.0), cc("Write", &other, 1.0)]);
     e.collector().drain().unwrap();
-    assert_eq!(e.links(), vec![("alto rooms/plan.html".into(), doc), ("inbox/x.html".into(), other)]);
+    assert_eq!(e.links(), vec![("inbox/plan.html".into(), doc), ("inbox/x.html".into(), other)]);
 }
 
 #[test]

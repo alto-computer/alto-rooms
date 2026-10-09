@@ -68,18 +68,6 @@ pub fn linked_roots(home: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Owned room folders directly under home: (folder name, path). `.rooms`, hidden folders and
-/// `journal` are not rooms one can link into by repo name.
-pub fn owned_rooms(home: &Path) -> Vec<(String, PathBuf)> {
-    let mut v: Vec<_> = std::fs::read_dir(home).into_iter().flatten().flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
-        .filter(|(n, _)| !n.starts_with('.') && n != "journal")
-        .collect();
-    v.sort();
-    v
-}
-
 /// Realpaths every symlink under home points to (folders not followed, `.rooms` skipped).
 pub fn link_targets(home: &Path) -> HashSet<PathBuf> {
     fn go(dir: &Path, top: bool, out: &mut HashSet<PathBuf>) {
