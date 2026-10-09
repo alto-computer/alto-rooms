@@ -88,7 +88,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
             ]}
           />
         ) : null}
-        <AskBar artifact={artifact} />
+        <AskBar subject={{ kind: "doc", artifact }} />
         <ToolbarGroup label="Document actions">
           <ShareMenu artifact={artifact} />
           {visible ? <SidePanelOpener /> : null}

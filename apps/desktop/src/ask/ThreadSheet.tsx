@@ -3,8 +3,8 @@ import { ArrowDown } from "lucide-react";
 import type { AskTurn } from "@alto-rooms/protocol-ts";
 import { askAction, SelectionBar } from "@/selection/SelectionBar";
 import { useTextSelection } from "@/selection/useTextSelection";
-import { modelLabel } from "./askModel";
 import type { Live } from "./asksStore";
+import type { TurnHeader } from "./askSubjects";
 import { PendingTurn, Turn } from "./Turn";
 import { ErrorText, TextButton } from "./ui";
 import type { Pending } from "./useComposer";
@@ -12,13 +12,6 @@ import { useStickToBottom } from "./useStickToBottom";
 
 /** Turns further back than this skip layout and paint while off screen: a long thread stays quick. */
 const RECENT_TURNS = 4;
-
-/** Who answers and how: the agent, its model, and whether it continues the thread that made the doc. */
-function header(t: AskTurn): { text: string; title?: string } {
-  const how = t.mode === "resume" ? "continuing the thread that made it" : "New conversation";
-  const text = [t.agent, t.model ? modelLabel(t.model) : null, how].filter(Boolean).join(" · ");
-  return t.mode === "resume" ? { text } : { text, title: "Couldn't find the thread that made this doc" };
-}
 
 /** Said under the last question when earlier answers no longer fit in what goes along with it. */
 function LeftOutNote({ count, onCompact }: { count: number; onCompact: () => void }) {
@@ -54,11 +47,12 @@ function useFollow(sheet: RefObject<HTMLDivElement | null>, turns: AskTurn[], li
 }
 
 /**
- * A doc's thread above the ask bar: its turns, a question on its way, and an "Ask" button over
- * text selected in an answer (it becomes a quote).
+ * A thread above the ask bar: its turns, a question on its way, and an "Ask" button over text
+ * selected in an answer (it becomes a quote).
  */
-export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
+export function ThreadSheet({ turns, header, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
   turns: AskTurn[];
+  header: (t: AskTurn) => TurnHeader;
   live: Record<string, Live>;
   loadError: boolean;
   pending: Pending | null;

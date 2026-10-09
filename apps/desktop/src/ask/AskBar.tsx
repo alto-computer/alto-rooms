@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { Artifact, AskScope, AskTurn } from "@alto-rooms/protocol-ts";
+import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
+import { frameSubject, type AskSubject } from "./askSubjects";
 import { Composer } from "./Composer";
-import { AgentChip, ModelPicker } from "./ModelPicker";
+import { AgentChip, ModelPicker, ReadScopeHint } from "./ModelPicker";
 import { ThreadSheet } from "./ThreadSheet";
 import { preloadAnswer } from "./Turn";
 import { ErrorText } from "./ui";
@@ -14,15 +15,16 @@ import { useComposer } from "./useComposer";
 const PART_OF_THE_BAR = "[data-slot=dropdown-menu-content], [data-slot=dialog-content], [data-slot=dialog-overlay], [data-selection-ask]";
 
 /**
- * The ask bar under a doc (⌘J): the doc's thread, and the input that asks the agent that made the
- * doc about it. The thread folds on Esc or a click elsewhere, and unfolds when the input is focused.
+ * The ask bar at the bottom of a doc or room tab (⌘J): the subject's thread, and the input that
+ * asks about it. The thread folds on Esc or a click elsewhere, and unfolds when the input is focused.
  */
-export function AskBar({ artifact }: { artifact: Artifact }) {
+export function AskBar({ subject }: { subject: AskSubject }) {
   const store = useAsksStore();
   const { open, threads, live } = useAsks();
   const readOnly = useReadOnly();
   const shown = open && !readOnly;
-  const scope: AskScope = { kind: "doc", fileKey: artifact.fileKey };
+  const framing = frameSubject(subject);
+  const { scope } = framing;
   const key = scopeKey(scope);
   const thread = threads[key];
   const turns = thread?.turns ?? [];
@@ -72,6 +74,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       {showThread ? (
         <ThreadSheet
           turns={turns}
+          header={framing.header}
           live={live}
           loadError={!!thread?.error}
           pending={composer.pending}
@@ -87,10 +90,16 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       <Composer
         composer={composer}
         inputRef={input}
+        placeholder={framing.placeholder}
         turns={turns}
         running={running}
         dragging={dragging}
-        model={target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={artifact.source.agent ?? "Default agent"} />}
+        model={
+          <>
+            <ReadScopeHint text={framing.hint(target)} />
+            {target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={framing.agent} />}
+          </>
+        }
         onStop={() => running && store.cancel(running.id)}
         onFold={() => setUnfolded(false)}
         onFocus={() => setUnfolded(true)}

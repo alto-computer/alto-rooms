@@ -146,7 +146,7 @@ describe("AppShell in Tauri", () => {
     expect(screen.getByLabelText("New room name")).toBeInTheDocument();
   });
 
-  it("menu://toggle-ask shows and hides the ask bar on a doc tab, and is ignored on other tabs", async () => {
+  it("menu://toggle-ask shows and hides the ask bar on a doc or room tab, and is ignored on other tabs", async () => {
     const h = await renderWithStores(
       <>
         <Grab />
@@ -164,6 +164,14 @@ describe("AppShell in Tauri", () => {
     expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
     menu("menu://toggle-ask");
     expect(await screen.findByPlaceholderText("Ask about this doc…")).toBeInTheDocument();
+    act(() => {
+      h.viewer.open({ kind: "room", roomId: "r1" });
+    });
+    expect(await screen.findByPlaceholderText("Ask about this room…")).toBeInTheDocument();
+    menu("menu://toggle-ask");
+    expect(screen.queryByPlaceholderText("Ask about this room…")).toBeNull();
+    menu("menu://toggle-ask");
+    expect(await screen.findByPlaceholderText("Ask about this room…")).toBeInTheDocument();
     act(() => {
       h.viewer.open({ kind: "new" });
     });

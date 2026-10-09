@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { CircleAlert } from "lucide-react";
+import { AskBar } from "@/ask/AskBar";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { useCurrentTabId } from "@/shell/currentTab";
 import { useArtifacts, useClient, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
@@ -11,6 +12,26 @@ import { EmptyRoom } from "./EmptyRoom";
 import { SortBar } from "./SortBar";
 import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { INBOX_ID } from "@/lib/drag";
+import { cn } from "@/lib/utils";
+
+// WebKit fires no animation frames for a covered or hidden window; the timeout keeps it from waiting forever.
+const FRAME_FALLBACK_MS = 100;
+
+/** False until the frame after `when` first holds, or FRAME_FALLBACK_MS later if no frame comes. */
+function useFrameAfter(when: boolean): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (!when || ready) return;
+    const done = () => setReady(true);
+    const frame = requestAnimationFrame(done);
+    const timer = setTimeout(done, FRAME_FALLBACK_MS);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [when, ready]);
+  return ready;
+}
 
 function Centered({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center p-12 text-center text-[17px] text-ink-2">{children}</div>;
@@ -35,6 +56,8 @@ export function RoomView({ roomId }: { roomId: string }) {
   const gridRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:room:${roomId}`, !!artifacts?.length && !!info);
 
   const baseline = useVisitsAtArrival().since(roomId);
+  // The ask bar mounts once the cards have painted, so it never delays them.
+  const barReady = useFrameAfter(artifacts !== undefined);
 
   if (!room) {
     // Before the first sync we can't tell; afterwards the room is gone.
@@ -55,7 +78,11 @@ export function RoomView({ roomId }: { roomId: string }) {
         ref={gridRef}
         data-grid
         data-scroll-root
-        className="-mx-12 -mt-2.5 grid min-h-0 flex-1 grid-cols-[repeat(auto-fill,300px)] content-start gap-x-7 gap-y-9 overflow-y-auto px-12 pt-2.5 pb-6 [scrollbar-color:#dddddd_transparent] [scrollbar-width:thin]"
+        className={cn(
+          "-mx-12 -mt-2.5 grid min-h-0 flex-1 grid-cols-[repeat(auto-fill,300px)] content-start gap-x-7 gap-y-9 overflow-y-auto px-12 pt-2.5 [scrollbar-color:#dddddd_transparent] [scrollbar-width:thin]",
+          // The ask bar floats over the bottom of the panel: the last row scrolls clear of it.
+          readOnly ? "pb-6" : "pb-28",
+        )}
       >
         {info
           ? [...artifacts]
@@ -78,7 +105,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-surface px-12 pt-10">
+    <div className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-surface px-12 pt-10">
       <header className="flex flex-col gap-1">
         <EditableTitle
           key={room.id}
@@ -105,6 +132,7 @@ export function RoomView({ roomId }: { roomId: string }) {
         ) : null}
       </header>
       {body}
+      {barReady && !readOnly ? <AskBar subject={{ kind: "room", roomId }} /> : null}
     </div>
   );
 }
