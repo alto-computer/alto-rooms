@@ -17,7 +17,7 @@ pub(crate) const DEFAULT_PREAMBLE: &str =
     "[Rooms] The user is reading the HTML document below in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 /// For a room or a Journal day. The `preamble` key in agents.toml replaces only the doc preamble.
 pub(crate) const SCOPE_PREAMBLE: &str =
-    "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below. Pass one of the listed paths to every search; never search without a path, and never search the home folder, other projects, or agent logs. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
+    "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Pass one of the listed paths to every search; never search without a path, and never search the home folder, other projects, or agent logs. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -792,8 +792,7 @@ async fn room_and_day_asks_list_their_documents() {
         let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
         if let rooms_protocol::EventKind::AskDone { turn: t } = ev.kind { break t.answer; }
     };
-    assert!(answer.contains("Room: r\nDocuments (1):\n- Original (r, "), "{answer}");
-    assert!(answer.contains(&format!(") :: {}\n", orig.display())), "{answer}");
+    assert!(answer.contains(&format!("Room: r\nDocuments (1):\n- {orig:?} \"Original\" (r, ")), "{answer}");
     assert!(!answer.contains("link.html"), "{answer}");
     assert!(d.path().join(format!(".rooms/asks/room-{}.jsonl", room.id)).exists());
 }

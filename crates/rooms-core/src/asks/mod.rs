@@ -17,7 +17,7 @@ use crate::rules::{slug_key, valid_room_id, validate_iso_date};
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
-use prompt::{build_prompt, build_scope_prompt, context, valid_file_key, valid_ident, with_image_paths, ContextEntry, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
+use prompt::{build_prompt, build_scope_prompt, context, valid_file_key, valid_ident, with_image_paths, ContextEntry, Listing, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
 use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, EventKind, JOURNAL_ROOM_ID};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
@@ -161,7 +161,7 @@ struct Entry { scope: AskScope, killer: Killer }
 /// What a question is about: one doc, or the documents of a room or a Journal day.
 enum Subject {
     Doc { file_key: String, file_abs: PathBuf },
-    Listing { heading: String, entries: Vec<ContextEntry> },
+    Listing { listing: Listing, entries: Vec<ContextEntry> },
 }
 
 /// Where an ask in a scope goes: the one answer both `target` and `start` use.
@@ -266,20 +266,20 @@ impl Asks {
     fn resolve(&self, scope: &AskScope) -> Result<Resolved, AskError> {
         scope.validate()?;
         let core = &self.0.core;
-        let (heading, entries) = match scope {
+        let (listing, entries) = match scope {
             AskScope::Doc { file_key } => return self.resolve_doc(file_key),
             AskScope::Room { room_id } => {
                 let (name, entries) = core.room_context(room_id).map_err(|e| match e {
                     CoreError::RoomNotFound => AskError::RoomNotFound,
                     e => AskError::Io(e.to_string()),
                 })?;
-                (format!("Room: {name}"), entries)
+                (Listing::Room(name), entries)
             }
-            AskScope::Day { date } => (format!("Journal day: {date}"), core.day_context(date).map_err(|e| AskError::Io(e.to_string()))?),
+            AskScope::Day { date } => (Listing::Day(date.clone()), core.day_context(date).map_err(|e| AskError::Io(e.to_string()))?),
         };
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
         let plan = profiles.plan(None, None);
-        Ok(Resolved { subject: Subject::Listing { heading, entries }, profiles, plan, session: None, cwd: self.empty_cwd()? })
+        Ok(Resolved { subject: Subject::Listing { listing, entries }, profiles, plan, session: None, cwd: self.empty_cwd()? })
     }
 
     /// A doc scope goes through the first artifact holding its file whose link still resolves
@@ -364,7 +364,7 @@ impl Asks {
                 let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, file_key, &ctx, &asked);
                 (file_s, prompt)
             }
-            Subject::Listing { heading, entries } => (String::new(), build_scope_prompt(heading, entries, &ctx, &asked)),
+            Subject::Listing { listing, entries } => (String::new(), build_scope_prompt(listing, entries, &ctx, &asked)),
         };
         let cwd_s = cwd.to_string_lossy().into_owned();
         let image_dir = if image_paths.is_empty() { String::new() } else { self.0.images.dir().to_string_lossy().into_owned() };
@@ -694,7 +694,7 @@ mod tests {
             for _ in 0..30 {
                 let t = std::time::Instant::now();
                 let (name, entries) = core.room_context(&room.id).unwrap();
-                bytes = build_scope_prompt(&format!("Room: {name}"), &entries, &ctx, "q").len();
+                bytes = build_scope_prompt(&Listing::Room(name), &entries, &ctx, "q").len();
                 ms.push(t.elapsed().as_secs_f64() * 1e3);
             }
             println!("room {n:>3} docs: p50 {:.2} ms  p95 {:.2} ms  prompt {bytes} bytes", pct(ms.clone(), 0.5), pct(ms, 0.95));
@@ -716,7 +716,7 @@ mod tests {
             let t = std::time::Instant::now();
             let entries = core.day_context(&today).unwrap();
             count = entries.len();
-            build_scope_prompt(&format!("Journal day: {today}"), &entries, &ctx, "q");
+            build_scope_prompt(&Listing::Day(today.clone()), &entries, &ctx, "q");
             ms.push(t.elapsed().as_secs_f64() * 1e3);
         }
         println!("day of {count} items: p50 {:.2} ms  p95 {:.2} ms", pct(ms.clone(), 0.5), pct(ms, 0.95));

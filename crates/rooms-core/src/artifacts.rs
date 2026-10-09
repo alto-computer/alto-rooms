@@ -303,6 +303,26 @@ mod tests {
         assert!(matches!(core.room_context(&JOURNAL_ROOM_ID.into()), Err(CoreError::InvalidInput(m)) if m == "the Journal is asked by day"));
     }
 
+    #[test]
+    fn a_capped_room_prompt_keeps_the_newest() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let r = core.create_room("Big").unwrap();
+        let root = core.room_root(&r.id).unwrap().0;
+        let n = crate::asks::prompt::MAX_LISTED + 2;
+        for i in 0..n {
+            let t = chrono::DateTime::from_timestamp(1_767_225_600 + i as i64 * 60, 0).unwrap().to_rfc3339();
+            std::fs::write(root.join(format!("{}.html", n - i)), format!(r#"<title>doc{i}</title><meta name="rooms:created" content="{t}">"#)).unwrap();
+        }
+        core.backfill_all().unwrap();
+        let (_, entries) = core.room_context(&r.id).unwrap();
+        let prompt = crate::asks::prompt::build_scope_prompt(&crate::asks::prompt::Listing::Room("Big".into()), &entries, &Default::default(), "q");
+        let listed: Vec<&str> = prompt.lines().filter_map(|l| l.split('"').nth(3)).collect();
+        assert_eq!(listed.len(), crate::asks::prompt::MAX_LISTED);
+        assert_eq!(listed.first(), Some(&format!("doc{}", n - 1).as_str()), "the newest is listed first");
+        assert!(!listed.contains(&"doc0") && !listed.contains(&"doc1") && listed.contains(&"doc2"), "the two oldest are the ones left out");
+    }
+
     /// Makes the index step of `move_artifact` fail on this thread (after the filesystem move).
     fn with_failing_reassign<T>(f: impl FnOnce() -> T) -> T {
         FAIL_REASSIGN.with(|c| c.set(true));
