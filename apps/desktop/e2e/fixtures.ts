@@ -28,7 +28,7 @@ const BASE = `http://127.0.0.1:${API_PORT}`;
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const ROOMSD = path.join(REPO_ROOT, "target", "debug", "roomsd");
 
-type Room = { id: string; name: string; path: string; artifactCount: number };
+type Room = { id: string; name: string; path: string; artifactCount: number; color: string | null };
 
 export type Daemon = {
   /** The daemon's home (canonical, as /v1/info reports it). */
