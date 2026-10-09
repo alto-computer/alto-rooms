@@ -75,6 +75,7 @@ impl Daemon {
         self.warm.start(async move {
             let started = Instant::now();
             let res = ensure(&app).await;
+            start_collector(&app, &res);
             eprintln!(
                 "roomsd: startup {} in {:?} (from setup)",
                 if res.is_ok() { "ready" } else { "failed" },
@@ -314,7 +315,16 @@ pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connec
     if let Some(res) = daemon.warm.take().await {
         return res;
     }
-    ensure(&app).await
+    let res = ensure(&app).await;
+    start_collector(&app, &res);
+    res
+}
+
+/// Once roomsd answers, the collector runs for the Home it serves (idempotent).
+fn start_collector(app: &AppHandle, res: &Result<Connection, String>) {
+    if let Ok(conn) = res {
+        app.state::<crate::collector::Collector>().ensure(app, &conn.home);
+    }
 }
 
 /// Reuse a running roomsd, or spawn ours and wait for it. Idempotent.

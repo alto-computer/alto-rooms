@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rooms-collect Spec</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column (~760px) with a sticky section index on wide screens; tables and code scroll in place. */
+:root{
+  --bg:#f7f8f6; --surface:#ffffff; --fg:#1d211f; --muted:#5f6862; --line:#dde2de;
+  --accent:#1f6f5c; --accent-bg:#e5f1ec; --code-bg:#eef1ef; --pre-bg:#18201c; --pre-fg:#e6ece8;
+  --warn-bg:#fff4d6; --warn-fg:#6b4a00;
+  --body:'IBM Plex Sans KR',-apple-system,'Apple SD Gothic Neo',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121614; --surface:#1a201d; --fg:#e3e8e5; --muted:#99a39d; --line:#2c3531;
+  --accent:#5fc3a6; --accent-bg:#1c2e28; --code-bg:#232b27; --pre-bg:#0c100e; --pre-fg:#dfe6e2;
+  --warn-bg:#3a2f10; --warn-fg:#f3d58a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121614; --surface:#1a201d; --fg:#e3e8e5; --muted:#99a39d; --line:#2c3531;
+  --accent:#5fc3a6; --accent-bg:#1c2e28; --code-bg:#232b27; --pre-bg:#0c100e; --pre-fg:#dfe6e2;
+  --warn-bg:#3a2f10; --warn-fg:#f3d58a; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.7}
+.wrap{max-width:1100px;margin:0 auto;padding-inline:20px;padding-block:40px 80px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:48px}
+nav{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;font-size:13px}
+nav ol{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+nav a{color:var(--muted);text-decoration:none}nav a:hover,nav a:focus-visible{color:var(--accent)}
+main{min-width:0;max-width:760px}
+@media (max-width:860px){.wrap{grid-template-columns:minmax(0,1fr)}nav{display:none}}
+h1{font-size:30px;line-height:1.3;margin:0 0 8px;text-wrap:balance}
+h2{font-size:20px;margin:52px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line);text-wrap:balance;scroll-margin-top:20px}
+h3{font-size:16px;margin:26px 0 8px}
+p,li{max-width:68ch}
+a{color:var(--accent)}
+.meta{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:4px 14px}
+.lede{font-size:17px;margin:20px 0}
+code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{background:var(--pre-bg);color:var(--pre-fg);padding:14px 18px;border-radius:8px;overflow-x:auto;font-size:12.5px;line-height:1.6;margin:14px 0}
+pre code{background:none;padding:0;color:inherit;overflow-wrap:normal}
+.tbl{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.04em;text-transform:uppercase}
+td:first-child{font-family:var(--mono);font-size:12.5px;white-space:nowrap;color:var(--accent)}
+.box{background:var(--accent-bg);border-radius:8px;padding:14px 18px;margin:18px 0}
+.box p{margin:6px 0}
+.q{background:var(--warn-bg);color:var(--warn-fg);border-radius:4px;padding:1px 6px;font-size:.92em}
+.flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:16px 0}
+.flow div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:13.5px}
+.flow b{display:block;font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.04em;margin-bottom:4px}
+</style>
+
+<div class="wrap">
+<nav aria-label="Sections"><ol>
+<li><a href="#s0">0. 개요</a></li><li><a href="#s1">1. 사용자 경험</a></li><li><a href="#s2">2. 결정</a></li>
+<li><a href="#s3">3. 구조</a></li><li><a href="#s4">4. 어댑터와 이벤트</a></li><li><a href="#s5">5. 저장소</a></li>
+<li><a href="#s6">6. 수집 규칙</a></li><li><a href="#s7">7. 링크 싱크</a></li><li><a href="#s8">8. 검색 (FTS5)</a></li>
+<li><a href="#s9">9. 설정</a></li><li><a href="#s10">10. 스킬 v8</a></li><li><a href="#s11">11. 장애와 예산</a></li>
+<li><a href="#s12">12. 확장 경로</a></li><li><a href="#s13">13. 테스트</a></li><li><a href="#s14">14. 구현 순서</a></li><li><a href="#s15">15. 열린 질문</a></li><li><a href="#s16">16. 구현 메모</a></li>
+</ol></nav>
+<main>
+<h1>rooms-collect — 아무것도 안 해도 모이는 수집기</h1>
+<div class="meta"><span>Spec · 2026-10-09</span><span>author: jun-hash</span><span>선행: v1-spec, v2-ask-spec §12 (sources.json), plugin-tools-spec</span><span>참고: Orca session search</span></div>
+
+<p class="lede">사용자가 CLAUDE.md, 훅, 스킬 습관에 기대지 않아도 에이전트가 쓴 HTML이 Rooms에 들어온다. 수집과 검색은 별도 프로세스 <code>rooms-collect</code>가 맡고, 코어(roomsd)는 지금처럼 폴더만 읽는다.</p>
+
+<h2 id="s0">0. 개요</h2>
+<div class="box">
+<p><b>원칙 (사용자 결정)</b></p>
+<p>에이전트 로그 형식에 대한 지식은 <code>rooms-collect</code>의 어댑터만 안다. 코어는 수집기를 모른다. 둘은 이미 있는 계약인 <b>폴더 규칙</b>으로만 이어진다. 결합은 없애지 못하지만 한곳에 가두고, 사용자 설정에서는 없앤다.</p>
+<p><b>역할 분담</b>: 과거(설치 전) 문서는 온보딩 스킬이 사용자와 대화하며 방을 정한다. 미래(설치 후) 문서는 수집기가 자동으로 모은다.</p>
+</div>
+<h3>Goal</h3>
+<ul>
+<li>설치 이후 에이전트가 쓴 <code>.html</code>/<code>.htm</code>이 사용자 행동 없이 2초 안팎으로 Rooms에 나타난다.</li>
+<li>같은 문서는 몇 번을 다시 읽어도 한 번만 들어온다. 사용자가 지운 링크는 다시 생기지 않는다.</li>
+<li>에이전트가 지우기 전에 대화 원문을 기기 안 보관소에 남긴다. 만든 문서와 그 대화를 나중에 다시 읽고 회고, 공부할 수 있게.</li>
+<li>대화 기록에 대한 전문 검색(SQLite FTS5)의 토대를 만든다. 이후 검색 UI, 분석, 학습용 보관, 기기 간 동기화가 같은 틀 위에 붙는다.</li>
+<li>가볍다. 상주 메모리는 작은 상수, 디스크는 원문을 복사하지 않는 색인 위주.</li>
+</ul>
+<h3>Out of scope</h3>
+<ul>
+<li>앱 안 검색 UI. 이번에는 색인과 CLI(<code>rooms-collect search</code>)까지.</li>
+<li>분석 싱크, 문서 옆 대화 보기, 안 읽음 표시, 하루 회고, 기기 간 동기화용 jsonl 내보내기. 스키마와 확장 지점만 열어 둔다(§12).</li>
+<li>30일보다 오래된 대화의 검색. 원문은 보관소에 남으므로 나중에 보관소를 다시 색인하면 된다(§12).</li>
+<li>토픽 자동 분류. Rooms는 AI를 부르지 않는다. 분류는 스킬(사용자의 에이전트)의 일.</li>
+<li>Claude Code, Codex, Aside 외 에이전트 어댑터. 어댑터 계약만 맞추면 이후 추가.</li>
+<li>macOS 외 플랫폼.</li>
+</ul>
+
+<h2 id="s1">1. 사용자 경험</h2>
+<div class="flow">
+<div><b>첫 실행</b>지금과 같다. 온보딩 카드가 한 줄 프롬프트를 보여 주고, 사용자는 에이전트에 붙여 넣어 방을 함께 정한다.</div>
+<div><b>동시에</b>앱이 <code>rooms-collect</code>를 띄운다. 이 시점이 <code>linker.since</code>가 된다. 백그라운드에서 검색 색인을 채운다.</div>
+<div><b>이후</b>에이전트가 HTML을 쓰면 수집기가 같은 repo 이름의 방, 없으면 <code>inbox</code>에 링크한다. 사용자는 아무것도 안 한다.</div>
+<div><b>정리</b>원할 때 "rooms 정리해줘"로 inbox를 방으로 옮긴다. 선택이다.</div>
+</div>
+<p>온보딩을 건너뛴 사용자도 설치 이후 문서는 자동으로 모인다. 앱이 계속 빈 상태로 남지 않는다.</p>
+
+<h2 id="s2">2. 결정</h2>
+<div class="tbl"><table>
+<tr><th>#</th><th>결정</th><th>이유</th></tr>
+<tr><td>D1</td><td>수집은 별도 바이너리 <code>rooms-collect</code>. 앱(Tauri)이 roomsd와 같은 방식의 sidecar로 띄우고 끈다.</td><td>코어의 "에이전트 로그를 모른다" 원칙 유지. 수집기가 죽어도 앱은 정상.</td></tr>
+<tr><td>D2</td><td>수집기 → 코어는 <b>폴더로만</b>. 링크를 만들면 roomsd가 기존 감시로 반영한다. 새 API 없음.</td><td>roomsd가 꺼져 있어도 수집이 이어지고, 토큰도 필요 없다. README의 "방 폴더에 HTML을 쓰면 끝" 계약 그대로.</td></tr>
+<tr><td>D3</td><td>저장소는 SQLite(WAL) 하나. 이벤트와 파일 커서를 <b>한 트랜잭션</b>으로 커밋한다.</td><td>중간에 죽어도 중복, 누락이 없다. jsonl은 "줄 추가"와 "커서 저장"이 분리돼 이를 보장하기 어렵다.</td></tr>
+<tr><td>D4</td><td>DB 위치는 <code>~/Library/Application Support/computer.alto.rooms/collect.db</code>. <code>~/rooms</code> 안에 두지 않는다.</td><td><code>~/rooms</code>는 Dropbox, git으로 동기화될 수 있다. 동기화 폴더의 SQLite는 깨진다.</td></tr>
+<tr><td>D5</td><td>DB는 <b>버려도 되는 캐시</b>. 원본은 에이전트 로그. 스키마 버전이 다르거나 파일이 깨지면 지우고 다시 만든다.</td><td>복구 절차가 "삭제 후 재시작" 하나로 끝난다.</td></tr>
+<tr><td>D6</td><td>사용자 상태(링크, 지운 목록, <code>sources.json</code>)는 DB가 아니라 <code>~/rooms</code> 안 파일에 둔다.</td><td>DB를 버려도 사용자 결정이 남는다. 동기화되는 진짜 데이터는 이쪽.</td></tr>
+<tr><td>D7</td><td>색인(ingest)은 과거 로그까지 읽지만, 링크는 <code>linker.since</code> 이후 이벤트에만 한다.</td><td>검색은 과거가 필요하고, 과거 문서의 방 정하기는 스킬이 사용자와 한다. 둘을 같은 이벤트 스트림의 다른 소비자로 분리.</td></tr>
+<tr><td>D8</td><td>FTS5는 <b>contentless</b>(<code>content=''</code>)로 만든다. 원문은 복사하지 않고, 발췌는 원본 로그에서 읽는다.</td><td>디스크를 가볍게. 원본 로그가 지워졌으면 보관소 사본에서 읽고, 그것도 없으면 이벤트마다 둔 짧은 미리보기(≤ 240자)를 쓴다.</td></tr>
+<tr><td>D10</td><td>대화 원문 보관소를 이번 범위에 넣는다. 수집기가 읽은 로그 바이트를 그대로 <code>~/Library/Application Support/computer.alto.rooms/archive/</code>에 복사하고, 다 쓴 세션은 zstd로 압축한다. 기본 켬.</td><td>Claude Code는 30일이 지난 로그를 지운다. 회고, 공부가 목적이면 켜는 날부터 사라지는 기록이 없어야 한다. DB(캐시)와 달리 다시 만들 수 없는 데이터라 따로 둔다.</td></tr>
+<tr><td>D9</td><td>스킬 v8: 습관 규칙과 CLAUDE.md 한 줄을 뺀다. 첫 정리, 재정리, "이거 방에 넣어줘"는 남긴다.</td><td>자동 수집이 대신한다. 수집기가 깨졌을 때의 수동 대안은 남긴다.</td></tr>
+</table></div>
+
+<h2 id="s3">3. 구조</h2>
+<pre><code>Claude Code  ~/.claude/projects/**/*.jsonl ┐
+Codex        ~/.codex/sessions/**/*.jsonl  ┤ (읽기 전용, .jsonl.zst 포함)
+Aside        ~/.aside/u/*/sessions/*/messages.jsonl ┤
+                                           ▼
+rooms-collect ─ discover ─┬─ archive (원문 바이트 복사) → Application Support/…/archive/
+                │         └─ adapter(agent) → events + messages_fts (같은 트랜잭션)
+                │        (파일 커서)          │       └─ sink: linker → ~/rooms/&lt;room|inbox&gt;/x.html (symlink)
+                └──── collect.db (SQLite WAL) ┘                     + ~/rooms/.rooms/sources.json
+                                                                  ▲
+roomsd (변경 없음) ── ~/rooms 감시 ──→ desktop app          rooms-collect search (CLI, 읽기 전용)</code></pre>
+<div class="tbl"><table>
+<tr><th>모듈</th><th>책임</th><th>모르는 것</th></tr>
+<tr><td>desktop (Tauri)</td><td>sidecar 시작, 종료, 비정상 종료 시 재시작</td><td>로그, 이벤트</td></tr>
+<tr><td>collect::discover</td><td>로그 파일 찾기, stat, 커서와 비교해 읽기 결정</td><td>로그 내용</td></tr>
+<tr><td>collect::adapters::*</td><td>한 에이전트의 로그 줄 → 정규화 이벤트</td><td>Rooms 폴더 규칙, DB</td></tr>
+<tr><td>collect::archive</td><td>로그 원문 바이트를 세션별 보관 파일에 이어 붙이고, 다 쓴 세션을 압축</td><td>로그 내용, Rooms</td></tr>
+<tr><td>collect::store</td><td>이벤트, 커서, 싱크 커서를 트랜잭션으로 저장</td><td>에이전트, Rooms</td></tr>
+<tr><td>collect::sinks::linker</td><td>HTML 쓰기 이벤트 → 방/inbox 링크</td><td>에이전트 로그 형식</td></tr>
+<tr><td>collect::sinks::sources</td><td><code>sources.json</code> 병합 기록</td><td>에이전트 로그 형식</td></tr>
+<tr><td>collect::ingest</td><td>파일별 읽기, 보관, 이벤트와 FTS 행을 한 트랜잭션으로 기록</td><td>Rooms 폴더 규칙</td></tr>
+<tr><td>roomsd, rooms-core</td><td>변경 없음</td><td>수집기의 존재</td></tr>
+</table></div>
+<p>새 크레이트 <code>crates/rooms-collect</code>(lib + bin). 폴더 규칙(이름 slug, 예약어, 무시 규칙)은 <code>rooms-core::rules</code>를 재사용해 스킬, 코어와 판단이 어긋나지 않게 한다.</p>
+
+<h2 id="s4">4. 어댑터와 이벤트</h2>
+<h3>어댑터 계약</h3>
+<pre><code>pub trait Adapter {
+    fn agent(&amp;self) -&gt; &amp;'static str;                 // "claude-code", "codex", "aside"
+    fn roots(&amp;self) -&gt; Vec&lt;PathBuf&gt;;                   // 감시할 로그 폴더
+    fn is_log(&amp;self, path: &amp;Path) -&gt; bool;              // *.jsonl 등
+    /// 한 파일의 [from, to) 바이트를 읽어 이벤트로. 완결되지 않은 마지막 줄은 읽지 않고 남긴다.
+    fn read(&amp;self, file: &amp;LogFile, from: u64, ctx: &amp;mut FileCtx) -&gt; Result&lt;Batch, AdapterError&gt;;
+}
+pub struct Batch { pub events: Vec&lt;Event&gt;, pub end_offset: u64 }   // end_offset = 마지막 완결 줄 끝
+pub struct FileCtx { pub session: Option&lt;String&gt;, pub cwd: Option&lt;PathBuf&gt; }  // 파일별로 DB에 보관</code></pre>
+<p><code>FileCtx</code>는 Codex처럼 세션 id, cwd가 앞쪽 메타 줄에만 있는 형식을 위해 파일 커서와 함께 저장한다. 이어 읽을 때 앞부분을 다시 읽지 않는다.</p>
+
+<h3>이벤트 (v1)</h3>
+<div class="tbl"><table>
+<tr><th>kind</th><th>필드</th><th>소비자</th></tr>
+<tr><td>session.seen</td><td>agent, session, cwd, title?, started_at</td><td>fts (세션 목록)</td></tr>
+<tr><td>message</td><td>role(user|assistant), text_ref, preview</td><td>fts</td></tr>
+<tr><td>tool.call</td><td>name, text_ref, preview</td><td>fts (tool_text)</td></tr>
+<tr><td>file.written</td><td>path(절대), op(write|edit|patch|shell), explicit(bool)</td><td>linker, sources</td></tr>
+</table></div>
+<p>공통 필드: <code>id</code>, <code>agent</code>, <code>session</code>, <code>ts</code>(UTC), <code>cwd</code>, <code>source</code>(로그 파일 경로, 시작 바이트, 길이). <code>text_ref</code>는 원문 위치 포인터이고 원문을 복사하지 않는다.</p>
+<div class="box"><p><b>이벤트 id (중복 방지의 핵심)</b>: <code>sha256(agent ‖ session ‖ native_id ‖ sub_index)</code>의 앞 16바이트(hex). <code>native_id</code>는 로그가 주는 고유 id(Claude Code <code>uuid</code>, Codex 레코드 id)이고, 없으면 <code>파일 identity ‖ 줄 시작 바이트</code>. <code>sub_index</code>는 한 줄에서 나온 n번째 이벤트. 같은 줄을 몇 번 읽어도 같은 id가 나오고 <code>PRIMARY KEY</code>가 두 번째를 막는다.</p></div>
+
+<h3>HTML 쓰기 감지 (find_html.py v7 규칙의 Rust 이식)</h3>
+<ul>
+<li><b>Claude Code</b>: <code>type=assistant</code> 레코드의 <code>tool_use</code> 중 <code>Write</code>, <code>Edit</code>, <code>MultiEdit</code>, <code>NotebookEdit</code>의 <code>file_path</code>가 HTML이면 <code>explicit=true</code>. <code>Bash</code>는 셸 토큰화로 리다이렉트, <code>tee</code>, <code>cp</code>/<code>mv</code>/<code>install</code> 대상만 <code>explicit=false</code>.</li>
+<li><b>Codex</b>: <code>apply_patch</code>의 <code>*** Add|Update File: x.html</code>은 <code>explicit=true</code>. 그 외 exec 명령은 쓰기 힌트가 있을 때만 <code>explicit=false</code>.</li>
+<li><b>Codex 압축 로그</b>: Codex는 오래된 rollout을 <code>.jsonl.zst</code>로 압축한다. 압축 파일은 이어 읽기 없이 통째로 읽는다(offset은 압축 해제 기준). <code>.jsonl</code>이 <code>.zst</code>로 바뀌면 새 파일로 보이지만 이벤트 id가 같아 중복되지 않는다.</li>
+<li><b>Aside</b>: <code>~/.aside/u/&lt;계정&gt;/sessions/&lt;YYYY-MM-DD&gt;_&lt;id&gt;/messages.jsonl</code>. 세션 id는 폴더 이름, 시각은 epoch ms. <code>role=assistant</code>의 <code>toolCall</code> 중 <code>repl</code>(JS)의 <code>writeFile</code>과 이름에 write/edit가 들어간 도구의 <code>path</code>는 <code>explicit=true</code>, <code>bash</code>는 <code>explicit=false</code>. 문서로 보는 건 <code>~/.aside</code> 안에서는 <code>artifacts</code> 폴더뿐(find_html.py와 같다).</li>
+<li>상대 경로는 이벤트 시점의 cwd로 절대화. 해석할 수 없으면 버린다.</li>
+<li>빠른 거르기: 줄에 <code>.htm</code>이 없고 메타/메시지 줄이 아니면 JSON 파싱을 하지 않는다.</li>
+</ul>
+<p>회귀 방지: <code>test_find_html.py</code>의 픽스처를 Rust 테스트로 옮겨 두 구현의 판단이 같은지 확인한다.</p>
+
+<h2 id="s5">5. 저장소</h2>
+<pre><code>PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA busy_timeout=5000;
+
+CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);         -- schema_version, linker_since, ...
+CREATE TABLE files(                                                   -- 로그 파일별 커서
+  path TEXT PRIMARY KEY, agent TEXT NOT NULL,
+  dev INTEGER, ino INTEGER, size INTEGER, mtime_ms REAL,
+  offset INTEGER NOT NULL DEFAULT 0,                                  -- 마지막 완결 줄 끝
+  archive_path TEXT, archive_len INTEGER NOT NULL DEFAULT 0,          -- 보관 사본과 그 커밋된 길이
+  ctx TEXT,                                                           -- FileCtx JSON
+  state TEXT NOT NULL DEFAULT 'current',                              -- current | due | failed
+  fail_count INTEGER NOT NULL DEFAULT 0, failed_mtime_ms REAL);
+CREATE TABLE events(
+  rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, agent TEXT NOT NULL, session TEXT,
+  ts TEXT, cwd TEXT, path TEXT, explicit INTEGER,
+  src_path TEXT NOT NULL, src_offset INTEGER NOT NULL, src_len INTEGER NOT NULL,
+  preview TEXT);                                                      -- ≤ 240자
+CREATE INDEX events_kind_rowid ON events(kind, rowid);
+CREATE INDEX events_session ON events(agent, session);
+CREATE TABLE sink_cursors(sink TEXT PRIMARY KEY, last_rowid INTEGER NOT NULL);
+CREATE VIRTUAL TABLE messages_fts USING fts5(
+  user_text, assistant_text, tool_text, identifiers,
+  content='', contentless_delete=1,
+  tokenize="unicode61 tokenchars '_.-/+'");                          -- rowid = events.rowid</code></pre>
+<ul>
+<li><b>한 파일 처리 = 한 트랜잭션</b>: 새 이벤트 <code>INSERT OR IGNORE</code> + <code>files</code> 커서, ctx 갱신. 커밋 전 죽으면 둘 다 없던 일.</li>
+<li><b>싱크는 각자 커서</b>: <code>events.rowid &gt; last_rowid</code>를 순서대로 처리하고, 처리한 만큼 커서를 올린다. 싱크 하나가 실패해도 다른 싱크와 수집은 계속된다.</li>
+<li><code>schema_version</code>이 다르면 DB 파일을 지우고 새로 만든다(D5). 이때 링커는 <code>~/rooms</code>의 사용자 상태(§7)로 중복을 막으므로 다시 링크하지 않는다.</li>
+</ul>
+
+<h2 id="s6">6. 수집 규칙</h2>
+<div class="tbl"><table>
+<tr><th>#</th><th>규칙</th></tr>
+<tr><td>C1</td><td>깨우기: 로그 루트를 FSEvents로 감시(디바운스 100ms, roomsd의 80ms와 비슷하게)하고, 놓친 변경을 위해 60초마다 한 번 전체 stat 대조. 바뀐 파일만 읽는다.</td></tr>
+<tr><td>C2</td><td>읽기 결정은 (현재 stat, <code>files</code> 행)만의 함수다. 행 없음 → 0부터. 같은 dev/ino이고 size ≥ offset → offset부터. inode 변경 또는 size &lt; offset → 다른 파일로 보고 0부터(이벤트 id가 같으면 무시되므로 안전). <code>due</code> → 0부터.</td></tr>
+<tr><td>C3</td><td>완결되지 않은 마지막 줄(개행 없음)은 읽지 않고 offset을 그 앞에 둔다.</td></tr>
+<tr><td>C4</td><td>같은 mtime에서 3번 실패한 파일은 <code>failed</code>로 두고 mtime이 바뀔 때까지 건너뛴다. 타이머 없이 stat이 재시도 정책이다.</td></tr>
+<tr><td>C5</td><td>보관 기간: 색인은 mtime이 <code>history_days</code>(기본 30일) 안인 로그만. 기간 밖으로 나간 파일의 이벤트와 FTS 행은 조금씩 지운다(incremental vacuum).</td></tr>
+<tr><td>C6</td><td>첫 색인은 최신 파일부터, 한 번에 최대 8 MiB씩 끊어 읽고 그 사이에 양보한다. 새로 쓰이는 파일이 항상 먼저 처리된다.</td></tr>
+<tr><td>C7</td><td>수집기는 로그 파일에 절대 쓰지 않는다. 열 때 읽기 전용.</td></tr>
+</table></div>
+
+<h2 id="s7">7. 링크 싱크 (linker)</h2>
+<div class="tbl"><table>
+<tr><th>#</th><th>규칙</th></tr>
+<tr><td>L1</td><td>대상: <code>file.written</code> 중 <code>ts ≥ linker.since</code>. <code>linker.since</code>는 수집기 첫 실행 시각이며 <code>meta</code>와 <code>~/rooms/.rooms/collect/state.json</code> 양쪽에 기록한다(DB를 다시 만들어도 유지).</td></tr>
+<tr><td>L2</td><td>링크 전에 파일이 실제로 있는지 확인한다. 로그 줄이 파일보다 먼저 기록될 수 있으므로, 없으면 0.5초, 2초, 10초 뒤 다시 확인하고 그래도 없으면 버린다. <code>explicit=false</code>(셸 추정)는 추가로 이벤트 이후 mtime이 바뀐 경우에만 링크한다.</td></tr>
+<tr><td>L3</td><td>제외: find_html.py <code>not_a_document</code>와 같은 규칙(scratchpad, node_modules, <code>~/.claude</code>, <code>~/.codex</code>, <code>~/rooms/.rooms</code>, 시스템 tmp 등), <code>~/rooms</code> 안에서 쓴 파일(이미 Rooms에 있음), <code>rooms-core::rules</code>가 무시하는 경로.</td></tr>
+<tr><td>L4</td><td>이미 링크됨: <code>~/rooms</code> 아래 어느 symlink든 같은 realpath를 가리키면 건너뛴다. 연결(linked) 방 안에 있는 원본도 건너뛴다. 확인은 시작 시 만든 realpath 집합 + roomsd와 같은 주기의 증분 갱신.</td></tr>
+<tr><td>L5</td><td>지운 건 다시 안 넣기: 한 번 링크한 realpath는 <code>~/rooms/.rooms/collect/linked.jsonl</code>에 추가만 한다. 여기 있으면 링크가 사라졌어도 다시 만들지 않는다.</td></tr>
+<tr><td>L6</td><td>목적지: 원본의 repo 이름(find_html <code>repo_key</code>, worktree면 본 repo 이름)과 slug가 같은 owned 방이 있으면 그 방, 없으면 <code>inbox</code>. 방을 새로 만들지 않는다.</td></tr>
+<tr><td>L7</td><td>링크 이름: 원본 파일 이름. 충돌하면 <code> (2)</code>, <code> (3)</code>… (스킬과 같은 규칙). 링크는 임시 이름으로 만든 뒤 rename.</td></tr>
+<tr><td>L8</td><td>worktree 복사본: 같은 <code>repo_key + rel_in_repo</code>가 이미 링크돼 있으면 새 경로를 링크하지 않는다.</td></tr>
+<tr><td>L9</td><td>연결 방(linked room) 폴더에는 절대 쓰지 않는다. <code>.rooms/token</code>은 읽지 않는다.</td></tr>
+</table></div>
+<h3>보관소 (archive)</h3>
+<p>원문은 에이전트가 지우면 끝이므로, 이벤트로 바꾸기 전 단계에서 <b>읽은 바이트를 그대로</b> 복사한다. 형식 변환이 없어서 어댑터가 깨져도 보관은 계속된다.</p>
+<div class="tbl"><table>
+<tr><th>#</th><th>규칙</th></tr>
+<tr><td>A1</td><td>위치: <code>~/Library/Application Support/computer.alto.rooms/archive/&lt;agent&gt;/&lt;YYYY-MM&gt;/&lt;session&gt;.jsonl</code>. <code>~/rooms</code>에 두지 않는다(대화 원문이 동기화 폴더로 나가지 않게). Time Machine 백업 대상에 그대로 둔다.</td></tr>
+<tr><td>A2</td><td>로그 파일 하나를 읽을 때 같은 바이트 구간 <code>[offset, end)</code>를 보관 사본 끝에 붙인다. 붙이기 전에 사본을 <code>files.archive_len</code>으로 잘라 두므로, 지난번에 커밋 전에 죽어 생긴 꼬리가 지워진다. 사본 fsync 후 DB 트랜잭션(이벤트 + 커서 + <code>archive_len</code>)을 커밋한다. 몇 번을 다시 해도 결과가 같다.</td></tr>
+<tr><td>A3</td><td>원본이 바뀐 파일(C2의 "처음부터 다시 읽기")은 기존 사본을 건드리지 않고 <code>&lt;session&gt;.2.jsonl</code>로 새 사본을 시작한다. 원문은 덮어쓰지 않는다.</td></tr>
+<tr><td>A4</td><td>Codex가 압축한 <code>.jsonl.zst</code>: 압축을 푼 내용이 이미 보관한 사본과 같은 길이, 같은 해시면 건너뛴다. 다르면 A3처럼 새 사본.</td></tr>
+<tr><td>A5</td><td>원본 로그가 24시간 동안 바뀌지 않으면 사본을 zstd(레벨 9)로 압축해 <code>.jsonl.zst</code>로 바꾸고 원래 사본을 지운다. 이후 그 원본에 새 줄이 붙으면 A3처럼 새 사본.</td></tr>
+<tr><td>A6</td><td>첫 실행 때는 <b>디스크에 남아 있는 로그 전부</b>를 보관한다(색인의 30일과 무관). 지금 남은 게 앞으로 남을 전부이기 때문이다. 백그라운드에서 최신 파일부터.</td></tr>
+<tr><td>A7</td><td>보관소는 수집기가 지우지 않는다. 지우는 기능(기간 설정, 세션 단위 삭제)은 다음 단계.</td></tr>
+<tr><td>A8</td><td>검색 발췌와 나중의 대화 보기는 원본 로그 → 보관 사본 → <code>preview</code> 순서로 읽는다. 이벤트의 <code>src_*</code> 위치는 원본 기준이고, 사본은 같은 바이트를 같은 순서로 가지므로 <code>archive_path</code> + (원본 offset − 사본 시작 offset)으로 찾는다.</td></tr>
+</table></div>
+
+<h3>sources 싱크</h3>
+<p>모든 <code>file.written</code>(시점 무관)에 대해 v2.1 형식 그대로 <code>sources.json</code>을 병합한다. 같은 경로는 <code>writtenAt</code>이 같거나 새로울 때만 덮고, 임시 파일 + rename. find_html.py와 동시에 쓸 수 있으므로 쓰기 직전에 다시 읽어 병합한다.</p>
+
+<h2 id="s8">8. 검색 (FTS5)</h2>
+<p>FTS5는 SQLite에 내장된 전문 검색이다. "단어 → 그 단어가 나오는 행" 색인을 미리 만들어 두고 <code>MATCH</code>로 찾는다. 관련도 정렬(<code>bm25</code>)과 발췌를 지원한다.</p>
+<ul>
+<li><b>열</b>: <code>user_text</code>, <code>assistant_text</code>, <code>tool_text</code>, <code>identifiers</code>(경로와 식별자를 <code>/ . _ -</code>, camelCase로 쪼갠 형태). 토크나이저는 <code>_ . - / +</code>를 토큰 안에 둬서 파일 경로가 그대로 맞는다.</li>
+<li><b>contentless</b>(D8): 색인만 저장하고 원문은 없다. 결과 행 → <code>events</code>의 <code>src_*</code>로 원본 로그를 열어 해당 줄만 읽고 발췌를 만든다. 원본이 사라졌으면 보관 사본(A8), 그것도 없으면 <code>preview</code>로 대신한다.</li>
+<li><b>범위</b>: 색인은 최근 30일(<code>history_days</code>)만. 보관소는 전부를 가지므로, 나중에 범위를 넓히고 싶으면 보관소를 하나의 로그 루트로 다시 색인한다.</li>
+<li><b>가중치</b>: <code>bm25(messages_fts, 1.0, 1.0, 0.4, 0.6)</code>. 같은 점수면 최근 순.</li>
+<li><b>CLI</b>: <code>rooms-collect search "pricing plan" [--agent codex] [--cwd PATH] [--since 7d] [--json] [--limit 20]</code>. 결과는 세션 단위로 묶어 세션 제목, cwd, 시각, 발췌, 이어가기 명령(<code>claude --resume &lt;id&gt;</code>)을 준다.</li>
+<li>검색은 DB를 읽기 전용 연결로 연다(WAL이라 쓰기 중에도 일관된 스냅샷).</li>
+</ul>
+<pre><code>SELECT e.agent, e.session, e.ts, e.src_path, e.src_offset, e.src_len, e.preview,
+       bm25(messages_fts, 1.0, 1.0, 0.4, 0.6) AS score
+FROM messages_fts JOIN events e ON e.rowid = messages_fts.rowid
+WHERE messages_fts MATCH ?1
+ORDER BY score, e.ts DESC LIMIT ?2;</code></pre>
+
+<h2 id="s9">9. 설정</h2>
+<p><code>~/rooms/.rooms/collect.toml</code> (없으면 기본값. 수집기는 읽기만 한다)</p>
+<pre><code>enabled = true            # false면 수집기가 아무것도 하지 않고 대기
+history_days = 30         # 검색 색인 보관 기간. 0 = 색인 끔(링크만)
+archive = true            # 대화 원문 보관소. false면 새로 보관하지 않음(기존 사본은 유지)
+[agents]
+claude-code = true
+codex = true
+aside = true</code></pre>
+<p>앱에 설정 화면이 아직 없어 토글은 이번 범위에서 빠졌다. <code>collect.toml</code>을 직접 고치거나 에이전트에게 부탁한다. 수집기는 매 패스마다 파일을 다시 읽으므로 재시작이 필요 없다.</p>
+
+<h2 id="s10">10. 스킬 v8</h2>
+<ul>
+<li>제거: "Every time you write one (habit)" 절, "Add one line" 절(CLAUDE.md, AGENTS.md 한 줄).</li>
+<li>유지: First sort / re-sort, Making a link, Writing to the Journal, Never.</li>
+<li>추가: "inbox 정리" — 정리 시 <code>inbox</code>에 있는 링크를 방으로 <b>옮긴다</b>(<code>mv</code> 링크 자체. 원본은 그대로). 옮긴 realpath는 <code>linked.jsonl</code>에 이미 있으므로 수집기가 다시 넣지 않는다.</li>
+<li>추가: "자동 수집이 멈춘 것 같을 때" — 방금 쓴 파일을 직접 링크하는 수동 경로(지금의 Making a link).</li>
+<li>마커 <code>rooms-onboarding v7 → v8</code>(SKILL.md, ONBOARD.md, find_html.py). <code>onboarding.rs</code> 업그레이드 테스트 추가.</li>
+<li>이미 사용자의 CLAUDE.md에 들어간 한 줄은 건드리지 않는다. 남아 있어도 L4, L5 덕분에 중복이 생기지 않는다.</li>
+</ul>
+
+<h2 id="s11">11. 장애와 예산</h2>
+<div class="tbl"><table>
+<tr><th>상황</th><th>동작</th></tr>
+<tr><td>어댑터 파싱 실패</td><td>그 파일만 C4 정책. 다른 파일, 다른 에이전트는 계속.</td></tr>
+<tr><td>로그 형식 변경</td><td>해당 어댑터의 실패율이 오르면 <code>~/rooms/.rooms/collect/status.json</code>에 기록. 앱 업데이트로 어댑터 수정. 수동 대안은 스킬.</td></tr>
+<tr><td>DB 손상, 스키마 변경</td><td>삭제 후 재생성(D5). 링크 중복은 L4, L5가 막는다.</td></tr>
+<tr><td>수집기 비정상 종료</td><td>앱이 지수 백오프로 재시작(최대 5회/10분). 트랜잭션 덕분에 재시작 후 이어서.</td></tr>
+<tr><td>roomsd 꺼짐</td><td>영향 없음. 링크는 다음 roomsd 시작 때 스캔으로 반영.</td></tr>
+<tr><td>디스크 가득</td><td>커밋 실패 → 커서가 안 올라가므로 다음 번에 다시 시도. 링크는 계속 시도.</td></tr>
+</table></div>
+<h3>예산 (목표치, 측정해서 확인)</h3>
+<ul>
+<li>유휴 상주 메모리 ≤ 20 MB (SQLite 페이지 캐시 상한 4 MB 포함).</li>
+<li>평상시 CPU: 새 줄이 없으면 0에 가깝게(FSEvents 대기).</li>
+<li>디스크(색인): 원문 미복사. 30일치 로그 총량의 약 15~30% 예상 <span class="q">측정 필요</span>.</li>
+<li>디스크(보관소): 압축 후 원본 로그의 약 10~20% 예상(JSON 텍스트는 zstd 압축률이 높다) <span class="q">측정 필요</span>. 하루 이상 지난 세션만 압축 상태로 있다.</li>
+<li>첫 색인: 100 MB 로그 기준 1분 이내, 백그라운드 우선순위.</li>
+</ul>
+
+<h2 id="s12">12. 확장 경로</h2>
+<div class="tbl"><table>
+<tr><th>다음 기능</th><th>붙이는 방법</th></tr>
+<tr><td>앱 안 검색</td><td>Tauri 커맨드가 <code>collect.db</code>를 읽기 전용으로 열거나 CLI <code>--json</code>을 호출. roomsd는 여전히 모른다.</td></tr>
+<tr><td>분석</td><td>새 싱크 하나(세션별 도구 사용, 하루 산출물 수 등). 이벤트 로그를 처음부터 다시 읽으면 과거에도 적용.</td></tr>
+<tr><td>문서 옆 대화 보기</td><td>HTML을 열면 그걸 만든 대화를 옆에 보여 준다. <code>sources.json</code>으로 세션을 찾고, 원문은 보관소에서 읽는다.</td></tr>
+<tr><td>안 읽음 표시</td><td>만들어졌지만 아직 열지 않은 문서를 Journal과 방에 표시.</td></tr>
+<tr><td>하루 회고</td><td>Journal 날짜 페이지에 그날의 대화, 문서, 메모를 모으고, 옵트인이면 에이전트가 그날 기록으로 <code>dream.html</code>을 쓴다.</td></tr>
+<tr><td>자동 정리 (옵트인)</td><td>inbox에 새 문서가 쌓이면 사용자의 에이전트가 읽기 전용으로 "이 파일은 이 방" 계획(JSON)만 내고, 수집기가 옮긴다. 기존 방으로만, 새 방은 제안으로.</td></tr>
+<tr><td>30일 넘는 검색</td><td>보관소를 로그 루트로 추가해 다시 색인.</td></tr>
+<tr><td>기기 간 동기화</td><td>옵트인 jsonl 내보내기 싱크: 기기마다 <code>~/rooms/.rooms/collect/&lt;machine&gt;/YYYY-MM-DD.jsonl</code>에만 추가로 쓴다. 다른 기기의 파일은 또 하나의 "어댑터"로 읽어 로컬 DB에 넣는다. 이벤트 id가 결정론적이라 중복이 생기지 않는다.</td></tr>
+<tr><td>새 에이전트</td><td><code>Adapter</code> 구현 하나 + 픽스처 테스트.</td></tr>
+</table></div>
+
+<h2 id="s13">13. 테스트</h2>
+<ul>
+<li><b>어댑터 픽스처</b>: Claude Code, Codex, Aside 실제 형식 샘플(Write, Edit, Bash 리다이렉트, apply_patch, Aside repl writeFile, Codex .zst, 상대 경로, 깨진 줄, 미완결 마지막 줄). find_html.py 테스트와 같은 기대값.</li>
+<li><b>멱등성</b>: 같은 파일을 두 번, 세 번 처리해도 이벤트 수, 링크 수가 같다. 처리 도중 강제 종료(트랜잭션 중단) 후 재실행해도 같다.</li>
+<li><b>커서</b>: 추가 쓰기, 잘림(truncate), 같은 이름의 새 파일(inode 변경), 회전.</li>
+<li><b>링커</b>: since 이전 이벤트 무시, 이미 링크된 realpath, 지운 링크 미복원, repo 이름 방 매칭, 이름 충돌, linked room 미기록, worktree 중복.</li>
+<li><b>보관소</b>: 사본이 원본과 바이트 단위로 같다. 커밋 전 강제 종료 후 재실행해도 사본에 중복 꼬리가 없다. 원본 잘림, inode 변경 시 새 사본. Codex <code>.zst</code> 전환 시 중복 없음. 24시간 후 압축. 원본 삭제 뒤에도 발췌가 사본에서 나온다.</li>
+<li><b>DB 재생성</b>: <code>collect.db</code> 삭제 후 재시작 시 링크가 늘지 않는다.</li>
+<li><b>FTS</b>: 경로 토큰(<code>src/app.tsx</code>) 일치, 한국어 검색, 원본 삭제 후 preview 대체, 보관 기간 밖 삭제.</li>
+<li><b>수동</b>: 실제 Claude Code에서 HTML 작성 → 2초 안에 앱에 표시.</li>
+</ul>
+
+<h2 id="s14">14. 구현 순서</h2>
+<ol>
+<li><code>crates/rooms-collect</code> 골격: store(스키마, 트랜잭션, 재생성), discover(커서 결정 C2, C3).</li>
+<li>Claude Code, Codex(.zst 포함), Aside 어댑터 + 각 픽스처.</li>
+<li>보관소(A1~A8). 어댑터와 독립이라 일찍 넣을수록 사라지는 로그가 줄어든다.</li>
+<li>linker, sources 싱크 + 사용자 상태 파일.</li>
+<li>Tauri sidecar 등록(<code>externalBin</code>, <code>build-sidecar.sh</code>), 시작/종료/재시작, 설정 토글.</li>
+<li>FTS 싱크 + <code>rooms-collect search</code> CLI.</li>
+<li>스킬 v8, ONBOARD v8, onboarding.rs 테스트, README "How it works" 갱신.</li>
+</ol>
+
+<h2 id="s15">15. 열린 질문</h2>
+<ul>
+<li><s>Q1 검색 색인 기본값.</s> → 켬, <code>history_days = 30</code> (2026-10-09 결정).</li>
+<li><s>Q2 repo 이름 방 매칭.</s> → 넣는다 (2026-10-09 결정). slug가 정확히 같을 때만. 토픽 방만 쓰는 사용자는 대부분 inbox로 가서 손해가 없고, 잘못 들어간 링크는 옮기기 쉽다.</li>
+<li><s>Q3 Aside 어댑터를 이번 범위에 넣을지.</s> → 포함 (2026-10-09 결정). Aside는 스킬이 설치되지 않아 습관 규칙이 없었으므로 자동 수집의 효과가 가장 크다.</li>
+<li><s>Q4 앱이 꺼져 있을 때도 수집할지.</s> → 앱이 켜져 있을 때만 (2026-10-09 결정). 다음 실행 때 커서부터 이어 읽으므로 반영만 늦다. 단, 앱을 30일 넘게 안 켜면 그사이 Claude Code가 지운 로그는 보관하지 못한다.</li>
+</ul>
+
+<h2 id="s16">16. 구현 메모 (2026-10-09)</h2>
+<p>구현하면서 위 본문과 달라진 점. 본문보다 이 절이 우선한다.</p>
+<div class="tbl"><table>
+<tr><th>항목</th><th>달라진 점과 이유</th></tr>
+<tr><td>FTS</td><td>별도 fts 싱크 없이, 이벤트를 넣는 같은 트랜잭션에서 색인 행을 넣는다. 이벤트와 색인이 어긋날 틈이 없고 커서가 하나 준다.</td></tr>
+<tr><td>sources</td><td>linker와 한 패스(커서 <code>linker</code>)로 합쳤다. 둘 다 "파일이 실제로 있나, realpath는 뭔가"를 먼저 알아야 해서. find_html.py처럼 존재하는 파일만 기록한다.</td></tr>
+<tr><td>L1</td><td><code>linkerSince</code>는 <code>state.json</code>에만 둔다. DB는 캐시라서 거기 두면 재생성 때 의미가 없다.</td></tr>
+<tr><td>L2</td><td>재확인은 60초 이내에 기록된 쓰기에만 한다(앱을 다시 켰을 때 오래된 이벤트마다 기다리지 않게). 셸 추정 쓰기는 파일 mtime ≥ 이벤트 시각 − 2초일 때만 인정.</td></tr>
+<tr><td>L3</td><td><code>rooms-core::rules</code> 무시 규칙은 따로 적용하지 않았다. 원본은 <code>~/rooms</code> 밖에 있고, 링크 자체는 roomsd가 평소 규칙으로 다룬다.</td></tr>
+<tr><td>L4</td><td>이미 링크된 realpath 집합은 링크 후보가 생긴 패스에서만 <code>~/rooms</code>를 한 번 훑어 만든다(증분 갱신 대신).</td></tr>
+<tr><td>L7</td><td>symlink(2)는 원자적이고 이미 있으면 실패하므로 임시 이름 + rename을 쓰지 않는다. rename은 오히려 같은 이름을 덮어쓸 수 있다.</td></tr>
+<tr><td>L8</td><td><code>linked.jsonl</code>에 <code>repo</code>, <code>rel</code>도 적어 worktree 중복을 DB 없이 판단한다.</td></tr>
+<tr><td>A1~A8</td><td><code>files.archive_path/len</code> 대신 <code>archives</code> 테이블(세그먼트: 원본, 시작 offset, 길이, 압축 여부). A3, A5의 새 사본과 A8의 offset 조회가 같은 방식으로 풀린다. 사본 이름은 로그 키 기준(<code>&lt;key&gt;.jsonl</code>, 다음 세그먼트는 <code>&lt;key&gt;.2.jsonl</code>).</td></tr>
+<tr><td>A4</td><td>같은 길이 + 해시 대신 "기존 사본이 압축본의 앞부분과 같으면 이어서 보관"(접두 일치). 압축 직전에 덧붙은 줄도 잃지 않는다.</td></tr>
+<tr><td>C1, 종료</td><td>앱이 죽어 부모 프로세스가 바뀌면 5초 안에 스스로 끝난다("앱이 켜져 있을 때만"을 앱 비정상 종료 때도 지킨다).</td></tr>
+<tr><td>재시작</td><td>지수 백오프 대신 2초 뒤 재시작, 10분에 5번까지.</td></tr>
+<tr><td>§11 status.json</td><td>이번에는 넣지 않았다. 오류는 앱 로그(stderr)로만 남는다.</td></tr>
+<tr><td>측정</td><td>Linux 실행 확인: 로그 줄 기록 후 파일이 0.2초 늦게 생긴 경우 0.6초 만에 inbox 링크(L2 0.5초 재확인 포함). macOS FSEvents 지연과 메모리 예산은 아직 측정하지 않았다.</td></tr>
+</table></div>
+</main>
+</div>
+
+</html>

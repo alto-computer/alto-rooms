@@ -1,8 +1,8 @@
 ---
 name: rooms
-description: "Sorts HTML artifacts into Rooms (an app that shows HTML artifacts grouped into topic room folders). Triggers: \"sort my rooms\", \"sort my rooms again\", reading and following \"~/rooms/ONBOARD.md\", \"put this in a room\", \"add to Rooms\", \"put this in the inbox\", \"put this in today's Journal\", making a review/Dream HTML, sorting recent HTML into rooms, and linking a newly written .html/.htm artifact into the right room. Never moves originals; only creates symlinks."
+description: "Sorts HTML artifacts into Rooms (an app that shows HTML artifacts grouped into topic room folders). Triggers: \"sort my rooms\", \"sort my rooms again\", \"sort my inbox\", reading and following \"~/rooms/ONBOARD.md\", \"put this in a room\", \"add to Rooms\", \"put this in the inbox\", \"put this in today's Journal\", making a review/Dream HTML, and sorting recent HTML into rooms. Never moves originals; only creates symlinks."
 ---
-<!-- rooms-onboarding v7 -->
+<!-- rooms-onboarding v8 -->
 
 # rooms skill
 
@@ -83,32 +83,26 @@ ln -s "<absolute path of the original>" "<home>/<slug>/<original file name>"
 4. Continue only on "yes". If the user renames a room or moves a file, continue with the edited plan (no need to ask again). On "no", create nothing.
 5. For each room run `mkdir -p "<home>/<slug>"`, and for each file `ln -s` (see "Making a link").
 6. Report: the rooms created, the number of links per room, and the inbox count. Then say: "I didn't move any original files. I only created links."
-7. If this was the first sort, do "Add one line".
+7. If this was the first sort, tell the user: "From now on, while the Rooms app is open, new HTML your agents write is linked on its own: into the room named like its repo, otherwise into the inbox. Ask me to sort the inbox any time."
 
-## Every time you write one (habit)
+## Sorting the inbox
 
-When you write a new `.html` / `.htm` artifact, link it into the best room. Do not copy it.
+While the Rooms app is open, it links each new HTML file an agent writes into `<home>/inbox` (or into the room whose folder is named like the file's repo). When the user asks to sort the inbox:
 
-1. Check whether a link already exists.
-
-   ```sh
-   python3 "<skill>/scripts/find_html.py" --home "<home>" --days 1 --record-sources
-   ```
-
-   If the entry for the file you just wrote has `linked: true` or a non-null `in_linked_room`, do not link it. If there is no entry (not in the logs yet), check directly. Any output means a link already exists.
+1. List the links: `ls -l "<home>/inbox"`.
+2. Read each one's title and the start of the file (as in step 2 of "First sort"), pick rooms, show one proposal table and ask once, as in steps 3–4.
+3. Move each **link** (not the original) into its room. If the name is taken, add ` (2)`, ` (3)` … as in "Making a link".
 
    ```sh
-   find "<home>" -path "<home>/.rooms" -prune -o -type l -exec sh -c '[ "$(realpath "$1")" = "$(realpath "$2")" ] && echo "$1"' _ {} "<absolute path of the file you just wrote>" \;
+   mkdir -p "<home>/<slug>"
+   mv "<home>/inbox/<link name>" "<home>/<slug>/<link name>"
    ```
 
-2. Link it.
+A link the user deletes is not added back.
 
-   ```sh
-   ln -s "<absolute path of the file you just wrote>" "<home>/<slug>/<file name>"
-   ```
+## When the app is not collecting
 
-- If no room fits, or you are not sure, link into `"<home>/inbox/<file name>"`.
-- Do not link files you wrote directly under `<home>`.
+If the user writes HTML while the Rooms app is closed, or turned collection off (`enabled = false` in `<home>/.rooms/collect.toml`), nothing is linked on its own. Run "First sort / re-sort" again with `--days 1` (or the range the user names): files already linked are skipped, and the rest are proposed as usual.
 
 ## Writing to the Journal
 
@@ -124,18 +118,10 @@ mkdir -p "<home>/journal/<YYYY-MM-DD>"
 - The `.md` notes in that folder belong to the user. Do not read, edit, or delete them.
 - Do not link a Journal file into a room as well.
 
-## Add one line (only after asking)
-
-After the first sort, ask the user: shall I add the line below to `~/.claude/CLAUDE.md` (Claude Code) or `~/.codex/AGENTS.md` (Codex)? Only on "yes", append it once at the end of the file (skip it if it is already there).
-
-```text
-- When you write an HTML artifact, link it into the right room with the rooms skill.
-```
-
 ## Never
 
 - Never move, edit, or delete original files.
 - Never write anything inside a linked (connected folder) room.
 - Never create rooms named `journal` or `inbox` (linking into `inbox`, and writing HTML into `journal/<date>/` as in "Writing to the Journal", are fine).
-- Never touch `<home>/.rooms` by hand. Exceptions: reading the skill source, and `find_html.py --record-sources`, which writes only `<home>/.rooms/sources.json`.
+- Never touch `<home>/.rooms` by hand. Exceptions: reading the skill source, `find_html.py --record-sources` (it writes only `<home>/.rooms/sources.json`), and `collect.toml` when the user asks to change collection settings.
 - Never read, print, or pass the token (`<home>/.rooms/token`) in a command.
