@@ -119,7 +119,8 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
         {
           client,
           changed: (path) => pluginDataBus.publish({ pluginId: latest.current.plugin.id, path, from: win }),
-          navigate: (t) => viewer.navigate(t),
+          slot: latest.current.context.slot,
+          viewer,
           rooms: () => rooms.getState().rooms,
         },
       ).then(

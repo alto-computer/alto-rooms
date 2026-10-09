@@ -309,17 +309,15 @@ export class ViewerStore {
 
   /**
    * Shows `tab` in the active tab, browser style: what it showed goes on its back
-   * list and its forward list is dropped. With no tab open, opens one instead.
+   * list and its forward list is dropped. With no tab open, opens one instead. Returns the tab's id.
    */
-  navigate(tab: TabInput): void {
+  navigate(tab: TabInput): string {
     const active = this.activeTab();
-    if (!active) {
-      this.open(tab);
-      return;
-    }
-    if (sameTab(active, tab)) return;
+    if (!active) return this.open(tab);
+    if (sameTab(active, tab)) return active.id;
     const h = this.historyOf(active.id);
     this.moveTo(active.id, tab, { back: [...h.back, toInput(active)].slice(-HISTORY_LIMIT), forward: [] });
+    return active.id;
   }
 
   /** A click's destination: a new tab (⌘/Ctrl or middle click) or this one. */
