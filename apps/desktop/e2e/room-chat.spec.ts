@@ -1,46 +1,8 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { expect, MOD, test, type Daemon } from "./fixtures";
+import { expect, MOD, test } from "./fixtures";
+import { installStreamingAgent } from "./streamingAgent";
 
 const ROOM_PLACEHOLDER = "Ask about this room…";
-
-/**
- * A streaming fake agent: one Read of the first listed doc for a second, then the answer in two
- * deltas. Its argv carries the scope settings, so roomsd reports its reads as scoped.
- */
-function installStreamingAgent(daemon: Daemon) {
-  const bin = join(daemon.home, "fake-stream.sh");
-  writeFileSync(
-    bin,
-    [
-      "#!/bin/sh",
-      `doc=$(printf %s "$1" | grep '^- "' | head -n 1 | cut -d '"' -f 2)`,
-      `q=$(printf %s "$1" | tail -n 1 | sed 's/^Question: //')`,
-      `printf '{"t":"act","p":"%s"}\\n' "$doc"; sleep 1`,
-      `printf '{"t":"d","x":"Room answer to "}\\n'; sleep 0.4`,
-      `printf '{"t":"d","x":"%s"}\\n' "$q"`,
-    ].join("\n") + "\n",
-  );
-  chmodSync(bin, 0o755);
-  mkdirSync(join(daemon.home, ".rooms"), { recursive: true });
-  writeFileSync(
-    join(daemon.home, ".rooms/agents.toml"),
-    [
-      'default = "fake-stream"',
-      "[agents.fake-stream]",
-      `new = ["${bin}", "{prompt}", "--settings", "{scope_settings}"]`,
-      "[[agents.fake-stream.events]]",
-      'match = { "/t" = "act" }',
-      'label = "Read"',
-      'activity = ["/p"]',
-      "[[agents.fake-stream.events]]",
-      'match = { "/t" = "d" }',
-      'delta = "/x"',
-      "",
-    ].join("\n"),
-  );
-}
 
 async function openRoom(page: Page, room: string) {
   await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: room, exact: true }).click();
@@ -48,7 +10,7 @@ async function openRoom(page: Page, room: string) {
 }
 
 test("ask a room, keep its thread across a reload, and keep it out of the doc's thread", async ({ page, daemon }) => {
-  installStreamingAgent(daemon);
+  installStreamingAgent(daemon, "Room");
   await daemon.createRoom("harness");
   await daemon.write("harness/alpha.html", "<html><head><title>Alpha</title></head><body>a</body></html>");
   await daemon.write("harness/beta.html", "<html><head><title>Beta</title></head><body>b</body></html>");
