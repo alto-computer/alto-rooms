@@ -50,6 +50,16 @@ fn semver(v: &str) -> bool {
     parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
 }
 
+/// The version a plugin's `minAppVersion` is checked against. The desktop app checks its own
+/// package version in `pluginsStore.ts`; the workspace keeps the two equal (see the test).
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Whether this app version can run a plugin: `APP_VERSION >= min`, comparing the semver cores.
+pub fn compatible(min: &str) -> bool {
+    let core = |v: &str| v.split(['-', '+']).next().unwrap_or("").split('.').map(|p| p.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    core(APP_VERSION) >= core(min)
+}
+
 fn valid_tool_name(n: &str) -> bool {
     let b = n.as_bytes();
     (1..=40).contains(&b.len()) && b[0].is_ascii_lowercase() && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_')
@@ -189,6 +199,26 @@ mod tests {
 
     fn with_tools(folder: &str, tools: &str) -> String {
         OK.replacen(r#""id":"echo""#, &format!(r#""id":"{folder}""#), 1).replacen(r#""permissions""#, &format!(r#""tools":{tools},"permissions""#), 1)
+    }
+
+    #[test]
+    fn compatible_compares_semver_cores_against_the_app_version() {
+        let v: Vec<u64> = APP_VERSION.split('.').map(|p| p.parse().unwrap()).collect();
+        let (major, minor, patch) = (v[0], v[1], v[2]);
+        assert!(compatible(APP_VERSION));
+        assert!(compatible(&format!("{major}.{minor}.{patch}-beta.1+build")), "a pre-release tag is ignored");
+        assert!(compatible("0.0.1"));
+        assert!(!compatible(&format!("{major}.{minor}.{}", patch + 1)));
+        assert!(!compatible(&format!("{major}.{}.0", minor + 1)));
+        assert!(!compatible(&format!("{}.0.0", major + 1)));
+        assert!(!compatible("99.0.0"));
+    }
+
+    #[test]
+    fn the_app_version_is_the_desktop_package_version() {
+        let pkg = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/desktop/package.json")).unwrap();
+        let pkg: Value = serde_json::from_str(&pkg).unwrap();
+        assert_eq!(pkg["version"].as_str().unwrap(), APP_VERSION, "the desktop checks minAppVersion against its package version and roomsd against the workspace version; they must agree");
     }
 
     #[test]
