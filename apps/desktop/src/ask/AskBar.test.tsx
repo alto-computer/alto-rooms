@@ -675,3 +675,59 @@ describe("AskBar for a room", () => {
     expect(screen.queryByPlaceholderText("Ask about this room…")).toBeNull();
   });
 });
+
+describe("AskBar for a day", () => {
+  const monday: AskScope = { kind: "day", date: "2026-10-05" };
+  const dayTurn = (extra: Partial<AskTurn>) => turn({ id: "dt1", scope: monday, mode: "new", ...extra });
+  let show: (date: string) => void = () => {};
+  /** The Journal tab keeps one bar mounted and hands it the viewed date. */
+  function Journal() {
+    const [date, setDate] = useState("2026-10-05");
+    show = setDate;
+    return <AskBar subject={{ kind: "day", date }} />;
+  }
+  const setupDays = (asks: Record<string, AskTurn[]> = {}) =>
+    renderWithStores(<Journal />, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks });
+  const input = () => screen.getByPlaceholderText("Ask about this day…") as HTMLTextAreaElement;
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  it("follows the viewed date to that day's own thread and draft", async () => {
+    await setupDays({
+      "day:2026-10-06": [turn({ id: "dt2", scope: { kind: "day", date: "2026-10-06" }, question: "화요일?", status: "done", answer: "화요일 답", endedAt: "2026-10-06T10:00:01+09:00" })],
+    });
+    fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일 초안" } });
+    act(() => show("2026-10-06"));
+    expect(await screen.findByText("화요일 답")).toBeTruthy();
+    expect(input().value).toBe("");
+    fireEvent.change(input(), { target: { value: "화요일 초안" } });
+    act(() => show("2026-10-05"));
+    expect(input().value).toBe("월요일 초안");
+    expect(screen.queryByText("화요일 답")).toBeNull();
+    expect(localStorage.getItem("alto-rooms.askDraft.day:2026-10-05")).toBe("월요일 초안");
+    expect(localStorage.getItem("alto-rooms.askDraft.day:2026-10-06")).toBe("화요일 초안");
+  });
+
+  it("a question on its way stays with its day, and its answer keeps running while another day is shown", async () => {
+    const { client, emit } = await setupDays();
+    let accept: () => void = () => {};
+    client.startAsk.mockImplementationOnce(() => new Promise((resolve) => (accept = () => resolve(dayTurn({ id: "ask-월요일?", question: "월요일?" })))));
+    fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일?" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(await screen.findByText("Thinking")).toBeTruthy();
+    act(() => show("2026-10-06"));
+    expect(screen.queryByText("월요일?")).toBeNull();
+    expect(screen.queryByText("Thinking")).toBeNull();
+    await act(async () => accept());
+    act(() => emit({ type: "ask.progress", id: "ask-월요일?", scope: monday, answer: "절반", activity: null }));
+    expect(screen.queryByText("절반")).toBeNull();
+    act(() => emit({ type: "ask.done", turn: dayTurn({ id: "ask-월요일?", question: "월요일?", status: "done", answer: "월요일 답", endedAt: "2026-10-06T10:00:09+09:00" }) }));
+    act(() => show("2026-10-05"));
+    expect(await screen.findByText("월요일 답")).toBeTruthy();
+    expect(client.startAsk).toHaveBeenCalledWith({ scope: monday, question: "월요일?", model: null });
+    expect(client.cancelAsk).not.toHaveBeenCalled();
+  });
+});
