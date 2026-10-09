@@ -3,7 +3,9 @@ import type { Conversation, Room } from "@alto-rooms/protocol-ts";
 import { Ellipsis, Folder } from "lucide-react";
 import { AgentMark } from "@/components/AgentMark";
 import { RoomDot } from "@/components/RoomDot";
+import { useReadOnly } from "@/data/hooks";
 import { conversationTitle } from "@/lib/conversations";
+import { conversationDragSource } from "@/lib/drag";
 import { cn } from "@/lib/utils";
 import { ContinueButton } from "./ContinueButton";
 import { ConversationMenu, openConversationMenu } from "./ConversationMenu";
@@ -21,7 +23,7 @@ export function RoomChip({ room }: { room: Room }) {
 /**
  * A conversation in the Journal: one 30px line, the agent's mark and the title, and a room chip
  * when it is in a room. A click selects it (it never opens Terminal); hover or focus shows the
- * continue pill and a ⋯ for the menu, which right-click also opens.
+ * continue pill and a ⋯ for the menu, which right-click also opens. It drags onto a sidebar room.
  */
 export function ConversationRow({
   conversation,
@@ -37,6 +39,7 @@ export function ConversationRow({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const readOnly = useReadOnly();
   const title = conversationTitle(conversation);
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
@@ -55,6 +58,7 @@ export function ConversationRow({
         aria-current={selected || undefined}
         onClick={onSelect}
         onKeyDown={onKeyDown}
+        {...(readOnly ? {} : conversationDragSource({ id: conversation.id, roomId: conversation.roomId }))}
         className={cn(
           "group -ml-2 flex h-[30px] min-w-0 cursor-default items-center gap-2.5 rounded-lg pr-1.5 pl-2 outline-none hover:bg-row-hover focus-visible:outline-2 focus-visible:outline-ink",
           "data-selected:bg-row-hover data-selected:shadow-[inset_0_0_0_1.5px_color-mix(in_srgb,var(--ink)_30%,transparent)]",

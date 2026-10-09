@@ -5,8 +5,8 @@ import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
 import { useClient, useReadOnly, useRoomList, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { isNewSince, localDate } from "@/lib/dates";
-import { INBOX_ID, type ArtifactDragPayload } from "@/lib/drag";
-import { moveErrorCopy } from "@/lib/errors";
+import { INBOX_ID, type ArtifactDragPayload, type ConversationDragPayload } from "@/lib/drag";
+import { errorCopy, moveErrorCopy } from "@/lib/errors";
 import { moveWithinSection } from "@/lib/roomOrder";
 import { wantsNewTab } from "@/lib/nav";
 import { IconTip } from "@/components/IconTip";
@@ -41,13 +41,25 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
   const moveFailed = useBriefError();
   const [moveError, setMoveError] = useState("");
 
-  // Success needs no word: the SSE events move the doc in both lists.
+  // Success needs no word: the SSE events move the artifact in both lists.
   const move = (p: ArtifactDragPayload, toRoomId: string) => {
     client.moveArtifact(p.roomId, p.artifactId, toRoomId).then(
       () => moveFailed.clear(),
       (e: unknown) => {
         console.warn("could not move the artifact", e);
         setMoveError(moveErrorCopy(e));
+        moveFailed.flash();
+      },
+    );
+  };
+
+  // Likewise for a conversation dropped on a room: conversation.moved updates the Journal and the room.
+  const addConversation = (p: ConversationDragPayload, toRoomId: string) => {
+    client.setConversationRoom(p.id, toRoomId).then(
+      () => moveFailed.clear(),
+      (e: unknown) => {
+        console.warn("could not add the conversation to the room", e);
+        setMoveError(errorCopy(e));
         moveFailed.flash();
       },
     );
@@ -92,7 +104,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
       unread={unread(room)}
       readOnly={readOnly}
       sortable={!readOnly}
-      onMove={readOnly || !isDropTarget(room) ? undefined : move}
+      drops={readOnly ? {} : { artifact: isArtifactDropTarget(room) ? move : undefined, conversation: addConversation }}
     />
   );
 
@@ -191,8 +203,8 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
   );
 }
 
-/** Docs can be dropped on owned, available rooms other than the inbox. */
-const isDropTarget = (room: Room) => room.kind === "owned" && room.id !== INBOX_ID && room.status === "ok";
+/** Artifacts can be dropped on owned, available rooms other than the inbox. (Conversations on any listed room.) */
+const isArtifactDropTarget = (room: Room) => room.kind === "owned" && room.id !== INBOX_ID && room.status === "ok";
 
 /** `rooms` in the `order` of ids (rooms it doesn't list keep their place at the end); `rooms` when there is none. */
 function inOrder(rooms: Room[], order: string[] | null): Room[] {

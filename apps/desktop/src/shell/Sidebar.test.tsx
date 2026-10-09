@@ -1,9 +1,10 @@
 import { RoomsApiError, type Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { conversation, memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { ViewerStore } from "@/data/viewerStore";
-import { ARTIFACT_DRAG_TYPE } from "@/lib/drag";
+import { localDate } from "@/lib/dates";
+import { ARTIFACT_DRAG_TYPE, CONVERSATION_DRAG_TYPE } from "@/lib/drag";
 import { AppShell } from "./AppShell";
 
 vi.mock("@/lib/native", () => ({
@@ -142,6 +143,66 @@ describe("Sidebar: drag to move", () => {
   });
 });
 
+describe("Sidebar: drag a conversation into a room", () => {
+  const today = localDate();
+  const journal = () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "journal", date: today });
+    return viewer;
+  };
+  const talk = conversation("s1", { title: "Cold start" });
+  const opts = () => ({
+    rooms: ROOMS,
+    artifacts: ARTIFACTS,
+    viewer: journal(),
+    conversations: [talk],
+    days: { [today]: { conversations: [{ at: `${today}T01:00:00Z`, conversation: talk }] } },
+  });
+
+  it("a Journal row dropped on a room (linked ones too) adds it there, highlighting while over", async () => {
+    const h = await renderWithStores(<AppShell />, opts());
+    const row = await screen.findByTestId("day-conversation");
+    const dt = stubTransfer();
+    fireEvent.dragStart(row, { dataTransfer: dt });
+    expect(JSON.parse(dt.data.get(CONVERSATION_DRAG_TYPE)!)).toEqual({ id: talk.id, roomId: null });
+
+    const target = sidebarRow("연결된 폴더");
+    fireEvent.dragEnter(target, { dataTransfer: dt });
+    fireEvent.dragOver(target, { dataTransfer: dt });
+    expect(target).toHaveClass("outline-ink");
+    await dropOn(target, dt);
+    fireEvent.dragEnd(row, { dataTransfer: dt });
+    expect(h.client.setConversationRoom).toHaveBeenCalledWith(talk.id, "l");
+    expect(h.client.moveArtifact).not.toHaveBeenCalled();
+  });
+
+  it("the room it is already in doesn't light up while it is carried over it", async () => {
+    const inRoom = { ...talk, roomId: "a" };
+    await renderWithStores(<AppShell />, { ...opts(), conversations: [inRoom], days: { [today]: { conversations: [{ at: `${today}T01:00:00Z`, conversation: inRoom }] } } });
+    const dt = stubTransfer();
+    fireEvent.dragStart(await screen.findByTestId("day-conversation"), { dataTransfer: dt });
+    const own = sidebarRow("벤치마크");
+    fireEvent.dragOver(own, { dataTransfer: dt });
+    expect(own).not.toHaveClass("outline-ink");
+    const other = sidebarRow("연결된 폴더");
+    fireEvent.dragOver(other, { dataTransfer: dt });
+    expect(other).toHaveClass("outline-ink");
+  });
+
+  it("is refused by the room it is already in, and a malformed payload does nothing", async () => {
+    const h = await renderWithStores(<AppShell />, opts());
+    await dropOn(sidebarRow("벤치마크"), stubTransfer({ [CONVERSATION_DRAG_TYPE]: JSON.stringify({ id: talk.id, roomId: "a" }) }));
+    for (const bad of ["nope", "{}", JSON.stringify({ id: { agent: "gpt", session: "s1" }, roomId: null })]) {
+      await dropOn(sidebarRow("벤치마크"), stubTransfer({ [CONVERSATION_DRAG_TYPE]: bad }));
+    }
+    expect(h.client.setConversationRoom).not.toHaveBeenCalled();
+  });
+
+  it("read-only: the row does not drag", async () => {
+    await renderWithStores(<AppShell />, { ...opts(), readOnly: true });
+    expect(await screen.findByTestId("day-conversation")).not.toHaveAttribute("draggable", "true");
+  });
+});
 
 describe("Sidebar: reorder rooms", () => {
   // A fresh list per test: the fake moveRoom reorders the array it was given.

@@ -6,18 +6,35 @@ import { Folder } from "lucide-react";
 import { RoomDot } from "@/components/RoomDot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useClient, useViewerStore } from "@/data/hooks";
-import { carriesArtifact, draggingFromRoom, endDrag, readArtifactPayload, type ArtifactDragPayload } from "@/lib/drag";
+import {
+  carriesArtifact,
+  carriesConversation,
+  draggingFromRoom,
+  endDrag,
+  readArtifactPayload,
+  readConversationPayload,
+  type ArtifactDragPayload,
+  type ConversationDragPayload,
+} from "@/lib/drag";
 import { wantsNewTab } from "@/lib/nav";
+import { roomTint } from "@/lib/roomTint";
 import { cn } from "@/lib/utils";
 import { EditableTitle } from "@/views/EditableTitle";
 import { RoomMenu } from "./RoomMenu";
 import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE } from "./sidebarItem";
 
-/** Drop handlers for a room row that accepts artifacts; `over` drives the highlight. */
-function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomId: string) => void) | undefined) {
+/** What a room row does with what is dropped on it; a kind it has no handler for is refused. */
+export type RoomDrops = {
+  artifact?: (p: ArtifactDragPayload, toRoomId: string) => void;
+  conversation?: (p: ConversationDragPayload, toRoomId: string) => void;
+};
+
+/** Drop handlers for a room row that accepts artifacts and conversations; `over` drives the highlight. */
+function useDropTarget(roomId: string, drops: RoomDrops) {
   const [over, setOver] = useState(false);
-  if (!onMove) return { over: false, handlers: {} };
-  const accepts = (e: DragEvent) => carriesArtifact(e.dataTransfer) && draggingFromRoom() !== roomId;
+  if (!drops.artifact && !drops.conversation) return { over: false, handlers: {} };
+  const accepts = (e: DragEvent) =>
+    ((drops.artifact && carriesArtifact(e.dataTransfer)) || (drops.conversation && carriesConversation(e.dataTransfer))) && draggingFromRoom() !== roomId;
   const enter = (e: DragEvent) => {
     if (!accepts(e)) return;
     e.preventDefault();
@@ -35,25 +52,26 @@ function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomI
       },
       onDrop: (e: DragEvent) => {
         setOver(false);
-        const p = readArtifactPayload(e.dataTransfer);
-        if (!p) return;
+        const artifact = drops.artifact && readArtifactPayload(e.dataTransfer);
+        const conversation = !artifact && drops.conversation ? readConversationPayload(e.dataTransfer) : null;
+        if (!artifact && !conversation) return;
         e.preventDefault();
         endDrag();
-        if (p.roomId === roomId) return;
-        onMove(p, roomId);
+        if (artifact && artifact.roomId !== roomId) drops.artifact?.(artifact, roomId);
+        if (conversation && conversation.roomId !== roomId) drops.conversation?.(conversation, roomId);
       },
     },
   };
 }
 
-/** A room in the sidebar list: opens on click, renames on double click, sorts by drag, takes dropped artifacts, and has a menu on right-click. */
+/** A room in the sidebar list: opens on click, renames on double click, sorts by drag, takes dropped artifacts and conversations, and has a menu on right-click. */
 export function RoomRow({
   room,
   active,
   unread,
   readOnly,
   sortable,
-  onMove,
+  drops,
 }: {
   room: Room;
   active: boolean;
@@ -62,14 +80,14 @@ export function RoomRow({
   readOnly: boolean;
   /** The row can be dragged up and down to reorder the rooms. */
   sortable: boolean;
-  /** Set when the row is a drop target for artifacts. */
-  onMove?: (p: ArtifactDragPayload, toRoomId: string) => void;
+  /** What the row takes when dropped on it (nothing when empty). */
+  drops: RoomDrops;
 }) {
   const viewer = useViewerStore();
   const client = useClient();
   const [editing, setEditing] = useState(false);
   const unavailable = room.status === "unavailable";
-  const drop = useDropTarget(room.id, onMove);
+  const drop = useDropTarget(room.id, drops);
   const sort = useSortable({ id: room.id, disabled: !sortable });
   const style = { transform: CSS.Translate.toString(sort.transform), transition: sort.transition };
   const mark = room.color ? <RoomDot color={room.color} /> : null;
@@ -105,13 +123,17 @@ export function RoomRow({
       onDoubleClick={readOnly ? undefined : () => setEditing(true)}
       {...(sortable ? { ...sort.attributes, ...sort.listeners } : {})}
       {...drop.handlers}
+      {...roomTint(room.color)}
       className={cn(
         ITEM,
         ITEM_INTERACTIVE,
         active && ITEM_CURRENT,
         // The row whose menu is open (Radix sets data-state on the context menu trigger).
         "data-[state=open]:ring-[1.5px] data-[state=open]:ring-ink/40 data-[state=open]:ring-inset",
-        drop.over && "bg-surface-strong outline-1 -outline-offset-1 outline-ink outline-solid hover:bg-surface-strong",
+        drop.over &&
+          (room.color
+            ? "bg-[color-mix(in_oklch,var(--room-dot)_26%,transparent)] outline-[1.5px] -outline-offset-[1.5px] outline-room-dot outline-solid hover:bg-[color-mix(in_oklch,var(--room-dot)_26%,transparent)]"
+            : "bg-surface-strong outline-1 -outline-offset-1 outline-ink outline-solid hover:bg-surface-strong"),
         // While carried the row is the gap where it would land; the lifted copy follows the pointer (RoomList).
         sort.isDragging && "invisible",
       )}
