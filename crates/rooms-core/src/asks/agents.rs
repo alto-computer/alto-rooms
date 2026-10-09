@@ -3,9 +3,14 @@
 //! gets the prompt there; one without gets it on stdin (the built-in claude-code and codex do).
 //!
 //! A profile may also say how to read its stdout as JSON lines while it streams, with
-//! `[[agents.X.events]]` rules (`match` pointers, then `delta` / `answer` / `activity` / `clear`;
-//! see `stream.rs`). The built-in claude-code and codex profiles carry theirs; a file's profile
-//! replaces the built-in one whole, rules included.
+//! `[[agents.X.events]]` rules (`match` pointers, then `delta` / `answer` / `activity` / `clear` /
+//! `session`; see `stream.rs`). The built-in claude-code and codex profiles carry theirs; a file's
+//! profile replaces the built-in one whole, rules included.
+//!
+//! A profile with a `continue` template and a `session` rule keeps one agent session per thread:
+//! the first question forks the doc's conversation (`resume`) or starts one (`new`), and the ones
+//! after it go to that same session (`continue`), so the agent remembers the thread itself and
+//! Rooms sends only the question. `/new`, a finished `/compact`, or another agent start over.
 use super::stream::EventRule;
 use rooms_protocol::AskMode;
 use serde::Deserialize;
@@ -21,6 +26,9 @@ pub(crate) const DEFAULT_PREAMBLE: &str =
 pub(crate) struct Profile {
     pub resume: Option<Vec<String>>,
     pub new: Vec<String>,
+    /// Asks again in the session an earlier question started; `{session}` is its id.
+    #[serde(rename = "continue")]
+    pub cont: Option<Vec<String>>,
     /// Models the user can pick; offered only for a template with an element that is exactly `{model}`.
     #[serde(default)]
     pub models: Vec<String>,
@@ -80,8 +88,8 @@ fn rules(toml_text: &str) -> Vec<EventRule> {
 }
 
 /// `claude -p --output-format stream-json --verbose --include-partial-messages`: text deltas of the
-/// current model message, each tool call as activity ("Read · AskBar.tsx"), and `result` (the
-/// last message's text) as the answer.
+/// current model message, each tool call as activity ("Read · AskBar.tsx"), `result` (the last
+/// message's text) as the answer, and the session id from the `init` line.
 const CLAUDE_EVENTS: &str = r#"
 [[events]]
 match = { "/type" = "stream_event", "/event/type" = "message_start" }
@@ -102,10 +110,14 @@ activity = ["/message/content/*/name", "/message/content/*/input/file_path", "/m
 [[events]]
 match = { "/type" = "result" }
 answer = "/result"
+
+[[events]]
+match = { "/type" = "system", "/subtype" = "init" }
+session = "/session_id"
 "#;
 
 /// `codex exec --json`: each agent message replaces the answer (the last is the final one);
-/// commands, tool calls and searches show as activity.
+/// commands, tool calls and searches show as activity; the session id is the thread's.
 const CODEX_EVENTS: &str = r#"
 [[events]]
 match = { "/type" = "item.started", "/item/type" = "reasoning" }
@@ -128,19 +140,30 @@ activity = ["/item/query"]
 [[events]]
 match = { "/type" = "item.completed", "/item/type" = "agent_message" }
 answer = "/item/text"
+
+[[events]]
+match = { "/type" = "thread.started" }
+session = "/thread_id"
 "#;
 
 fn builtin() -> BTreeMap<String, Profile> {
+    // Sessions are kept (no --no-session-persistence / --ephemeral): the next question continues them.
+    const CLAUDE_FLAGS: &[&str] = &["--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"];
+    const CODEX_FLAGS: &[&str] = &["--skip-git-repo-check", "-i", "{image}", "--json", "-"];
+    let claude = |head: &[&str]| argv(&[head, CLAUDE_FLAGS].concat());
+    let codex = |head: &[&str]| argv(&[head, CODEX_FLAGS].concat());
     BTreeMap::from([
         ("claude-code".to_string(), Profile {
-            resume: Some(argv(&["claude", "-p", "--model", "{model}", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])),
-            new: argv(&["claude", "-p", "--model", "{model}", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]),
+            resume: Some(claude(&["claude", "-p", "--model", "{model}", "--resume", "{session}", "--fork-session"])),
+            new: claude(&["claude", "-p", "--model", "{model}"]),
+            cont: Some(claude(&["claude", "-p", "--model", "{model}", "--resume", "{session}"])),
             models: argv(&["opus", "sonnet", "haiku"]),
             events: rules(CLAUDE_EVENTS),
         }),
         ("codex".to_string(), Profile {
-            resume: Some(argv(&["codex", "exec", "fork", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "-i", "{image}", "--json", "-"])),
-            new: argv(&["codex", "exec", "-m", "{model}", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "-i", "{image}", "--json", "-"]),
+            resume: Some(codex(&["codex", "exec", "fork", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\""])),
+            new: codex(&["codex", "exec", "-m", "{model}", "-s", "read-only"]),
+            cont: Some(codex(&["codex", "exec", "resume", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\""])),
             models: argv(&["gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol"]),
             events: rules(CODEX_EVENTS),
         }),
@@ -148,6 +171,7 @@ fn builtin() -> BTreeMap<String, Profile> {
         ("aside".to_string(), Profile {
             resume: Some(argv(&["aside", "session", "resume", "{session}", "{prompt}"])),
             new: argv(&["aside", "exec", "-m", "{model}", "{prompt}"]),
+            cont: None,
             models: argv(&["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]),
             events: Vec::new(),
         }),
@@ -183,11 +207,12 @@ impl AgentProfiles {
         for (name, p) in &agents {
             check(name, "new", &p.new)?;
             if let Some(r) = &p.resume { check(name, "resume", r)?; }
+            if let Some(c) = &p.cont { check(name, "continue", c)?; }
             if let Some(m) = p.models.iter().find(|m| !valid_model(m)) {
                 return Err(format!("agents.{name}.models: \"{m}\" is not a valid model name"));
             }
             // Only an element that is exactly {model} can be dropped for "Default"; "--model={model}" would send "--model=".
-            let partial = std::iter::once(&p.new).chain(p.resume.as_ref()).flatten().any(|a| a.contains("{model}") && a != "{model}");
+            let partial = std::iter::once(&p.new).chain(p.resume.as_ref()).chain(p.cont.as_ref()).flatten().any(|a| a.contains("{model}") && a != "{model}");
             for (i, r) in p.events.iter().enumerate() {
                 r.check().map_err(|e| format!("agents.{name}.events[{i}]: {e}"))?;
             }
@@ -211,8 +236,15 @@ impl AgentProfiles {
             (Some(_), Some(_), Some(t)) => (AskMode::Resume, t.clone()),
             _ => (AskMode::New, p.new.clone()),
         };
-        let models = if template.iter().any(|a| a == "{model}") { p.models.clone() } else { Vec::new() };
-        Plan { agent: name, mode, models, events: p.events.clone(), template }
+        Plan::of(name, mode, template, p)
+    }
+
+    /// `first`'s agent asking again in the session an earlier question started, when its profile
+    /// can: it has a `continue` template and a rule that reads the session id.
+    pub fn continuing(&self, first: &Plan) -> Option<Plan> {
+        let p = &self.agents[&first.agent];
+        let t = p.cont.as_ref().filter(|_| p.events.iter().any(|r| r.session.is_some()))?;
+        Some(Plan::of(first.agent.clone(), AskMode::Continue, t.clone(), p))
     }
 
     pub fn preamble(&self) -> &str { self.preamble.as_deref().unwrap_or(DEFAULT_PREAMBLE) }
@@ -240,6 +272,11 @@ fn subst(arg: &str, v: &Vars) -> String {
 }
 
 impl Plan {
+    fn of(agent: String, mode: AskMode, template: Vec<String>, p: &Profile) -> Self {
+        let models = if template.iter().any(|a| a == "{model}") { p.models.clone() } else { Vec::new() };
+        Plan { agent, mode, models, events: p.events.clone(), template }
+    }
+
     /// A template without `{prompt}` gets the prompt on stdin, which has no size limit; with it,
     /// the prompt is that argv element, as for a CLI that reads no stdin.
     pub fn prompt_on_stdin(&self) -> bool { !self.template.iter().any(|a| a.contains("{prompt}")) }
@@ -281,7 +318,7 @@ mod tests {
         let a = AgentProfiles::load(&p).unwrap();
         let plan = a.plan(Some("claude-code"), Some("S1"));
         assert_eq!(plan.mode, AskMode::Resume);
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
         assert_eq!(a.preamble(), DEFAULT_PREAMBLE);
     }
 
@@ -302,9 +339,9 @@ mod tests {
         let (_d, p) = tmp(None);
         let a = AgentProfiles::load(&p).unwrap();
         assert_eq!(a.plan(Some("codex"), Some("S1")).render(&vars("Q")),
-            vec!["codex", "exec", "fork", "S1", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
+            vec!["codex", "exec", "fork", "S1", "-c", "sandbox_mode=\"read-only\"", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("codex"), None).render(&vars("Q")),
-            vec!["codex", "exec", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
+            vec!["codex", "exec", "-s", "read-only", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("aside"), Some("S1")).render(&vars("Q")), vec!["aside", "session", "resume", "S1", "Q"]);
         assert_eq!(a.plan(Some("aside"), None).render(&vars("Q")), vec!["aside", "exec", "Q"]);
     }
@@ -314,7 +351,7 @@ mod tests {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("my-agent"), Some("S1"));
         assert_eq!((plan.agent.as_str(), plan.mode), ("claude-code", AskMode::New));
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
     }
 
     #[test]
@@ -359,7 +396,7 @@ new = ["codex2", "{prompt}"]
         let a = AgentProfiles::load(&p).unwrap();
         let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json", model: "", images: &[], image_dir: "" };
         assert_eq!(a.plan(Some("claude-code"), None).render(&v),
-            vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
+            vec!["claude", "-p", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
         let resumed = a.plan(Some("claude-code"), Some("S1")).render(&v);
         assert!(resumed.windows(4).any(|w| w == ["--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms"]));
         // without a config the pair is dropped but strict stays: the ask gets no MCP at all
@@ -407,6 +444,29 @@ new = ["codex2", "{prompt}"]
     }
 
     #[test]
+    fn continuing_needs_a_continue_template_and_a_session_rule() {
+        let (_d, p) = tmp(None);
+        let a = AgentProfiles::load(&p).unwrap();
+        let claude = a.continuing(&a.plan(Some("claude-code"), Some("S1"))).unwrap();
+        assert_eq!((claude.mode, claude.models.len()), (AskMode::Continue, 3));
+        assert_eq!(claude.render(&with_model("opus"))[..6], ["claude", "-p", "--model", "opus", "--resume", "S1"]);
+        assert!(!claude.render(&vars("Q")).contains(&"--fork-session".to_string()));
+        assert!(claude.prompt_on_stdin());
+        // from a new conversation too
+        assert_eq!(a.continuing(&a.plan(Some("claude-code"), None)).unwrap().mode, AskMode::Continue);
+        assert_eq!(a.continuing(&a.plan(Some("codex"), None)).unwrap().render(&vars("Q")),
+            vec!["codex", "exec", "resume", "S1", "-c", "sandbox_mode=\"read-only\"", "--skip-git-repo-check", "--json", "-"]);
+        assert!(a.continuing(&a.plan(Some("aside"), Some("S1"))).is_none());
+        // a continue template without a rule that reads the session id is never used
+        let (_d, p) = tmp(Some("[agents.x]\nnew = [\"x\", \"{prompt}\"]\ncontinue = [\"x\", \"{session}\", \"{prompt}\"]\n"));
+        let a = AgentProfiles::load(&p).unwrap();
+        assert!(a.continuing(&a.plan(Some("x"), None)).is_none());
+        let (_d, p) = tmp(Some("[agents.x]\nnew = [\"x\", \"{prompt}\"]\ncontinue = [\"x\", \"{session}\", \"{prompt}\"]\n[[agents.x.events]]\nsession = \"/id\"\n"));
+        let a = AgentProfiles::load(&p).unwrap();
+        assert_eq!(a.continuing(&a.plan(Some("x"), None)).unwrap().render(&vars("Q")), vec!["x", "S1", "Q"]);
+    }
+
+    #[test]
     fn invalid_configs_are_errors() {
         for (text, needle) in [
             ("default = [", "agents.toml"),
@@ -414,6 +474,8 @@ new = ["codex2", "{prompt}"]
             ("[agents.x]\nnew = []", "agents.x.new"),
             ("[agents.x]\nnew = [\"{prompt}\"]", "agents.x.new"),
             ("[agents.x]\nnew = [\"a\"]\nresume = []", "agents.x.resume"),
+            ("[agents.x]\nnew = [\"a\"]\ncontinue = [\"{session}\"]", "agents.x.continue"),
+            ("[agents.x]\nnew = [\"a\", \"-m\", \"{model}\"]\ncontinue = [\"a\", \"-m{model}\"]\nmodels = [\"m\"]", "whole element"),
             ("default = \"nope\"", "nope"),
             ("[agents.x]\nnew = [\"a\"]\nmodels = [\"--evil\"]", "agents.x.models"),
             ("[agents.x]\nnew = [\"a\"]\nmodels = [\"\"]", "agents.x.models"),
@@ -476,9 +538,9 @@ new = ["codex2", "{prompt}"]
         let codex = a.plan(Some("codex"), Some("S1"));
         assert_eq!(codex.models, vec!["gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol"]);
         assert_eq!(codex.render(&with_model("gpt-6-sol")),
-            vec!["codex", "exec", "fork", "S1", "-m", "gpt-6-sol", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
+            vec!["codex", "exec", "fork", "S1", "-m", "gpt-6-sol", "-c", "sandbox_mode=\"read-only\"", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("codex"), None).render(&with_model("gpt-6-luna")),
-            vec!["codex", "exec", "-m", "gpt-6-luna", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
+            vec!["codex", "exec", "-m", "gpt-6-luna", "-s", "read-only", "--skip-git-repo-check", "--json", "-"]);
         let aside_new = a.plan(Some("aside"), None);
         assert_eq!(aside_new.models, vec!["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]);
         assert_eq!(aside_new.render(&with_model("claude-haiku-4-5")), vec!["aside", "exec", "-m", "claude-haiku-4-5", "Q"]);

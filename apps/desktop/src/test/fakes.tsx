@@ -172,7 +172,7 @@ export function fakeClient(
         id: `ask-${question}`, scope: req.scope, question, answer: "", agent: a.source.agent ?? "claude-code",
         model: req.model, mode: a.source.session ? "resume" : "new", status: kind === "clear" ? "done" : "running", error: null,
         startedAt: "2026-10-06T10:00:00+09:00", endedAt: kind === "clear" ? "2026-10-06T10:00:00+09:00" : null,
-        images: kind === "question" ? (req.images ?? []) : [], kind, leftOut: 0,
+        images: kind === "question" ? (req.images ?? []) : [], kind, leftOut: 0, session: null,
       };
     }),
     uploadAskImage: vi.fn(async (image: Blob) => ({ id: `img-${(image as File).name ?? "blob"}` })),

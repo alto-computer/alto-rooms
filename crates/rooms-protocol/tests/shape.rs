@@ -63,7 +63,7 @@ fn ask_events_are_camel_and_tagged() {
         id: "a1".into(), scope: AskScope::Doc { file_key: "0123456789abcdef".into() }, question: "q".into(), answer: "".into(),
         agent: "claude-code".into(), model: None, mode: AskMode::Resume, status: AskStatus::Running,
         error: None, started_at: "2026-10-06T10:00:00+09:00".into(), ended_at: None, images: vec![],
-        kind: AskKind::Question, left_out: 0,
+        kind: AskKind::Question, left_out: 0, session: None,
     };
     let v = serde_json::to_value(&RoomsEvent { seq: 3, kind: EventKind::AskStarted { turn: turn.clone() } }).unwrap();
     assert_eq!(v["type"], "ask.started");
@@ -77,6 +77,8 @@ fn ask_events_are_camel_and_tagged() {
     assert_eq!((&s.scope, s.question.as_str(), s.model), (&AskScope::Doc { file_key: "k".into() }, "hi", None));
     assert_eq!(v["turn"]["kind"], "question");
     assert_eq!(v["turn"]["leftOut"], 0);
+    assert_eq!(v["turn"]["session"], serde_json::Value::Null);
+    assert_eq!(serde_json::to_value(AskMode::Continue).unwrap(), "continue");
     let c: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"doc","fileKey":"k"},"question":"","kind":"compact"}"#).unwrap();
     assert_eq!(c.kind, Some(AskKind::Compact));
     // records written before kinds existed read back as questions

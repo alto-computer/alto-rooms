@@ -16,8 +16,8 @@ use crate::rules::{slug_key, valid_room_id, validate_iso_date};
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
-use prompt::{build_prompt, context, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
-use rooms_protocol::{Artifact, AskKind, AskScope, AskStatus, AskTarget, AskTurn, EventKind, JOURNAL_ROOM_ID};
+use prompt::{build_prompt, chain_head, context, valid_file_key, valid_ident, with_image_paths, Context, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
+use rooms_protocol::{Artifact, AskKind, AskMode, AskScope, AskStatus, AskTarget, AskTurn, EventKind, JOURNAL_ROOM_ID};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
 use std::collections::HashMap;
@@ -45,6 +45,26 @@ fn read_answer(rules: &[EventRule], stdout: &[u8]) -> String {
     r.finish();
     if r.saw_json() { run::clean_output(r.text().as_bytes()) } else { run::clean_output(stdout) }
 }
+
+/// The session id a `session` rule read from `stdout`, if it is safe to pass back as an argument.
+fn read_session(rules: &[EventRule], stdout: &[u8]) -> Option<String> {
+    if !rules.iter().any(|r| r.session.is_some()) { return None; }
+    let mut r = Reader::new(rules);
+    r.push(stdout);
+    r.finish();
+    r.session().filter(|s| valid_ident(s)).map(str::to_string)
+}
+
+fn stdout_of(o: &Outcome) -> &str {
+    match o { Outcome::Exited { stdout, .. } | Outcome::Killed { stdout, .. } => stdout }
+}
+
+/// One run of the agent: its argv, and the prompt on stdin when the template has no `{prompt}`.
+struct Invocation { argv: Vec<String>, stdin: Option<String> }
+
+/// What a continued session that is gone is asked instead: the thread's first question again,
+/// with the earlier Q&A sent along.
+struct Fallback { run: Invocation, mode: AskMode, left_out: u32 }
 
 /// A scope as one string, `doc:<fileKey>`, `room:<roomId>` or `day:<YYYY-MM-DD>`: what
 /// `GET /v1/asks?scope=` takes and what the app keys its threads by.
@@ -282,7 +302,15 @@ impl Asks {
     /// Blocking, like `start`: what the ask bar shows before the first question.
     pub fn target(&self, scope: &AskScope) -> Result<AskTarget, AskError> {
         let r = self.resolve(scope)?;
-        Ok(AskTarget { agent: r.plan.agent, mode: r.plan.mode, models: r.plan.models })
+        let prior = self.thread(scope)?;
+        let plan = Self::continuing(&r, &prior).map_or(r.plan, |(p, _)| p);
+        Ok(AskTarget { agent: plan.agent, mode: plan.mode, models: plan.models })
+    }
+
+    /// The plan that continues the session this thread's agent last ran in, and that session's id.
+    fn continuing(r: &Resolved, prior: &[AskTurn]) -> Option<(Plan, String)> {
+        let head = chain_head(prior, &r.plan.agent)?;
+        Some((r.profiles.continuing(&r.plan)?, head.to_string()))
     }
 
     /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
@@ -305,38 +333,50 @@ impl Asks {
         let _rt = self.0.rt.as_ref().map(|h| h.enter());
         let question = req.text()?;
         let image_paths = self.image_paths(req.images())?;
-        let Resolved { artifact, file_abs, profiles, plan, session, cwd } = self.resolve(scope)?;
+        let resolved = self.resolve(scope)?;
         let model = req.model.filter(|m| !m.is_empty());
+        let running = self.reserve(scope)?;
+        let prior = self.read_thread(&running, scope)?;
+        let continuing = Self::continuing(&resolved, &prior);
+        let Resolved { artifact, file_abs, profiles, plan: first, session, cwd } = resolved;
+        let plan = continuing.as_ref().map_or(&first, |(p, _)| p);
         if let Some(m) = model.filter(|m| !plan.models.iter().any(|x| x == m)) {
             return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
         }
 
-        let running = self.reserve(scope)?;
-        let prior = self.read_thread(&running, scope)?;
-        let ctx = context(&prior, if plan.prompt_on_stdin() { PRIOR_CHARS_STDIN } else { PRIOR_CHARS_ARGV });
+        let ctx = context(&prior, if first.prompt_on_stdin() { PRIOR_CHARS_STDIN } else { PRIOR_CHARS_ARGV });
         if req.kind != AskKind::Question && ctx.is_empty() {
             return Err(AskError::BadRequest(if req.kind == AskKind::Clear { "Nothing to clear yet" } else { "Nothing to summarize yet" }.into()));
         }
         let turn = AskTurn {
             id: nanoid::nanoid!(16), scope: scope.clone(), question: question.to_string(), answer: String::new(),
             agent: plan.agent.clone(), model: model.map(str::to_string), mode: plan.mode, status: AskStatus::Running, error: None,
-            started_at: now(), ended_at: None, images: req.images().to_vec(), kind: req.kind, left_out: ctx.left_out as u32,
+            started_at: now(), ended_at: None, images: req.images().to_vec(), kind: req.kind,
+            left_out: if continuing.is_some() { 0 } else { ctx.left_out as u32 }, session: continuing.as_ref().map(|(_, s)| s.clone()),
         };
         if req.kind == AskKind::Clear { return self.record_clear(running, turn); }
 
         let (file_s, cwd_s) = (file_abs.to_string_lossy().into_owned(), cwd.to_string_lossy().into_owned());
         let asked = if req.kind == AskKind::Compact { COMPACT_ASK.to_string() } else { with_image_paths(question, &image_paths) };
-        let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, &ctx, &asked);
         let image_dir = if image_paths.is_empty() { String::new() } else { self.0.images.dir().to_string_lossy().into_owned() };
         // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
         let mcp = self.0.core.home().join(".rooms/mcp.json");
         let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
-        let stdin = plan.prompt_on_stdin();
-        let argv = plan.render(&Vars {
-            prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
-            model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir,
-        });
-        self.launch(running, turn, argv, stdin.then_some(prompt), cwd, plan.events)
+        let invocation = |plan: &Plan, session: &str, ctx: &Context| {
+            let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, &artifact.file_key, ctx, &asked);
+            let stdin = plan.prompt_on_stdin();
+            let argv = plan.render(&Vars {
+                prompt: if stdin { "" } else { &prompt }, session, file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
+                model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir,
+            });
+            Invocation { argv, stdin: stdin.then_some(prompt) }
+        };
+        let first_run = || invocation(&first, session.as_deref().unwrap_or(""), &ctx);
+        let (run, fallback) = match &continuing {
+            Some((plan, head)) => (invocation(plan, head, &Context::default()), Some(Fallback { run: first_run(), mode: first.mode, left_out: ctx.left_out as u32 })),
+            None => (first_run(), None),
+        };
+        self.launch(running, turn, run, fallback, cwd, first.events)
     }
 
     /// The stored files for `ids`; an unknown id is the user's to fix.
@@ -362,6 +402,7 @@ impl Asks {
     /// `/new`: nothing runs; the turn is recorded done, and the next question starts over.
     fn record_clear(&self, running: MutexGuard<'_, HashMap<String, Entry>>, mut turn: AskTurn) -> Result<AskTurn, AskError> {
         turn.status = AskStatus::Done;
+        turn.session = None;
         turn.ended_at = Some(now());
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
         drop(running);
@@ -369,39 +410,60 @@ impl Asks {
         Ok(turn)
     }
 
-    /// Records `turn`, runs `argv` (with `stdin` as its input, if any), relays its progress, and
-    /// finishes the turn when it ends.
-    fn launch(&self, mut running: MutexGuard<'_, HashMap<String, Entry>>, turn: AskTurn, argv: Vec<String>, stdin: Option<String>, cwd: PathBuf, rules: Vec<EventRule>) -> Result<AskTurn, AskError> {
+    /// Records `turn`, runs it, relays its progress, and finishes the turn when it ends.
+    fn launch(&self, running: MutexGuard<'_, HashMap<String, Entry>>, turn: AskTurn, run: Invocation, fallback: Option<Fallback>, cwd: PathBuf, rules: Vec<EventRule>) -> Result<AskTurn, AskError> {
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
         self.0.core.emit_ask(EventKind::AskStarted { turn: turn.clone() });
+        self.run(running, turn.clone(), run, fallback, cwd, rules);
+        Ok(turn)
+    }
+
+    /// Runs `run` for `turn` (with its prompt on stdin, if any). A continued session that fails
+    /// without a word, as when the agent no longer has it, is asked as `fallback` once instead.
+    fn run(&self, mut running: MutexGuard<'_, HashMap<String, Entry>>, turn: AskTurn, run: Invocation, fallback: Option<Fallback>, cwd: PathBuf, rules: Vec<EventRule>) {
         let (tap, chunks) = tokio::sync::mpsc::unbounded_channel();
         let mut limits = self.0.limits;
         if !rules.is_empty() { limits.max_stdout = limits.max_stdout.saturating_mul(JSON_STDOUT_FACTOR); }
-        match spawn_agent(SpawnSpec { argv: argv.clone(), stdin, cwd, path_env: self.0.login_path.get().cloned(), limits, tap: Some(tap) }) {
+        let program = run.argv[0].clone();
+        match spawn_agent(SpawnSpec { argv: run.argv, stdin: run.stdin, cwd: cwd.clone(), path_env: self.0.login_path.get().cloned(), limits, tap: Some(tap) }) {
             Err(e) => {
                 drop(running);
                 let msg = if e.kind() == std::io::ErrorKind::NotFound {
-                    format!("Command not found: {} — settings: {}", argv[0], self.config_path().display())
+                    format!("Command not found: {program} — settings: {}", self.config_path().display())
                 } else {
-                    format!("Couldn't run {} ({e})", argv[0])
+                    format!("Couldn't run {program} ({e})")
                 };
-                self.finish(turn.clone(), AskStatus::Failed, String::new(), Some(msg));
+                self.finish(turn, AskStatus::Failed, String::new(), Some(msg));
             }
             Ok(Running { killer, done }) => {
                 running.insert(turn.id.clone(), Entry { scope: turn.scope.clone(), killer });
                 drop(running);
                 self.relay_progress(&turn, rules.clone(), chunks);
-                let (me, t) = (self.clone(), turn.clone());
+                let me = self.clone();
                 tokio::spawn(async move {
+                    let mut t = turn;
                     let (status, answer, error) = match done.await {
-                        Ok(outcome) => turn_end(&t.agent, &rules, outcome),
+                        Ok(outcome) => {
+                            let session = read_session(&rules, stdout_of(&outcome).as_bytes());
+                            let error_exit = matches!(outcome, Outcome::Exited { code, .. } if code != 0);
+                            let end = turn_end(&t.agent, &rules, outcome);
+                            if let Some(fb) = fallback.filter(|_| error_exit && end.1.is_empty() && session.is_none()) {
+                                let running = lock(&me.0.running);
+                                // Still ours to run: not stopped by a shutdown meanwhile.
+                                if !me.0.shutting_down.load(Ordering::SeqCst) {
+                                    (t.mode, t.left_out, t.session) = (fb.mode, fb.left_out, None);
+                                    return me.run(running, t, fb.run, None, cwd, rules);
+                                }
+                            }
+                            if session.is_some() { t.session = session; }
+                            end
+                        }
                         Err(_) => (AskStatus::Failed, String::new(), Some("Internal error".into())),
                     };
                     me.finish(t, status, answer, error);
                 });
             }
         }
-        Ok(turn)
     }
 
     /// Reads stdout chunks as they come and emits `ask.progress` with the answer so far, at most

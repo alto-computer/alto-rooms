@@ -153,7 +153,14 @@ pub enum AskStatus { Running, Done, Failed, Cancelled }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
-pub enum AskMode { Resume, New }
+pub enum AskMode {
+    /// A fork of the conversation that made the doc.
+    Resume,
+    /// A fresh conversation: that one couldn't be found.
+    New,
+    /// The agent session an earlier question in this thread started (`AskTurn::session`).
+    Continue,
+}
 
 /// What a turn is: a question, or a command typed in the ask bar (`/new`, `/compact`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
@@ -205,6 +212,10 @@ pub struct AskTurn {
     /// Earlier answers in this conversation that were too many or too long to send along.
     #[serde(default)]
     pub left_out: u32,
+    /// The agent's own session this turn ran in, read from its output; the next question
+    /// continues it. `None` when the profile doesn't say how to read it.
+    #[serde(default)]
+    pub session: Option<String>,
 });
 
 wire!(
