@@ -62,9 +62,13 @@ function useNoteText(note: Note): string | null {
   return text;
 }
 
-/** The first few lines of a note as they read: bullets as a list, the rest as paragraphs. */
+/** Lines of a note the day shows; past them, an ellipsis says there is more and the note's tab has it. */
+const NOTE_LINES = 6;
+
+/** The first few lines of a note as they read: bullets as a list, the rest as paragraphs, then "…" if it goes on. */
 function NoteText({ text }: { text: string }) {
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 6);
+  const all = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = all.slice(0, NOTE_LINES);
   const blocks: ({ list: string[] } | { para: string })[] = [];
   for (const l of lines) {
     const item = /^[-*+]\s+(.*)$/.exec(l)?.[1];
@@ -87,6 +91,12 @@ function NoteText({ text }: { text: string }) {
         {b.para}
       </p>
     ),
+  ).concat(
+    all.length > lines.length ? (
+      <p key="more" aria-label={`${all.length - lines.length} more lines`} className="mt-1 text-ink-3">
+        …
+      </p>
+    ) : [],
   );
 }
 
@@ -111,7 +121,7 @@ function NoteEntry({ note }: { note: Note }) {
     >
       <h3 className="font-serif text-heading leading-6 font-semibold text-ink">{name}</h3>
       {text ? (
-        <div className="max-w-[60ch] font-serif text-lead leading-[1.6] text-ink-2">
+        <div className="max-w-[60ch] font-serif text-lead leading-[1.6] break-keep text-ink-2">
           <NoteText text={text} />
         </div>
       ) : null}
