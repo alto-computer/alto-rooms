@@ -1,5 +1,5 @@
 import { RoomsApiError, type Artifact } from "@alto-rooms/protocol-ts";
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { ViewerStore } from "@/data/viewerStore";
@@ -277,6 +277,85 @@ describe("Sidebar: pinned rooms", () => {
     await act(async () => void fireEvent.keyDown(p3, { code: "Escape" }));
     expect(marked()).toEqual([]);
     expect(p3).not.toHaveClass("invisible");
+  });
+});
+
+describe("Sidebar: room menu", () => {
+  const rooms = () => [
+    room("inbox", "Inbox"),
+    room("p1", "P1", { color: "sage" }),
+    room("p2", "P2", { color: "dusk" }),
+    room("p3", "P3", { color: "sage" }),
+    room("a", "A"),
+  ];
+  const openMenu = (name: string) => fireEvent.contextMenu(screen.getByRole("button", { name }));
+  const openColours = async () => {
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Colour" }));
+    return within(await screen.findByRole("menu", { name: "Colour" }));
+  };
+  const choice = (menu: ReturnType<typeof within>, name: string) => menu.getByRole("menuitemradio", { name: new RegExp(`^${name}`) });
+
+  it("offers None and the eight colours by name, with the current one checked and who uses each", async () => {
+    await renderWithStores(<AppShell />, { rooms: rooms() });
+    openMenu("P1");
+    const menu = await openColours();
+    expect(menu.getAllByRole("menuitemradio").map((i) => i.textContent)).toEqual([
+      "NoneNot pinned",
+      "Rose",
+      "Clay",
+      "Oat",
+      "SageP3",
+      "Sea",
+      "DuskP2",
+      "Lilac",
+      "Stone",
+    ]);
+    expect(choice(menu, "Sage")).toHaveAttribute("aria-checked", "true");
+    expect(menu.getAllByRole("menuitemradio").filter((i) => i.getAttribute("aria-checked") === "true")).toHaveLength(1);
+  });
+
+  it("picking a colour pins the room, and the sidebar follows the core", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: rooms() });
+    openMenu("A");
+    const menu = await openColours();
+    expect(choice(menu, "None")).toHaveAttribute("aria-checked", "true");
+    expect(menu.getByText("Picking a colour pins this room.")).toBeInTheDocument();
+    await act(async () => void fireEvent.click(choice(menu, "Rose")));
+    expect(h.client.setRoomColor).toHaveBeenCalledWith("a", "rose");
+    act(() => {
+      h.emit({ type: "room.updated", room: room("a", "A", { color: "rose" }) });
+      h.emit({ type: "rooms.reordered", roomIds: ["inbox", "p1", "p2", "p3", "a"] });
+    });
+    const pinned = within(screen.getByRole("list", { name: "Pinned" }));
+    expect(pinned.getAllByRole("button").map((b) => b.textContent)).toEqual(["P1", "P2", "P3", "A"]);
+    expect(pinned.getByRole("button", { name: "A" }).querySelector("[data-tint]")).toHaveAttribute("data-tint", "rose");
+  });
+
+  it("None unpins a pinned room", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: rooms() });
+    openMenu("P2");
+    const menu = await openColours();
+    expect(menu.getByText("None unpins this room.")).toBeInTheDocument();
+    await act(async () => void fireEvent.click(choice(menu, "None")));
+    expect(h.client.setRoomColor).toHaveBeenCalledWith("p2", null);
+  });
+
+  it("Open in New Tab and Rename… do what they say", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: rooms() });
+    openMenu("A");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open in New Tab" }));
+    expect(h.viewer.getState().tabs.map((t) => (t.kind === "room" ? t.roomId : t.kind))).toEqual(["new", "a"]);
+    openMenu("A");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Room name" })).toHaveFocus());
+  });
+
+  it("read-only: no Colour and no Rename", async () => {
+    await renderWithStores(<AppShell />, { rooms: rooms(), readOnly: true });
+    openMenu("A");
+    expect(await screen.findByRole("menuitem", { name: "Open in New Tab" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Colour" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Rename…" })).toBeNull();
   });
 });
 

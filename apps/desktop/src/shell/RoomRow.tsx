@@ -10,6 +10,7 @@ import { carriesArtifact, draggingFromRoom, endArtifactDrag, readArtifactPayload
 import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { EditableTitle } from "@/views/EditableTitle";
+import { RoomMenu } from "./RoomMenu";
 import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE } from "./sidebarItem";
 
 /** Drop handlers for a room row that accepts artifacts; `over` drives the highlight. */
@@ -45,7 +46,7 @@ function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomI
   };
 }
 
-/** A room in the sidebar list: opens on click, renames on double click, sorts by drag, and takes dropped docs. */
+/** A room in the sidebar list: opens on click, renames on double click, sorts by drag, takes dropped artifacts, and has a menu on right-click. */
 export function RoomRow({
   room,
   active,
@@ -108,6 +109,8 @@ export function RoomRow({
         ITEM,
         ITEM_INTERACTIVE,
         active && ITEM_CURRENT,
+        // The row whose menu is open (Radix sets data-state on the context menu trigger).
+        "data-[state=open]:ring-[1.5px] data-[state=open]:ring-ink/40 data-[state=open]:ring-inset",
         drop.over && "bg-surface-strong outline-1 -outline-offset-1 outline-ink outline-solid hover:bg-surface-strong",
         // While carried the row is the gap where it would land; the lifted copy follows the pointer (RoomList).
         sort.isDragging && "invisible",
@@ -127,11 +130,15 @@ export function RoomRow({
       {sort.isDragging ? <ThreadLine /> : null}
       {unavailable ? (
         <Tooltip>
-          <TooltipTrigger asChild>{row}</TooltipTrigger>
+          <RoomMenu room={room} readOnly={readOnly} onRename={() => setEditing(true)}>
+            <TooltipTrigger asChild>{row}</TooltipTrigger>
+          </RoomMenu>
           <TooltipContent side="right">Folder not found</TooltipContent>
         </Tooltip>
       ) : (
-        row
+        <RoomMenu room={room} readOnly={readOnly} onRename={() => setEditing(true)}>
+          {row}
+        </RoomMenu>
       )}
     </li>
   );
