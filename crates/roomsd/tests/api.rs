@@ -251,10 +251,9 @@ async fn doc_variant_injects_bridge_then_content_scripts() {
     assert_eq!(tags, format!("{}{}{}{}", tag("alpha", "content.js"), tag("alpha", "lib/more.js"), tag("marker", "content.js"), tag("marker", "lib/more.js")));
     assert_eq!(std::fs::read_to_string(d.path().join("a/x.html")).unwrap(), DOC, "the file on disk is unchanged");
 
-    // A non-HTML file is served as is, whatever the query says.
     std::fs::write(d.path().join("a/x.svg"), "<svg/>").unwrap();
     let r = files.oneshot(get(&format!("/{}/x.svg?doc=1", room.id), FILES_HOST)).await.unwrap();
-    assert_eq!(text(r).await, "<svg/>");
+    assert_eq!(text(r).await, "<svg/>", "a non-HTML file is served as is, whatever the query says");
 }
 
 #[tokio::test]
@@ -302,10 +301,9 @@ async fn doc_etag_changes_when_a_content_plugin_toggles() {
     assert!(text(on).await.contains("_plugins/marker/content.js"));
     assert_eq!(fetch(Some(on_tag.clone())).await.unwrap().status(), StatusCode::NOT_MODIFIED);
 
-    // An edited content script changes the plugin's rev, so the tag's `?r=` and the ETag move too.
     std::fs::write(d.path().join(".rooms/plugins/marker/content.js"), "mark(); mark()").unwrap();
     let edited = fetch(Some(on_tag.clone())).await.unwrap();
-    assert_eq!(edited.status(), StatusCode::OK);
+    assert_eq!(edited.status(), StatusCode::OK, "an edited content script changes the rev, so the tag misses");
     assert_ne!(etag(&edited), on_tag);
     assert!(text(edited).await.contains(&format!("content.js?r={}", rev_of(&st, "marker"))));
 

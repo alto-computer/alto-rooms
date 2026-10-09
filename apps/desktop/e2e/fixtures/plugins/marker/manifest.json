@@ -1,0 +1,9 @@
+{
+  "id": "marker",
+  "name": "Marker",
+  "version": "0.1.0",
+  "minAppVersion": "0.1.0",
+  "description": "Marks every document it runs in. Used by the end-to-end tests.",
+  "permissions": ["artifact.content"],
+  "contentScripts": ["content.js"]
+}
