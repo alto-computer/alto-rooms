@@ -1,11 +1,9 @@
-import { useSyncExternalStore } from "react";
-import { ChevronDown, Contrast, House, Moon, Sun, type LucideIcon } from "lucide-react";
+import { ChevronDown, Contrast, Moon, Sun, type LucideIcon } from "lucide-react";
 import { DropdownMenu as MenuPrimitive } from "radix-ui";
 import { PeekGlyph } from "@/components/PeekGlyph";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useViewer, useViewerStore } from "@/data/hooks";
-import { DARK_QUERY, isAppearance, type Appearance } from "@/lib/appearance";
-import { wantsNewTab } from "@/lib/nav";
+import { isAppearance, type Appearance } from "@/lib/appearance";
 
 const OPTIONS: { value: Appearance; label: string; Icon: LucideIcon }[] = [
   { value: "system", label: "System", Icon: Contrast },
@@ -13,18 +11,10 @@ const OPTIONS: { value: Appearance; label: string; Icon: LucideIcon }[] = [
   { value: "dark", label: "Dark", Icon: Moon },
 ];
 
-const subscribeScheme = (onChange: () => void) => {
-  const media = window.matchMedia(DARK_QUERY);
-  media.addEventListener("change", onChange);
-  return () => media.removeEventListener("change", onChange);
-};
-const systemIsDark = () => window.matchMedia(DARK_QUERY).matches;
-
-/** The brand row ("Rooms ▾"): opens the app menu, with Appearance first. */
+/** The brand row ("Rooms ▾"): opens the app menu, which holds Appearance. */
 export function BrandMenu() {
   const viewer = useViewerStore();
   const { appearance } = useViewer();
-  const systemDark = useSyncExternalStore(subscribeScheme, systemIsDark);
 
   return (
     <DropdownMenu>
@@ -54,15 +44,6 @@ export function BrandMenu() {
             </MenuPrimitive.RadioItem>
           ))}
         </MenuPrimitive.RadioGroup>
-        {appearance === "system" ? (
-          <p className="px-2 pt-2 pb-1 text-caption text-ink-3">Follows macOS, which is {systemDark ? "dark" : "light"} right now.</p>
-        ) : null}
-        <DropdownMenuSeparator className="mx-2 my-1.5 bg-hairline" />
-        {/* Browser style: home (today's Journal) replaces this tab; ⌘-click opens it in a new one. */}
-        <DropdownMenuItem onClick={(e) => viewer.go(viewer.home(), wantsNewTab(e))} className="h-7 py-0 [&_svg]:text-ink-2">
-          <House size={14} strokeWidth={1.5} aria-hidden />
-          Home
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

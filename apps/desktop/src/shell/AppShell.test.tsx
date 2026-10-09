@@ -207,24 +207,6 @@ describe("AppShell: tabs", () => {
     expect(h.viewer.getState().tabs).toHaveLength(1);
   });
 
-  it("Home in the Rooms menu takes the current tab home; ⌘-click opens home in a new tab", async () => {
-    await renderWithStores(<AppShell />, { rooms: twoRooms });
-    const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
-    const home = async () => {
-      fireEvent.keyDown(screen.getByRole("button", { name: "Rooms" }), { key: "Enter" });
-      return screen.findByRole("menuitem", { name: "Home" });
-    };
-    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
-    expect(tabNames()).toEqual(["벤치마크"]);
-    fireEvent.click(await home());
-    expect(tabNames()).toEqual([HOME]);
-    expect(screen.getByRole("button", { name: "Back (⌘[)" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
-    fireEvent.click(await home(), { metaKey: true });
-    expect(tabNames()).toEqual(["벤치마크", HOME]);
-    expect(activeTab()).toHaveTextContent(HOME);
-  });
-
   it("Space picks a tab up, arrows move it, Space drops it", async () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });

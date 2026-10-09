@@ -49,19 +49,6 @@ test("dragging a tab reorders the tab bar and activates the dragged tab", async 
   await expect.poll(() => tabNames(page)).toEqual(["Alpha", "Beta", "Gamma"]);
 });
 
-test("Home in the Rooms menu turns this tab into today's Journal", async ({ page, daemon }) => {
-  await daemon.createRoom("Alpha");
-  await page.goto("/");
-  await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "Alpha" }).click();
-  await expect(tab(page, "Alpha")).toHaveAttribute("aria-selected", "true");
-
-  await page.getByRole("button", { name: "Rooms", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Home" }).click();
-  await expect(tab(page, HOME)).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("region", { name: "Today" })).toBeVisible();
-  await expect(tabs(page)).toHaveCount(1); // replaced in place, not a second tab
-});
-
 test("⌘⇧T reopens the last closed tab where it was", async ({ page, daemon }) => {
   await openRoomTabs(page, daemon);
   await tab(page, "Beta").click();

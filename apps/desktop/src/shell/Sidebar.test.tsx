@@ -465,7 +465,7 @@ describe("Sidebar: unread rooms", () => {
 describe("Sidebar: Rooms menu", () => {
   const openMenu = () => fireEvent.keyDown(screen.getByRole("button", { name: "Rooms" }), { key: "Enter" });
 
-  it("offers System, Light and Dark, defaulting to System and saying what System resolves to", async () => {
+  it("offers System, Light and Dark, defaulting to System, and nothing else", async () => {
     await renderWithStores(<AppShell />, { rooms: [room("a", "A")] });
     openMenu();
     const group = await screen.findByRole("group", { name: "Appearance" });
@@ -474,7 +474,8 @@ describe("Sidebar: Rooms menu", () => {
       ["Light", "false"],
       ["Dark", "false"],
     ]);
-    expect(screen.getByText("Follows macOS, which is light right now.")).toBeInTheDocument();
+    expect(screen.queryByText(/Follows macOS/)).toBeNull();
+    expect(screen.queryByRole("menuitem")).toBeNull();
   });
 
   it("picking Dark saves it and keeps the menu open", async () => {
@@ -484,6 +485,5 @@ describe("Sidebar: Rooms menu", () => {
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "Dark" }));
     expect(viewer.getState().appearance).toBe("dark");
     expect(screen.getByRole("menuitemradio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.queryByText(/Follows macOS/)).toBeNull();
   });
 });
