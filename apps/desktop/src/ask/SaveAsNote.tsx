@@ -3,7 +3,7 @@ import { NotebookPen } from "lucide-react";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useClient, useRoomsStore, useViewerStore, type RoomsClient } from "@/data/hooks";
 import { GENERIC_ERROR, noteNameErrorCopy } from "@/lib/errors";
-import { freeNoteNames, noteFileName, noteNameFromQuestion } from "@/lib/notes";
+import { freeNoteNames, MAX_QUESTION_NAME, noteFileName, noteNameFromQuestion } from "@/lib/notes";
 import type { NoteTargetOf } from "./askSubjects";
 import { splitQuotes } from "./quotes";
 import { ErrorText, TextButton } from "./ui";
@@ -120,7 +120,7 @@ function NameForm({ name, error, saving, onChange, onSave, onCancel }: {
         ref={input}
         aria-label="Note name"
         value={name}
-        maxLength={55}
+        maxLength={MAX_QUESTION_NAME}
         readOnly={saving}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {

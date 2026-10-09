@@ -64,10 +64,7 @@ function Divider({ children }: { children: string }) {
   );
 }
 
-/**
- * A question and its answer: streaming in with what the agent is doing, then whole, stopped, or
- * failed with Retry. Only a whole answer can be saved as a note, never one cut short.
- */
+/** A question and its answer: streaming in with what the agent is doing, then whole, stopped, or failed with Retry. */
 function QuestionTurn({ t, live, noteTarget, onRetry }: { t: AskTurn; live?: Live; noteTarget: NoteTargetOf | null; onRetry: (t: AskTurn) => void }) {
   const running = t.status === "running";
   const answer = running ? live?.answer : t.answer;

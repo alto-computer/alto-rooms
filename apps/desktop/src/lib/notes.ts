@@ -46,10 +46,10 @@ export function firstNewNoteNames(notes: readonly Note[], count: number): string
   return out;
 }
 
-/** Longest name made from a question: roomsd allows 60 characters, which leaves room for " (2)". */
-const MAX_QUESTION_NAME = 55;
+/** Longest name a saved answer starts with: roomsd allows 60 characters, which leaves room for " (2)". */
+export const MAX_QUESTION_NAME = 55;
 /** The name of a saved answer whose question leaves nothing usable. */
-export const ANSWER_NOTE = "Answer";
+const ANSWER_NOTE = "Answer";
 
 /** At most `max` characters of `s`, cut at the last space when there is one. */
 function cutAtWord(s: string, max: number): string {
