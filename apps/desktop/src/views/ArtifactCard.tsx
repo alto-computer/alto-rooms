@@ -1,113 +1,39 @@
-import { memo, useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { memo, type KeyboardEvent } from "react";
 import type { Artifact, Info } from "@alto-rooms/protocol-ts";
 import { Maximize2 } from "lucide-react";
-import { useClient } from "@/data/hooks";
+import { Dotted } from "@/components/Dotted";
 import { artifactDragSource } from "@/lib/drag";
+import { shortAge } from "@/lib/dates";
 import { wantsNewTab } from "@/lib/nav";
-import { cn } from "@/lib/utils";
-import { useLiveFrame } from "@/lib/liveFrames";
-import { useLoadSlot } from "@/lib/loadSlots";
-import { useLingering } from "@/lib/useLingering";
-import { DocSkeleton } from "./DocSkeleton";
-
-/** Previews are laid out at this width, then scaled down to the page box. */
-const LAYOUT_WIDTH = 1280;
-/** A preview stays loaded this long after its card scrolls out of range, so scrolling back and forth doesn't reload it. */
-const UNLOAD_DELAY_MS = 2000;
-
-const SIZES = {
-  // Room grid: 300 wide with a 420 page. Hover only raises the hovered card (shadow and
-  // a darker hairline); it never resizes a card, which would reflow the grid.
-  strip: {
-    card: "w-[300px]",
-    page: "h-[420px] transition-[box-shadow,border-color] duration-200 ease-out group-hover/card:border-hairline-strong group-hover/card:shadow-float group-focus-within/card:shadow-float motion-reduce:transition-none",
-    expand: "top-3 right-3 size-9",
-    label: "font-mono text-small text-ink-3",
-    // Inner page box (inside the 1px border) before it is measured.
-    fallback: { w: 298, h: 418 },
-  },
-  // Journal row: 220 wide, page 250.
-  journal: {
-    card: "w-[220px]",
-    page: "h-[250px] transition-shadow duration-200 group-hover/card:shadow-float group-focus-within/card:shadow-float",
-    expand: "top-2.5 right-2.5 size-[34px]",
-    label: "text-small text-ink-3",
-    fallback: { w: 218, h: 248 },
-  },
-} as const;
+import { ArtifactThumb } from "./ArtifactThumb";
 
 export type ArtifactCardProps = {
   artifact: Artifact;
   info: Info;
-  /** Date text (`Today` / `MM·DD`) in the strip, or a room name in the journal. */
-  label: string;
   isNew: boolean;
-  size: "strip" | "journal";
-  /** Opens the document: here, or in a new tab (⌘/middle click, or the expand button). Pass a stable function: cards are memoized. */
+  /** Opens the artifact: here, or in a new tab (⌘/middle click, or the expand button). Pass a stable function: cards are memoized. */
   onOpen: (artifact: Artifact, newTab: boolean) => void;
   /** The whole card drags onto sidebar rooms (inbox cards, when writable). */
   draggable?: boolean;
 };
 
-/** True while `el` is within a quarter viewport (each way, so the horizontal Journal row preloads too) of its scroll root (the nearest `[data-scroll-root]`, else the viewport). */
-function useNearViewport(ref: RefObject<HTMLElement | null>): boolean {
-  const [near, setNear] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setNear(true);
-      return;
-    }
-    const root = el.closest<HTMLElement>("[data-scroll-root]");
-    const io = new IntersectionObserver((entries) => setNear(entries[entries.length - 1]?.isIntersecting ?? false), {
-      root,
-      rootMargin: "25%",
-    });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [ref]);
-  return near;
-}
-
-
-/** The page box's inner size; `fallback` until measured. */
-function useBoxSize(ref: RefObject<HTMLElement | null>, fallback: { w: number; h: number }) {
-  const [size, setSize] = useState(fallback);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver((entries) => {
-      const r = entries[entries.length - 1]?.contentRect;
-      if (r && r.width > 0 && r.height > 0) setSize((s) => (s.w === r.width && s.h === r.height ? s : { w: r.width, h: r.height }));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [ref]);
-  return size;
+/** "New" in the thread colour, one of the few places red appears. */
+export function NewMark() {
+  return (
+    <span role="img" aria-label="New artifact" className="inline-flex items-center gap-1.5 font-medium text-thread-deep">
+      <span aria-hidden className="size-1.5 rounded-full bg-thread" />
+      New
+    </span>
+  );
 }
 
 /**
- * One artifact: a white page holding a live, sandboxed, non-interactive preview
- * (laid out at 1280px and scaled to fit), then title, new-doc dot and label.
- * The card body is a focusable button: click/Enter/Space opens the doc in this tab
- * (⌘ or a middle click: a new tab); the expand button, shown on hover or focus,
- * always opens a new tab.
+ * One artifact on a sheet: the top of the page cropped to 16:10, then the title and a line with
+ * "New", the agent that wrote it and how long ago. The card body is a focusable button:
+ * click/Enter/Space opens the artifact in this tab (⌘ or a middle click: a new tab); the expand
+ * button, shown on hover or focus, always opens a new tab.
  */
-export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, isNew, size, onOpen: open, draggable = false }: ArtifactCardProps) {
-  const client = useClient();
-  const s = SIZES[size];
-  const pageRef = useRef<HTMLDivElement>(null);
-  // Near the viewport, and within the live-preview budget.
-  const live = useLiveFrame(pageRef, useLingering(useNearViewport(pageRef), UNLOAD_DELAY_MS));
-  const slot = useLoadSlot(live);
-  // The preview unmounts when the card scrolls far away (or the budget drops it), so loading starts over then.
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    if (!live) setLoaded(false);
-  }, [live]);
-  const box = useBoxSize(pageRef, s.fallback);
-  const scale = box.w / LAYOUT_WIDTH;
+export const ArtifactCard = memo(function ArtifactCard({ artifact, info, isNew, onOpen: open, draggable = false }: ArtifactCardProps) {
   const onOpen = (newTab: boolean) => open(artifact, newTab);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -122,7 +48,7 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
     <div
       data-testid="artifact-card"
       {...(draggable ? artifactDragSource({ roomId: artifact.roomId, artifactId: artifact.id }) : {})}
-      className={cn("group/card relative shrink-0", s.card)}
+      className="group/card relative min-w-0"
     >
       <div
         role="button"
@@ -131,54 +57,26 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
         onClick={(e) => onOpen(wantsNewTab(e))}
         onAuxClick={(e) => e.button === 1 && onOpen(true)}
         onKeyDown={onKeyDown}
-        className="flex cursor-pointer flex-col gap-3 rounded-xl outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+        // Hover lifts the card a little; it never resizes it, which would reflow the grid.
+        className="flex cursor-pointer flex-col rounded-xl bg-sheet px-1.5 pt-1.5 shadow-sheet outline-none transition-[translate,box-shadow] duration-150 ease-out group-hover/card:-translate-y-0.5 group-hover/card:shadow-lift focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink motion-reduce:transition-none"
       >
-        <div ref={pageRef} className={cn("relative overflow-hidden rounded-xl border border-hairline bg-sheet", s.page)}>
-          {slot.granted ? (
-            <iframe
-              onLoad={() => {
-                setLoaded(true);
-                slot.loaded();
-              }}
-              title={artifact.title}
-              aria-hidden
-              tabIndex={-1}
-              src={client.fileUrl(info, artifact)}
-              sandbox="allow-scripts allow-popups"
-              // A preview is clicked, never scrolled: no scrollbar inside the page.
-              scrolling="no"
-              className={cn("absolute top-0 left-0 border-0 bg-white transition-opacity duration-300 ease-out", loaded ? "opacity-100" : "opacity-0")}
-              style={{
-                width: LAYOUT_WIDTH,
-                height: (LAYOUT_WIDTH * box.h) / box.w,
-                transform: `scale(${scale})`,
-                transformOrigin: "0 0",
-                pointerEvents: "none",
-              }}
-            />
-          ) : null}
-          {loaded && live ? null : <DocSkeleton compact={size === "journal"} />}
-        </div>
-        <div className="flex min-w-0 items-center gap-2 px-0.5">
-          <span data-testid="card-title" className="min-w-0 truncate text-lead font-medium text-ink">
+        <ArtifactThumb artifact={artifact} info={info} variant="card" className="rounded-lg" />
+        <div className="min-w-0 px-2 pt-2.5 pb-3">
+          <div data-testid="card-title" className="truncate text-body font-semibold text-ink">
             {artifact.title}
-          </span>
-          {isNew ? <span role="img" aria-label="New artifact" className="size-1.5 shrink-0 rounded-full bg-ink" /> : null}
-          <span className={cn("ml-auto shrink-0 whitespace-nowrap", s.label)}>{label}</span>
+          </div>
+          <p className="mt-1 flex h-[18px] items-center gap-1.5 text-small whitespace-nowrap text-ink-3">
+            <Dotted parts={[isNew && <NewMark />, artifact.source.agent && <span className="truncate">{artifact.source.agent}</span>, shortAge(artifact.createdAt)]} />
+          </p>
         </div>
       </div>
       <button
         type="button"
         aria-label="Open in new tab"
         onClick={() => onOpen(true)}
-        className={cn(
-          "absolute flex items-center justify-center rounded-lg border border-hairline bg-sheet text-ink shadow-float",
-          "opacity-0 transition-opacity group-focus-within/card:opacity-100 group-hover/card:opacity-100",
-          "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
-          s.expand,
-        )}
+        className="absolute top-3 right-3 flex size-8 items-center justify-center rounded-lg bg-sheet text-ink opacity-0 shadow-float transition-opacity outline-none group-focus-within/card:opacity-100 group-hover/card:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
-        <Maximize2 size={16} aria-hidden />
+        <Maximize2 size={15} aria-hidden />
       </button>
     </div>
   );

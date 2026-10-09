@@ -190,15 +190,10 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
           >
             {info
               ? cards.map(({ artifact, label }) => (
-                  <ArtifactCard
-                    key={artifact.id}
-                    artifact={artifact}
-                    info={info}
-                    label={label}
-                    isNew={isNewSince(artifact.createdAt, visits.since(artifact.roomId))}
-                    size="journal"
-                    onOpen={openDoc}
-                  />
+                  <div key={artifact.id} className="flex w-[260px] shrink-0 flex-col gap-1">
+                    <ArtifactCard artifact={artifact} info={info} isNew={isNewSince(artifact.createdAt, visits.since(artifact.roomId))} onOpen={openDoc} />
+                    <span className="px-2 text-small text-ink-3">{label}</span>
+                  </div>
                 ))
               : null}
           </div>

@@ -15,6 +15,11 @@ export async function openInEditor(absPath: string): Promise<void> {
   if (isTauri()) await openPath(absPath);
 }
 
+/** Opens a folder in Finder. */
+export async function showInFinder(absPath: string): Promise<void> {
+  if (isTauri()) await openPath(absPath);
+}
+
 /** The original file behind a doc's room link. Without Tauri there is nothing to resolve it with, so the link itself. */
 export async function docOriginal(link: string): Promise<string> {
   return isTauri() ? invoke<string>("doc_original", { link }) : link;

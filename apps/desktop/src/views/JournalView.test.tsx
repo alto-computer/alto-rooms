@@ -75,10 +75,10 @@ describe("JournalView: agent row", () => {
     });
     const cards = within(agentRow()).getAllByTestId("artifact-card");
     expect(cards.map((c) => within(c).getByTestId("card-title").textContent)).toEqual(["어젯밤 꿈", "이른 문서", "메모", "나중 문서"]);
-    expect(within(cards[0]).getByText("Review")).toBeInTheDocument();
-    expect(within(cards[1]).getByText("벤치마크")).toBeInTheDocument();
-    expect(within(cards[2]).getByText("Journal")).toBeInTheDocument();
-    expect(within(cards[3]).getByText("리서치")).toBeInTheDocument();
+    expect(within(cards[0].parentElement!).getByText("Review")).toBeInTheDocument();
+    expect(within(cards[1].parentElement!).getByText("벤치마크")).toBeInTheDocument();
+    expect(within(cards[2].parentElement!).getByText("Journal")).toBeInTheDocument();
+    expect(within(cards[3].parentElement!).getByText("리서치")).toBeInTheDocument();
     expect(within(agentRow()).getByText("4")).toBeInTheDocument();
     expect(within(agentRow()).getByText("Agents")).toBeInTheDocument();
   });
@@ -90,7 +90,7 @@ describe("JournalView: agent row", () => {
       days: { [today]: { artifacts: [artifact("a1", "r9", "x.html", "보고서", `${today}T01:00:00Z`)] } },
     });
     const card = within(agentRow()).getByTestId("artifact-card");
-    expect(within(card).getByText("다른 방")).toBeInTheDocument();
+    expect(within(card.parentElement!).getByText("다른 방")).toBeInTheDocument();
     const frame = card.querySelector("iframe")!;
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-popups");
     expect(frame.getAttribute("src")).toBe("http://files.test/r9/x.html");
@@ -105,7 +105,7 @@ describe("JournalView: agent row", () => {
       days: { [today]: { artifacts: [artifact("a1", "gone-room", "x.html", "고아 문서", `${today}T01:00:00Z`)] } },
     });
     const card = within(agentRow()).getByTestId("artifact-card");
-    expect(within(card).getByText("Room")).toBeInTheDocument();
+    expect(within(card.parentElement!).getByText("Room")).toBeInTheDocument();
   });
 
   it("does not treat a dream.html outside the journal room as the Dream", async () => {
