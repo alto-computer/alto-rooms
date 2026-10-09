@@ -46,8 +46,11 @@ export function firstNewNoteNames(notes: readonly Note[], count: number): string
   return out;
 }
 
-/** Longest name a saved answer starts with: roomsd allows 60 characters, which leaves room for " (2)". */
+/** Longest name a saved answer takes: roomsd allows 60 characters, which leaves room for " (2)". */
 export const MAX_QUESTION_NAME = 55;
+
+/** A name's length as roomsd counts it: code points of the NFC name without its `.md`. */
+export const noteNameLength = (name: string) => Array.from(noteBase(name.trim()).normalize("NFC")).length;
 /** The name of a saved answer whose question leaves nothing usable. */
 const ANSWER_NOTE = "Answer";
 

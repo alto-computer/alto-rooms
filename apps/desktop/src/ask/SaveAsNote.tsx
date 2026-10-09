@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { NotebookPen } from "lucide-react";
 import { useClient, useRoomsStore, useViewerStore } from "@/data/hooks";
 import { GENERIC_ERROR, noteNameErrorCopy } from "@/lib/errors";
-import { createUnderFreeName, freeNoteNames, MAX_QUESTION_NAME, noteNameFromQuestion } from "@/lib/notes";
+import { createUnderFreeName, freeNoteNames, MAX_QUESTION_NAME, noteNameFromQuestion, noteNameLength } from "@/lib/notes";
 import type { NoteTargetOf } from "./askSubjects";
 import { splitQuotes } from "./quotes";
 import { ErrorText, TextButton } from "./ui";
@@ -90,17 +90,19 @@ function NameForm({ name, error, saving, onChange, onSave, onCancel }: {
 }) {
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.select(), []);
+  const tooLong = noteNameLength(name) > MAX_QUESTION_NAME;
+  const canSave = !saving && !tooLong && !!name.trim();
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!saving && name.trim()) onSave(name);
+    if (canSave) onSave(name);
   };
+  const shown = error ?? (tooLong ? `Names can be up to ${MAX_QUESTION_NAME} characters` : null);
   return (
     <form onSubmit={submit} className="flex basis-full flex-wrap items-center gap-2 py-1">
       <input
         ref={input}
         aria-label="Note name"
         value={name}
-        maxLength={MAX_QUESTION_NAME}
         readOnly={saving}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
@@ -111,14 +113,14 @@ function NameForm({ name, error, saving, onChange, onSave, onCancel }: {
       />
       <button
         type="submit"
-        disabled={saving || !name.trim()}
+        disabled={!canSave}
         aria-busy={saving || undefined}
         className="inline-flex h-7 items-center rounded-md bg-ink px-2.5 text-[12.5px] font-medium text-white disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
         Save
       </button>
       <TextButton onClick={onCancel}>Cancel</TextButton>
-      {error ? <div className="basis-full"><ErrorText>{error}</ErrorText></div> : null}
+      {shown ? <div className="basis-full"><ErrorText>{shown}</ErrorText></div> : null}
     </form>
   );
 }

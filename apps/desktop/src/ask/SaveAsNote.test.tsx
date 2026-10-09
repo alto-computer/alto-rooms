@@ -120,6 +120,21 @@ describe("SaveAsNote", () => {
     expect(screen.queryByText("Saved to Journal")).toBeNull();
   });
 
+  it("counts the name's length the way roomsd does: 55 characters, not UTF-16 units", async () => {
+    const { state } = await setup({ kind: "room", roomId: "r1" }, turn(roomScope));
+    const input = await openNameInput();
+    const save = screen.getByRole<HTMLButtonElement>("button", { name: "Save" });
+    fireEvent.change(input, { target: { value: "a".repeat(56) } });
+    expect(screen.getByText("Names can be up to 55 characters")).toBeTruthy();
+    expect(save.disabled).toBe(true);
+    const emoji = "📝".repeat(30);
+    fireEvent.change(input, { target: { value: emoji } });
+    expect(screen.queryByText("Names can be up to 55 characters")).toBeNull();
+    fireEvent.click(save);
+    expect(await screen.findByText("Saved to Journal")).toBeTruthy();
+    expect(state.notes[`${localDate()}/${emoji}.md`]).toBe(ROOM_NOTE);
+  });
+
   it("closes the name input on Escape without saving", async () => {
     const { client } = await setup({ kind: "room", roomId: "r1" }, turn(roomScope));
     fireEvent.keyDown(await openNameInput(), { key: "Escape" });
