@@ -208,7 +208,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             copyError={noteNameErrorCopy}
             ariaLabel="Note name"
             readOnly={readOnly}
-            className="w-full truncate text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink"
+            className="w-full truncate font-serif text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink"
           />
         </div>
         {readOnly ? null : (
@@ -294,7 +294,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
           setFocused(false);
           if (editable) saver?.blur();
         }}
-        className="min-h-0 flex-1 resize-none border-0 bg-transparent font-sans text-lead leading-[1.7] text-ink outline-none disabled:bg-transparent"
+        className="min-h-0 flex-1 resize-none border-0 bg-transparent font-serif text-lead leading-[1.7] text-ink outline-none disabled:bg-transparent"
       />
     </div>
   );

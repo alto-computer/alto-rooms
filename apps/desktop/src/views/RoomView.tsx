@@ -88,7 +88,7 @@ export function RoomView({ roomId }: { roomId: string }) {
           onSave={async (next) => {
             await client.renameRoom(room.id, next);
           }}
-          className="text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink"
+          className="font-display text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink"
           inputClassName="-ml-2 w-full max-w-[560px] rounded-lg px-2 py-0.5 outline-2 outline-solid outline-ink"
         />
         <p className="text-lead text-ink-2">{count(room.artifactCount, "doc")}</p>

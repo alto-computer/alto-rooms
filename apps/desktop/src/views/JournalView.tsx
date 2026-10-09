@@ -238,7 +238,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
     <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto bg-pane px-12 pt-9 pb-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>
+          <h1 className="font-serif text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>
           {isToday ? <span className="text-heading text-ink-2">Today</span> : null}
         </div>
         <WeekStrip date={date} onChange={setDate} />

@@ -48,7 +48,7 @@ function Welcome({ home }: { home: string }) {
     <div data-testid="welcome" className="@container mx-auto flex w-full max-w-[760px] flex-col gap-10">
       <header className="flex flex-col items-start gap-3">
         <img src={clewPeek} alt="" width={120} className="mb-1 h-auto w-[120px]" />
-        <h1 className="text-display font-medium tracking-[-0.01em] text-ink">Welcome to Rooms</h1>
+        <h1 className="font-display text-display font-medium tracking-[-0.01em] text-ink">Welcome to Rooms</h1>
         <p className="text-heading text-ink-2">Rooms gathers the HTML your agents write into topic rooms.</p>
       </header>
 

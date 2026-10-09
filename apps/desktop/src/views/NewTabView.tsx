@@ -101,7 +101,7 @@ export function NewTabView() {
     // Header at the same place and size as a room's or a note's, so switching tabs doesn't jump.
     <div ref={shellRef} className={cn(shell, "pt-10")}>
       <header className="flex flex-col gap-1">
-        <h1 className="text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink">Since your last visit</h1>
+        <h1 className="font-display text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink">Since your last visit</h1>
         {settled ? (
           <p className="text-lead text-ink-2">
             {roomsWithNew > 0
