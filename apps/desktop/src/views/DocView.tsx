@@ -9,6 +9,7 @@ import { wantsNewTab } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { PluginSlot, SidePanelOpener } from "@/plugins/PluginSlot";
 import { contentKey } from "@/plugins/pluginsStore";
+import { RoomDot } from "@/components/RoomDot";
 import { ToolbarGroup } from "@/components/ToolbarGroup";
 import { useTabVisible } from "@/shell/currentTab";
 import { AskBar } from "@/ask/AskBar";
@@ -29,7 +30,7 @@ function Breadcrumb({ artifact, room, info }: { artifact: Artifact; room: Room |
   const name = journal ? "Journal" : inbox ? "Inbox" : (room?.name ?? "Room");
   const place = (
     <>
-      <Mark size={14} className="shrink-0 text-ink-3" aria-hidden />
+      {room?.color ? <RoomDot color={room.color} className="size-3.5" /> : <Mark size={14} className="shrink-0 text-ink-3" aria-hidden />}
       <span className="truncate">{name}</span>
     </>
   );

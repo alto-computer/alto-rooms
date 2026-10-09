@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { Artifact, Info, JournalDay, Note, Room } from "@alto-rooms/protocol-ts";
+import type { Artifact, Info, JournalDay, Note, Room, RoomColor } from "@alto-rooms/protocol-ts";
+import { RoomDot } from "@/components/RoomDot";
 import { useClient, useOpenDoc, useViewerStore } from "@/data/hooks";
 import { clockTime } from "@/lib/dates";
 import { INBOX_ID } from "@/lib/drag";
@@ -7,10 +8,10 @@ import { noteBase } from "@/lib/notes";
 import { wantsNewTab } from "@/lib/nav";
 import { ArtifactThumb } from "./ArtifactThumb";
 
-/** One line of a day, at the time it happened: a note of yours, or an artifact an agent wrote. */
+/** One line of a day, at the time it happened: a note of yours, or an artifact an agent wrote (with its room's name and pin colour). */
 export type DayEntry =
   | { kind: "note"; at: string; key: string; note: Note }
-  | { kind: "artifact"; at: string; key: string; artifact: Artifact; label: string };
+  | { kind: "artifact"; at: string; key: string; artifact: Artifact; label: string; color: RoomColor | null };
 
 /** The day's entries, oldest first. An artifact is labelled with its room; the Dream (the day's dream.html in the Journal) is "Review". */
 export function dayEntries(day: JournalDay, info: Info, rooms: readonly Room[]): DayEntry[] {
@@ -19,9 +20,10 @@ export function dayEntries(day: JournalDay, info: Info, rooms: readonly Room[]):
     if (a.roomId === info.journalRoomId) return a.relPath === `${day.date}/dream.html` ? "Review" : "Journal";
     return rooms.find((r) => r.id === a.roomId)?.name ?? "Room";
   };
+  const color = (a: Artifact) => rooms.find((r) => r.id === a.roomId)?.color ?? null;
   const entries: DayEntry[] = [
     ...day.notes.map((note): DayEntry => ({ kind: "note", at: note.updatedAt, key: `note:${note.name}`, note })),
-    ...day.artifacts.map((artifact): DayEntry => ({ kind: "artifact", at: artifact.createdAt, key: `artifact:${artifact.id}`, artifact, label: label(artifact) })),
+    ...day.artifacts.map((artifact): DayEntry => ({ kind: "artifact", at: artifact.createdAt, key: `artifact:${artifact.id}`, artifact, label: label(artifact), color: color(artifact) })),
   ];
   return entries.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
@@ -100,7 +102,7 @@ function NoteEntry({ note }: { note: Note }) {
   );
 }
 
-function ArtifactEntry({ artifact, label, info }: { artifact: Artifact; label: string; info: Info }) {
+function ArtifactEntry({ artifact, label, color, info }: { artifact: Artifact; label: string; color: RoomColor | null; info: Info }) {
   const openDoc = useOpenDoc();
   return (
     <button
@@ -116,7 +118,10 @@ function ArtifactEntry({ artifact, label, info }: { artifact: Artifact; label: s
         <span data-testid="card-title" className="truncate text-body font-semibold text-ink">
           {artifact.title}
         </span>
-        <span className="truncate text-small text-ink-3">{[label, artifact.source.agent].filter(Boolean).join(" · ")}</span>
+        <span className="flex min-w-0 items-center gap-1 text-small text-ink-3">
+          {color ? <RoomDot color={color} className="size-3.5" /> : null}
+          <span className="truncate">{[label, artifact.source.agent].filter(Boolean).join(" · ")}</span>
+        </span>
       </span>
     </button>
   );
@@ -134,7 +139,7 @@ export function Daybook({ entries, info }: { entries: DayEntry[]; info: Info }) 
           <time dateTime={e.at} className="pr-4 text-right text-small leading-6 font-medium text-ink-3 tabular-nums">
             {clockTime(e.at)}
           </time>
-          {e.kind === "note" ? <NoteEntry note={e.note} /> : <ArtifactEntry artifact={e.artifact} label={e.label} info={info} />}
+          {e.kind === "note" ? <NoteEntry note={e.note} /> : <ArtifactEntry artifact={e.artifact} label={e.label} color={e.color} info={info} />}
         </li>
       ))}
     </ol>

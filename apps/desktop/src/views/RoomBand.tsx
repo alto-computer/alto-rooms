@@ -1,5 +1,7 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
+import type { RoomColor } from "@alto-rooms/protocol-ts";
 import { ClewPeek } from "@/components/ClewPeek";
+import { roomTint } from "@/lib/roomTint";
 import { cn } from "@/lib/utils";
 
 /** Clew perches on the band while a room holds this many artifacts or fewer; from the next one the band is compact and Clew is gone. */
@@ -15,25 +17,25 @@ export function perchFor(artifactCount: number): Perch {
 
 /**
  * A room's header band, like a wall: title, a meta line and actions, with Clew perched on its
- * bottom edge while the room is nearly empty. Warm paper by default; `tint` (any CSS colour)
- * paints it instead, for a pinned room, and drops the hairline under it.
+ * bottom edge while the room is nearly empty. Warm paper for a neutral room; a pinned room's
+ * `color` paints it in that room's tint instead, without the hairline under it.
  */
-export function RoomBand({ title, meta, actions, perch, tint, children }: {
+export function RoomBand({ title, meta, actions, perch, color, children }: {
   title: ReactNode;
   meta: ReactNode;
   actions?: ReactNode;
   perch: Perch;
-  tint?: string;
+  color: RoomColor | null;
   children?: ReactNode;
 }) {
   return (
     <header
       data-testid="room-band"
       data-perch={perch ?? undefined}
-      style={tint ? ({ "--room-tint": tint } as CSSProperties) : undefined}
+      {...roomTint(color)}
       className={cn(
-        "relative shrink-0 bg-[var(--room-tint,var(--paper-band))] px-10 pt-[30px]",
-        !tint && "shadow-[inset_0_-1px_0_var(--hairline)]",
+        "relative shrink-0 bg-room-band px-10 pt-[30px]",
+        !color && "shadow-[inset_0_-1px_0_var(--hairline)]",
         perch === "start" ? "pb-[76px]" : perch === "end" ? "pb-10" : "pb-[26px]",
       )}
     >

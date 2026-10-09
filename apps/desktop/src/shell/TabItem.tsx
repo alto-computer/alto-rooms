@@ -6,6 +6,7 @@ import { RoomDot } from "@/components/RoomDot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlugins, useRoomList } from "@/data/hooks";
 import type { Tab } from "@/data/viewerStore";
+import { roomTint } from "@/lib/roomTint";
 import { cn } from "@/lib/utils";
 import { pluginIcon } from "@/plugins/icons";
 import { TAB_PANEL_ID, tabDomId } from "./tabIds";
@@ -39,7 +40,7 @@ export function TabItem({
   const { list } = usePlugins();
   const rooms = useRoomList();
   const Icon = tab.kind === "plugin" ? pluginIcon(list.find((p) => p.id === tab.pluginId)?.slots.tab?.icon) : ICONS[tab.kind];
-  // A pinned room's tab shows its colour dot in place of the folder.
+  // A pinned room's tab shows its colour dot in place of the folder and, while active, its band colour.
   const color = tab.kind === "room" ? (rooms.find((r) => r.id === tab.roomId)?.color ?? null) : null;
   const sort = useSortable({ id: tab.id });
   const style = {
@@ -59,6 +60,7 @@ export function TabItem({
       style={style}
       role="presentation"
       data-active={active || undefined}
+      {...roomTint(color)}
       className={cn(
         // The 220px width also sets the strip's own size: Chrome sizes a flex row from its items'
         // widths, not their flex-basis, so without it every tab shrank to fit its label.
@@ -94,7 +96,7 @@ export function TabItem({
               "flex min-h-[34px] w-full min-w-0 items-center gap-2 rounded-lg border pl-3 text-left text-body",
               "focus-visible:outline-2 focus-visible:outline-ink",
               active ? "pr-8" : "pr-3",
-              active ? "border-transparent bg-pane text-ink" : "border-transparent text-ink-2 group-focus-within:bg-surface hover:bg-surface hover:text-ink",
+              active ? cn("border-transparent text-ink", color ? "bg-room-band" : "bg-pane") : "border-transparent text-ink-2 group-focus-within:bg-surface hover:bg-surface hover:text-ink",
               sort.isDragging && "cursor-grabbing border-hairline bg-sheet shadow-float",
             )}
           >
@@ -122,7 +124,7 @@ export function TabItem({
           "absolute top-1/2 right-[1px] flex h-[32px] -translate-y-1/2 items-center rounded-r-lg pr-2 text-ink-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-ink",
           "transition-opacity duration-150",
           active
-            ? "bg-pane opacity-100"
+            ? cn("opacity-100", color ? "bg-room-band" : "bg-pane")
             : "bg-[linear-gradient(to_right,transparent,var(--surface)_20px)] pl-6 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
         )}
       >

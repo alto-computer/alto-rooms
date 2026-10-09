@@ -101,6 +101,7 @@ export function RoomView({ roomId }: { roomId: string }) {
             inputClassName="-ml-2 w-full max-w-[560px] rounded-lg px-2 py-0.5 outline-2 outline-solid outline-ink"
           />
         }
+        color={room.color}
         meta={
           <>
             {roomMeta(room, artifacts?.at(-1))}
