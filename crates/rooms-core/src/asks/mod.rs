@@ -15,9 +15,9 @@ use crate::error::CoreError;
 use crate::lock::lock;
 use crate::rules::{slug_key, valid_room_id, validate_iso_date};
 use crate::RoomsCore;
-use agents::{AgentProfiles, Plan, Vars};
+use agents::{claude_read_scope, AgentProfiles, Plan, Vars};
 use log::AskLog;
-use prompt::{build_prompt, build_scope_prompt, context, valid_file_key, valid_ident, with_image_paths, ContextEntry, Listing, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
+use prompt::{build_prompt, build_scope_prompt, context, listed, valid_file_key, valid_ident, with_image_paths, ContextEntry, Listing, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
 use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, EventKind, JOURNAL_ROOM_ID};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
@@ -349,15 +349,16 @@ impl Asks {
         if req.kind == AskKind::Clear { return self.record_clear(running, turn); }
 
         let asked = if req.kind == AskKind::Compact { COMPACT_ASK.to_string() } else { with_image_paths(question, &image_paths) };
-        let (file_s, prompt) = match &subject {
+        let (file_s, prompt, scope_settings) = match &subject {
             Subject::Doc { file_key, file_abs } => {
                 let file_s = file_abs.to_string_lossy().into_owned();
                 let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, file_key, &ctx, &asked);
-                (file_s, prompt)
+                (file_s, prompt, String::new())
             }
             Subject::Listing { listing, entries } => {
                 private_dir(&cwd).map_err(|e| AskError::Io(e.to_string()))?;
-                (String::new(), build_scope_prompt(listing, entries, &ctx, &asked))
+                let settings = claude_read_scope(listed(entries).iter().map(|e| e.path.as_path()));
+                (String::new(), build_scope_prompt(listing, entries, &ctx, &asked), settings)
             }
         };
         let cwd_s = cwd.to_string_lossy().into_owned();
@@ -368,7 +369,7 @@ impl Asks {
         let stdin = plan.prompt_on_stdin();
         let argv = plan.render(&Vars {
             prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
-            model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir,
+            model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir, scope_settings: &scope_settings,
         });
         self.launch(running, turn, argv, stdin.then_some(prompt), cwd, plan.events)
     }

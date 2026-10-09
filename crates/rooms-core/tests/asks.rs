@@ -524,3 +524,23 @@ async fn room_ask_streams_progress_under_its_scope() {
     }
     assert_eq!(asks.thread(&room).unwrap().len(), 1);
 }
+
+/// A room ask hands the default claude template its listed realpaths as read rules; a doc ask in
+/// the same room gets no `--settings`.
+#[tokio::test]
+async fn room_ask_limits_reads_to_its_listed_files() {
+    let (d, core, doc, room_id) = setup("");
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--settings\", \"{{scope_settings}}\", \"{{prompt}}\"]\n")).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t = asks.start(&AskScope::Room { room_id: room_id.clone() }, "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    let real = core.room_root(&room_id).unwrap().0.join("doc.html").canonicalize().unwrap();
+    let argv = done.answer.lines().next().unwrap();
+    assert!(argv.starts_with(&format!(r#"ARGV: [--settings] [{{"permissions":{{"allow":["Read(/{})"],"defaultMode":"dontAsk"}}}}] ["#, real.display())), "{argv}");
+    let t = asks.start(&doc, "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(!done.answer.contains("[--settings]") && !done.answer.contains("dontAsk"), "{}", done.answer);
+    asks.shutdown().await;
+}

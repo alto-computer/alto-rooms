@@ -16,8 +16,10 @@ pub(crate) const DEFAULT_AGENT: &str = "claude-code";
 pub(crate) const DEFAULT_PREAMBLE: &str =
     "[Rooms] The user is reading the HTML document below in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 /// For a room or a Journal day. The `preamble` key in agents.toml replaces only the doc preamble.
+/// The built-in claude-code profile also enforces the list (`claude_read_scope`); other agents
+/// get only these words.
 pub(crate) const SCOPE_PREAMBLE: &str =
-    "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Pass one of the listed paths to every search; never search without a path, and never search the home folder, other projects, or agent logs. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
+    "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder, not even the folder a listed file is in, and never search without a path. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,6 +73,8 @@ pub(crate) struct Vars<'a> {
     pub images: &'a [String],
     /// The folder the images are in, or "" when there are none.
     pub image_dir: &'a str,
+    /// `claude_read_scope` of a room's or day's listed files, or "" for a doc ask.
+    pub scope_settings: &'a str,
 }
 
 fn argv(parts: &[&str]) -> Vec<String> { parts.iter().map(|s| s.to_string()).collect() }
@@ -137,7 +141,7 @@ fn builtin() -> BTreeMap<String, Profile> {
     BTreeMap::from([
         ("claude-code".to_string(), Profile {
             resume: Some(argv(&["claude", "-p", "--model", "{model}", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])),
-            new: argv(&["claude", "-p", "--model", "{model}", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]),
+            new: argv(&["claude", "-p", "--model", "{model}", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--settings", "{scope_settings}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]),
             models: argv(&["opus", "sonnet", "haiku"]),
             events: rules(CLAUDE_EVENTS),
         }),
@@ -155,6 +159,26 @@ fn builtin() -> BTreeMap<String, Profile> {
             events: Vec::new(),
         }),
     ])
+}
+
+/// Claude Code `--settings` for a room or day ask: `dontAsk` denies every tool call that no rule
+/// allows, and one `Read(//<path>)` rule per listed file allows that file. Claude applies Read rules
+/// to Grep and Glob too, so a search of the folder a listed file is in is denied (measured on
+/// claude 2.1.295). Its own spill files under `~/.claude/projects/` and the `--add-dir` image folder
+/// stay readable. A rule path is a gitignore pattern: `\`, `*`, `?`, `[` and `]` are escaped, and a
+/// name holding `?` or `\` then matches nothing, so that file is denied, never a wider set. An allow
+/// rule in the user's own settings (`--setting-sources=user`) still adds to this.
+pub(crate) fn claude_read_scope<'a>(paths: impl IntoIterator<Item = &'a Path>) -> String {
+    let allow: Vec<String> = paths.into_iter().map(|p| {
+        let mut rule = String::from("Read(/");
+        for c in p.to_string_lossy().chars() {
+            if matches!(c, '\\' | '*' | '?' | '[' | ']') { rule.push('\\'); }
+            rule.push(c);
+        }
+        rule.push(')');
+        rule
+    }).collect();
+    serde_json::json!({ "permissions": { "defaultMode": "dontAsk", "allow": allow } }).to_string()
 }
 
 /// `[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}`: never flag-shaped, so it is safe as an argv element.
@@ -221,7 +245,7 @@ impl AgentProfiles {
     pub fn preamble(&self) -> &str { self.preamble.as_deref().unwrap_or(DEFAULT_PREAMBLE) }
 }
 
-const PLACEHOLDERS: [&str; 7] = ["{prompt}", "{session}", "{file}", "{cwd}", "{mcp_config}", "{model}", "{image_dir}"];
+const PLACEHOLDERS: [&str; 8] = ["{prompt}", "{session}", "{file}", "{cwd}", "{mcp_config}", "{model}", "{image_dir}", "{scope_settings}"];
 
 /// One left-to-right pass: substituted text is never scanned again.
 fn subst(arg: &str, v: &Vars) -> String {
@@ -232,7 +256,7 @@ fn subst(arg: &str, v: &Vars) -> String {
         let tail = &rest[i..];
         match PLACEHOLDERS.iter().find(|p| tail.starts_with(**p)) {
             Some(p) => {
-                out.push_str(match *p { "{prompt}" => v.prompt, "{session}" => v.session, "{file}" => v.file, "{cwd}" => v.cwd, "{model}" => v.model, "{image_dir}" => v.image_dir, _ => v.mcp_config });
+                out.push_str(match *p { "{prompt}" => v.prompt, "{session}" => v.session, "{file}" => v.file, "{cwd}" => v.cwd, "{model}" => v.model, "{image_dir}" => v.image_dir, "{scope_settings}" => v.scope_settings, _ => v.mcp_config });
                 rest = &tail[p.len()..];
             }
             None => { out.push('{'); rest = &tail[1..]; }
@@ -247,7 +271,7 @@ impl Plan {
     /// the prompt is that argv element, as for a CLI that reads no stdin.
     pub fn prompt_on_stdin(&self) -> bool { !self.template.iter().any(|a| a.contains("{prompt}")) }
 
-    /// An element that is exactly `{mcp_config}`, `{model}` or `{image_dir}` with an empty value is
+    /// An element that is exactly `{mcp_config}`, `{model}`, `{image_dir}` or `{scope_settings}` with an empty value is
     /// dropped together with the element before it (its flag, e.g. `--mcp-config` or `--model`).
     /// `{image}` repeats with its flag once per image (`-i a -i b`).
     pub fn render(&self, v: &Vars) -> Vec<String> {
@@ -258,7 +282,8 @@ impl Plan {
                 for img in v.images { out.extend(flag.iter().cloned()); out.push(img.clone()); }
                 continue;
             }
-            let empty = (a == "{mcp_config}" && v.mcp_config.is_empty()) || (a == "{model}" && v.model.is_empty()) || (a == "{image_dir}" && v.image_dir.is_empty());
+            let empty = (a == "{mcp_config}" && v.mcp_config.is_empty()) || (a == "{model}" && v.model.is_empty()) || (a == "{image_dir}" && v.image_dir.is_empty())
+                || (a == "{scope_settings}" && v.scope_settings.is_empty());
             if empty { out.pop(); continue; }
             out.push(subst(a, v));
         }
@@ -276,7 +301,7 @@ mod tests {
         if let Some(t) = text { std::fs::write(&p, t).unwrap(); }
         (d, p)
     }
-    fn vars<'a>(prompt: &'a str) -> Vars<'a> { Vars { prompt, session: "S1", file: "/f.html", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "" } }
+    fn vars<'a>(prompt: &'a str) -> Vars<'a> { Vars { prompt, session: "S1", file: "/f.html", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "", scope_settings: "" } }
 
     #[test]
     fn missing_file_gives_builtin_defaults() {
@@ -352,15 +377,29 @@ new = ["codex2", "{prompt}"]
     fn substitution_is_single_pass() {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("aside"), None);
-        let out = plan.render(&Vars { prompt: "say {session} and {cwd} and {other}", session: "S1", file: "/f", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "" });
+        let out = plan.render(&Vars { prompt: "say {session} and {cwd} and {other}", session: "S1", file: "/f", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "", scope_settings: "" });
         assert_eq!(out, vec!["aside", "exec", "say {session} and {cwd} and {other}"]);
+    }
+
+    /// A room or day ask: the built-in claude template carries the read scope; a doc ask drops the flag.
+    #[test]
+    fn claude_new_takes_the_read_scope_as_settings() {
+        let (_d, p) = tmp(None);
+        let a = AgentProfiles::load(&p).unwrap();
+        let settings = claude_read_scope([Path::new("/d/a.html"), Path::new("/d/x?y [1] *.html"), Path::new("/d/b\\c.html")]);
+        assert_eq!(settings, r#"{"permissions":{"allow":["Read(//d/a.html)","Read(//d/x\\?y \\[1\\] \\*.html)","Read(//d/b\\\\c.html)"],"defaultMode":"dontAsk"}}"#);
+        let v = Vars { scope_settings: &settings, ..vars("Q") };
+        let out = a.plan(Some("claude-code"), None).render(&v);
+        assert!(out.windows(2).any(|w| w == ["--settings", settings.as_str()]), "{out:?}");
+        assert!(!a.plan(Some("claude-code"), None).render(&vars("Q")).contains(&"--settings".to_string()));
+        assert_eq!(a.plan(Some("codex"), None).render(&v), a.plan(Some("codex"), None).render(&vars("Q")), "codex has no such flag");
     }
 
     #[test]
     fn mcp_config_is_substituted_into_claude_templates() {
         let (_d, p) = tmp(None);
         let a = AgentProfiles::load(&p).unwrap();
-        let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json", model: "", images: &[], image_dir: "" };
+        let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json", model: "", images: &[], image_dir: "", scope_settings: "" };
         assert_eq!(a.plan(Some("claude-code"), None).render(&v),
             vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
         let resumed = a.plan(Some("claude-code"), Some("S1")).render(&v);

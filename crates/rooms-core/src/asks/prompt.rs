@@ -92,7 +92,9 @@ pub(crate) enum Listing {
 pub(crate) const MAX_LISTED: usize = 400;
 /// The most bytes the document lines take. A template with `{prompt}` passes the prompt as one argv
 /// element, and macOS caps argv plus the environment at 1 MiB; this, the earlier Q&A
-/// (`PRIOR_CHARS_ARGV`, at most 4 bytes a char) and the question stay under 400 KiB.
+/// (`PRIOR_CHARS_ARGV`, at most 4 bytes a char) and the question stay under 400 KiB. The
+/// `{scope_settings}` element holds one rule per listed line, at most twice its bytes, so a template
+/// with both stays under 1 MiB.
 pub(crate) const MAX_LISTING_BYTES: usize = 256 * 1024;
 /// A title is the doc's own `<title>`, which an agent or a web page wrote.
 const MAX_TITLE_CHARS: usize = 120;
@@ -105,18 +107,21 @@ pub(crate) fn build_scope_prompt(listing: &Listing, entries: &[ContextEntry], ct
         Listing::Day(date) => format!("Journal day: {date}"),
     };
     let mut out = format!("{SCOPE_PREAMBLE}\n\n{heading}\nDocuments ({}):\n", entries.len());
-    let (mut listed, mut bytes) = (0, 0);
-    for e in entries.iter().take(MAX_LISTED) {
-        let line = format!("- {:?} {:?} ({}, {})\n", e.path, clean_title(&e.title), e.label, e.day);
-        if bytes + line.len() > MAX_LISTING_BYTES { break; }
-        bytes += line.len();
-        listed += 1;
-        out.push_str(&line);
-    }
-    if entries.len() > listed { out.push_str(&format!("({} older documents not listed)\n", entries.len() - listed)); }
+    let shown = listed(entries);
+    for e in shown { out.push_str(&line(e)); }
+    if entries.len() > shown.len() { out.push_str(&format!("({} older documents not listed)\n", entries.len() - shown.len())); }
     push_thread(&mut out, ctx, question);
     out
 }
+
+/// The entries the prompt lists: the newest `MAX_LISTED` whose lines fit in `MAX_LISTING_BYTES`.
+pub(crate) fn listed(entries: &[ContextEntry]) -> &[ContextEntry] {
+    let mut bytes = 0;
+    let fit = entries.iter().take(MAX_LISTED).take_while(|e| { bytes += line(e).len(); bytes <= MAX_LISTING_BYTES }).count();
+    &entries[..fit]
+}
+
+fn line(e: &ContextEntry) -> String { format!("- {:?} {:?} ({}, {})\n", e.path, clean_title(&e.title), e.label, e.day) }
 
 /// One line, no control characters, at most `MAX_TITLE_CHARS`.
 fn clean_title(title: &str) -> String {
