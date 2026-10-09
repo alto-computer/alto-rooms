@@ -34,7 +34,7 @@ function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => 
       if (s.activeId) viewer.close(s.activeId);
       break;
     case "new-tab":
-      viewer.open({ kind: "new" });
+      viewer.open(viewer.home());
       break;
     case "find":
       openFind();
@@ -46,7 +46,7 @@ function runAction(action: ShortcutAction, viewer: ViewerStore, openFind: () => 
 }
 
 /**
- * ⌘B sidebar, ⌘W close tab, ⌘T new tab, ⌘K quick find, ⌘J ask bar. Bound on window.
+ * ⌘B sidebar, ⌘W close tab, ⌘T new tab (home: today's Journal), ⌘K quick find, ⌘J ask bar. Bound on window.
  * In Tauri all five belong to the native menu (which emits `menu://…`), so the
  * page leaves them alone and they never fire twice. Either way the same focus
  * rule applies: ⌘K and ⌘J work from a text field, the others don't (except ⌘W from

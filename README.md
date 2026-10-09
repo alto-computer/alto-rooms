@@ -17,7 +17,7 @@ Agents like Claude Code and Codex write specs, reports, and reviews as HTML. The
 
 - **Room**: a topic. One folder in `~/rooms`, or an existing folder you link.
 - **Artifact**: one HTML file in a room. It can be a symlink to a file that lives elsewhere.
-- **Journal**: one page per day. It shows the artifacts created that day, next to your own notes.
+- **Journal**: one page per day. It shows the artifacts created that day, next to your own notes. Today's page is home: a new tab opens on it.
 
 ## How it works
 
@@ -134,7 +134,7 @@ Right-click a plugin in the sidebar to turn it off. To add another, copy its fol
 
 | Key | Action |
 | --- | --- |
-| `⌘T` / `⌘W` | New tab / close tab |
+| `⌘T` / `⌘W` | New tab (today's Journal) / close tab |
 | `⌘K` | Find a room or document |
 | `⌘B` | Toggle the sidebar |
 | `⌘[` / `⌘]`, `⌘←` / `⌘→` | Back / forward |

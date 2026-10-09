@@ -1,6 +1,6 @@
 /*
- * Plan 3 onboarding: the first-run card on a fresh home, and moving an inbox
- * doc onto a room by dragging its "Waiting for a room" row onto the sidebar.
+ * Plan 3 onboarding: the first-run welcome in today's Journal on a fresh home, and
+ * moving an inbox artifact onto a room by dragging its card from the inbox onto the sidebar.
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -12,11 +12,10 @@ const SCREENS = path.join(import.meta.dirname, "__screens__");
 const HEADING = "Welcome to Rooms";
 const SHIPPED_ONBOARD = path.join(REPO_ROOT, "crates/rooms-core/assets/onboarding/ONBOARD.md");
 
-const waitingList = (page: Page) => page.getByRole("region", { name: "Waiting for a room" });
-
-test("a fresh home shows the welcome page, and roomsd wrote ONBOARD.md with the marker", async ({ page, daemon }) => {
+test("a fresh home opens on today's Journal with the welcome page, and roomsd wrote ONBOARD.md with the marker", async ({ page, daemon }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: HEADING, exact: true })).toBeVisible();
+  await expect(page.getByText(/^Journal · Week \d+$/)).toBeVisible();
   const onboard = await daemon.read("ONBOARD.md");
   expect(onboard).toBe(await fs.readFile(SHIPPED_ONBOARD, "utf8"));
 
@@ -78,7 +77,7 @@ async function expectNoHorizontalOverflow(page: Page) {
   }
 }
 
-test("dragging an inbox row onto room a moves the link, keeps the original and its Journal day", async ({ page, daemon }) => {
+test("dragging an inbox card onto room a moves the link, keeps the original and its Journal day", async ({ page, daemon }) => {
   // The original lives outside the home; the inbox only holds a symlink to it.
   const outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "rooms-e2e-orig-")));
   try {
@@ -95,14 +94,15 @@ test("dragging an inbox row onto room a moves the link, keeps the original and i
     const inJournalBefore = (await waiting())!;
 
     await page.goto("/");
-    const row = waitingList(page).getByTestId("inbox-row").filter({ hasText: "기다리는 문서" });
+    await page.getByRole("button", { name: /^Inbox/ }).click();
+    const row = page.getByTestId("artifact-card").filter({ hasText: "기다리는 문서" });
     await expect(row).toBeVisible();
     const target = page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "a", exact: true });
     await expect(target).toBeVisible();
 
     await row.dragTo(target);
 
-    await expect(waitingList(page)).toHaveCount(0); // the only waiting doc left, so the list goes away
+    await expect(row).toHaveCount(0); // gone from the inbox
     const moved = path.join(daemon.home, "a", "x.html");
     await expect.poll(() => fs.lstat(moved).then((s) => s.isSymbolicLink(), () => false)).toBe(true);
     expect(await fs.realpath(moved)).toBe(original);

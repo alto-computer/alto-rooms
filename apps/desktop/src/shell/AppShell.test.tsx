@@ -5,7 +5,11 @@ import { fakeClient, memoryStorage, renderWithStores, room } from "@/test/fakes"
 import { StoresProvider } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
 import { ViewerStore } from "@/data/viewerStore";
+import { localDate, monthDay } from "@/lib/dates";
 import { AppShell } from "./AppShell";
+
+/** The home tab's label: today's Journal. */
+const HOME = `Journal · ${monthDay(localDate())}`;
 
 vi.mock("@/lib/native", () => ({
   pickFolder: vi.fn(async () => "/Users/me/code/bench"),
@@ -183,15 +187,15 @@ describe("AppShell: tabs", () => {
     const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
     fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["New tab", "벤치마크", "디자인"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([HOME, "벤치마크", "디자인"]);
 
     const benchTab = screen.getByRole("tab", { name: "벤치마크" });
     fireEvent.mouseEnter(benchTab);
     fireEvent.click(within(benchTab.parentElement!).getByRole("button", { name: "Close tab" }));
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["New tab", "디자인"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([HOME, "디자인"]);
 
     key("w");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["New tab"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([HOME]);
     expect(h.viewer.getState().tabs).toHaveLength(1);
   });
 
@@ -205,12 +209,12 @@ describe("AppShell: tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
     expect(tabNames()).toEqual(["벤치마크"]);
     fireEvent.click(await home());
-    expect(tabNames()).toEqual(["New tab"]);
+    expect(tabNames()).toEqual([HOME]);
     expect(screen.getByRole("button", { name: "Back (⌘[)" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
     fireEvent.click(await home(), { metaKey: true });
-    expect(tabNames()).toEqual(["벤치마크", "New tab"]);
-    expect(activeTab()).toHaveTextContent("New tab");
+    expect(tabNames()).toEqual(["벤치마크", HOME]);
+    expect(activeTab()).toHaveTextContent(HOME);
   });
 
   it("Space picks a tab up, arrows move it, Space drops it", async () => {
@@ -218,7 +222,7 @@ describe("AppShell: tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
     fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
     const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(tabNames()).toEqual(["New tab", "벤치마크", "디자인"]);
+    expect(tabNames()).toEqual([HOME, "벤치마크", "디자인"]);
     const tab = screen.getByRole("tab", { name: "디자인" });
     tab.focus();
     // jsdom has no layout; give each tab a box so the keyboard sensor can find neighbours.
@@ -228,7 +232,7 @@ describe("AppShell: tabs", () => {
     await act(async () => void fireEvent.keyDown(tab, { code: "Space" }));
     await act(async () => void fireEvent.keyDown(tab, { code: "ArrowLeft" }));
     await act(async () => void fireEvent.keyDown(tab, { code: "Space" }));
-    await waitFor(() => expect(tabNames()).toEqual(["New tab", "디자인", "벤치마크"]));
+    await waitFor(() => expect(tabNames()).toEqual([HOME, "디자인", "벤치마크"]));
   });
 
   it("tabs are one Tab stop: arrows, Home and End switch tabs, Delete closes the focused one", async () => {
@@ -245,11 +249,11 @@ describe("AppShell: tabs", () => {
     expect(activeTab()).toHaveTextContent("벤치마크");
     expect(document.activeElement).toBe(activeTab());
     press("Home");
-    expect(activeTab()).toHaveTextContent("New tab");
+    expect(activeTab()).toHaveTextContent(HOME);
     press("ArrowLeft"); // wraps
     expect(activeTab()).toHaveTextContent("디자인");
     press("Delete");
-    expect(tabNames()).toEqual(["New tab", "벤치마크"]);
+    expect(tabNames()).toEqual([HOME, "벤치마크"]);
     expect(h.viewer.getState().tabs).toHaveLength(2);
   });
 
@@ -289,11 +293,11 @@ describe("AppShell: tabs", () => {
     fireEvent.click(back);
     expect(tabNames()).toEqual(["벤치마크"]);
     fireEvent.keyDown(window, { key: "[", code: "BracketLeft", metaKey: true });
-    expect(tabNames()).toEqual(["New tab"]);
+    expect(tabNames()).toEqual([HOME]);
     fireEvent.keyDown(window, { key: "]", code: "BracketRight", metaKey: true });
     expect(tabNames()).toEqual(["벤치마크"]);
     fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft", metaKey: true });
-    expect(tabNames()).toEqual(["New tab"]);
+    expect(tabNames()).toEqual([HOME]);
     fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight", metaKey: true });
     expect(tabNames()).toEqual(["벤치마크"]);
     fireEvent(window, new MouseEvent("mouseup", { button: 4 }));
@@ -316,15 +320,15 @@ describe("AppShell: tabs", () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
     fireEvent(screen.getByRole("button", { name: "디자인" }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["New tab", "벤치마크", "디자인"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([HOME, "벤치마크", "디자인"]);
   });
 
-  it("⌘T opens (or activates) the new tab", async () => {
+  it("⌘T opens (or activates) home, today's Journal", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
     key("t");
-    expect(activeTab()).toHaveTextContent("New tab");
-    expect(h.viewer.getState().tabs.filter((t) => t.kind === "new")).toHaveLength(1);
+    expect(activeTab()).toHaveTextContent(HOME);
+    expect(h.viewer.getState().tabs.filter((t) => t.kind === "journal")).toHaveLength(1);
   });
 
   it("shortcuts call preventDefault", async () => {
@@ -503,7 +507,7 @@ describe("AppShell: gone rooms and docs, and before the first sync", () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [] }, viewer });
     await act(async () => {});
     const labels = screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(labels).toEqual(["New tab", "Missing room", "Missing artifact", "Missing artifact"]);
+    expect(labels).toEqual([HOME, "Missing room", "Missing artifact", "Missing artifact"]);
   });
 
   it("before the first sync (no info): tabs show …, and nothing is writable", async () => {

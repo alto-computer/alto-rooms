@@ -38,8 +38,6 @@ export function TabLabel({ tab }: { tab: Tab }) {
       return <>{`Journal · ${monthDay(tab.date)}`}</>;
     case "note":
       return <>{noteBase(tab.name)}</>;
-    case "new":
-      return <>New tab</>;
     case "plugin":
       return <PluginLabel pluginId={tab.pluginId} />;
   }

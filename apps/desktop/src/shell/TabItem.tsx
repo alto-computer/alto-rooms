@@ -1,7 +1,7 @@
 import type { MouseEvent } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Calendar, FileText, Folder, LayoutGrid, Puzzle, X, type LucideIcon } from "lucide-react";
+import { Calendar, FileText, Folder, Puzzle, X, type LucideIcon } from "lucide-react";
 import { RoomDot } from "@/components/RoomDot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlugins, useRoomList } from "@/data/hooks";
@@ -17,7 +17,6 @@ const ICONS: Record<Tab["kind"], LucideIcon> = {
   doc: FileText,
   note: FileText,
   journal: Calendar,
-  new: LayoutGrid,
   plugin: Puzzle,
 };
 

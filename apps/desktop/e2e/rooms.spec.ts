@@ -131,5 +131,5 @@ test("Review Focus 2: renaming the folder on disk updates the open tab in place"
   await expect(page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "연구 노트" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 1, name: "연구 노트" })).toBeVisible();
   await expect(card(page, "첫 문서")).toBeVisible();
-  await expect(page.getByRole("tab")).toHaveCount(1); // the same room tab (it replaced New tab in place), not a second one
+  await expect(page.getByRole("tab")).toHaveCount(1); // the same room tab (it replaced home in place), not a second one
 });

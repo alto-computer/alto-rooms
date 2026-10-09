@@ -65,9 +65,10 @@ async function dropOn(target: HTMLElement, dt: ReturnType<typeof stubTransfer>) 
 }
 
 describe("Sidebar: drag to move", () => {
-  it("dragging an inbox row onto an owned room calls moveArtifact with the payload, highlighting while over", async () => {
+  it("dragging an inbox card onto an owned room calls moveArtifact with the payload, highlighting while over", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: ROOMS, artifacts: ARTIFACTS });
-    const row = await screen.findByTestId("inbox-row");
+    fireEvent.click(inboxRow()!);
+    const row = await screen.findByTestId("artifact-card");
     const dt = stubTransfer();
     fireEvent.dragStart(row, { dataTransfer: dt });
     expect(JSON.parse(dt.data.get(ARTIFACT_DRAG_TYPE)!)).toEqual({ roomId: "inbox", artifactId: "x1" });
@@ -131,7 +132,8 @@ describe("Sidebar: drag to move", () => {
 
   it("read-only: no drag source, no drop target, no sidebar link", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: ROOMS, artifacts: ARTIFACTS, readOnly: true });
-    const row = await screen.findByTestId("inbox-row");
+    fireEvent.click(inboxRow()!);
+    const row = await screen.findByTestId("artifact-card");
     expect(row).not.toHaveAttribute("draggable", "true");
     const dt = stubTransfer();
     fireEvent.dragStart(row, { dataTransfer: dt });
@@ -405,7 +407,7 @@ describe("Sidebar: room menu", () => {
     const h = await renderWithStores(<AppShell />, { rooms: rooms() });
     openMenu("A");
     fireEvent.click(await screen.findByRole("menuitem", { name: "Open in New Tab" }));
-    expect(h.viewer.getState().tabs.map((t) => (t.kind === "room" ? t.roomId : t.kind))).toEqual(["new", "a"]);
+    expect(h.viewer.getState().tabs.map((t) => (t.kind === "room" ? t.roomId : t.kind))).toEqual(["journal", "a"]);
     openMenu("A");
     fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Room name" })).toHaveFocus());

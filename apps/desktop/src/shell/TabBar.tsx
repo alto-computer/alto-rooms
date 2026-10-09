@@ -120,7 +120,7 @@ export function TabBar() {
         </DndContext>
       </div>
       <IconTip label="New tab" shortcut="⌘T">
-        <button type="button" aria-label="New tab" onClick={() => viewer.open({ kind: "new" })} className={ICON_BUTTON}>
+        <button type="button" aria-label="New tab" onClick={() => viewer.open(viewer.home())} className={ICON_BUTTON}>
           <Plus size={17} strokeWidth={1.75} aria-hidden />
         </button>
       </IconTip>

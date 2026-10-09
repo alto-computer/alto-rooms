@@ -119,15 +119,15 @@ describe("AppShell in Tauri", () => {
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
     await act(async () => {}); // listeners register asynchronously
     menu("menu://close-tab");
-    // Closing the last tab leaves a New tab.
-    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["new"]);
+    // Closing the last tab goes home, and New Tab finds home already open.
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["journal"]);
     menu("menu://new-tab");
-    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["new"]);
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["journal"]);
     menu("menu://reopen-tab");
-    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["room", "new"]);
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["room", "journal"]);
     expect(activeKind(h)).toBe("room");
     menu("menu://next-tab");
-    expect(activeKind(h)).toBe("new");
+    expect(activeKind(h)).toBe("journal");
     menu("menu://prev-tab");
     expect(activeKind(h)).toBe("room");
   });
@@ -165,7 +165,7 @@ describe("AppShell in Tauri", () => {
     menu("menu://toggle-ask");
     expect(await screen.findByPlaceholderText("Ask about this artifact…")).toBeInTheDocument();
     act(() => {
-      h.viewer.open({ kind: "new" });
+      h.viewer.open(h.viewer.home());
     });
     menu("menu://toggle-ask");
     expect(asksStore.getState().open).toBe(true);

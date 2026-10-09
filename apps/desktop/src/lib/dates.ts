@@ -14,18 +14,6 @@ export function monthDay(date: string): string {
   return `${MONTHS[m - 1]} ${d}`;
 }
 
-/**
- * Card date label: `Today` when `createdAt` falls on today's local date, else
- * `MM·DD` (zero-padded, U+00B7). Any UTC offset in `createdAt` is converted to
- * local time first. Empty for an unparseable time.
- */
-export function dateLabel(createdAt: string, now: Date = new Date()): string {
-  const d = new Date(createdAt);
-  if (Number.isNaN(d.getTime())) return "";
-  if (localDate(d) === localDate(now)) return "Today";
-  return `${pad(d.getMonth() + 1)}·${pad(d.getDate())}`;
-}
-
 /** New-doc dot: `createdAt` is strictly after `baseline` (both ISO instants). False if either is unparseable. */
 export function isNewSince(createdAt: string, baseline: string): boolean {
   const created = Date.parse(createdAt);

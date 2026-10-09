@@ -58,8 +58,8 @@ export function BrandMenu() {
           <p className="px-2 pt-2 pb-1 text-caption text-ink-3">Follows macOS, which is {systemDark ? "dark" : "light"} right now.</p>
         ) : null}
         <DropdownMenuSeparator className="mx-2 my-1.5 bg-hairline" />
-        {/* Browser style: the home page replaces this tab; ⌘-click opens it in a new one. */}
-        <DropdownMenuItem onClick={(e) => viewer.go({ kind: "new" }, wantsNewTab(e))} className="h-7 py-0 [&_svg]:text-ink-2">
+        {/* Browser style: home (today's Journal) replaces this tab; ⌘-click opens it in a new one. */}
+        <DropdownMenuItem onClick={(e) => viewer.go(viewer.home(), wantsNewTab(e))} className="h-7 py-0 [&_svg]:text-ink-2">
           <House size={14} strokeWidth={1.5} aria-hidden />
           Home
         </DropdownMenuItem>

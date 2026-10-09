@@ -162,7 +162,7 @@ describe("RoomView", () => {
     const roomTab = viewer.getState().activeId!;
     expect(within(cards()[0]).getByLabelText("New artifact")).toBeInTheDocument();
     act(() => {
-      viewer.open({ kind: "new" }); // leaves r1: records lastVisit, unmounts RoomView
+      viewer.open(viewer.home()); // leaves r1: records lastVisit, unmounts RoomView
     });
     expect(screen.queryAllByTestId("artifact-card")).toHaveLength(0);
     // Coming back within the unwatch linger: the artifacts are still there, no reload.

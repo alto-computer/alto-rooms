@@ -91,12 +91,6 @@ test("screens for visual review", async ({ page, daemon }) => {
   await settle(page);
   await shot(page, "note-tab");
 
-  // New tab.
-  await page.getByRole("button", { name: "New tab", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Since your last visit" })).toBeVisible();
-  await settle(page);
-  await shot(page, "new-tab");
-
   // Collapsed sidebar (on a room, so the strip shows at full width).
   await rooms.getByRole("button", { name: "Benchmarks" }).click();
   await page.keyboard.press(`${MOD}+b`);
