@@ -22,11 +22,11 @@ Agents like Claude Code and Codex write specs, reports, and reviews as HTML. The
 ## How it works
 
 - Write an `.html` file into a room folder. It shows up in the app within two seconds.
-- While the app is open, HTML your agents (Claude Code, Codex, Aside) write anywhere is linked in on its own: into the room named like its repo, otherwise into `inbox`. See [Collecting](#collecting).
+- While the app is open, HTML your agents (Claude Code, Codex, Aside) write anywhere is linked into `inbox` on its own, and auto-sort moves it on to the room named like its repo. See [Collecting](#collecting) and [Auto-sort](#auto-sort).
 - Rooms never moves your files, and never writes into a folder you linked.
 - Drag rooms in the sidebar to reorder them.
 
-Rooms does not run agents or call any AI model. It reads folders and your agents' own conversation logs.
+Rooms does not run agents. It calls an AI model only if you turn on [auto-sort](#auto-sort) with your own TypeSafe key.
 
 ## Install
 
@@ -39,7 +39,7 @@ git clone https://github.com/alto-computer/alto-rooms.git
 cd alto-rooms
 bun install
 cd apps/desktop
-bun run sidecar        # build roomsd, rooms-mcp and rooms-collect
+bun run sidecar        # build roomsd, rooms-mcp, rooms-collect and rooms-sort
 bun run tauri build    # build the app
 ```
 
@@ -61,7 +61,7 @@ After that, new files are linked on their own while the app is open. Ask your ag
 
 `rooms-collect` runs beside the app (and stops with it). It reads the logs Claude Code (`~/.claude/projects`), Codex (`~/.codex/sessions`) and Aside (`~/.aside/u`) already keep, read-only, and:
 
-- links each new `.html` an agent writes into the room whose folder is named like the file's repo, or into `inbox`. It never creates rooms, never writes into linked rooms, and never re-adds a link you deleted;
+- links each new `.html` an agent writes into `inbox` (and notes it in `~/rooms/.rooms/collect/linked.jsonl`). It never chooses a room, never creates rooms, and never re-adds a link you deleted;
 - records which conversation wrote each file in `~/rooms/.rooms/sources.json`, so asking about a document continues that conversation;
 - keeps a copy of the logs in `~/Library/Application Support/computer.alto.rooms/archive` (agents delete old logs; Claude Code after 30 days);
 - indexes the last 30 days of conversations for search:
@@ -82,6 +82,28 @@ claude-code = true
 codex = true
 aside = true
 ```
+
+## Auto-sort
+
+`rooms-sort` runs every minute while the app is open. It only moves links `rooms-collect` put in `inbox`, never ones you or your agent put there, and the first rule that matches decides:
+
+| Rule | Needs a key | Moves the doc |
+|---|---|---|
+| R1 | no | to the room named like its git repo |
+| R2 | no | to the room R4 once made for its repo, even after you rename it |
+| R3 | yes | to the room TypeSafe Jev picks, when it is at least 70% sure |
+| R4 | yes | nowhere yet: a vote for its repo; at 3 votes a room named after the repo is made and they move in |
+| R5 | | stays in `inbox` |
+
+To turn on R3 and R4, paste a [TypeSafe key](https://console.typesafe.ai/keys) into the panel above the inbox. The key is kept in the macOS Keychain; `TYPESAFE_API_KEY` in the app's environment wins over it. For each doc, Jev gets its title, its path inside the repo and its first 2,000 characters, plus each room's name and five recent titles.
+
+```sh
+rooms-sort log            # every decision with its rule and reason
+rooms-sort run --dry-run  # what would move now
+rooms-sort undo           # put the last run's docs back in the inbox
+```
+
+Settings live in `~/rooms/.rooms/sort.toml` (all optional): `enabled`, `min_confidence` (0.7), `new_room_min_docs` (3), `model`, `max_docs_per_run`, `ignore_names`.
 
 ## For agents
 
@@ -121,7 +143,8 @@ Right-click a plugin in the sidebar to turn it off. To add another, copy its fol
 ## Architecture
 
 - **roomsd** (Rust) watches `~/rooms` and serves a local HTTP API on `127.0.0.1:4317`.
-- **rooms-collect** (Rust) reads agent logs and talks to Rooms only through folders: the symlinks it makes in `~/rooms` reach roomsd through its usual file watching.
+- **rooms-collect** (Rust) reads agent logs and talks to Rooms only through folders: the symlinks it makes in `~/rooms/inbox` reach roomsd through its usual file watching.
+- **rooms-sort** (Rust) moves those links to rooms through roomsd's API. Its rules are one function, `rules::decide`.
 - **The desktop app** (Tauri + React) is one client of that API. You can build your own.
 - `GET /v1/rooms` lists rooms. `GET /v1/events` streams changes. Write requests need the token in `~/rooms/.rooms/token`.
 
@@ -129,6 +152,7 @@ Right-click a plugin in the sidebar to turn it off. To add another, copy its fol
 crates/rooms-core       indexing, file watching, rooms, notes
 crates/roomsd           HTTP API and event stream
 crates/rooms-collect    agent-log collector: links, sources, archive, search
+crates/rooms-sort       inbox sorter: rules R1–R5, TypeSafe Jev
 crates/rooms-protocol   API types
 packages/protocol-ts    TypeScript client
 apps/desktop            Tauri app

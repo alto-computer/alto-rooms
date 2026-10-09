@@ -76,11 +76,11 @@ td:first-child{font-family:var(--mono);font-size:12.5px;white-space:nowrap;color
 <li><a href="#s3">3. Jev 입력과 출력</a></li><li><a href="#s4">4. 사용자 경험</a></li><li><a href="#s5">5. 구조와 실행</a></li>
 <li><a href="#s6">6. 저장소와 설정</a></li><li><a href="#s7">7. API 키</a></li><li><a href="#s8">8. 앱 연결</a></li>
 <li><a href="#s9">9. collect 변경</a></li><li><a href="#s10">10. 스킬 v9</a></li><li><a href="#s11">11. 장애와 안전장치</a></li>
-<li><a href="#s12">12. 테스트</a></li><li><a href="#s13">13. 열린 질문</a></li>
+<li><a href="#s12">12. 테스트</a></li><li><a href="#s13">13. 열린 질문</a></li><li><a href="#s14">14. 구현 메모</a></li>
 </ol></nav>
 <main>
 <h1>rooms-sort — inbox를 비우는 분류기</h1>
-<div class="meta"><span>Spec · 2026-10-09 (rev 3)</span><span>author: jun-hash</span><span>선행: rooms-collect-spec, v1-spec (artifacts/move)</span><span>모델: TypeSafe Jev</span></div>
+<div class="meta"><span>Spec · 2026-10-09 (rev 4, 구현)</span><span>author: jun-hash</span><span>선행: rooms-collect-spec, v1-spec (artifacts/move)</span><span>모델: TypeSafe Jev</span></div>
 
 <p class="lede">rooms-collect는 새 문서를 모으기만 하고, 어느 룸에 둘지는 전부 <code>rooms-sort</code>가 정한다. 규칙은 다섯 개이고 위에서부터 처음 맞는 하나가 결과가 된다. 앞의 두 규칙은 키 없이 돌고, Jev가 필요한 규칙은 사용자가 TypeSafe API 키를 넣었을 때만 켜진다.</p>
 
@@ -257,6 +257,7 @@ Authorization: Bearer $TYPESAFE_API_KEY
 <pre><code>rooms-sort run [--dry-run]   # dry-run: 묻고 결정만 출력, 옮기지 않음
 rooms-sort undo [--run ID]   # 기본: 마지막 실행
 rooms-sort log [-n 20]       # 최근 결정과 이유(규칙 id, confidence)
+rooms-sort check-key         # 키 확인: TypeSafe가 받으면 0, 거절하면 3
 
 $ rooms-sort log
 10-09 08:41  moved  sort-spec.html → alto-rooms          R1 repo "alto-rooms" = room "alto-rooms"
@@ -335,6 +336,21 @@ ignore_names = []         # N2 목록에 더함</code></pre>
 <li><span class="q">기준값</span> 0.7로 정했다(사용자). dry-run에서 잘못 옮겨지는 문서가 많으면 올린다.</li>
 <li><span class="q">본문 2,000자</span> 정확도가 부족하면 늘린다. 비용은 거의 그대로다.</li>
 </ul>
+<h2 id="s14">14. 구현 메모</h2>
+<p>스펙과 다르게 구현했거나 구현하면서 정한 것.</p>
+<div class="tbl"><table>
+<tr><th>항목</th><th>내용</th></tr>
+<tr><td>화면 문구</td><td>앱이 영어라 inbox 위 카드도 영어다("Sort the inbox automatically", "Auto-sort is on · 5 moved today, 2 left here").</td></tr>
+<tr><td>undo</td><td>roomsd는 inbox로 옮기는 이동을 거부한다(<code>cannot move into inbox</code>). 그래서 undo는 링크 자체를 inbox로 rename한다. fileKey는 원본 경로로 정해지므로 그대로이고, 결정이 <code>undone</code>으로 남아 다시 옮기지 않는다. 되돌린 문서의 createdAt은 되돌린 시각이 된다.</td></tr>
+<tr><td>키 확인</td><td>앱은 네트워크 코드를 늘리지 않고 <code>rooms-sort check-key</code>로 확인한다. TypeSafe와 통신하는 코드는 <code>jev.rs</code> 하나뿐이다.</td></tr>
+<tr><td>거절된 키</td><td>앱은 실행마다 <code>TYPESAFE_API_KEY</code>를 명시적으로 넘긴다. 키가 없거나 거절된 키면 빈 값을 넘겨서, 앱 환경의 키가 그대로 상속되지 않게 한다.</td></tr>
+<tr><td>macOS 밖</td><td>키체인이 없으므로 <code>TYPESAFE_API_KEY</code>만 쓴다. 키 저장은 안내 문구와 함께 실패한다.</td></tr>
+<tr><td>T3 시각</td><td>inbox에 들어온 시각은 Artifact의 createdAt이 아니라 <code>linked.jsonl</code>의 <code>at</code>(collect가 링크한 시각)을 쓴다.</td></tr>
+<tr><td>본문 발췌</td><td>script, style, noscript, template, svg, title 안의 텍스트는 뺀다(제목은 따로 들어가므로).</td></tr>
+<tr><td>테스트 훅</td><td><code>TYPESAFE_URL</code>로 Jev 주소를 바꿀 수 있다(가짜 서버용).</td></tr>
+<tr><td>스킬 v9</td><td>안내문 두 곳을 고치고, 스킬이 inbox에 둔 링크는 자동 분류가 건드리지 않는다는 점을 적었다. 버전이 올라가서 기존 사용자에게도 다시 설치된다.</td></tr>
+<tr><td>검증</td><td>rooms-sort 테스트 24개(규칙별 단위 + 가짜 roomsd/Jev로 실행 전체), collect 테스트 수정, 앱 프런트 482개, 앱 Rust 테스트 통과. 실제 roomsd와 가짜 Jev 서버로 R1, R3, R4(룸 생성), R5, 거절된 키, dry-run, undo를 끝까지 돌려 봤다. 실제 TypeSafe 호출과 macOS 빌드는 아직 안 했다.</td></tr>
+</table></div>
 </main>
 </div>
 

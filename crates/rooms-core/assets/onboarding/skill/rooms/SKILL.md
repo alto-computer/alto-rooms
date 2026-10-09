@@ -2,7 +2,7 @@
 name: rooms
 description: "Sorts HTML artifacts into Rooms (an app that shows HTML artifacts grouped into topic room folders). Triggers: \"sort my rooms\", \"sort my rooms again\", \"sort my inbox\", reading and following \"~/rooms/ONBOARD.md\", \"put this in a room\", \"add to Rooms\", \"put this in the inbox\", \"put this in today's Journal\", making a review/Dream HTML, and sorting recent HTML into rooms. Never moves originals; only creates symlinks."
 ---
-<!-- rooms-onboarding v8 -->
+<!-- rooms-onboarding v9 -->
 
 # rooms skill
 
@@ -83,11 +83,11 @@ ln -s "<absolute path of the original>" "<home>/<slug>/<original file name>"
 4. Continue only on "yes". If the user renames a room or moves a file, continue with the edited plan (no need to ask again). On "no", create nothing.
 5. For each room run `mkdir -p "<home>/<slug>"`, and for each file `ln -s` (see "Making a link").
 6. Report: the rooms created, the number of links per room, and the inbox count. Then say: "I didn't move any original files. I only created links."
-7. If this was the first sort, tell the user: "From now on, while the Rooms app is open, new HTML your agents write is linked on its own: into the room named like its repo, otherwise into the inbox. Ask me to sort the inbox any time."
+7. If this was the first sort, tell the user: "From now on, while the Rooms app is open, new HTML your agents write is linked into the inbox on its own, and auto-sort moves it from there: into the room named like its repo, and, if you add a TypeSafe key above the inbox, into the room that fits. Ask me any time to sort the inbox into topic rooms."
 
 ## Sorting the inbox
 
-While the Rooms app is open, it links each new HTML file an agent writes into `<home>/inbox` (or into the room whose folder is named like the file's repo). When the user asks to sort the inbox:
+While the Rooms app is open, it links each new HTML file an agent writes into `<home>/inbox`, and auto-sort (rooms-sort) moves the ones it is sure about into existing rooms. What stays in the inbox is yours to sort when the user asks. You can make new topic rooms; auto-sort never names a room after a topic, and it never moves a link you put in the inbox or in a room. When the user asks to sort the inbox:
 
 1. List the links: `ls -l "<home>/inbox"`.
 2. Read each one's title and the start of the file (as in step 2 of "First sort"), pick rooms, show one proposal table and ask once, as in steps 3–4.
