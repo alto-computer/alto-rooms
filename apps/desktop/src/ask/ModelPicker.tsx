@@ -17,16 +17,20 @@ export function AgentChip({ name }: { name: string }) {
   return <span className={CHIP}>{name}</span>;
 }
 
-/** A lock beside the agent chip when the agent can't read past the listed files; the words show on hover. */
+/** A lock beside the agent chip when the agent can't read past the listed files; the words show on hover or keyboard focus. */
 export function ReadScopeHint({ text }: { text: string | null }) {
   if (!text) return null;
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span role="img" aria-label={text} className="flex size-7 shrink-0 items-center justify-center text-ink-3">
-            <Lock className="size-3.5" />
-          </span>
+          <button
+            type="button"
+            aria-label={text}
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-ink-3 focus-visible:outline-2 focus-visible:outline-ink"
+          >
+            <Lock className="size-3.5" aria-hidden />
+          </button>
         </TooltipTrigger>
         <TooltipContent side="top">{text}</TooltipContent>
       </Tooltip>

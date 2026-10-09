@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Artifact, AskScope, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
@@ -638,11 +639,35 @@ describe("AskBar for a room", () => {
 
   it("says the agent reads only the room's docs when roomsd scopes its reads, and nothing when it doesn't", async () => {
     const first = await setupRoom({ target: { agent: "claude-code", mode: "new", models: ["haiku"], scoped: true } });
-    expect(await screen.findByRole("img", { name: "Reads only this room's docs" })).toBeTruthy();
+    const hint = await screen.findByRole("button", { name: "Reads only this room's docs" });
+    expect(hint.tabIndex).toBe(0);
+    act(() => hint.focus());
+    expect((await screen.findByRole("tooltip")).textContent).toBe("Reads only this room's docs");
     first.unmount();
     await setupRoom({ target: { agent: "codex", mode: "new", models: [], scoped: false } });
     expect(await screen.findByText("codex")).toBeTruthy();
-    expect(screen.queryByRole("img", { name: "Reads only this room's docs" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reads only this room's docs" })).toBeNull();
+  });
+
+  it("a room's answer keeps running while another room is shown, and is there on coming back", async () => {
+    let show: (roomId: string) => void = () => {};
+    function Switch() {
+      const [roomId, setRoomId] = useState("r1");
+      show = setRoomId;
+      return <AskBar key={roomId} subject={{ kind: "room", roomId }} />;
+    }
+    const { client, emit } = await renderWithStores(<Switch />, { rooms: [room("r1", "A"), room("r2", "B")], artifacts: { r1: [doc], r2: [] } });
+    const input = await screen.findByPlaceholderText("Ask about this room…");
+    fireEvent.change(input, { target: { value: "길게?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope: roomScope, question: "길게?", model: null }));
+    act(() => show("r2"));
+    expect(screen.queryByText("길게?")).toBeNull();
+    act(() => emit({ type: "ask.progress", id: "ask-길게?", scope: roomScope, answer: "절반", activity: null }));
+    act(() => emit({ type: "ask.done", turn: roomTurn({ id: "ask-길게?", question: "길게?", status: "done", answer: "끝까지 답함", endedAt: "2026-10-06T10:00:09+09:00" }) }));
+    act(() => show("r1"));
+    expect(await screen.findByText("끝까지 답함")).toBeTruthy();
+    expect(client.cancelAsk).not.toHaveBeenCalled();
   });
 
   it("renders nothing in read-only", async () => {
