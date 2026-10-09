@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useArtifacts, useAsksStore, useClient, useInfo, usePlugins, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { PluginSlot, SidePanelOpener } from "@/plugins/PluginSlot";
-import { contentKey } from "@/plugins/pluginsStore";
+import { createContentChannel, type ContentAction, type ContentChannel, type ContentChannelDeps } from "@/plugins/contentChannel";
+import { contentKey, contentPlugins, type HostPlugin } from "@/plugins/pluginsStore";
 import { ToolbarGroup } from "@/components/ToolbarGroup";
 import { useTabVisible } from "@/shell/currentTab";
 import { AskBar } from "@/ask/AskBar";
-import { readSelectionMessage, SelectionAsk, type SelectionRect } from "@/ask/SelectionAsk";
+import { askAction, SelectionBar, type SelectionAction } from "@/selection/SelectionBar";
+import { readSelectionMessage, type SelectionRect } from "@/selection/useTextSelection";
 import { DocSkeleton } from "./DocSkeleton";
 import { ShareMenu } from "./ShareMenu";
 
@@ -32,6 +34,8 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
   const asks = useAsksStore();
   const readOnly = useReadOnly();
   const plugins = usePlugins();
+  const fileKey = artifacts?.find((a) => a.id === artifactId)?.fileKey;
+  const content = useContentChannel(frame, fileKey, plugins.list, client);
 
   // The store forgets a removed room's artifacts; its documents are gone too.
   const roomGone = info !== null && roomId !== info.journalRoomId && !rooms.some((r) => r.id === roomId);
@@ -58,13 +62,30 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
           className={cn("absolute inset-0 size-full border-0 bg-white transition-opacity duration-300 ease-out motion-reduce:transition-none", loaded ? "opacity-100" : "opacity-0")}
         />
         {loaded ? null : <DocSkeleton />}
-        {selection.current && !readOnly ? (
-          <SelectionAsk
+        {selection.current ? (
+          <SelectionBar
             rect={selection.current.rect}
-            onAsk={() => {
-              asks.addQuote({ kind: "doc", fileKey: artifact.fileKey }, selection.current!.text);
-              selection.dismiss();
-            }}
+            actions={[
+              ...(readOnly
+                ? []
+                : [
+                    askAction(() => {
+                      asks.addQuote({ kind: "doc", fileKey: artifact.fileKey }, selection.current!.text);
+                      selection.dismiss();
+                    }),
+                  ]),
+              ...content.actions.map(
+                (a): SelectionAction => ({
+                  key: `${a.plugin}:${a.id}`,
+                  title: a.title,
+                  color: a.color,
+                  run: () => {
+                    content.run(a.plugin, a.id);
+                    selection.dismiss();
+                  },
+                }),
+              ),
+            ]}
           />
         ) : null}
         <AskBar artifact={artifact} />
@@ -93,4 +114,39 @@ function useDocSelection(frame: RefObject<HTMLIFrameElement | null>) {
     return () => window.removeEventListener("message", onMessage);
   }, [frame]);
   return { current, dismiss: () => setCurrent(null) };
+}
+
+/**
+ * The content channel of this tab's doc frame: storage for the content scripts of the plugins
+ * that are on, scoped to this document, and the selection actions they declared, in plugin id
+ * order. A new plugin set or document makes a new channel; the frame reloads with it.
+ */
+function useContentChannel(frame: RefObject<HTMLIFrameElement | null>, fileKey: string | undefined, list: HostPlugin[], client: ContentChannelDeps["client"]) {
+  const ids = contentPlugins(list).map((p) => p.id).join(",");
+  const channel = useRef<ContentChannel | null>(null);
+  const [declared, setDeclared] = useState<ReadonlyMap<string, ContentAction[]>>(new Map());
+  useEffect(() => {
+    if (!fileKey || !ids) return;
+    const ch = createContentChannel({
+      fileKey,
+      plugins: new Set(ids.split(",")),
+      frame: () => frame.current?.contentWindow ?? null,
+      client,
+      onActions: setDeclared,
+    });
+    channel.current = ch;
+    const onMessage = (e: MessageEvent) => ch.receive(e);
+    window.addEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      ch.dispose();
+      channel.current = null;
+      setDeclared(new Map());
+    };
+  }, [frame, fileKey, ids, client]);
+  const actions = useMemo(
+    () => [...declared].sort(([a], [b]) => (a < b ? -1 : 1)).flatMap(([plugin, items]) => items.map((it) => ({ plugin, ...it }))),
+    [declared],
+  );
+  return { actions, run: (plugin: string, actionId: string) => channel.current?.runAction(plugin, actionId) };
 }

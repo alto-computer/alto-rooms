@@ -1,9 +1,10 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { ArrowDown } from "lucide-react";
 import type { AskTurn } from "@alto-rooms/protocol-ts";
+import { askAction, SelectionBar } from "@/selection/SelectionBar";
+import { useTextSelection } from "@/selection/useTextSelection";
 import { modelLabel } from "./askModel";
 import type { Live } from "./asksStore";
-import { SelectionAsk, useTextSelection } from "./SelectionAsk";
 import { PendingTurn, Turn } from "./Turn";
 import { ErrorText, TextButton } from "./ui";
 import type { Pending } from "./useComposer";
@@ -104,13 +105,15 @@ export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompac
         </button>
       ) : null}
       {selection.picked ? (
-        <SelectionAsk
+        <SelectionBar
           rect={selection.picked.rect}
-          onAsk={() => {
-            onQuote(selection.picked!.text);
-            document.getSelection()?.removeAllRanges();
-            selection.dismiss();
-          }}
+          actions={[
+            askAction(() => {
+              onQuote(selection.picked!.text);
+              document.getSelection()?.removeAllRanges();
+              selection.dismiss();
+            }),
+          ]}
         />
       ) : null}
     </div>
