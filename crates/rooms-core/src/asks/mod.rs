@@ -14,7 +14,7 @@ use crate::lock::lock;
 use crate::RoomsCore;
 use agents::{AgentProfiles, Plan, Vars};
 use log::AskLog;
-use prompt::{build_prompt, context, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK};
+use prompt::{build_prompt, context, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
 use rooms_protocol::{Artifact, AskKind, AskStatus, AskTarget, AskTurn, EventKind};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
@@ -267,7 +267,7 @@ impl Asks {
 
         let running = self.reserve(&artifact.file_key)?;
         let prior = self.read_thread(&running, &artifact.file_key)?;
-        let ctx = context(&prior);
+        let ctx = context(&prior, if plan.prompt_on_stdin() { PRIOR_CHARS_STDIN } else { PRIOR_CHARS_ARGV });
         if req.kind != AskKind::Question && ctx.is_empty() {
             return Err(AskError::BadRequest(if req.kind == AskKind::Clear { "Nothing to clear yet" } else { "Nothing to summarize yet" }.into()));
         }
@@ -285,11 +285,12 @@ impl Asks {
         // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
         let mcp = self.0.core.home().join(".rooms/mcp.json");
         let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
+        let stdin = plan.prompt_on_stdin();
         let argv = plan.render(&Vars {
-            prompt: &prompt, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
+            prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
             model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir,
         });
-        self.launch(running, turn, argv, cwd, plan.events)
+        self.launch(running, turn, argv, stdin.then_some(prompt), cwd, plan.events)
     }
 
     /// The stored files for `ids`; an unknown id is the user's to fix.
@@ -322,14 +323,15 @@ impl Asks {
         Ok(turn)
     }
 
-    /// Records `turn`, runs `argv`, relays its progress, and finishes the turn when it ends.
-    fn launch(&self, mut running: MutexGuard<'_, HashMap<String, Entry>>, turn: AskTurn, argv: Vec<String>, cwd: PathBuf, rules: Vec<EventRule>) -> Result<AskTurn, AskError> {
+    /// Records `turn`, runs `argv` (with `stdin` as its input, if any), relays its progress, and
+    /// finishes the turn when it ends.
+    fn launch(&self, mut running: MutexGuard<'_, HashMap<String, Entry>>, turn: AskTurn, argv: Vec<String>, stdin: Option<String>, cwd: PathBuf, rules: Vec<EventRule>) -> Result<AskTurn, AskError> {
         self.0.log.append(&turn).map_err(|e| AskError::Io(e.to_string()))?;
         self.0.core.emit_ask(EventKind::AskStarted { turn: turn.clone() });
         let (tap, chunks) = tokio::sync::mpsc::unbounded_channel();
         let mut limits = self.0.limits;
         if !rules.is_empty() { limits.max_stdout = limits.max_stdout.saturating_mul(JSON_STDOUT_FACTOR); }
-        match spawn_agent(SpawnSpec { argv: argv.clone(), cwd, path_env: self.0.login_path.get().cloned(), limits, tap: Some(tap) }) {
+        match spawn_agent(SpawnSpec { argv: argv.clone(), stdin, cwd, path_env: self.0.login_path.get().cloned(), limits, tap: Some(tap) }) {
             Err(e) => {
                 drop(running);
                 let msg = if e.kind() == std::io::ErrorKind::NotFound {

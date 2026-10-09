@@ -1,8 +1,11 @@
 //! The only text Rooms writes into a question (spec §6.3), plus the R0 checks on doc meta.
 use rooms_protocol::{AskKind, AskMode, AskStatus, AskTurn};
 
-pub(crate) const MAX_PRIOR_TURNS: usize = 6;
-pub(crate) const MAX_PRIOR_CHARS: usize = 24_000;
+/// How much earlier Q&A goes along with a question, in characters, summary included. A prompt on
+/// stdin has no OS limit; one passed as an argv element (a template with `{prompt}`) does: Linux
+/// takes at most 128 KiB per argument, about 40k Korean characters with the rest of the prompt.
+pub(crate) const PRIOR_CHARS_STDIN: usize = 100_000;
+pub(crate) const PRIOR_CHARS_ARGV: usize = 24_000;
 
 /// R0: meta from a doc is untrusted. A leading '-' would read as a CLI flag.
 pub(crate) fn valid_ident(s: &str) -> bool {
@@ -37,7 +40,8 @@ impl Context<'_> {
     pub fn is_empty(&self) -> bool { self.summary.is_none() && self.turns.is_empty() && self.left_out == 0 }
 }
 
-pub(crate) fn context(prior: &[AskTurn]) -> Context<'_> {
+/// The newest answered questions that fit in `budget` characters along with the summary.
+pub(crate) fn context(prior: &[AskTurn], budget: usize) -> Context<'_> {
     let ends = |t: &AskTurn| t.kind == AskKind::Clear || (t.kind == AskKind::Compact && t.status == AskStatus::Done);
     let (summary, since) = match prior.iter().rposition(ends) {
         Some(i) if prior[i].kind == AskKind::Compact => (Some(prior[i].answer.as_str()), &prior[i + 1..]),
@@ -45,8 +49,8 @@ pub(crate) fn context(prior: &[AskTurn]) -> Context<'_> {
         None => (None, prior),
     };
     let done: Vec<&AskTurn> = since.iter().filter(|t| t.kind == AskKind::Question && t.status == AskStatus::Done).collect();
-    let mut turns: Vec<&AskTurn> = done[done.len().saturating_sub(MAX_PRIOR_TURNS)..].to_vec();
-    let budget = MAX_PRIOR_CHARS.saturating_sub(summary.map_or(0, |s| s.chars().count()));
+    let mut turns = done.clone();
+    let budget = budget.saturating_sub(summary.map_or(0, |s| s.chars().count()));
     let size = |ts: &[&AskTurn]| ts.iter().map(|t| t.question.chars().count() + t.answer.chars().count()).sum::<usize>();
     while !turns.is_empty() && size(&turns) > budget { turns.remove(0); }
     Context { summary, left_out: done.len() - turns.len(), turns }
@@ -83,35 +87,37 @@ mod tests {
 
     fn of(kind: AskKind, a: &str) -> AskTurn { AskTurn { kind, ..turn("", a, AskStatus::Done) } }
 
-    fn prompt(prior: &[AskTurn], q: &str) -> String { build_prompt("P", AskMode::Resume, "/f", "k", &context(prior), q) }
+    fn prompt(prior: &[AskTurn], q: &str) -> String { build_prompt("P", AskMode::Resume, "/f", "k", &context(prior, PRIOR_CHARS_ARGV), q) }
 
     #[test]
     fn resume_without_prior() {
-        assert_eq!(build_prompt("P", AskMode::Resume, "/d/a.html", "0123abcd", &context(&[]), "왜?"), "P\n\nDocument: /d/a.html\nRooms doc: 0123abcd\n\nQuestion: 왜?");
+        assert_eq!(build_prompt("P", AskMode::Resume, "/d/a.html", "0123abcd", &context(&[], PRIOR_CHARS_ARGV), "왜?"), "P\n\nDocument: /d/a.html\nRooms doc: 0123abcd\n\nQuestion: 왜?");
     }
 
     #[test]
     fn new_mode_asks_to_read_and_includes_done_prior_only() {
         let prior = [turn("q1", "a1", AskStatus::Done), turn("q2", "", AskStatus::Failed), turn("q3", "a3", AskStatus::Done)];
         assert_eq!(
-            build_prompt("P", AskMode::New, "/d/a.html", "0123abcd", &context(&prior), "q4"),
+            build_prompt("P", AskMode::New, "/d/a.html", "0123abcd", &context(&prior, PRIOR_CHARS_ARGV), "q4"),
             "P\n\nDocument: /d/a.html\nRooms doc: 0123abcd\nRead this file first.\n\nPrevious Q&A:\nQ: q1\nA: a1\nQ: q3\nA: a3\n\nQuestion: q4"
         );
     }
 
     #[test]
-    fn keeps_last_six_then_trims_oldest_over_char_budget() {
-        let many: Vec<_> = (0..8).map(|i| turn(&format!("q{i}"), "a", AskStatus::Done)).collect();
+    fn keeps_every_answer_that_fits_then_trims_the_oldest() {
+        let many: Vec<_> = (0..40).map(|i| turn(&format!("q{i}"), "a", AskStatus::Done)).collect();
         let p = prompt(&many, "z");
-        assert!(!p.contains("Q: q1\n") && p.contains("Q: q2\n") && p.contains("Q: q7\n"));
-        assert_eq!(context(&many).left_out, 2);
+        assert!(p.contains("Q: q0\n") && p.contains("Q: q39\n"));
+        assert_eq!(context(&many, PRIOR_CHARS_ARGV).left_out, 0);
         let big = "가".repeat(15_000);
         let heavy = [turn("old", &big, AskStatus::Done), turn("new", &big, AskStatus::Done)];
         let p = prompt(&heavy, "z");
         assert!(!p.contains("Q: old") && p.contains("Q: new"));
+        // on stdin both fit
+        assert_eq!(context(&heavy, PRIOR_CHARS_STDIN).turns.len(), 2);
         let huge = [turn("only", &"x".repeat(30_000), AskStatus::Done)];
         assert!(!prompt(&huge, "z").contains("Previous Q&A"));
-        assert_eq!(context(&huge).left_out, 1);
+        assert_eq!(context(&huge, PRIOR_CHARS_ARGV).left_out, 1);
     }
 
     #[test]
@@ -126,12 +132,13 @@ mod tests {
         assert!(prompt(&t, "z").contains("S2") && prompt(&t, "z").contains("Q: q3"));
         // a clear after a summary drops it too
         t.push(of(AskKind::Clear, ""));
-        assert!(context(&t).is_empty());
+        assert!(context(&t, PRIOR_CHARS_ARGV).is_empty());
         assert_eq!(prompt(&t, "z"), "P\n\nDocument: /f\nRooms doc: k\n\nQuestion: z");
         // the summary takes its share of the budget
-        let big = "가".repeat(MAX_PRIOR_CHARS - 10);
+        let big = "가".repeat(PRIOR_CHARS_ARGV - 10);
         let c = [of(AskKind::Compact, &big), turn("q", "0123456789ab", AskStatus::Done)];
-        assert_eq!((context(&c).turns.len(), context(&c).left_out), (0, 1));
+        let ctx = context(&c, PRIOR_CHARS_ARGV);
+        assert_eq!((ctx.turns.len(), ctx.left_out), (0, 1));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! The only place Rooms knows about agent CLIs: argv templates from `<home>/.rooms/agents.toml`,
-//! over built-in defaults. Rooms reads this file and never writes it.
+//! over built-in defaults. Rooms reads this file and never writes it. A template with `{prompt}`
+//! gets the prompt there; one without gets it on stdin (the built-in claude-code and codex do).
 //!
 //! A profile may also say how to read its stdout as JSON lines while it streams, with
 //! `[[agents.X.events]]` rules (`match` pointers, then `delta` / `answer` / `activity` / `clear`;
@@ -132,14 +133,14 @@ answer = "/item/text"
 fn builtin() -> BTreeMap<String, Profile> {
     BTreeMap::from([
         ("claude-code".to_string(), Profile {
-            resume: Some(argv(&["claude", "-p", "--model", "{model}", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "{prompt}"])),
-            new: argv(&["claude", "-p", "--model", "{model}", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "{prompt}"]),
+            resume: Some(argv(&["claude", "-p", "--model", "{model}", "--resume", "{session}", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])),
+            new: argv(&["claude", "-p", "--model", "{model}", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]),
             models: argv(&["opus", "sonnet", "haiku"]),
             events: rules(CLAUDE_EVENTS),
         }),
         ("codex".to_string(), Profile {
-            resume: Some(argv(&["codex", "exec", "fork", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "-i", "{image}", "--json", "{prompt}"])),
-            new: argv(&["codex", "exec", "-m", "{model}", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "-i", "{image}", "--json", "{prompt}"]),
+            resume: Some(argv(&["codex", "exec", "fork", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "-i", "{image}", "--json", "-"])),
+            new: argv(&["codex", "exec", "-m", "{model}", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "-i", "{image}", "--json", "-"]),
             models: argv(&["gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol"]),
             events: rules(CODEX_EVENTS),
         }),
@@ -239,6 +240,10 @@ fn subst(arg: &str, v: &Vars) -> String {
 }
 
 impl Plan {
+    /// A template without `{prompt}` gets the prompt on stdin, which has no size limit; with it,
+    /// the prompt is that argv element, as for a CLI that reads no stdin.
+    pub fn prompt_on_stdin(&self) -> bool { !self.template.iter().any(|a| a.contains("{prompt}")) }
+
     /// An element that is exactly `{mcp_config}`, `{model}` or `{image_dir}` with an empty value is
     /// dropped together with the element before it (its flag, e.g. `--mcp-config` or `--model`).
     /// `{image}` repeats with its flag once per image (`-i a -i b`).
@@ -276,8 +281,20 @@ mod tests {
         let a = AgentProfiles::load(&p).unwrap();
         let plan = a.plan(Some("claude-code"), Some("S1"));
         assert_eq!(plan.mode, AskMode::Resume);
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "Q"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--resume", "S1", "--fork-session", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
         assert_eq!(a.preamble(), DEFAULT_PREAMBLE);
+    }
+
+    #[test]
+    fn a_template_without_prompt_takes_it_on_stdin() {
+        let (_d, p) = tmp(None);
+        let a = AgentProfiles::load(&p).unwrap();
+        for (agent, session) in [("claude-code", None), ("claude-code", Some("S1")), ("codex", None), ("codex", Some("S1"))] {
+            assert!(a.plan(Some(agent), session).prompt_on_stdin(), "{agent} {session:?}");
+        }
+        assert!(!a.plan(Some("aside"), None).prompt_on_stdin());
+        let (_d, p) = tmp(Some("[agents.x]\nnew = [\"x\", \"--ask={prompt}\"]\n"));
+        assert!(!AgentProfiles::load(&p).unwrap().plan(Some("x"), None).prompt_on_stdin());
     }
 
     #[test]
@@ -285,9 +302,9 @@ mod tests {
         let (_d, p) = tmp(None);
         let a = AgentProfiles::load(&p).unwrap();
         assert_eq!(a.plan(Some("codex"), Some("S1")).render(&vars("Q")),
-            vec!["codex", "exec", "fork", "S1", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "--json", "Q"]);
+            vec!["codex", "exec", "fork", "S1", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("codex"), None).render(&vars("Q")),
-            vec!["codex", "exec", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "--json", "Q"]);
+            vec!["codex", "exec", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("aside"), Some("S1")).render(&vars("Q")), vec!["aside", "session", "resume", "S1", "Q"]);
         assert_eq!(a.plan(Some("aside"), None).render(&vars("Q")), vec!["aside", "exec", "Q"]);
     }
@@ -297,7 +314,7 @@ mod tests {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("my-agent"), Some("S1"));
         assert_eq!((plan.agent.as_str(), plan.mode), ("claude-code", AskMode::New));
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "Q"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
     }
 
     #[test]
@@ -342,7 +359,7 @@ new = ["codex2", "{prompt}"]
         let a = AgentProfiles::load(&p).unwrap();
         let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json", model: "", images: &[], image_dir: "" };
         assert_eq!(a.plan(Some("claude-code"), None).render(&v),
-            vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "Q"]);
+            vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
         let resumed = a.plan(Some("claude-code"), Some("S1")).render(&v);
         assert!(resumed.windows(4).any(|w| w == ["--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms"]));
         // without a config the pair is dropped but strict stays: the ask gets no MCP at all
@@ -369,7 +386,7 @@ new = ["codex2", "{prompt}"]
         let imgs = ["/h/i/a.png".to_string(), "/h/i/b.jpg".to_string()];
         let v = Vars { images: &imgs, image_dir: "/h/i", ..vars("Q") };
         let codex = a.plan(Some("codex"), None).render(&v);
-        assert!(codex.ends_with(&["-i".into(), "/h/i/a.png".into(), "-i".into(), "/h/i/b.jpg".into(), "--json".into(), "Q".into()]), "{codex:?}");
+        assert!(codex.ends_with(&["-i".into(), "/h/i/a.png".into(), "-i".into(), "/h/i/b.jpg".into(), "--json".into(), "-".into()]), "{codex:?}");
         let claude = a.plan(Some("claude-code"), Some("S1")).render(&v);
         assert!(claude.windows(2).any(|w| w == ["--add-dir", "/h/i"]), "{claude:?}");
         for out in [a.plan(Some("codex"), Some("S1")).render(&vars("Q")), a.plan(Some("claude-code"), None).render(&vars("Q"))] {
@@ -459,9 +476,9 @@ new = ["codex2", "{prompt}"]
         let codex = a.plan(Some("codex"), Some("S1"));
         assert_eq!(codex.models, vec!["gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol"]);
         assert_eq!(codex.render(&with_model("gpt-6-sol")),
-            vec!["codex", "exec", "fork", "S1", "-m", "gpt-6-sol", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "--json", "Q"]);
+            vec!["codex", "exec", "fork", "S1", "-m", "gpt-6-sol", "-c", "sandbox_mode=\"read-only\"", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("codex"), None).render(&with_model("gpt-6-luna")),
-            vec!["codex", "exec", "-m", "gpt-6-luna", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "--json", "Q"]);
+            vec!["codex", "exec", "-m", "gpt-6-luna", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
         let aside_new = a.plan(Some("aside"), None);
         assert_eq!(aside_new.models, vec!["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]);
         assert_eq!(aside_new.render(&with_model("claude-haiku-4-5")), vec!["aside", "exec", "-m", "claude-haiku-4-5", "Q"]);
