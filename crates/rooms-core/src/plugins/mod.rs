@@ -6,7 +6,7 @@ mod data;
 mod manifest;
 
 pub use data::{append_data, delete_data, list_data, read_data, resolve_asset, valid_path, write_data, MAX_DATA_BYTES};
-pub use manifest::{load_manifest, rev, Manifest, ICONS, PERMISSIONS};
+pub use manifest::{load_manifest, rev, Manifest, ICONS};
 
 use crate::core::RoomsCore;
 use crate::error::CoreError;

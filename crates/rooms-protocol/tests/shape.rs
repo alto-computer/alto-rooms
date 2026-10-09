@@ -51,6 +51,9 @@ fn export_typescript_bindings() {
     StartAsk::export_all().unwrap();
     AskTarget::export_all().unwrap();
     AskImage::export_all().unwrap();
+    let list = PERMISSIONS.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
+    let ts = format!("// Generated from rooms_protocol::PERMISSIONS by crates/rooms-protocol/tests/shape.rs. Do not edit.\n\nexport const PERMISSIONS = [{list}] as const;\n\nexport type Permission = (typeof PERMISSIONS)[number];\n");
+    std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/protocol-ts/src/generated/permissions.ts"), ts).unwrap();
 }
 
 #[test]

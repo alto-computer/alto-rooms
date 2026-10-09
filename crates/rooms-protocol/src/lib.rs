@@ -7,6 +7,8 @@ pub mod layout;
 
 pub const PROTOCOL_VERSION: &str = "1";
 pub const JOURNAL_ROOM_ID: &str = "journal";
+/// Every permission a plugin manifest may declare. The app's enable card has copy for each.
+pub const PERMISSIONS: [&str; 4] = ["rooms.read", "clipboard", "downloads", "artifact.content"];
 /// The id of the inbox, the owned room every home has (its folder is `<home>/inbox`).
 pub const INBOX_ROOM_ID: &str = "inbox";
 
@@ -134,7 +136,7 @@ pub struct PluginInfo {
     /// Valid, and either never approved or declaring permissions beyond `granted`. Turning a
     /// plugin off keeps its approval, so an off plugin doesn't need approval to come back.
     pub needs_approval: bool,
-    /// Changes when the manifest or the entry file changes.
+    /// Changes when the manifest, the entry file or a content script changes.
     pub rev: String,
 });
 

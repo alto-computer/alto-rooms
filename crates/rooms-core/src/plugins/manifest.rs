@@ -1,11 +1,10 @@
 //! `manifest.json`: reading and validating a plugin's manifest, and the rev that changes with it.
 
 use super::data::{valid_code_path, valid_path};
-use rooms_protocol::{PluginSlots, SidePanelSlot, TabSlot};
+use rooms_protocol::{PluginSlots, SidePanelSlot, TabSlot, PERMISSIONS};
 use serde_json::Value;
 use std::path::Path;
 
-pub const PERMISSIONS: [&str; 4] = ["rooms.read", "clipboard", "downloads", "artifact.content"];
 pub const ICONS: [&str; 13] = [
     "target", "pencil", "list-checks", "calendar", "star", "book", "flag", "layout-grid", "sparkles", "notebook", "lightbulb", "puzzle", "palette",
 ];

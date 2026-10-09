@@ -17,6 +17,6 @@ granted: Array<string> | null,
  */
 needsApproval: boolean, 
 /**
- * Changes when the manifest or the entry file changes.
+ * Changes when the manifest, the entry file or a content script changes.
  */
 rev: string, };
