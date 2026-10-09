@@ -7,7 +7,18 @@ import type { AskImage, AskTarget, AskTurn, RoomsEvent, StartAsk } from "@alto-r
 export type Thread = { turns: AskTurn[]; loaded: boolean; error: boolean };
 /** A running turn's answer so far and what the agent is doing, from `ask.progress`. */
 export type Live = { answer: string; activity: string | null };
-export type AsksState = { open: boolean; threads: Record<string, Thread>; live: Record<string, Live> };
+/** `quotes`: text picked with "Ask" in a doc or an answer, waiting to go out with the next question, by file key. */
+export type AsksState = { open: boolean; threads: Record<string, Thread>; live: Record<string, Live>; quotes: Record<string, string[]> };
+
+export const MAX_QUOTES = 5;
+/** A question is at most 8,000 characters; a few quotes plus the question must fit. */
+export const MAX_QUOTE_CHARS = 1500;
+
+/** The question as sent: each quote as a Markdown blockquote, then what was asked. */
+export function withQuotes(quotes: string[], question: string): string {
+  const blocks = quotes.map((q) => q.split("\n").map((l) => `> ${l}`.trimEnd()).join("\n"));
+  return [...blocks, question].join("\n\n");
+}
 type Progress = Extract<RoomsEvent, { type: "ask.progress" }>;
 
 type Client = {
@@ -37,7 +48,7 @@ export const MAX_THREADS = 20;
 const EMPTY: Thread = { turns: [], loaded: false, error: false };
 
 export class AsksStore {
-  private state: AsksState = { open: true, threads: {}, live: {} };
+  private state: AsksState = { open: true, threads: {}, live: {}, quotes: {} };
   private listeners = new Set<() => void>();
   /** File keys an ask bar is showing, with a count per bar. */
   private held = new Map<string, number>();
@@ -108,6 +119,26 @@ export class AsksStore {
     if (!this.client) return;
     const t = await this.client.startAsk({ roomId: a.roomId, artifactId: a.artifactId, question, model, ...(images.length ? { images } : {}) });
     this.apply(t);
+  }
+
+  /** Adds `text` as a quote for the next question about `fileKey`, and opens the bar. */
+  addQuote(fileKey: string, text: string): void {
+    const t = text.trim();
+    if (!t) return;
+    const q = t.length > MAX_QUOTE_CHARS ? `${t.slice(0, MAX_QUOTE_CHARS - 1)}…` : t;
+    const current = this.state.quotes[fileKey] ?? [];
+    const next = current.includes(q) ? current : [...current, q].slice(-MAX_QUOTES);
+    this.set({ ...this.state, open: true, quotes: { ...this.state.quotes, [fileKey]: next } });
+  }
+
+  removeQuote(fileKey: string, index: number): void {
+    const next = (this.state.quotes[fileKey] ?? []).filter((_, i) => i !== index);
+    this.set({ ...this.state, quotes: { ...this.state.quotes, [fileKey]: next } });
+  }
+
+  clearQuotes(fileKey: string, sent: string[]): void {
+    const next = (this.state.quotes[fileKey] ?? []).filter((q) => !sent.includes(q));
+    this.set({ ...this.state, quotes: { ...this.state.quotes, [fileKey]: next } });
   }
 
   /** Stores an image for a question; resolves to its id. Throws the API error for the bar to show. */

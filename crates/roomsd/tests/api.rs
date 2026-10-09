@@ -178,7 +178,22 @@ async fn files_stream_a_big_document_whole() {
     let r = files.oneshot(get(&format!("/{}/big.html", room.id), FILES_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     assert_eq!(r.headers()["content-type"], "text/html; charset=utf-8");
-    assert_eq!(r.into_body().collect().await.unwrap().to_bytes().as_ref(), big.as_slice());
+    // The whole file, then the selection bridge Rooms appends to every HTML document it shows.
+    let body = r.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..big.len()], big.as_slice());
+    let tail = std::str::from_utf8(&body[big.len()..]).unwrap();
+    assert!(tail.starts_with("<script data-rooms-bridge>") && tail.contains("roomsSelection"), "{tail}");
+    assert_eq!(std::fs::read(d.path().join("a/big.html")).unwrap(), big, "the file on disk is unchanged");
+}
+
+#[tokio::test]
+async fn only_html_gets_the_selection_bridge() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.css"), "p{}").unwrap();
+    let files = build_files_router(st);
+    let r = files.oneshot(get(&format!("/{}/x.css", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(r.into_body().collect().await.unwrap().to_bytes().as_ref(), b"p{}");
 }
 
 #[tokio::test]

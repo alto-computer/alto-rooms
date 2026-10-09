@@ -178,10 +178,10 @@ pub async fn get_note(State(st): State<AppState>, Path((date, name)): Path<(Stri
 /// A weak validator from the file's identity (device, inode), length and mtime: cheap (no read),
 /// changes on every rewrite, and differs between two files of equal size and mtime (a link
 /// retargeted to another original).
-fn etag_of(meta: &std::fs::Metadata) -> Option<HeaderValue> {
+fn etag_of(meta: &std::fs::Metadata, suffix: &str) -> Option<HeaderValue> {
     use std::os::unix::fs::MetadataExt;
     let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
-    HeaderValue::from_str(&format!("W/\"{:x}-{:x}-{:x}-{:x}\"", meta.dev(), meta.ino(), meta.len(), mtime)).ok()
+    HeaderValue::from_str(&format!("W/\"{:x}-{:x}-{:x}-{:x}{suffix}\"", meta.dev(), meta.ino(), meta.len(), mtime)).ok()
 }
 
 /// Whether `If-None-Match` (all its header lines) matches `tag`: `*`, or any listed tag equal
@@ -193,18 +193,32 @@ fn none_match_hits<'a>(if_none_match: impl Iterator<Item = &'a str>, tag: &str) 
 
 /// Serves a room file. Previews remount often (scrolling, tab switches), so responses carry an
 /// ETag with `no-cache`: the webview revalidates every time and gets a bodyless 304 while unchanged.
+/// Appended to every HTML document Rooms shows (after `</html>`, where the parser still runs it):
+/// it posts the selected text to the Rooms window for "ask about this". Files on disk are untouched.
+const SELECTION_BRIDGE: &[u8] = include_bytes!("selection-bridge.html");
+/// Bumped when the bridge changes, so cached documents pick up the new one.
+const BRIDGE_VERSION: &str = "b1";
+
 pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ApiErr> {
     let path = blocking(&st, move |c| c.resolve_file(&room_id, &rel)).await?;
     let read_err = |e: std::io::Error| ApiErr(CoreError::Io(e));
-    let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?);
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let html = matches!(ext.as_str(), "html" | "htm");
+    let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?, if html { BRIDGE_VERSION } else { "" });
     if let Some(tag) = &etag {
         let tag_str = tag.to_str().unwrap_or_default();
         if none_match_hits(headers.get_all("if-none-match").iter().filter_map(|v| v.to_str().ok()), tag_str) {
             return Ok((StatusCode::NOT_MODIFIED, [("etag", tag.clone()), ("cache-control", HeaderValue::from_static("no-cache"))]).into_response());
         }
     }
-    let body = file_body(&path).await.map_err(read_err)?;
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let body = if html {
+        use futures::StreamExt;
+        let f = tokio::fs::File::open(&path).await.map_err(read_err)?;
+        let tail = futures::stream::once(async { Ok::<_, std::io::Error>(axum::body::Bytes::from_static(SELECTION_BRIDGE)) });
+        Body::from_stream(tokio_util::io::ReaderStream::new(f).chain(tail))
+    } else {
+        file_body(&path).await.map_err(read_err)?
+    };
     let mut res = ([("content-type", content_type(&ext)), ("x-content-type-options", "nosniff"), ("cache-control", "no-cache")], body).into_response();
     if let Some(tag) = etag { res.headers_mut().insert("etag", tag); }
     Ok(res)

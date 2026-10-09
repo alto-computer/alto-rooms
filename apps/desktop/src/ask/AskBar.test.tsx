@@ -4,7 +4,7 @@ import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
-import { AskBar } from "./AskBar";
+import { AskBar, splitQuotes } from "./AskBar";
 
 const doc: Artifact = {
   id: "a1", roomId: "r1", relPath: "doc.html", title: "Doc", createdAt: "2026-10-06T09:00:00+09:00",
@@ -241,6 +241,27 @@ describe("AskBar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove bad.png" }));
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.not.objectContaining({ images: expect.anything() })));
+  });
+
+  it("shows quotes waiting above the input and on the asked question", async () => {
+    const { emit } = await setup();
+    act(() => store.addQuote("k1", "첫 인용\n둘째 줄"));
+    act(() => store.addQuote("k1", "  다른 인용  "));
+    act(() => store.addQuote("k1", "다른 인용"));
+    const chips = await screen.findByRole("list", { name: "Quoted text" });
+    expect(chips.querySelectorAll("li")).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove quote" })[1]);
+    expect(chips.querySelectorAll("li")).toHaveLength(1);
+    act(() => emit({ type: "ask.started", turn: turn({ question: "> 첫 인용\n> 둘째 줄\n\n뭐야?" }) }));
+    const bubbleQuote = await screen.findByText(/첫 인용/, { selector: "div.line-clamp-3" });
+    expect(bubbleQuote.textContent).toBe("첫 인용\n둘째 줄");
+    expect(screen.getByText("뭐야?")).toBeInTheDocument();
+  });
+
+  it("splits leading blockquotes off a question", () => {
+    expect(splitQuotes("> a\n> b\n\n> c\n\nq\n\nmore")).toEqual({ quotes: ["a\nb", "c"], text: "q\n\nmore" });
+    expect(splitQuotes("> only a quote")).toEqual({ quotes: [], text: "> only a quote" });
+    expect(splitQuotes("plain")).toEqual({ quotes: [], text: "plain" });
   });
 
   it("while an answer runs you can type ahead, but Enter doesn't send", async () => {
