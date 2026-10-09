@@ -8,7 +8,16 @@ export type Thread = { turns: AskTurn[]; loaded: boolean; error: boolean };
 /** A running turn's answer so far and what the agent is doing, from `ask.progress`. */
 export type Live = { answer: string; activity: string | null };
 /** `quotes`: text picked with "Ask" in a doc or an answer, waiting to go out with the next question, by file key. */
-export type AsksState = { open: boolean; threads: Record<string, Thread>; live: Record<string, Live>; quotes: Record<string, string[]> };
+/** A question typed while an answer runs: it goes out by itself when that answer ends (Codex's queued follow-ups). */
+export type Queued = { id: string; roomId: string; artifactId: string; text: string; model: string | null; images: string[]; error: string | null };
+export type AsksState = {
+  open: boolean;
+  threads: Record<string, Thread>;
+  live: Record<string, Live>;
+  quotes: Record<string, string[]>;
+  /** By file key, oldest first. */
+  queues: Record<string, Queued[]>;
+};
 
 export const MAX_QUOTES = 5;
 /** A question is at most 8,000 characters; a few quotes plus the question must fit. */
@@ -48,7 +57,10 @@ export const MAX_THREADS = 20;
 const EMPTY: Thread = { turns: [], loaded: false, error: false };
 
 export class AsksStore {
-  private state: AsksState = { open: true, threads: {}, live: {}, quotes: {} };
+  private state: AsksState = { open: true, threads: {}, live: {}, quotes: {}, queues: {} };
+  /** File keys whose head question is being sent, so one end-of-turn never sends two. */
+  private draining = new Set<string>();
+  private queueSeq = 0;
   private listeners = new Set<() => void>();
   /** File keys an ask bar is showing, with a count per bar. */
   private held = new Map<string, number>();
@@ -121,6 +133,53 @@ export class AsksStore {
     this.apply(t);
   }
 
+  /** Queues a question behind the running answer for `a.fileKey`; it is sent when that answer ends. */
+  enqueue(a: { roomId: string; artifactId: string; fileKey: string }, text: string, model: string | null, images: string[] = []): string {
+    const item: Queued = { id: `q${++this.queueSeq}`, roomId: a.roomId, artifactId: a.artifactId, text, model, images, error: null };
+    this.setQueue(a.fileKey, [...(this.state.queues[a.fileKey] ?? []), item]);
+    void this.drain(a.fileKey);
+    return item.id;
+  }
+
+  /** Takes a queued question out (to edit it, or drop it). */
+  unqueue(fileKey: string, id: string): Queued | undefined {
+    const queue = this.state.queues[fileKey] ?? [];
+    const item = queue.find((q) => q.id === id);
+    if (item) this.setQueue(fileKey, queue.filter((q) => q.id !== id));
+    return item;
+  }
+
+  /** Sends a queued question now: it moves to the front and the running answer is stopped. */
+  sendNow(fileKey: string, id: string): void {
+    const queue = this.state.queues[fileKey] ?? [];
+    const item = queue.find((q) => q.id === id);
+    if (!item) return;
+    this.setQueue(fileKey, [{ ...item, error: null }, ...queue.filter((q) => q.id !== id)]);
+    const running = this.state.threads[fileKey]?.turns.find((t) => !finished(t));
+    if (running) this.cancel(running.id);
+    else void this.drain(fileKey);
+  }
+
+  /** Sends the head of `fileKey`'s queue if nothing runs there. A failure stays on the item, which waits for the next try. */
+  private async drain(fileKey: string): Promise<void> {
+    const head = this.state.queues[fileKey]?.[0];
+    if (!head || this.draining.has(fileKey) || this.state.threads[fileKey]?.turns.some((t) => !finished(t))) return;
+    this.draining.add(fileKey);
+    try {
+      await this.ask(head, head.text, head.model, head.images);
+      this.setQueue(fileKey, (this.state.queues[fileKey] ?? []).filter((q) => q.id !== head.id));
+    } catch (e) {
+      const error = e instanceof Error && e.message ? e.message : "Couldn't send";
+      this.setQueue(fileKey, (this.state.queues[fileKey] ?? []).map((q) => (q.id === head.id ? { ...q, error } : q)));
+    } finally {
+      this.draining.delete(fileKey);
+    }
+  }
+
+  private setQueue(fileKey: string, queue: Queued[]) {
+    this.set({ ...this.state, queues: { ...this.state.queues, [fileKey]: queue } });
+  }
+
   /** Adds `text` as a quote for the next question about `fileKey`, and opens the bar. */
   addQuote(fileKey: string, text: string): void {
     const t = text.trim();
@@ -168,6 +227,8 @@ export class AsksStore {
     }
     const th = this.state.threads[t.fileKey] ?? EMPTY;
     this.setThread(t.fileKey, { ...th, turns: upsert(th.turns, t) });
+    // An answer ended (done, failed or stopped): the next queued question goes out.
+    if (finished(t)) void this.drain(t.fileKey);
   }
 
   /** Progress for a turn already known to be finished is late and dropped. */

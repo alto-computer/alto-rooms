@@ -18,6 +18,8 @@ let nextKey = 0;
 /** Images picked for the next question: each uploads as soon as it's added, with its own preview and error. */
 export function useAttachments(onRefused: (message: string) => void) {
   const store = useAsksStore();
+  const info = useInfo();
+  const client = useClient();
   const [items, setItems] = useState<Attachment[]>([]);
   const live = useRef(items);
   live.current = items;
@@ -46,6 +48,13 @@ export function useAttachments(onRefused: (message: string) => void) {
     return true;
   };
 
+  /** Puts already stored images back (a queued question taken out to edit). */
+  const restore = (ids: string[]) => {
+    if (!info) return;
+    const back = ids.map((id): Attachment => ({ key: `att-${nextKey++}`, preview: client.askImageUrl(info, id), name: "Image", id, error: null }));
+    setItems((xs) => [...xs, ...back].slice(0, MAX_IMAGES));
+  };
+
   const remove = (key: string) => {
     const a = live.current.find((x) => x.key === key);
     if (a) URL.revokeObjectURL(a.preview);
@@ -60,7 +69,7 @@ export function useAttachments(onRefused: (message: string) => void) {
 
   const uploading = items.some((a) => !a.id && !a.error);
   const failed = items.some((a) => a.error);
-  return { items, add, remove, clear, uploading, failed };
+  return { items, add, restore, remove, clear, uploading, failed };
 }
 
 /** The picked images above the input: a thumbnail each, a spinner while it uploads, × to drop it. */

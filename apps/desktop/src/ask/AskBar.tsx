@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, CircleAlert, ImagePlus, Quote, Square, X } from "lucide-react";
+import { ArrowUp, CircleAlert, CornerDownRight, ImagePlus, Pencil, Quote, Send, Square, X } from "lucide-react";
 import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -11,7 +11,7 @@ import { CopyAnswerButton } from "./CopyAnswerButton";
 import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThinkingLine } from "./ThinkingLine";
 import { useStickToBottom } from "./useStickToBottom";
-import { withQuotes, type Live } from "./asksStore";
+import { withQuotes, type Live, type Queued } from "./asksStore";
 import { SelectionAsk, type SelectionRect } from "./SelectionAsk";
 import { AttachmentStrip, IMAGE_TYPES, TurnImages, useAttachments } from "./attachments";
 
@@ -117,6 +117,43 @@ function QuoteChips({ quotes, onRemove }: { quotes: string[]; onRemove: (i: numb
   );
 }
 
+/**
+ * Questions waiting behind the running answer, as in Codex: each goes out when the answer before
+ * it ends. Edit takes one back into the input; Send now stops the answer and sends it.
+ */
+function QueueList({ items, running, onEdit, onSendNow, onRemove }: {
+  items: Queued[];
+  running: boolean;
+  onEdit: (q: Queued) => void;
+  onSendNow: (q: Queued) => void;
+  onRemove: (q: Queued) => void;
+}) {
+  if (items.length === 0) return null;
+  const icon = "flex size-6 shrink-0 items-center justify-center rounded-md text-ink-2 hover:bg-[#ededed] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink";
+  return (
+    <div className="pt-1 pb-1.5">
+      <div className="mb-1 text-[11.5px] text-ink-2">
+        {running ? "Sends after this answer" : "Queued"}
+      </div>
+      <ul aria-label="Queued questions" className="space-y-1">
+        {items.map((q) => (
+          <li key={q.id} className="group/q flex items-start gap-1.5 text-[12.5px]">
+            <CornerDownRight className="mt-[3px] size-3.5 shrink-0 text-ink-3" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <div className="line-clamp-2 whitespace-pre-wrap">{splitQuotes(q.text).text}</div>
+              {q.images.length ? <div className="text-[11.5px] text-ink-2">{q.images.length === 1 ? "1 image" : `${q.images.length} images`}</div> : null}
+              {q.error ? <div className="text-[11.5px] text-[#c13515]">{q.error}</div> : null}
+            </div>
+            <button type="button" aria-label="Edit queued question" onClick={() => onEdit(q)} className={icon}><Pencil className="size-3" /></button>
+            <button type="button" aria-label="Send now" onClick={() => onSendNow(q)} className={icon}><Send className="size-3" /></button>
+            <button type="button" aria-label="Remove queued question" onClick={() => onRemove(q)} className={icon}><X className="size-3" /></button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function Turn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: () => void }) {
   return (
     <div data-turn-id={t.id} className="space-y-2">
@@ -162,7 +199,7 @@ function Turn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: () => vo
 /** The round ask bar under a doc (⌘J), with this doc's thread above it. Hidden until toggled. */
 export function AskBar({ artifact }: { artifact: Artifact }) {
   const store = useAsksStore();
-  const { open, threads, live, quotes: allQuotes } = useAsks();
+  const { open, threads, live, quotes: allQuotes, queues } = useAsks();
   const readOnly = useReadOnly();
   const thread = threads[artifact.fileKey];
   const [draft, setDraft] = useState("");
@@ -173,6 +210,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const attachments = useAttachments((m) => setSendError(m));
   const filePicker = useRef<HTMLInputElement>(null);
   const quotes = allQuotes[artifact.fileKey] ?? [];
+  const queue = queues[artifact.fileKey] ?? [];
   /** Text selected in an answer, with where it is in the bar's box. */
   const [picked, setPicked] = useState<{ text: string; rect: SelectionRect } | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -300,6 +338,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   }, [shown]);
 
   if (!shown) return null;
+  /** While an answer runs, the button stops it; once you type, it queues what you typed (Esc still stops). */
+  const stopping = !!running && !draft.trim();
   const last = turns.at(-1);
   const head = last ? header(last) : null;
 
@@ -307,19 +347,28 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const retryModel = (t: AskTurn) => (t.model && target?.models.includes(t.model) ? t.model : model);
   /** The draft's images, ready to go: null while one is still uploading or one failed. */
   const readyImages = () => (attachments.uploading || attachments.failed ? null : attachments.items);
-  const send = async (question: string, withModel: string | null = model, images: string[] | null = null) => {
+  /** Sends a question, or queues it behind the running answer (and any already queued); `now` stops that answer first. */
+  const send = async (question: string, withModel: string | null = model, images: string[] | null = null, now = false) => {
     const q = question.trim();
-    // Typing ahead is fine while an answer runs; sending waits for it.
-    if (!q || running || sending.current) return;
+    if (!q || sending.current || (images && running)) return;
     const picked = images ? null : readyImages();
     if (!images && !picked) {
       setSendError(attachments.failed ? "Remove the images that couldn't be attached" : "Wait for the images to finish uploading");
       return;
     }
-    sending.current = true;
     setSendError(null);
     // A retry resends its question as it was; a new one carries the quotes waiting above the input.
     const quoted = images ? [] : quotes;
+    if (!images && (running || queue.length > 0)) {
+      const id = store.enqueue({ roomId: artifact.roomId, artifactId: artifact.id, fileKey: artifact.fileKey }, withQuotes(quoted, q), withModel, picked!.map((a) => a.id!));
+      if (now) store.sendNow(artifact.fileKey, id);
+      setDraft("");
+      attachments.clear(picked!.map((a) => a.key));
+      if (quoted.length) store.clearQuotes(artifact.fileKey, quoted);
+      setSheet(true);
+      return;
+    }
+    sending.current = true;
     try {
       await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, withQuotes(quoted, q), withModel, images ?? picked!.map((a) => a.id!));
       // Only clear what was sent: the next question may have been typed in the meantime.
@@ -340,8 +389,31 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       else setSheet(false);
     } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
+      // While an answer runs, Enter queues; ⌘Enter stops the answer and sends this one now.
+      void send(draft, model, null, (e.metaKey || e.ctrlKey) && !!running);
+    } else if (e.key === "Tab" && !e.shiftKey && running && draft.trim()) {
+      // Codex's queue key.
+      e.preventDefault();
       void send(draft);
+    } else if (e.key === "ArrowUp" && !draft && !e.nativeEvent.isComposing) {
+      // ↑ in an empty input: take the last queued question back to edit, else bring back the last question asked.
+      const last = queue.at(-1);
+      const recall = last ? splitQuotes(last.text).text : turns.at(-1) ? splitQuotes(turns.at(-1)!.question).text : "";
+      if (!recall) return;
+      e.preventDefault();
+      if (last) editQueued(last);
+      else setDraft(recall);
     }
+  };
+  /** A queued question back in the input: its text, quotes and images, out of the queue. */
+  const editQueued = (q: Queued) => {
+    const item = store.unqueue(artifact.fileKey, q.id);
+    if (!item) return;
+    const { quotes: qs, text } = splitQuotes(item.text);
+    qs.forEach((x) => store.addQuote(artifact.fileKey, x));
+    attachments.restore(item.images);
+    setDraft(text);
+    input.current?.focus();
   };
 
   return (
@@ -396,10 +468,17 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
         className={cn(
           "pointer-events-auto flex w-full max-w-[720px] flex-col border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
           // A full pill only suits one line; taller, round the corners less and keep the buttons at the bottom.
-          multiline || attachments.items.length > 0 || quotes.length > 0 ? "rounded-[20px]" : "rounded-full",
+          multiline || attachments.items.length > 0 || quotes.length > 0 || queue.length > 0 ? "rounded-[20px]" : "rounded-full",
           dragging && "border-ink/60 ring-4 ring-ink/10",
         )}
       >
+        <QueueList
+          items={queue}
+          running={!!running}
+          onEdit={editQueued}
+          onSendNow={(q) => store.sendNow(artifact.fileKey, q.id)}
+          onRemove={(q) => store.unqueue(artifact.fileKey, q.id)}
+        />
         <QuoteChips quotes={quotes} onRemove={(i) => store.removeQuote(artifact.fileKey, i)} />
         <AttachmentStrip items={attachments.items} onRemove={attachments.remove} />
         <div className={cn("flex gap-2.5", multiline ? "items-end" : "items-center")}>
@@ -442,16 +521,17 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
             <TooltipTrigger asChild>
               <button
                 type="button"
-                aria-label={running ? "Stop" : "Send"}
-                disabled={!running && (!draft.trim() || attachments.uploading)}
-                onClick={() => (running ? store.cancel(running.id) : void send(draft))}
-                className={cn("flex size-[30px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground focus-visible:outline-2 focus-visible:outline-ink", !running && (!draft.trim() || attachments.uploading) && "opacity-40")}
+                aria-label={stopping ? "Stop" : running ? "Queue" : "Send"}
+                disabled={!stopping && (!draft.trim() || attachments.uploading)}
+                onClick={() => (stopping ? store.cancel(running!.id) : void send(draft))}
+                className={cn("flex size-[30px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground focus-visible:outline-2 focus-visible:outline-ink", !stopping && (!draft.trim() || attachments.uploading) && "opacity-40")}
               >
-                {running ? <Square className="size-3 fill-current" /> : <ArrowUp className="size-4" />}
+                {stopping ? <Square className="size-3 fill-current" /> : <ArrowUp className="size-4" />}
               </button>
             </TooltipTrigger>
             {/* Esc in the input stops it too, as in Claude Code: say so where the mouse goes. */}
-            {running ? <TooltipContent side="top">Stop (Esc)</TooltipContent> : null}
+            {stopping ? <TooltipContent side="top">Stop (Esc)</TooltipContent> : null}
+            {running && !stopping ? <TooltipContent side="top">Queue (Enter) · Send now (⌘Enter)</TooltipContent> : null}
           </Tooltip>
         </TooltipProvider>
         </div>

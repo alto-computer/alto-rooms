@@ -264,16 +264,63 @@ describe("AskBar", () => {
     expect(splitQuotes("plain")).toEqual({ quotes: [], text: "plain" });
   });
 
-  it("while an answer runs you can type ahead, but Enter doesn't send", async () => {
-    const { client } = await setup({ k1: [turn({})] });
+  it("while an answer runs, Enter queues the question and it goes out when the answer ends", async () => {
+    const { client, emit } = await setup({ k1: [turn({})] });
     const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
     await screen.findByText("Thinking");
     expect(input.readOnly).toBe(false);
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
     fireEvent.change(input, { target: { value: "다음 질문" } });
-    expect(input.value).toBe("다음 질문");
+    expect(screen.getByRole("button", { name: "Queue" })).toBeTruthy();
     fireEvent.keyDown(input, { key: "Enter" });
+    expect(input.value).toBe("");
+    const queued = screen.getByRole("list", { name: "Queued questions" });
+    expect(queued.textContent).toContain("다음 질문");
+    fireEvent.change(input, { target: { value: "그 다음" } });
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(screen.getByRole("list", { name: "Queued questions" }).querySelectorAll("li")).toHaveLength(2);
     expect(client.startAsk).not.toHaveBeenCalled();
-    expect(input.value).toBe("다음 질문");
+    act(() => emit({ type: "ask.done", turn: turn({ status: "done", answer: "끝", endedAt: "2026-10-06T10:00:05+09:00" }) }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledTimes(1));
+    expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ question: "다음 질문" }));
+    // the second waits for the first's answer
+    expect(screen.getByRole("list", { name: "Queued questions" }).textContent).toContain("그 다음");
+  });
+
+  it("⌘Enter stops the running answer and sends this question next", async () => {
+    const { client, emit } = await setup({ k1: [turn({})] });
+    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    await screen.findByText("Thinking");
+    fireEvent.change(input, { target: { value: "지금 바로" } });
+    fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+    await waitFor(() => expect(client.cancelAsk).toHaveBeenCalledWith("t1"));
+    act(() => emit({ type: "ask.done", turn: turn({ status: "cancelled", endedAt: "2026-10-06T10:00:05+09:00" }) }));
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ question: "지금 바로" })));
+  });
+
+  it("↑ in an empty input takes the last queued question back to edit; the row buttons send now or drop", async () => {
+    const { client } = await setup({ k1: [turn({})] });
+    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    await screen.findByText("Thinking");
+    for (const q of ["첫째", "둘째"]) {
+      fireEvent.change(input, { target: { value: q } });
+      fireEvent.keyDown(input, { key: "Enter" });
+    }
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(input.value).toBe("둘째");
+    expect(screen.getByRole("list", { name: "Queued questions" }).querySelectorAll("li")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Remove queued question" }));
+    expect(screen.queryByRole("list", { name: "Queued questions" })).toBeNull();
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(client.cancelAsk).toHaveBeenCalledWith("t1"));
+  });
+
+  it("↑ in an empty input with nothing queued brings back the last question", async () => {
+    await setup({ k1: [turn({ status: "done", question: "> 인용\n\n지난 질문", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(input.value).toBe("지난 질문");
   });
 
   it("a fast double Enter sends once", async () => {

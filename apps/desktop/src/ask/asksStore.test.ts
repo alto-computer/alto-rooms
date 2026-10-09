@@ -68,6 +68,45 @@ describe("AsksStore", () => {
     expect(store.getState().live).toEqual({});
   });
 
+  it("queues questions behind a running answer and sends them one per finished answer", async () => {
+    const { store, client, emit } = setup();
+    const a = { roomId: "r", artifactId: "a", fileKey: "k1" };
+    emit({ type: "ask.started", turn: turn("t1", "running") });
+    store.enqueue(a, "second", null);
+    store.enqueue(a, "third", "opus", ["img.png"]);
+    expect(store.getState().queues.k1.map((q) => q.text)).toEqual(["second", "third"]);
+    expect(client.startAsk).not.toHaveBeenCalled();
+    client.startAsk.mockResolvedValueOnce(turn("t2", "running"));
+    emit({ type: "ask.done", turn: turn("t1", "done") });
+    await vi.waitFor(() => expect(client.startAsk).toHaveBeenCalledTimes(1));
+    expect(client.startAsk).toHaveBeenLastCalledWith({ roomId: "r", artifactId: "a", question: "second", model: null });
+    await vi.waitFor(() => expect(store.getState().queues.k1.map((q) => q.text)).toEqual(["third"]));
+    client.startAsk.mockResolvedValueOnce(turn("t3", "running"));
+    emit({ type: "ask.done", turn: turn("t2", "cancelled") });
+    await vi.waitFor(() => expect(client.startAsk).toHaveBeenLastCalledWith({ roomId: "r", artifactId: "a", question: "third", model: "opus", images: ["img.png"] }));
+    await vi.waitFor(() => expect(store.getState().queues.k1).toEqual([]));
+  });
+
+  it("send now moves a question to the front and stops the running answer; a failure stays on the item", async () => {
+    const { store, client, emit } = setup();
+    const a = { roomId: "r", artifactId: "a", fileKey: "k1" };
+    emit({ type: "ask.started", turn: turn("t1", "running") });
+    store.enqueue(a, "one", null);
+    store.enqueue(a, "two", null);
+    const two = store.getState().queues.k1[1];
+    store.sendNow("k1", two.id);
+    expect(client.cancelAsk).toHaveBeenCalledWith("t1");
+    expect(store.getState().queues.k1.map((q) => q.text)).toEqual(["two", "one"]);
+    client.startAsk.mockRejectedValueOnce(new Error("Waiting for an answer"));
+    emit({ type: "ask.done", turn: turn("t1", "cancelled") });
+    await vi.waitFor(() => expect(store.getState().queues.k1[0].error).toBe("Waiting for an answer"));
+    expect(store.unqueue("k1", two.id)?.text).toBe("two");
+    expect(store.getState().queues.k1.map((q) => q.text)).toEqual(["one"]);
+    // Nothing running: queuing sends at once.
+    store.enqueue(a, "three", null);
+    await vi.waitFor(() => expect(client.startAsk).toHaveBeenLastCalledWith(expect.objectContaining({ question: "one" })));
+  });
+
   it("starts open and toggles", () => {
     const { store } = setup();
     expect(store.getState().open).toBe(true);
