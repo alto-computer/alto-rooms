@@ -101,7 +101,7 @@ describe("JournalView: the daybook", () => {
     expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "note", date: today, name: "계획.md" });
   });
 
-  it("cuts a long note at six lines and ends it with an ellipsis; a short one has none", async () => {
+  it("cuts a long note at four lines and ends it with an ellipsis; a short one has none", async () => {
     const long = Array.from({ length: 9 }, (_, i) => `줄 ${i + 1}`).join("\n");
     await renderJournal({
       viewer: journalViewer(),
@@ -109,9 +109,9 @@ describe("JournalView: the daybook", () => {
       notes: { [`${today}/긴.md`]: long, [`${today}/짧은.md`]: "한 줄" },
     });
     const [longItem, shortItem] = within(daybook()).getAllByRole("listitem");
-    expect(await within(longItem).findByText("줄 6")).toBeInTheDocument();
-    expect(within(longItem).queryByText("줄 7")).toBeNull();
-    expect(within(longItem).getByLabelText("3 more lines")).toHaveTextContent("…");
+    expect(await within(longItem).findByText("줄 4")).toBeInTheDocument();
+    expect(within(longItem).queryByText("줄 5")).toBeNull();
+    expect(within(longItem).getByLabelText("5 more lines")).toHaveTextContent("…");
     expect(await within(shortItem).findByText("한 줄")).toBeInTheDocument();
     expect(within(shortItem).queryByText("…")).toBeNull();
   });

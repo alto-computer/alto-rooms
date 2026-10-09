@@ -63,7 +63,7 @@ function useNoteText(note: Note): string | null {
 }
 
 /** Lines of a note the day shows; past them, an ellipsis says there is more and the note's tab has it. */
-const NOTE_LINES = 6;
+const NOTE_LINES = 4;
 
 /** The first few lines of a note as they read: bullets as a list, the rest as paragraphs, then "…" if it goes on. */
 function NoteText({ text }: { text: string }) {
