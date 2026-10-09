@@ -31,7 +31,8 @@
     "externalBin": [
       "binaries/roomsd",
       "binaries/rooms-mcp",
-      "binaries/rooms-collect"
+      "binaries/rooms-collect",
+      "binaries/rooms-sort"
     ],
     "resources": {
       "resources/plugins/": "plugins/"

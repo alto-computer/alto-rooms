@@ -1,0 +1,20 @@
+[package]
+name = "rooms-sort"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+rooms-protocol = { path = "../rooms-protocol" }
+rooms-core = { path = "../rooms-core" }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+toml = "0.8"
+dirs = "5"
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

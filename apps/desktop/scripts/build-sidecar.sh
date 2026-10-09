@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds roomsd, rooms-mcp and rooms-collect in release mode and copies them to
+# Builds roomsd, rooms-mcp, rooms-collect and rooms-sort in release mode and copies them to
 # src-tauri/binaries/<name>-<host-triple>, the names Tauri's bundle.externalBin expects.
 set -euo pipefail
 
@@ -18,14 +18,14 @@ if [ -z "$TRIPLE" ]; then
   exit 1
 fi
 
-(cd "$REPO_ROOT" && cargo build -p roomsd -p rooms-mcp -p rooms-collect --release)
+(cd "$REPO_ROOT" && cargo build -p roomsd -p rooms-mcp -p rooms-collect -p rooms-sort --release)
 
 EXT=""
 case "$TRIPLE" in *windows*) EXT=".exe" ;; esac
 
 DEST_DIR="$DESKTOP_DIR/src-tauri/binaries"
 mkdir -p "$DEST_DIR"
-for BIN in roomsd rooms-mcp rooms-collect; do
+for BIN in roomsd rooms-mcp rooms-collect rooms-sort; do
   # install, not cp: cp onto an existing file keeps its mode, and a non-executable sidecar never starts.
   install -m 755 "$REPO_ROOT/target/release/$BIN$EXT" "$DEST_DIR/$BIN-$TRIPLE$EXT"
   echo "build-sidecar: $DEST_DIR/$BIN-$TRIPLE$EXT"

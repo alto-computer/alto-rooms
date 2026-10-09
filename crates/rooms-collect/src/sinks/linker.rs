@@ -1,13 +1,13 @@
 //! The linker (L1–L9): each HTML file an agent writes after the collector first ran gets a
-//! symlink in `<home>/<room>` (the owned room named like its repo) or `<home>/inbox`. It never
-//! creates rooms, never writes into linked rooms, and never re-adds a link the user removed.
+//! symlink in `<home>/inbox`. Choosing a room is rooms-sort's job (its R1 is the old "room named
+//! like the repo" rule), which reads `linked.jsonl` to know what the collector put there. It
+//! never creates rooms, never writes into rooms, and never re-adds a link the user removed.
 //! The same pass records each written file's conversation in sources.json.
 use super::sources::{self, Entry};
-use crate::filter::{link_targets, linked_roots, not_a_document, owned_rooms, repo_info};
+use crate::filter::{link_targets, linked_roots, not_a_document, repo_info};
 use crate::pathutil::under;
 use crate::store::{event_by_rowid, events_after, set_sink_cursor, sink_cursor, StoredEvent};
 use chrono::{DateTime, SecondsFormat, Utc};
-use rooms_core::rules::{room_slug, slug_key};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
@@ -167,12 +167,8 @@ impl Run<'_> {
         if self.linked.in_repo.contains(&(repo.clone(), rel.clone())) { return; } // L7: the same file in another worktree
         let targets = self.targets.get_or_insert_with(|| link_targets(self.home));
         if targets.contains(real) { return; } // already linked by hand or by the skill
-        // L8: the owned room named like the repo, else inbox
-        let want = slug_key(&room_slug(&repo));
-        let dir = owned_rooms(self.home).into_iter()
-            .find(|(name, _)| name != "inbox" && !want.is_empty() && slug_key(&room_slug(name)) == want)
-            .map(|(_, p)| p)
-            .unwrap_or_else(|| self.home.join("inbox"));
+        // L8: always the inbox; rooms-sort files it from there
+        let dir = self.home.join("inbox");
         if std::fs::create_dir_all(&dir).is_err() { return; }
         let Some(name) = real.file_name().map(|n| n.to_string_lossy().into_owned()) else { return };
         let (stem, ext) = match name.rfind('.') { Some(i) if i > 0 => (&name[..i], &name[i..]), _ => (name.as_str(), "") };

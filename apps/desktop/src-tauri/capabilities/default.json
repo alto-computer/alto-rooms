@@ -9,6 +9,10 @@
     {
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "$HOME/rooms/**" }]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://console.typesafe.ai/*" }]
     }
   ]
 }

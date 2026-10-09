@@ -320,10 +320,11 @@ pub async fn connect(app: AppHandle, daemon: State<'_, Daemon>) -> Result<Connec
     res
 }
 
-/// Once roomsd answers, the collector runs for the Home it serves (idempotent).
+/// Once roomsd answers, the collector and the sorter run for the Home it serves (idempotent).
 fn start_collector(app: &AppHandle, res: &Result<Connection, String>) {
     if let Ok(conn) = res {
         app.state::<crate::collector::Collector>().ensure(app, &conn.home);
+        app.state::<crate::sorter::Sorter>().ensure(app, &conn.home, &conn.base_url);
     }
 }
 
