@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ArrowUp, CircleAlert, CornerDownRight, ImagePlus, Pencil, Quote, Send, Square, X } from "lucide-react";
-import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskKind, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
@@ -14,6 +14,7 @@ import { useStickToBottom } from "./useStickToBottom";
 import { withQuotes, type Live, type Queued } from "./asksStore";
 import { SelectionAsk, type SelectionRect } from "./SelectionAsk";
 import { AttachmentStrip, IMAGE_TYPES, TurnImages, useAttachments } from "./attachments";
+import { CommandTurn, exactCommand, matchCommands, SlashMenu, type Command } from "./commands";
 
 /** The Markdown chain is heavy and only needed once an answer arrives. */
 const loadAnswerMarkdown = () => import("./AnswerMarkdown");
@@ -207,6 +208,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const [sendError, setSendError] = useState<string | null>(null);
   const [multiline, setMultiline] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [menuIndex, setMenuIndex] = useState(0);
   const attachments = useAttachments((m) => setSendError(m));
   const filePicker = useRef<HTMLInputElement>(null);
   const quotes = allQuotes[artifact.fileKey] ?? [];
@@ -345,11 +347,38 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
 
   /** A retry keeps its turn's model while the agent still offers it. */
   const retryModel = (t: AskTurn) => (t.model && target?.models.includes(t.model) ? t.model : model);
+  const commands = matchCommands(draft);
+  const menuActive = Math.min(menuIndex, Math.max(0, commands.length - 1));
+  /** `/new` or `/compact`: run now, or queued like a question behind the running answer. */
+  const runCommand = async (kind: Exclude<AskKind, "question">) => {
+    const text = kind === "clear" ? "/new" : "/compact";
+    setMenuIndex(0);
+    setSendError(null);
+    setSheet(true);
+    if (running || queue.length > 0) {
+      store.enqueue({ roomId: artifact.roomId, artifactId: artifact.id, fileKey: artifact.fileKey }, text, model, [], kind);
+      setDraft("");
+      return;
+    }
+    if (sending.current) return;
+    sending.current = true;
+    try {
+      await store.ask({ roomId: artifact.roomId, artifactId: artifact.id }, text, model, [], kind);
+      setDraft((d) => (exactCommand(d) || matchCommands(d).length ? "" : d));
+    } catch (e) {
+      setSendError(e instanceof RoomsApiError ? e.message : GENERIC_ERROR);
+    } finally {
+      sending.current = false;
+    }
+  };
+  const pickCommand = (c: Command) => void runCommand(c.kind);
   /** The draft's images, ready to go: null while one is still uploading or one failed. */
   const readyImages = () => (attachments.uploading || attachments.failed ? null : attachments.items);
   /** Sends a question, or queues it behind the running answer (and any already queued); `now` stops that answer first. */
   const send = async (question: string, withModel: string | null = model, images: string[] | null = null, now = false) => {
     const q = question.trim();
+    const command = images ? undefined : exactCommand(q);
+    if (command) return runCommand(command.kind);
     if (!q || sending.current || (images && running)) return;
     const picked = images ? null : readyImages();
     if (!images && !picked) {
@@ -383,6 +412,23 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
     }
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (commands.length > 0 && !e.nativeEvent.isComposing) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setMenuIndex((menuActive + (e.key === "ArrowDown" ? 1 : commands.length - 1)) % commands.length);
+        return;
+      }
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+        e.preventDefault();
+        pickCommand(commands[menuActive]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setDraft("");
+        return;
+      }
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       if (running) store.cancel(running.id);
@@ -398,7 +444,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
     } else if (e.key === "ArrowUp" && !draft && !e.nativeEvent.isComposing) {
       // ↑ in an empty input: take the last queued question back to edit, else bring back the last question asked.
       const last = queue.at(-1);
-      const recall = last ? splitQuotes(last.text).text : turns.at(-1) ? splitQuotes(turns.at(-1)!.question).text : "";
+      const asked = turns.filter((t) => (t.kind ?? "question") === "question").at(-1);
+      const recall = last ? splitQuotes(last.text).text : asked ? splitQuotes(asked.question).text : "";
       if (!recall) return;
       e.preventDefault();
       if (last) editQueued(last);
@@ -447,10 +494,35 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
             </div>
           ) : null}
           <div className="space-y-4">
-            {turns.map((t) => (
-              <Turn key={t.id} t={t} live={live[t.id]} onRetry={() => void send(t.question, retryModel(t), t.images ?? [])} />
-            ))}
+            {turns.map((t) =>
+              (t.kind ?? "question") === "question" ? (
+                <Turn key={t.id} t={t} live={live[t.id]} onRetry={() => void send(t.question, retryModel(t), t.images ?? [])} />
+              ) : (
+                <CommandTurn
+                  key={t.id}
+                  t={t}
+                  activity={live[t.id]?.activity}
+                  renderAnswer={(text) => (
+                    <Suspense fallback={<AnswerFallback text={text} />}>
+                      <AnswerMarkdown text={text} />
+                    </Suspense>
+                  )}
+                  renderFailure={() => (
+                    <div>
+                      <ErrorText>{t.error || GENERIC_ERROR}</ErrorText>
+                      <button type="button" className={TEXT_BUTTON} onClick={() => void runCommand("compact")}>Retry</button>
+                    </div>
+                  )}
+                />
+              ),
+            )}
           </div>
+          {last && (last.kind ?? "question") === "question" && last.leftOut > 0 ? (
+            <p className="mt-3 flex flex-wrap items-center gap-x-1 text-[12px] text-ink-2">
+              {last.leftOut === 1 ? "1 earlier answer wasn't" : `${last.leftOut} earlier answers weren't`} sent along: the conversation got long.
+              <button type="button" className={TEXT_BUTTON} onClick={() => void runCommand("compact")}>Summarize it</button>
+            </p>
+          ) : null}
         </div>
       ) : null}
       {picked ? (
@@ -468,10 +540,11 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
         className={cn(
           "pointer-events-auto flex w-full max-w-[720px] flex-col border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
           // A full pill only suits one line; taller, round the corners less and keep the buttons at the bottom.
-          multiline || attachments.items.length > 0 || quotes.length > 0 || queue.length > 0 ? "rounded-[20px]" : "rounded-full",
+          multiline || attachments.items.length > 0 || quotes.length > 0 || queue.length > 0 || commands.length > 0 ? "rounded-[20px]" : "rounded-full",
           dragging && "border-ink/60 ring-4 ring-ink/10",
         )}
       >
+        <SlashMenu items={commands} active={menuActive} onPick={pickCommand} onHover={setMenuIndex} />
         <QueueList
           items={queue}
           running={!!running}
