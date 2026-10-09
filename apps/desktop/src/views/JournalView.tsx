@@ -10,7 +10,6 @@ import { wantsNewTab } from "@/lib/nav";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { useCurrentTabId } from "@/shell/currentTab";
 import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from "@/lib/notes";
-import otterAvatar from "@/assets/otter-avatar.svg";
 import { ArtifactCard } from "./ArtifactCard";
 import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { WeekStrip } from "./WeekStrip";
@@ -52,7 +51,7 @@ export function agentCards(artifacts: readonly Artifact[], date: string, info: I
   return [...dream.map((artifact) => ({ artifact, label: "Review" })), ...rest.map((artifact) => ({ artifact, label: label(artifact) }))];
 }
 
-function RowLabel({ avatar, name, count }: { avatar: ReactNode; name: string; count: number }) {
+function RowLabel({ avatar, name, count }: { avatar?: ReactNode; name: string; count: number }) {
   return (
     <div className="flex items-center gap-2">
       {avatar}
@@ -183,15 +182,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
     body = (
       <>
         <section aria-label="From agents" className="flex flex-col gap-4">
-          <RowLabel
-            avatar={
-              <span className="grid size-6 place-items-center overflow-hidden rounded-full bg-surface">
-                <img src={otterAvatar} alt="" className="size-5" />
-              </span>
-            }
-            name="Agents"
-            count={cards.length}
-          />
+          <RowLabel name="Agents" count={cards.length} />
           <div
             data-scroll-root
             // The fade sits in the side padding, so it only touches cards cut off at the edge.
