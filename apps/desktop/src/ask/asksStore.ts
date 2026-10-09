@@ -269,12 +269,13 @@ export class AsksStore {
   cancel(askId: string): void {
     const client = this.client;
     if (!client) return;
-    const thread = Object.values(this.state.threads).find((th) => th.turns.some((t) => t.id === askId));
-    const stillRunning = () => !!thread && thread.turns.some((t) => t.id === askId && !finished(t));
+    const scope = Object.values(this.state.threads).find((th) => th.turns.some((t) => t.id === askId))?.scope;
+    // Read the thread as it is then, not as it was: an `ask.done` in the meantime replaces it.
+    const stillRunning = () => !!scope && !!this.state.threads[scopeKey(scope)]?.turns.some((t) => t.id === askId && !finished(t));
     client.cancelAsk(askId).then(
-      () => setTimeout(() => { if (stillRunning()) void this.load(thread!.scope); }, STOP_CHECK_MS),
+      () => setTimeout(() => { if (stillRunning()) void this.load(scope!); }, STOP_CHECK_MS),
       (e) => {
-        if (thread && e instanceof RoomsApiError && e.status === 404) void this.load(thread.scope);
+        if (scope && e instanceof RoomsApiError && e.status === 404) void this.load(scope);
         else console.warn("rooms: could not cancel ask", e);
       },
     );

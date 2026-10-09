@@ -245,6 +245,17 @@ describe("AsksStore", () => {
       await vi.waitFor(() => expect(store.getState().threads["doc:k1"].turns).toEqual([ended]));
     });
 
+    it("Stop answered by ask.done before the check does not reload", async () => {
+      vi.useFakeTimers();
+      const { store, client, emit } = setup();
+      emit({ type: "ask.started", turn: stale });
+      store.cancel("t1");
+      emit({ type: "ask.done", turn: turn("t1", "cancelled") });
+      await vi.advanceTimersByTimeAsync(STOP_CHECK_MS);
+      expect(client.askThread).not.toHaveBeenCalled();
+      expect(store.getState().threads["doc:k1"].turns).toEqual([turn("t1", "cancelled")]);
+    });
+
     it("a turn still running a while after Stop is reloaded", async () => {
       vi.useFakeTimers();
       const { store, client, emit } = setup();
