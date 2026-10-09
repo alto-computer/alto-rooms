@@ -1,11 +1,11 @@
 import { useRef, useState, type ReactNode } from "react";
-import { RoomsApiError, type JournalDay, type Note } from "@alto-rooms/protocol-ts";
+import { RoomsApiError, type Note } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
 import { useClient, useJournalDay, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { AGENT_NAMES } from "@/lib/agents";
 import { conversationTitle } from "@/lib/conversations";
-import { count, daybookTitle, isoWeek, localDate, monthDay } from "@/lib/dates";
+import { daybookTitle, isoWeek, localDate, monthDay } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { useCurrentTabId } from "@/shell/currentTab";
@@ -78,18 +78,6 @@ function WriteNoteButton({ date, notes, viewer }: { date: string; notes: readonl
       ) : null}
     </div>
   );
-}
-
-/** What the header says the day holds: `3 notes and 7 artifacts`, `3 notes, 7 artifacts and 2 conversations`. */
-function daySummary(day: JournalDay): string {
-  const counts: [number, string][] = [
-    [day.notes.length, "note"],
-    [day.artifacts.length, "artifact"],
-    [day.conversations.length, "conversation"],
-  ];
-  const parts = counts.filter(([n]) => n > 0).map(([n, noun]) => count(n, noun));
-  if (parts.length === 0) return "Nothing was written this day";
-  return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 /**
@@ -179,7 +167,6 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
         <div className="flex flex-col">
           <p className="text-small font-semibold tracking-[0.06em] text-ink-3 uppercase">Journal · Week {isoWeek(date)}</p>
           <h1 className="mt-2.5 font-serif text-display font-medium tracking-[-0.01em] text-ink">{daybookTitle(date)}</h1>
-          <p className="mt-2 text-body text-ink-2">{day ? daySummary(day) : "\u00a0"}</p>
         </div>
         <div className="ml-auto">
           <WeekStrip date={date} onChange={setDate} />

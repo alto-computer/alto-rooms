@@ -81,7 +81,7 @@ describe("JournalView: the daybook", () => {
     expect(within(items[3]).getByText(/^Journal/)).toBeInTheDocument();
     expect(within(items[4]).getByText(/^리서치/)).toBeInTheDocument();
     expect(within(items[1]).getByText(clockTime(`${today}T01:00:00Z`))).toBeInTheDocument();
-    expect(screen.getByText("1 note and 4 artifacts")).toBeInTheDocument();
+    expect(screen.queryByText("1 note and 4 artifacts")).not.toBeInTheDocument();
   });
 
   it("shows a note's own words in the day and opens the note on click", async () => {
