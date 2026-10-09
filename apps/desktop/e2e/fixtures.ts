@@ -25,7 +25,7 @@ export const APP_PORT = envPort("ROOMS_E2E_APP_PORT", 4173);
 export const APP_ORIGIN = `http://localhost:${APP_PORT}`;
 const BASE = `http://127.0.0.1:${API_PORT}`;
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
+export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const ROOMSD = path.join(REPO_ROOT, "target", "debug", "roomsd");
 
 type Room = { id: string; name: string; path: string; artifactCount: number };

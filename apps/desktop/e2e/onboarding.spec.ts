@@ -6,11 +6,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import { APP_ORIGIN, artifactHtml, expect, test, today } from "./fixtures";
+import { APP_ORIGIN, artifactHtml, expect, REPO_ROOT, test, today } from "./fixtures";
 
 const SCREENS = path.join(import.meta.dirname, "__screens__");
 const HEADING = "Welcome to Rooms";
-const MARKER = "<!-- rooms-onboarding v8 -->";
+const SHIPPED_ONBOARD = path.join(REPO_ROOT, "crates/rooms-core/assets/onboarding/ONBOARD.md");
 
 const waitingList = (page: Page) => page.getByRole("region", { name: "Waiting for a room" });
 
@@ -18,7 +18,7 @@ test("a fresh home shows the welcome page, and roomsd wrote ONBOARD.md with the 
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: HEADING, exact: true })).toBeVisible();
   const onboard = await daemon.read("ONBOARD.md");
-  expect(onboard.split("\n")[0]).toBe(MARKER);
+  expect(onboard).toBe(await fs.readFile(SHIPPED_ONBOARD, "utf8"));
 
   // The chip shows the one-liner pointing at this home's ONBOARD.md; 복사 copies it.
   const line = `Read ${daemon.home}/ONBOARD.md and follow it.`;
