@@ -13,7 +13,7 @@ pub fn build_api_router(state: AppState) -> Router {
             move |o: &HeaderValue, _| o.to_str().map(|o| guard::origin_allowed(&st, o)).unwrap_or(false)
         }))
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::IF_NONE_MATCH])
         .expose_headers([HeaderName::from_static("x-rooms-seq")]);
     Router::new()
         .route("/v1/info", get(routes::info))

@@ -79,6 +79,16 @@ async fn cors_preflight_allows_tauri_only() {
 }
 
 #[tokio::test]
+async fn cors_preflight_allows_a_create_only_note_put() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let r = app.oneshot(Request::options("/v1/journal/2026-10-05/notes/a").header("host", API_HOST)
+        .header("origin", "tauri://localhost").header("access-control-request-method", "PUT")
+        .header("access-control-request-headers", "authorization,content-type,if-none-match").body(Body::empty()).unwrap()).await.unwrap();
+    let allowed = r.headers()["access-control-allow-headers"].to_str().unwrap().to_ascii_lowercase();
+    assert!(allowed.contains("if-none-match"), "{allowed}");
+}
+
+#[tokio::test]
 async fn create_room_requires_token_host_and_loopback() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
     let ok = app.clone().oneshot(post("/v1/rooms", r#"{"name":"연구 도구"}"#, Some("t0k"), "127.0.0.1:4317")).await.unwrap();
@@ -564,6 +574,25 @@ async fn note_rename_missing_is_404_and_taken_is_409() {
     let r = app.oneshot(post("/v1/journal/2026-10-05/notes/a/rename", r#"{"to":"B"}"#, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::CONFLICT);
     assert_eq!(body_json(r).await["error"], "note_exists");
+}
+
+#[tokio::test]
+async fn note_put_with_if_none_match_only_creates() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let create = |name: &str, body: &str| Request::put(format!("/v1/journal/2026-10-05/notes/{name}"))
+        .header("host", API_HOST).header("authorization", "Bearer t0k").header("if-none-match", "*")
+        .header("content-type", "text/markdown").body(Body::from(body.to_string())).unwrap();
+    let r = app.clone().oneshot(create("a", "first")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await["name"], "a.md");
+    let r = app.clone().oneshot(create("A", "second")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::CONFLICT);
+    assert_eq!(body_json(r).await["error"], "note_exists");
+    let r = app.clone().oneshot(get("/v1/journal/2026-10-05/notes/a", API_HOST)).await.unwrap();
+    assert_eq!(&r.into_body().collect().await.unwrap().to_bytes()[..], b"first");
+    assert_eq!(put_note(&app, "a", "edited").await, StatusCode::OK);
+    let r = app.oneshot(get("/v1/journal/2026-10-05/notes/a", API_HOST)).await.unwrap();
+    assert_eq!(&r.into_body().collect().await.unwrap().to_bytes()[..], b"edited");
 }
 
 #[tokio::test]

@@ -159,8 +159,11 @@ pub async fn move_room(State(st): State<AppState>, Path(room_id): Path<String>, 
     Ok(Json(blocking(&st, move |c| c.move_room(&room_id, b.to)).await?))
 }
 
-pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>, body: String) -> Result<Json<Note>, ApiErr> {
-    Ok(Json(blocking(&st, move |c| c.save_note(&date, &name, &body)).await?))
+/// Saves a note. With `If-None-Match: *` it only creates one: 409 `note_exists` if the name (or a
+/// case variant of it) is taken, and the note on disk is left as it was.
+pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>, headers: HeaderMap, body: String) -> Result<Json<Note>, ApiErr> {
+    let create_only = headers.get("if-none-match").is_some_and(|v| v == "*");
+    Ok(Json(blocking(&st, move |c| if create_only { c.create_note(&date, &name, &body) } else { c.save_note(&date, &name, &body) }).await?))
 }
 
 #[derive(Deserialize)] pub struct RenameNoteBody { to: String }
