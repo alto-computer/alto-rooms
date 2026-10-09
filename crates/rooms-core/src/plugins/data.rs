@@ -46,18 +46,20 @@ pub fn read_data(dir: &Path, rel: &str) -> Result<Option<String>, CoreError> {
     }
 }
 
-/// Writes atomically (a hidden temp file in the same folder, then rename).
+/// Writes atomically (a hidden temp file of its own in the same folder, then rename), so
+/// concurrent writes to one path each succeed and the last rename wins.
 pub fn write_data(dir: &Path, rel: &str, text: &str) -> Result<(), CoreError> {
+    use std::io::Write;
     let p = data_file(dir, rel)?;
     if text.len() > MAX_DATA_BYTES { return Err(CoreError::TooLarge); }
     let parent = p.parent().ok_or(CoreError::InvalidPath)?;
     std::fs::create_dir_all(parent)?;
     let name = p.file_name().ok_or(CoreError::InvalidPath)?.to_string_lossy().to_string();
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let tmp = parent.join(format!(".{name}.{}-{nanos}.part", std::process::id()));
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, &p).inspect_err(|_| { let _ = std::fs::remove_file(&tmp); })?;
-    Ok(())
+    let tmp = parent.join(format!(".{name}.{}.part", nanoid::nanoid!(8)));
+    let mut f = std::fs::OpenOptions::new().create_new(true).write(true).open(&tmp)?;
+    let written = f.write_all(text.as_bytes()).and_then(|_| std::fs::rename(&tmp, &p));
+    if written.is_err() { let _ = std::fs::remove_file(&tmp); }
+    Ok(written?)
 }
 
 /// Appends `line` (which carries its own newline) to a data file with one `O_APPEND` write, so
@@ -159,6 +161,37 @@ mod tests {
         delete_data(&dir, "notes/a.txt").unwrap();
         delete_data(&dir, "notes/a.txt").unwrap();
         assert_eq!(read_data(&dir, "notes/a.txt").unwrap(), None);
+    }
+
+    #[test]
+    fn concurrent_writes_each_succeed_and_leave_one_whole_value() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = plugin(d.path(), "echo", OK);
+        let values: Vec<String> = (0..16).map(|i| format!("{i:02}").repeat(4096)).collect();
+        for round in 0..50 {
+            let barrier = std::sync::Barrier::new(values.len());
+            let errors: Vec<String> = std::thread::scope(|s| {
+                let handles: Vec<_> = values.iter().enumerate().map(|(i, v)| {
+                    let (dir, barrier) = (&dir, &barrier);
+                    s.spawn(move || {
+                        barrier.wait();
+                        let shared = write_data(dir, "same.txt", v).err().map(|e| format!("same.txt: {e}"));
+                        let own = write_data(dir, &format!("own/{i}.txt"), v).err().map(|e| format!("own/{i}.txt: {e}"));
+                        shared.into_iter().chain(own)
+                    })
+                }).collect();
+                handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+            });
+            assert!(errors.is_empty(), "round {round}: {errors:?}");
+            let last = read_data(&dir, "same.txt").unwrap().unwrap();
+            assert!(values.contains(&last), "round {round}: same.txt holds a torn value of {} bytes", last.len());
+            for (i, v) in values.iter().enumerate() {
+                assert_eq!(read_data(&dir, &format!("own/{i}.txt")).unwrap().as_ref(), Some(v), "round {round}");
+            }
+        }
+        let leftovers: Vec<_> = fs::read_dir(dir.join("data")).unwrap().flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.starts_with('.')).collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[test]
