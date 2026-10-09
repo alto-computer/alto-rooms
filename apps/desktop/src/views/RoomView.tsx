@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { CircleAlert } from "lucide-react";
 import { AskBar } from "@/ask/AskBar";
+import { useFrameAfter } from "@/ask/useFrameAfter";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { useCurrentTabId } from "@/shell/currentTab";
 import { useArtifacts, useClient, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
@@ -13,25 +14,6 @@ import { SortBar } from "./SortBar";
 import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { INBOX_ID } from "@/lib/drag";
 import { cn } from "@/lib/utils";
-
-// WebKit fires no animation frames for a covered or hidden window; the timeout keeps it from waiting forever.
-const FRAME_FALLBACK_MS = 100;
-
-/** False until the frame after `when` first holds, or FRAME_FALLBACK_MS later if no frame comes. */
-function useFrameAfter(when: boolean): boolean {
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    if (!when || ready) return;
-    const done = () => setReady(true);
-    const frame = requestAnimationFrame(done);
-    const timer = setTimeout(done, FRAME_FALLBACK_MS);
-    return () => {
-      cancelAnimationFrame(frame);
-      clearTimeout(timer);
-    };
-  }, [when, ready]);
-  return ready;
-}
 
 function Centered({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center p-12 text-center text-[17px] text-ink-2">{children}</div>;

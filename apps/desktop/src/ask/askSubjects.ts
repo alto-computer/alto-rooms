@@ -1,8 +1,8 @@
 import type { Artifact, AskScope, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { modelLabel } from "./askModel";
 
-/** What an ask bar asks about: the doc in a doc tab, the room in a room tab. */
-export type AskSubject = { kind: "doc"; artifact: Artifact } | { kind: "room"; roomId: string };
+/** What an ask bar asks about: the doc in a doc tab, the room in a room tab, the viewed day in the Journal tab. */
+export type AskSubject = { kind: "doc"; artifact: Artifact } | { kind: "room"; roomId: string } | { kind: "day"; date: string };
 
 export type TurnHeader = { text: string; title?: string };
 
@@ -41,6 +41,14 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         header: (t) => ({ text: agentAndModel(t).filter(Boolean).join(" · ") }),
         agent: "Default agent",
         hint: (target) => (target?.scoped ? "Reads only this room's docs" : null),
+      };
+    case "day":
+      return {
+        scope: { kind: "day", date: subject.date },
+        placeholder: "Ask about this day…",
+        header: (t) => ({ text: agentAndModel(t).filter(Boolean).join(" · ") }),
+        agent: "Default agent",
+        hint: (target) => (target?.scoped ? "Reads only this day's items" : null),
       };
   }
 }
