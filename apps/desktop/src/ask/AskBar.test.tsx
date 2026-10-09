@@ -394,35 +394,27 @@ describe("AskBar", () => {
     expect(screen.getByText("답")).toBeTruthy();
   });
 
-  it("docks answers in a column beside the page: a click on the page or elsewhere keeps them, Close folds them to the bar", async () => {
+  it("floats over the page: an outside pointerdown or a click into the doc iframe folds the sheet; inside does not", async () => {
     const { container } = await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
     const input = await screen.findByPlaceholderText("Ask about this artifact…");
-    expect(await screen.findByText("답")).toBeTruthy();
-    const bar = container.querySelector("[data-ask-docked]")!;
-    expect(bar).not.toBeNull();
-    expect(bar).not.toHaveClass("absolute");
+    fireEvent.pointerDown(await screen.findByText("답"));
+    expect(screen.getByText("답")).toBeTruthy();
+    expect(container.querySelector(".absolute")).toContainElement(screen.getByText("답"));
     fireEvent.pointerDown(document.body);
+    expect(screen.queryByText("답")).toBeNull();
+    expect(input.isConnected).toBe(true);
+    fireEvent.focus(input);
+    expect(screen.getByText("답")).toBeTruthy();
     const frame = document.createElement("iframe");
     document.body.appendChild(frame);
     try {
       frame.focus();
+      expect(document.activeElement).toBe(frame);
       act(() => void window.dispatchEvent(new Event("blur")));
-      expect(screen.getByText("답")).toBeTruthy();
+      expect(screen.queryByText("답")).toBeNull();
     } finally {
       frame.remove();
     }
-    fireEvent.click(screen.getByRole("button", { name: "Close answers" }));
-    expect(screen.queryByText("답")).toBeNull();
-    expect(container.querySelector("[data-ask-docked]")).toBeNull();
-    fireEvent.focus(input);
-    expect(screen.getByText("답")).toBeTruthy();
-  });
-
-  it("is a bar over the page while there is no thread", async () => {
-    const { container } = await setup();
-    await screen.findByPlaceholderText("Ask about this artifact…");
-    expect(container.querySelector("[data-ask-docked]")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Close answers" })).toBeNull();
   });
 
   it("with no models shows just the agent the ask goes to, from roomsd, with no menu", async () => {

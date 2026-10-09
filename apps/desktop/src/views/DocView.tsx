@@ -57,8 +57,8 @@ function Breadcrumb({ artifact, room, info }: { artifact: Artifact; room: Room |
 /**
  * A doc tab: a toolbar (breadcrumb, Share, the plugin opener) over one artifact on a sheet, in a
  * sandboxed iframe from the files origin. In dark mode the page is dimmed unless it reported a
- * dark background itself. Ask answers dock in a column beside it. Watches the artifact's room so
- * a removal shows the "gone" copy.
+ * dark background itself. The ask bar and its answers float over the page. Watches the artifact's
+ * room so a removal shows the "gone" copy.
  */
 export function DocView({ roomId, artifactId }: { roomId: string; artifactId: string }) {
   const info = useInfo();

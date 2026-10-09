@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { X } from "lucide-react";
 import type { Artifact, AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
-import { PeekGlyph } from "@/components/PeekGlyph";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
-import { cn } from "@/lib/utils";
 import { Composer } from "./Composer";
 import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThreadSheet } from "./ThreadSheet";
@@ -13,11 +10,13 @@ import { ErrorText } from "./ui";
 import { useAskTarget } from "./useAskTarget";
 import { useComposer } from "./useComposer";
 
+/** Portaled out of the bar but still part of it: a click there doesn't fold the thread. */
+const PART_OF_THE_BAR = "[data-slot=dropdown-menu-content], [data-slot=dialog-content], [data-slot=dialog-overlay], [data-selection-ask]";
+
 /**
- * The ask bar (⌘J): the input that asks the agent that made the artifact about it, floating over
- * the bottom of the page. Once there is a thread, it docks in a column beside the page instead,
- * answers above the input, so nothing covers the page. Esc or the close button folds the column
- * back to the bar; focusing the input docks it again.
+ * The ask bar over the bottom of an artifact (⌘J): the artifact's thread on a sheet, and the input
+ * that asks the agent that made it. The thread folds on Esc or a click elsewhere, and unfolds when
+ * the input is focused.
  */
 export function AskBar({ artifact }: { artifact: Artifact }) {
   const store = useAsksStore();
@@ -43,6 +42,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   useEffect(() => void preloadAnswer(), []);
   useLoadThread(scope, shown && !(thread?.loaded ?? false));
   useFocusRules({ open, shown, quoteCount: composer.quotes.length, runningId: running?.id, input, container, setUnfolded, setAnnounce });
+  useFoldOnOutsideClick(container, shown, () => setUnfolded(false));
 
   // Stable for the memoized turns.
   const retryWith = useRef<(t: AskTurn) => void>(() => {});
@@ -50,15 +50,11 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const retry = useCallback((t: AskTurn) => retryWith.current(t), []);
 
   if (!shown) return null;
-  const docked = unfolded && (turns.length > 0 || !!thread?.error || !!composer.pending);
+  const showThread = unfolded && (turns.length > 0 || !!thread?.error || !!composer.pending);
   return (
     <div
       ref={container}
-      data-ask-docked={docked || undefined}
-      className={cn(
-        "flex flex-col items-center gap-3",
-        docked ? "relative min-h-0 w-[392px] shrink-0 pt-1 pr-2 pl-4" : "pointer-events-none absolute inset-x-4 bottom-4 px-4 pb-4",
-      )}
+      className="pointer-events-none absolute inset-x-4 bottom-4 flex flex-col items-center gap-3 px-4 pb-4"
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
@@ -74,22 +70,7 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
         if (composer.attachments.add(e.dataTransfer.files)) input.current?.focus();
       }}
     >
-      {docked ? (
-        <div className="flex h-8 w-full items-center gap-2 text-small text-ink-3">
-          <PeekGlyph size={16} className="text-ink" />
-          <b className="text-body font-semibold text-ink">Ask</b>
-          about this artifact
-          <button
-            type="button"
-            aria-label="Close answers"
-            onClick={() => setUnfolded(false)}
-            className="ml-auto grid size-6 place-items-center rounded-md text-ink-3 outline-none hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
-          >
-            <X size={14} aria-hidden />
-          </button>
-        </div>
-      ) : null}
-      {docked ? (
+      {showThread ? (
         <ThreadSheet
           turns={turns}
           live={live}
@@ -174,4 +155,26 @@ function useFocusRules({ open, shown, quoteCount, runningId, input, container, s
     }
     wasRunning.current = runningId;
   }, [runningId, shown, input, container, setAnnounce]);
+}
+
+/** A click outside the bar folds the thread, like Esc. A click in the doc iframe never reaches this document, so focus moving into an iframe counts too. */
+function useFoldOnOutsideClick(container: RefObject<HTMLDivElement | null>, shown: boolean, fold: () => void) {
+  const latest = useRef(fold);
+  latest.current = fold;
+  useEffect(() => {
+    if (!shown) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!(e.target instanceof Element) || container.current?.contains(e.target)) return;
+      if (!e.target.closest(PART_OF_THE_BAR)) latest.current();
+    };
+    const onBlur = () => {
+      if (document.activeElement?.tagName === "IFRAME") latest.current();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [container, shown]);
 }
