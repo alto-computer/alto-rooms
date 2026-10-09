@@ -1,4 +1,5 @@
 export * from "./client";
+export * from "./generated/Agent";
 export * from "./generated/ApiError";
 export * from "./generated/Artifact";
 export * from "./generated/AskImage";
@@ -9,8 +10,11 @@ export * from "./generated/AskStatus";
 export * from "./generated/AskTarget";
 export * from "./generated/AskTurn";
 export * from "./generated/Author";
+export * from "./generated/Conversation";
+export * from "./generated/ConversationId";
 export * from "./generated/EventKind";
 export * from "./generated/Info";
+export * from "./generated/JournalConversation";
 export * from "./generated/JournalDay";
 export * from "./generated/Note";
 export * from "./generated/PluginInfo";

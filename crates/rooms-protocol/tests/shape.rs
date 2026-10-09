@@ -56,6 +56,8 @@ fn export_typescript_bindings() {
     StartAsk::export_all().unwrap();
     AskTarget::export_all().unwrap();
     AskImage::export_all().unwrap();
+    Conversation::export_all().unwrap();
+    JournalConversation::export_all().unwrap();
     let list = PERMISSIONS.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
     let ts = format!("// Generated from rooms_protocol::PERMISSIONS by crates/rooms-protocol/tests/shape.rs. Do not edit.\n\nexport const PERMISSIONS = [{list}] as const;\n\nexport type Permission = (typeof PERMISSIONS)[number];\n");
     std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/protocol-ts/src/generated/permissions.ts"), ts).unwrap();
@@ -149,4 +151,36 @@ fn plugin_data_changed_and_tool_types_have_camel_case_json() {
     let c: ToolCall = serde_json::from_str(r#"{"pluginId":"p","name":"t","input":{"doc":"x"}}"#).unwrap();
     assert_eq!((c.plugin_id.as_str(), c.input["doc"].as_str()), ("p", Some("x")));
     assert_eq!(serde_json::to_value(&ToolResult { path: "a".into() }).unwrap()["path"], "a");
+}
+
+#[test]
+fn conversation_ids_validate_the_session_at_the_boundary() {
+    let id: ConversationId = serde_json::from_str(r#"{"agent":"claude-code","session":"4b264772-d86b_42ef"}"#).unwrap();
+    assert_eq!(id.key(), "claude-code:4b264772-d86b_42ef");
+    assert_eq!(ConversationId::parse_key(&id.key()), Some(id.clone()));
+    assert_eq!(id.resume_argv(), ["claude", "--resume", "4b264772-d86b_42ef"]);
+    let codex = ConversationId { agent: Agent::Codex, session: SessionId::parse("019c").unwrap() };
+    assert_eq!(codex.resume_argv(), ["codex", "resume", "019c"]);
+    assert_eq!(serde_json::to_value(&codex).unwrap(), serde_json::json!({"agent": "codex", "session": "019c"}));
+    for bad in ["", "a b", "a;rm -rf", "../x", "x:y", &"a".repeat(129)] {
+        assert!(SessionId::parse(bad).is_none(), "{bad:?}");
+        assert!(serde_json::from_value::<ConversationId>(serde_json::json!({"agent": "codex", "session": bad})).is_err(), "{bad:?}");
+    }
+    assert!(serde_json::from_str::<ConversationId>(r#"{"agent":"cursor","session":"s"}"#).is_err());
+    assert_eq!(ConversationId::parse_key("cursor:s"), None);
+}
+
+#[test]
+fn conversation_moved_is_camel_case() {
+    let c = Conversation {
+        id: ConversationId { agent: Agent::Aside, session: SessionId::parse("s1").unwrap() },
+        title: Some("t".into()), cwd: None, started_at: "2026-10-01T00:00:00Z".into(), ended_at: "2026-10-01T01:00:00Z".into(),
+        messages: 2, last_reply: None, artifacts_written: vec!["/a.html".into()], room_id: Some("r1".into()),
+    };
+    let v = serde_json::to_value(&RoomsEvent { seq: 1, kind: EventKind::ConversationMoved { conversation: c, from_room_id: None } }).unwrap();
+    assert_eq!(v["type"], "conversation.moved");
+    assert_eq!(v["fromRoomId"], serde_json::Value::Null);
+    assert_eq!(v["conversation"]["roomId"], "r1");
+    assert_eq!(v["conversation"]["artifactsWritten"][0], "/a.html");
+    assert_eq!(v["conversation"]["id"], serde_json::json!({"agent": "aside", "session": "s1"}));
 }
