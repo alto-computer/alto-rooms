@@ -187,7 +187,6 @@ mod tests {
         let r = log.read(&room).unwrap();
         assert_eq!((r.len(), r[0].id.as_str(), &r[0].scope), (1, "r", &room));
         assert_eq!(log.read(&day).unwrap()[0].scope, day);
-        // room and day lines carry no fileKey
         let line = std::fs::read_to_string(d.path().join(format!("asks/room-{K1}.jsonl"))).unwrap();
         assert!(!line.contains("fileKey") && !line.contains("scope"), "{line}");
     }

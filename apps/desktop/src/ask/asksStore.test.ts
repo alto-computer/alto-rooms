@@ -138,7 +138,6 @@ describe("AsksStore", () => {
     expect(quotes["doc:k1"]).toBeUndefined();
     expect(queues["room:k1"].map((x) => x.text)).toEqual(["later"]);
     expect(queues["doc:k1"]).toBeUndefined();
-    // the doc is free: its question goes out at once, with its own scope
     expect(await store.submit(doc, q("doc question"))).toBe("sent");
     expect(client.startAsk).toHaveBeenCalledWith({ scope: doc, question: "doc question", model: null });
   });

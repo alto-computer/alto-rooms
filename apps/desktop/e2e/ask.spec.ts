@@ -46,7 +46,6 @@ test("ask a doc and get the fake agent's answer", async ({ page, daemon }) => {
   await openDocTab(page, "harness", "Doc");
   await expect(page.getByText("Question: 왜 이렇게 했어?")).toBeVisible();
 
-  // The thread is keyed by the doc's scope, in the file named by its file key.
   const [art] = (await (await fetch(`${daemon.baseUrl}/v1/rooms/${harness.id}/artifacts`)).json()) as { fileKey: string }[];
   const thread = (await (await fetch(`${daemon.baseUrl}/v1/asks?scope=doc:${art.fileKey}`)).json()) as { scope: unknown; status: string }[];
   expect(thread).toHaveLength(1);
