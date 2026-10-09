@@ -75,7 +75,7 @@ export function NewTabView() {
 
   const inbox = useMemo(() => [...(artifacts[INBOX_ID] ?? [])].reverse(), [artifacts]);
 
-  const shell = "flex flex-1 flex-col gap-8 overflow-y-auto bg-white px-12 pb-10";
+  const shell = "flex flex-1 flex-col gap-8 overflow-y-auto bg-pane px-12 pb-10";
   const shellRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:new`, settled);
   if (info === null) return <div className={cn(shell, "pt-10")} />;
 
@@ -101,9 +101,9 @@ export function NewTabView() {
     // Header at the same place and size as a room's or a note's, so switching tabs doesn't jump.
     <div ref={shellRef} className={cn(shell, "pt-10")}>
       <header className="flex flex-col gap-1">
-        <h1 className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">Since your last visit</h1>
+        <h1 className="text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink">Since your last visit</h1>
         {settled ? (
-          <p className="text-[16px] text-ink-2">
+          <p className="text-lead text-ink-2">
             {roomsWithNew > 0
               ? `New docs in ${count(roomsWithNew, "room")}.`
               : neverVisited > 0
@@ -120,13 +120,13 @@ export function NewTabView() {
               data-testid="new-room-card"
               onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))}
               onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "room", roomId: room.id }, true)}
-              className="flex flex-col gap-1 rounded-[14px] border border-[#ddd] bg-white px-5 py-[18px] text-left hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink"
+              className="flex flex-col gap-1 rounded-xl border border-hairline bg-sheet px-5 py-[18px] text-left hover:bg-surface focus-visible:outline-2 focus-visible:outline-ink"
             >
-              <span data-testid="new-room-name" className="text-[18px] font-medium text-ink">
+              <span data-testid="new-room-name" className="text-heading font-medium text-ink">
                 {room.name}
               </span>
-              {newCount > 0 ? <span className="text-[14px] text-ink">{newCount} new</span> : null}
-              <span className="text-[14px] text-ink-2">
+              {newCount > 0 ? <span className="text-body text-ink">{newCount} new</span> : null}
+              <span className="text-body text-ink-2">
                 {room.status === "unavailable" ? "Folder not found" : count(room.artifactCount, "doc")}
               </span>
             </button>
@@ -151,7 +151,7 @@ function InboxList({
   const now = new Date();
   return (
     <section aria-labelledby="inbox-waiting" className="flex flex-col gap-2">
-      <h2 id="inbox-waiting" className="text-[18px] font-medium text-ink">
+      <h2 id="inbox-waiting" className="text-heading font-medium text-ink">
         Waiting for a room
       </h2>
       <ul className="mt-1 flex flex-col gap-1">
@@ -163,12 +163,12 @@ function InboxList({
               onClick={(e) => onOpen(a, wantsNewTab(e))}
               onAuxClick={(e) => e.button === 1 && onOpen(a, true)}
               {...(draggable ? artifactDragSource({ roomId: a.roomId, artifactId: a.id }) : {})}
-              className="flex w-full min-w-0 items-baseline gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink"
+              className="flex w-full min-w-0 items-baseline gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-surface focus-visible:outline-2 focus-visible:outline-ink"
             >
-              <span data-testid="inbox-title" className="min-w-0 truncate text-[16px] font-medium text-ink">
+              <span data-testid="inbox-title" className="min-w-0 truncate text-lead font-medium text-ink">
                 {a.title}
               </span>
-              <span className="shrink-0 font-mono text-[12px] text-ink-3">{dateLabel(a.createdAt, now)}</span>
+              <span className="shrink-0 font-mono text-small text-ink-3">{dateLabel(a.createdAt, now)}</span>
             </button>
           </li>
         ))}

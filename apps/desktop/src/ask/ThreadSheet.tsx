@@ -22,7 +22,7 @@ function header(t: AskTurn): { text: string; title?: string } {
 /** Said under the last question when earlier answers no longer fit in what goes along with it. */
 function LeftOutNote({ count, onCompact }: { count: number; onCompact: () => void }) {
   return (
-    <p className="mt-3 flex flex-wrap items-center gap-x-1 text-[12px] text-ink-2">
+    <p className="mt-3 flex flex-wrap items-center gap-x-1 text-small text-ink-2">
       {count === 1 ? "1 earlier answer wasn't" : `${count} earlier answers weren't`} sent along: the conversation got long.
       <TextButton onClick={onCompact}>Summarize it</TextButton>
     </p>
@@ -76,8 +76,8 @@ export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompac
 
   return (
     <div ref={box} className="pointer-events-auto relative w-full max-w-[720px]">
-      <div ref={sheet} className="max-h-[50vh] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
-        {head ? <div className="mb-2 text-[11.5px] text-ink-2" title={head.title}>{head.text}</div> : null}
+      <div ref={sheet} className="max-h-[50vh] overflow-y-auto rounded-xl border border-hairline bg-sheet px-4 py-3 text-body shadow-float">
+        {head ? <div className="mb-2 text-small text-ink-2" title={head.title}>{head.text}</div> : null}
         {loadError ? (
           <div>
             <ErrorText>Couldn't load the conversation</ErrorText>
@@ -98,7 +98,7 @@ export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompac
           type="button"
           aria-label="Scroll to the latest"
           onClick={toBottom}
-          className="absolute bottom-3 left-1/2 flex size-7 -translate-x-1/2 items-center justify-center rounded-full border border-[#e3e3e3] bg-white text-ink-2 shadow-sm hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+          className="absolute bottom-3 left-1/2 flex size-7 -translate-x-1/2 items-center justify-center rounded-full border border-hairline bg-sheet text-ink-2 shadow-sheet hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
         >
           <ArrowDown className="size-3.5" />
         </button>

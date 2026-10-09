@@ -22,22 +22,22 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   };
   const Icon = copied ? Check : Copy;
   return (
-    <div className="group/code my-2 overflow-hidden rounded-lg bg-[#f6f6f6]">
-      <div className="flex h-7 items-center justify-between pr-1 pl-3 text-[11.5px] text-ink-2">
+    <div className="group/code my-2 overflow-hidden rounded-lg bg-surface">
+      <div className="flex h-7 items-center justify-between pr-1 pl-3 text-small text-ink-2">
         <span className="font-mono">{lang ?? ""}</span>
         <button
           type="button"
           aria-label="Copy code"
           data-copied={copied ? "true" : undefined}
           onClick={() => void onCopy()}
-          className="inline-flex size-6 items-center justify-center rounded-md hover:bg-[#ebebeb] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+          className="inline-flex size-6 items-center justify-center rounded-md hover:bg-surface-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
         >
           <Icon size={13} />
         </button>
       </div>
       <pre
         ref={pre}
-        className="overflow-x-auto px-3 pt-0 pb-3 font-mono text-[12.5px] leading-[1.5] [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-[inherit]"
+        className="overflow-x-auto px-3 pt-0 pb-3 font-mono text-small leading-[1.5] [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-[inherit]"
       >
         {children}
       </pre>
@@ -57,22 +57,22 @@ const COMPONENTS: Components = {
     </>
   ),
   img: ({ alt }) => <>{alt ?? ""}</>,
-  h1: ({ children }) => <h1 className="mt-3 mb-1.5 text-[16px] leading-snug font-semibold">{children}</h1>,
-  h2: ({ children }) => <h2 className="mt-3 mb-1 text-[14.5px] leading-snug font-semibold">{children}</h2>,
-  h3: ({ children }) => <h3 className="mt-2.5 mb-1 text-[13.5px] leading-snug font-semibold">{children}</h3>,
+  h1: ({ children }) => <h1 className="mt-3 mb-1.5 text-lead leading-snug font-semibold">{children}</h1>,
+  h2: ({ children }) => <h2 className="mt-3 mb-1 text-body leading-snug font-semibold">{children}</h2>,
+  h3: ({ children }) => <h3 className="mt-2.5 mb-1 text-body leading-snug font-semibold">{children}</h3>,
   code: ({ children, className }) => (
-    <code className={className ?? "rounded bg-[#f2f2f2] px-1 font-mono text-[0.9em]"}>{children}</code>
+    <code className={className ?? "rounded bg-surface px-1 font-mono text-[0.9em]"}>{children}</code>
   ),
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-  blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-[#dcdcdc] pl-3 text-ink-2">{children}</blockquote>,
+  blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-hairline pl-3 text-ink-2">{children}</blockquote>,
   // A wide table scrolls inside its own frame instead of squeezing every column to a word per line.
   table: ({ children }) => (
-    <div className="my-2 overflow-x-auto rounded-lg border border-[#e3e3e3]">
-      <table className="w-full border-collapse text-[12.5px] leading-[1.45]">{children}</table>
+    <div className="my-2 overflow-x-auto rounded-lg border border-hairline">
+      <table className="w-full border-collapse text-small leading-[1.45]">{children}</table>
     </div>
   ),
-  thead: ({ children }) => <thead className="bg-[#f6f6f6]">{children}</thead>,
-  tr: ({ children }) => <tr className="border-t border-[#ececec] first:border-t-0">{children}</tr>,
+  thead: ({ children }) => <thead className="bg-surface">{children}</thead>,
+  tr: ({ children }) => <tr className="border-t border-hairline first:border-t-0">{children}</tr>,
   // keep-all: Korean breaks between words, not inside them; inline code in a cell never wraps.
   th: ({ children, style }) => (
     <th style={style} className="px-2.5 py-1.5 text-left align-bottom font-semibold break-keep whitespace-nowrap">{children}</th>
@@ -95,7 +95,7 @@ const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkCjkFriendly, [remarkGfm,
 /** An agent's answer as Markdown, with links and images shown as plain text. Memoized: a long thread re-renders often. */
 export const AnswerMarkdown = memo(function AnswerMarkdown({ text }: { text: string }) {
   return (
-    <div className="text-[13.5px] leading-[1.55] [&>:first-child]:mt-0 [&_.contains-task-list]:list-none [&_.contains-task-list]:pl-0.5 [&_hr]:my-3 [&_hr]:border-[#e3e3e3] [&_li]:my-0.5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5">
+    <div className="text-body leading-[1.55] [&>:first-child]:mt-0 [&_.contains-task-list]:list-none [&_.contains-task-list]:pl-0.5 [&_hr]:my-3 [&_hr]:border-hairline [&_li]:my-0.5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1.5 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5">
       <Markdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>{text}</Markdown>
     </div>
   );

@@ -337,7 +337,7 @@ describe("NoteView: other editor and read-only", () => {
       fireEvent.click(screen.getByRole("button", { name: "Open in another editor" }));
     });
     const msg = screen.getByText("Something went wrong");
-    expect(msg.closest("[role=status]")).toHaveClass("text-[#c13515]");
+    expect(msg.closest("[role=status]")).toHaveClass("text-error");
     expect(msg.closest("[role=status]")!.querySelector("svg")).not.toBeNull();
     await advance(3000);
     expect(screen.queryByText("Something went wrong")).toBeNull();

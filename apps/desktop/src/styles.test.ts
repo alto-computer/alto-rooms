@@ -7,25 +7,27 @@ const css = readFileSync(path.resolve(__dirname, "styles.css"), "utf8").replace(
 
 describe("styles.css", () => {
   it.each([
-    ["--background", "var(--canvas)"],
+    ["--background", "var(--pane)"],
     ["--foreground", "var(--ink)"],
     ["--primary", "var(--thread-deep)"],
     ["--ring", "var(--ink)"],
     ["--border", "var(--hairline)"],
-    ["--sidebar", "var(--surface)"],
+    ["--sidebar", "var(--desk)"],
     ["--destructive", "var(--error)"],
   ])("maps shadcn %s to the Alto token %s", (name, value) => {
     expect(css).toContain(`${name}:${value};`);
   });
 
-  it("keeps Alto values and the dark canvas", () => {
-    expect(css).toContain("--surface:#f7f7f7;");
-    expect(css).toContain("--ink:#222222;");
-    expect(css).toContain("--canvas:#121212;");
-    expect(css).not.toMatch(/oklch\(/);
+  it("keeps warm paper in light and warm charcoal (not #121212) in dark", () => {
+    expect(css).toContain("--pane:#f8f4ee;");
+    expect(css).toContain("--ink:#27211e;");
+    expect(css).toContain(".dark{--desk:#161311;--pane:#211c19;");
+    expect(css).not.toContain("#121212");
   });
 
-  it("uses Jost on body", () => {
-    expect(css).toContain("body{font-family:Jost,'AppleSDGothicNeo',system-ui;background:var(--surface);color:var(--ink);}");
+  it("sets the UI in the system font and keeps Jost for display only", () => {
+    expect(css).toContain("--font-sans:system-ui,");
+    expect(css).toContain('--font-display:"Jost",');
+    expect(css).toContain("body{font-family:var(--font-sans);");
   });
 });

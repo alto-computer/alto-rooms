@@ -23,7 +23,7 @@ export function PluginSlot(props: Props) {
 }
 
 function Message({ children }: { children: ReactNode }) {
-  return <div className="flex flex-1 items-center justify-center p-12 text-center text-[17px] text-ink-2">{children}</div>;
+  return <div className="flex flex-1 items-center justify-center p-12 text-center text-heading text-ink-2">{children}</div>;
 }
 
 /**
@@ -180,7 +180,7 @@ function SidePanel({ artifact }: { artifact: Artifact }) {
   };
 
   return (
-    <aside ref={panelElement} aria-label={title} className="relative flex shrink-0 flex-col border-l border-[#ddd] bg-white" style={{ width: panel.width }}>
+    <aside ref={panelElement} aria-label={title} className="relative flex shrink-0 flex-col border-l border-hairline bg-pane" style={{ width: panel.width }}>
       <div
         role="separator"
         aria-orientation="vertical"
@@ -188,7 +188,7 @@ function SidePanel({ artifact }: { artifact: Artifact }) {
         onPointerDown={startResize}
         className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none"
       />
-      <header className="flex h-10 shrink-0 items-center gap-1 border-b border-[#ddd] px-2 text-[13px]">
+      <header className="flex h-10 shrink-0 items-center gap-1 border-b border-hairline px-2 text-body">
         {candidates.length > 1 ? (
           <div role="tablist" aria-label="Panel plugins" className="flex min-w-0 gap-1">
             {candidates.map((p) => (
@@ -198,7 +198,7 @@ function SidePanel({ artifact }: { artifact: Artifact }) {
                 role="tab"
                 aria-selected={p.id === current.id}
                 onClick={() => viewer.setPluginPanel({ pluginId: p.id })}
-                className={cn("truncate rounded-md px-2 py-1", p.id === current.id ? "bg-[#f2f2f2] text-ink" : "text-ink-2 hover:text-ink")}
+                className={cn("truncate rounded-md px-2 py-1", p.id === current.id ? "bg-surface text-ink" : "text-ink-2 hover:text-ink")}
               >
                 {p.slots.artifactSidePanel!.title}
               </button>
@@ -211,7 +211,7 @@ function SidePanel({ artifact }: { artifact: Artifact }) {
           type="button"
           aria-label={`Close ${title}`}
           onClick={() => void close()}
-          className="ml-auto grid size-7 place-items-center rounded-md text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+          className="ml-auto grid size-7 place-items-center rounded-md text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
         >
           <X size={15} aria-hidden />
         </button>

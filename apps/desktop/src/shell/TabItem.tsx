@@ -61,7 +61,7 @@ export function TabItem({
         "group relative flex w-[220px] min-w-[112px] flex-[0_1_220px]",
         // Chrome's divider between resting tabs: it marks where a tab with a short label ends,
         // and gives way next to the active and the hovered tab, whose own box shows the edge.
-        "before:absolute before:top-1/2 before:-left-[2.5px] before:h-4 before:w-px before:-translate-y-1/2 before:bg-[#dcdcdc]",
+        "before:absolute before:top-1/2 before:-left-[2.5px] before:h-4 before:w-px before:-translate-y-1/2 before:bg-hairline",
         "first:before:hidden hover:before:hidden data-active:before:hidden [[data-active]+&]:before:hidden [:hover+&]:before:hidden",
         sort.isDragging && "z-10 before:hidden",
       )}
@@ -87,11 +87,11 @@ export function TabItem({
             className={cn(
               // The active tab keeps room for its always-visible close button; the others never
               // change padding on hover (their close button fades in over the label's end instead).
-              "flex min-h-[34px] w-full min-w-0 items-center gap-2 rounded-lg border pl-3 text-left text-[14px]",
+              "flex min-h-[34px] w-full min-w-0 items-center gap-2 rounded-lg border pl-3 text-left text-body",
               "focus-visible:outline-2 focus-visible:outline-ink",
               active ? "pr-8" : "pr-3",
-              active ? "border-[#ddd] bg-white text-[#222]" : "border-transparent text-[#6a6a6a] group-focus-within:bg-[#efefef] hover:bg-[#efefef] hover:text-[#222]",
-              sort.isDragging && "cursor-grabbing border-[#ddd] bg-white shadow-float",
+              active ? "border-transparent bg-pane text-ink" : "border-transparent text-ink-2 group-focus-within:bg-surface hover:bg-surface hover:text-ink",
+              sort.isDragging && "cursor-grabbing border-hairline bg-sheet shadow-float",
             )}
           >
             <Icon size={15} strokeWidth={1.75} aria-hidden className="shrink-0" />
@@ -115,14 +115,14 @@ export function TabItem({
         onClick={(e) => onClose(e.detail > 0 ? e.currentTarget.parentElement?.getBoundingClientRect().width : undefined)}
         onAuxClick={middle}
         className={cn(
-          "absolute top-1/2 right-[1px] flex h-[32px] -translate-y-1/2 items-center rounded-r-lg pr-2 text-[#6a6a6a] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-ink",
+          "absolute top-1/2 right-[1px] flex h-[32px] -translate-y-1/2 items-center rounded-r-lg pr-2 text-ink-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-ink",
           "transition-opacity duration-150",
           active
-            ? "bg-white opacity-100"
-            : "bg-[linear-gradient(to_right,transparent,#efefef_20px)] pl-6 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
+            ? "bg-pane opacity-100"
+            : "bg-[linear-gradient(to_right,transparent,var(--surface)_20px)] pl-6 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
         )}
       >
-        <span className="grid size-5 place-items-center rounded hover:bg-[#f2f2f2]">
+        <span className="grid size-5 place-items-center rounded hover:bg-surface">
           <X size={15} strokeWidth={1.75} aria-hidden />
         </span>
       </button>

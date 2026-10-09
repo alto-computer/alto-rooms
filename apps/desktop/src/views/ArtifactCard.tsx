@@ -20,9 +20,9 @@ const SIZES = {
   // a darker hairline); it never resizes a card, which would reflow the grid.
   strip: {
     card: "w-[300px]",
-    page: "h-[420px] transition-[box-shadow,border-color] duration-200 ease-out group-hover/card:border-[#c8c8c8] group-hover/card:shadow-float group-focus-within/card:shadow-float motion-reduce:transition-none",
+    page: "h-[420px] transition-[box-shadow,border-color] duration-200 ease-out group-hover/card:border-hairline-strong group-hover/card:shadow-float group-focus-within/card:shadow-float motion-reduce:transition-none",
     expand: "top-3 right-3 size-9",
-    label: "font-mono text-[12px] text-ink-3",
+    label: "font-mono text-small text-ink-3",
     // Inner page box (inside the 1px border) before it is measured.
     fallback: { w: 298, h: 418 },
   },
@@ -31,7 +31,7 @@ const SIZES = {
     card: "w-[220px]",
     page: "h-[250px] transition-shadow duration-200 group-hover/card:shadow-float group-focus-within/card:shadow-float",
     expand: "top-2.5 right-2.5 size-[34px]",
-    label: "text-[12px] text-ink-3",
+    label: "text-small text-ink-3",
     fallback: { w: 218, h: 248 },
   },
 } as const;
@@ -133,7 +133,7 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
         onKeyDown={onKeyDown}
         className="flex cursor-pointer flex-col gap-3 rounded-xl outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
-        <div ref={pageRef} className={cn("relative overflow-hidden rounded-xl border border-[#ddd] bg-white", s.page)}>
+        <div ref={pageRef} className={cn("relative overflow-hidden rounded-xl border border-hairline bg-sheet", s.page)}>
           {slot.granted ? (
             <iframe
               onLoad={() => {
@@ -160,10 +160,10 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
           {loaded && live ? null : <DocSkeleton compact={size === "journal"} />}
         </div>
         <div className="flex min-w-0 items-center gap-2 px-0.5">
-          <span data-testid="card-title" className="min-w-0 truncate text-[15px] font-medium text-ink">
+          <span data-testid="card-title" className="min-w-0 truncate text-lead font-medium text-ink">
             {artifact.title}
           </span>
-          {isNew ? <span role="img" aria-label="New doc" className="size-1.5 shrink-0 rounded-full bg-[#222]" /> : null}
+          {isNew ? <span role="img" aria-label="New doc" className="size-1.5 shrink-0 rounded-full bg-ink" /> : null}
           <span className={cn("ml-auto shrink-0 whitespace-nowrap", s.label)}>{label}</span>
         </div>
       </div>
@@ -172,7 +172,7 @@ export const ArtifactCard = memo(function ArtifactCard({ artifact, info, label, 
         aria-label="Open in new tab"
         onClick={() => onOpen(true)}
         className={cn(
-          "absolute flex items-center justify-center rounded-lg border border-[#ddd] bg-white text-ink shadow-float",
+          "absolute flex items-center justify-center rounded-lg border border-hairline bg-sheet text-ink shadow-float",
           "opacity-0 transition-opacity group-focus-within/card:opacity-100 group-hover/card:opacity-100",
           "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
           s.expand,

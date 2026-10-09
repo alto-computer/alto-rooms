@@ -72,7 +72,7 @@ describe("Sidebar: drag to move", () => {
     const target = sidebarRow("벤치마크");
     fireEvent.dragEnter(target, { dataTransfer: dt });
     fireEvent.dragOver(target, { dataTransfer: dt });
-    expect(target).toHaveClass("bg-[#ebebeb]", "outline-ink");
+    expect(target).toHaveClass("bg-surface-strong", "outline-ink");
     fireEvent.dragLeave(target, { dataTransfer: dt });
     expect(target).not.toHaveClass("outline-ink");
 
@@ -114,7 +114,7 @@ describe("Sidebar: drag to move", () => {
     await dropOn(sidebarRow("벤치마크"), dt);
     const msg = screen.getByText("This doc can't be moved");
     const status = msg.closest("[role=status]")!;
-    expect(status).toHaveClass("text-[#c13515]");
+    expect(status).toHaveClass("text-error");
     expect(status.querySelector("svg")).not.toBeNull();
     act(() => vi.advanceTimersByTime(3000));
     expect(screen.queryByText("This doc can't be moved")).toBeNull();

@@ -13,7 +13,7 @@ import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { INBOX_ID } from "@/lib/drag";
 
 function Centered({ children }: { children: ReactNode }) {
-  return <div className="flex flex-1 items-center justify-center p-12 text-center text-[17px] text-ink-2">{children}</div>;
+  return <div className="flex flex-1 items-center justify-center p-12 text-center text-heading text-ink-2">{children}</div>;
 }
 
 /**
@@ -38,7 +38,7 @@ export function RoomView({ roomId }: { roomId: string }) {
 
   if (!room) {
     // Before the first sync we can't tell; afterwards the room is gone.
-    return info ? <Centered>This room is gone</Centered> : <div className="flex-1 bg-surface" />;
+    return info ? <Centered>This room is gone</Centered> : <div className="flex-1 bg-pane" />;
   }
 
   let body: ReactNode;
@@ -78,7 +78,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-surface px-12 pt-10">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-pane px-12 pt-10">
       <header className="flex flex-col gap-1">
         <EditableTitle
           key={room.id}
@@ -88,12 +88,12 @@ export function RoomView({ roomId }: { roomId: string }) {
           onSave={async (next) => {
             await client.renameRoom(room.id, next);
           }}
-          className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink"
-          inputClassName="-ml-2 w-full max-w-[560px] rounded-lg px-2 py-0.5 outline-2 outline-solid outline-[#222]"
+          className="text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink"
+          inputClassName="-ml-2 w-full max-w-[560px] rounded-lg px-2 py-0.5 outline-2 outline-solid outline-ink"
         />
-        <p className="text-[16px] text-ink-2">{count(room.artifactCount, "doc")}</p>
+        <p className="text-lead text-ink-2">{count(room.artifactCount, "doc")}</p>
         {room.status === "unavailable" ? (
-          <p className="mt-1 flex items-center gap-1.5 text-[14px] text-[#c13515]">
+          <p className="mt-1 flex items-center gap-1.5 text-body text-error">
             <CircleAlert size={16} aria-hidden />
             Folder not found
           </p>

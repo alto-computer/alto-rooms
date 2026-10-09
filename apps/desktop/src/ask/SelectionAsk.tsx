@@ -20,7 +20,7 @@ export function SelectionAsk({ rect, onAsk }: { rect: SelectionRect; onAsk: () =
       onMouseDown={(e) => e.preventDefault()}
       onClick={onAsk}
       style={{ left: Math.max(8, rect.x + rect.w / 2), top: below ? rect.y + rect.h + 8 : rect.y - 8 }}
-      className={`pointer-events-auto absolute z-20 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-[#dcdcdc] bg-white px-3 text-[12.5px] font-medium text-ink shadow-[0_4px_14px_rgba(0,0,0,0.12)] hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 ${below ? "" : "-translate-y-full"}`}
+      className={`pointer-events-auto absolute z-20 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline bg-sheet px-3 text-small font-medium text-ink shadow-float hover:bg-surface focus-visible:outline-2 focus-visible:outline-ink motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 ${below ? "" : "-translate-y-full"}`}
     >
       <MessageSquareQuote className="size-3.5" aria-hidden />
       Ask

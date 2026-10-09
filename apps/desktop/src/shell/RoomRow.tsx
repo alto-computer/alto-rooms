@@ -70,7 +70,7 @@ export function RoomRow({
 
   if (editing && !readOnly) {
     return (
-      <li className="flex min-h-9 items-center gap-2.5 rounded-lg bg-white px-2.5 py-1.5 text-[15px] shadow-[0_0_0_2px_#222]">
+      <li className="flex min-h-9 items-center gap-2.5 rounded-lg bg-white px-2.5 py-1.5 text-lead shadow-[0_0_0_2px_#222]">
         <Folder {...ICON} className="shrink-0" />
         <div className="min-w-0 flex-1">
           <EditableTitle
@@ -82,7 +82,7 @@ export function RoomRow({
             }}
             onSaved={() => setEditing(false)}
             onCancel={() => setEditing(false)}
-            className="w-full text-[15px] text-ink"
+            className="w-full text-lead text-ink"
             inputClassName="bg-transparent p-0"
           />
         </div>
@@ -102,8 +102,8 @@ export function RoomRow({
       className={cn(
         ITEM,
         ITEM_INTERACTIVE,
-        active && "bg-[#ebebeb] hover:bg-[#ebebeb]",
-        drop.over && "bg-[#ebebeb] outline-1 outline-ink outline-solid hover:bg-[#ebebeb]",
+        active && "bg-surface-strong hover:bg-surface-strong",
+        drop.over && "bg-surface-strong outline-1 outline-ink outline-solid hover:bg-surface-strong",
         sort.isDragging && "cursor-grabbing bg-white shadow-float hover:bg-white",
       )}
     >

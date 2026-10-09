@@ -40,8 +40,8 @@ describe("OnboardingCard full (welcome page)", () => {
 
   it("shows the exact copy, in order", async () => {
     await render();
-    expect(screen.getByRole("heading", { level: 1, name: "Welcome to Rooms" })).toHaveClass("text-[32px]", "font-medium", "tracking-[-0.01em]");
-    expect(screen.getByText("Rooms gathers the HTML your agents write into topic rooms.")).toHaveClass("text-[17px]", "text-ink-2");
+    expect(screen.getByRole("heading", { level: 1, name: "Welcome to Rooms" })).toHaveClass("text-display", "font-medium", "tracking-[-0.01em]");
+    expect(screen.getByText("Rooms gathers the HTML your agents write into topic rooms.")).toHaveClass("text-heading", "text-ink-2");
     const h2s = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(h2s).toEqual(["Get started", "Good to know", "Try telling your agent"]);
     expect(screen.getByTestId("welcome-prompt")).toHaveTextContent(PROMPT);
@@ -51,7 +51,7 @@ describe("OnboardingCard full (welcome page)", () => {
         "Paste this into Claude Code or Codex. Your agent finds the HTML it wrote in the last 14 days and sorts it into topic rooms. It only adds links; your files stay where they are.",
       ),
     ).toBeInTheDocument();
-    for (const name of ["Rooms", "Journal", "inbox"]) expect(screen.getByText(name, { selector: "p" })).toHaveClass("text-[15px]", "font-medium");
+    for (const name of ["Rooms", "Journal", "inbox"]) expect(screen.getByText(name, { selector: "p" })).toHaveClass("text-lead", "font-medium");
     expect(text("One folder per topic. Any HTML in ~/rooms/<room>/ becomes a card right away.")).toBeInTheDocument();
     expect(screen.getByText("~/rooms/<room>/")).toHaveClass("font-mono");
     expect(screen.getByText("Each day's docs, next to your own plan and review notes.")).toBeInTheDocument();
@@ -61,14 +61,14 @@ describe("OnboardingCard full (welcome page)", () => {
     expect(screen.getByText("Tip")).toBeInTheDocument();
     expect(
       screen.getByText("⌘K finds rooms and docs. ⌘B hides the sidebar. Hover a card and press ↗ to open it in a new tab."),
-    ).toHaveClass("text-[14px]", "text-ink");
+    ).toHaveClass("text-body", "text-ink");
   });
 
   it("복사 is the single thread-deep action; chip and button are labelled Copy prompt", async () => {
     await render();
     const targets = screen.getAllByRole("button", { name: "Copy prompt" });
     expect(targets).toEqual([screen.getByTestId("welcome-prompt"), screen.getByTestId("welcome-copy")]);
-    expect(screen.getByTestId("welcome-copy")).toHaveClass("bg-thread-deep", "text-white", "h-10");
+    expect(screen.getByTestId("welcome-copy")).toHaveClass("bg-thread-deep", "text-on-thread", "h-10");
     expect(document.querySelectorAll('[class*="thread-deep"]')).toHaveLength(1);
   });
 

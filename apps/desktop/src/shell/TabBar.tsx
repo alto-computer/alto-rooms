@@ -11,7 +11,7 @@ import { TabItem } from "./TabItem";
 import { useTabOverflow } from "./useTabOverflow";
 
 const ICON_BUTTON =
-  "grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink disabled:pointer-events-none disabled:text-ink-3 disabled:opacity-50";
+  "grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink disabled:pointer-events-none disabled:text-ink-3 disabled:opacity-50";
 
 export function TabBar() {
   const { tabs, activeId, sidebarOpen } = useViewer();

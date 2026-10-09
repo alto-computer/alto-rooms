@@ -37,7 +37,7 @@ export function PluginItems() {
 
   return (
     <div className="mt-4 flex flex-col">
-      <span className="flex min-h-7 items-center pl-2.5 text-[12px] text-ink-3">Plugins</span>
+      <span className="flex min-h-7 items-center pl-2.5 text-small text-ink-3">Plugins</span>
       <ul aria-label="Plugins" className="flex flex-col gap-0.5 p-0.5">
         {items.map((p) => {
           const Icon = pluginIcon(p.slots.tab?.icon);
@@ -57,7 +57,7 @@ export function PluginItems() {
                   onClick={(e) => viewer.go({ kind: "plugin", pluginId: p.id }, wantsNewTab(e))}
                   onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "plugin", pluginId: p.id }, true)}
                   onContextMenu={onContextMenu}
-                  className={cn(ITEM, ITEM_INTERACTIVE, current && "bg-[#ebebeb] hover:bg-[#ebebeb]")}
+                  className={cn(ITEM, ITEM_INTERACTIVE, current && "bg-surface-strong hover:bg-surface-strong")}
                 >
                   <Icon size={17} strokeWidth={1.75} aria-hidden className="shrink-0" />
                   <span className="truncate">{p.slots.tab!.title}</span>
@@ -70,7 +70,7 @@ export function PluginItems() {
                 >
                   <Icon size={17} strokeWidth={1.75} aria-hidden className="shrink-0" />
                   <span className="truncate">{p.slots.tab?.title ?? p.name}</span>
-                  {p.enabled ? null : <span className="ml-auto shrink-0 text-[12px]">Off</span>}
+                  {p.enabled ? null : <span className="ml-auto shrink-0 text-small">Off</span>}
                 </div>
               )}
             </li>
@@ -82,7 +82,7 @@ export function PluginItems() {
           role="menu"
           aria-label="Plugin"
           style={{ left: menu.x, top: menu.y }}
-          className="fixed z-50 min-w-[140px] rounded-lg border border-[#ddd] bg-white p-1 text-[14px] shadow-float"
+          className="fixed z-50 min-w-[140px] rounded-menu bg-popover p-1 text-body shadow-float backdrop-blur-xl"
         >
           {(() => {
             const p = list.find((x) => x.id === menu.pluginId);
@@ -97,7 +97,7 @@ export function PluginItems() {
                   const done = on ? store.setEnabled(p.id, false) : store.setEnabled(p.id, true, p.permissions);
                   done.catch((e: unknown) => console.warn(`could not turn ${p.id} ${on ? "off" : "on"}`, e));
                 }}
-                className="w-full rounded-md px-2.5 py-1.5 text-left text-ink hover:bg-[#f2f2f2]"
+                className="w-full rounded-md px-2.5 py-1.5 text-left text-ink hover:bg-surface"
               >
                 {on ? "Turn off" : "Turn on"}
               </button>

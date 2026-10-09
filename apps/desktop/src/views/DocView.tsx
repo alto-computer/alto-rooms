@@ -12,7 +12,7 @@ import { DocSkeleton } from "./DocSkeleton";
 import { ShareMenu } from "./ShareMenu";
 
 function Centered({ children }: { children: ReactNode }) {
-  return <div className="flex flex-1 items-center justify-center bg-white p-12 text-center text-[17px] text-ink-2">{children}</div>;
+  return <div className="flex flex-1 items-center justify-center bg-pane p-12 text-center text-heading text-ink-2">{children}</div>;
 }
 
 /**
@@ -37,14 +37,14 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
   const roomGone = info !== null && roomId !== info.journalRoomId && !rooms.some((r) => r.id === roomId);
   if (roomGone) return <Centered>This doc is gone</Centered>;
   if (artifacts === undefined) {
-    return loadError ? <Centered>{GENERIC_ERROR}</Centered> : <div className="flex-1 bg-white" />;
+    return loadError ? <Centered>{GENERIC_ERROR}</Centered> : <div className="flex-1 bg-pane" />;
   }
   const artifact = artifacts.find((a) => a.id === artifactId);
   if (!artifact) return <Centered>This doc is gone</Centered>;
-  if (!info) return <div className="flex-1 bg-white" />;
+  if (!info) return <div className="flex-1 bg-pane" />;
 
   return (
-    <div className="relative flex min-h-0 flex-1 bg-white">
+    <div className="relative flex min-h-0 flex-1 bg-pane">
       <div className="relative min-w-0 flex-1">
         {/* No allow-same-origin: a doc is agent-written HTML and must never reach the app. What
             it shares comes out by postMessage only: the selection bridge roomsd splices in, and

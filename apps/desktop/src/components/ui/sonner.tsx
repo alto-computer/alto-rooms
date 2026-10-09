@@ -13,7 +13,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         unstyled: true,
         classNames: {
           toast:
-            "mx-auto flex w-fit items-center gap-2 rounded-full border-0 bg-ink px-3.5 py-2 text-[13px] leading-5 text-white shadow-lg",
+            "mx-auto flex w-fit items-center gap-2 rounded-full border-0 bg-ink px-3.5 py-2 text-body text-pane shadow-float",
           title: "font-normal",
           icon: "m-0 flex size-4 items-center justify-center",
         },

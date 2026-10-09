@@ -322,7 +322,7 @@ describe("EmptyRoom", () => {
     });
     expect(screen.queryByText("Copied")).toBeNull();
     const msg = screen.getByText("Something went wrong");
-    expect(msg.closest("[role=status]")).toHaveClass("text-[#c13515]");
+    expect(msg.closest("[role=status]")).toHaveClass("text-error");
     expect(msg.closest("[role=status]")!.querySelector("svg")).not.toBeNull();
     act(() => vi.advanceTimersByTime(3000));
     expect(screen.queryByText("Something went wrong")).toBeNull();

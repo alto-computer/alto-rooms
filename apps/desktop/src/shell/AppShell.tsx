@@ -43,7 +43,7 @@ export function AppShell() {
         open={sidebarOpen}
         onOpenChange={(open) => viewer.setSidebarOpen(open)}
         style={SIDEBAR_STYLE}
-        className="h-svh min-h-0 overflow-hidden bg-surface text-ink"
+        className="h-svh min-h-0 overflow-hidden bg-desk text-ink"
       >
         <Sidebar onFind={openFind} />
         {/* Content column: padding 8px 8px 8px 0 (8px on the left too once the sidebar is gone). */}
@@ -53,7 +53,7 @@ export function AppShell() {
             id={TAB_PANEL_ID}
             role="tabpanel"
             aria-labelledby={active ? tabDomId(active.id) : undefined}
-            className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-[#ddd] bg-white"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-pane"
           >
             {mounted.map((tab) => (
               <Activity key={viewer.navKey(tab.id)} mode={tab === active ? "visible" : "hidden"}>

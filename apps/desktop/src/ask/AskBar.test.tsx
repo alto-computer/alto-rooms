@@ -342,7 +342,7 @@ describe("AskBar", () => {
       turn({ id: "t1", question: "q1", status: "cancelled", answer: "부분", endedAt: "2026-10-06T10:00:02+09:00" }),
     ] });
     const error = await screen.findByText("claude-code exited with an error (code 1)");
-    expect(error.closest("p")).toHaveClass("text-[#c13515]");
+    expect(error.closest("p")).toHaveClass("text-error");
     expect(error.closest("p")!.querySelector("svg")).not.toBeNull();
     expect(screen.getByText("Stopped")).toBeTruthy();
     const retry = screen.getByRole("button", { name: "Retry" });

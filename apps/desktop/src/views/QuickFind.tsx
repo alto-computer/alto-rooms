@@ -119,7 +119,7 @@ function FindBody({ onClose }: { onClose: () => void }) {
               >
                 <FileText size={16} strokeWidth={1.75} aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{d.title}</span>
-                <span className="ml-auto shrink-0 font-mono text-[12px] text-[#929292]">{d.roomName}</span>
+                <span className="ml-auto shrink-0 font-mono text-small text-ink-3">{d.roomName}</span>
               </CommandItem>
             ))}
           </CommandGroup>

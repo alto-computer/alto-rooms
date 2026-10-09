@@ -78,12 +78,12 @@ export function SortBar() {
 
   const s = state.status;
   return (
-    <div data-testid="sort-bar" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px] text-ink-2">
+    <div data-testid="sort-bar" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-body text-ink-2">
       <span className="flex items-center gap-1.5 text-ink">
         <Sparkles size={15} aria-hidden /> Auto-sort is on
       </span>
       {state.keyRejected ? (
-        <span className="text-[#c13515]">TypeSafe refused TYPESAFE_API_KEY. Only docs named like a room move.</span>
+        <span className="text-error">TypeSafe refused TYPESAFE_API_KEY. Only docs named like a room move.</span>
       ) : s ? (
         <span>
           {s.movedToday} moved today, {s.keptToday} left here · {ago(s.lastRunAt)}
@@ -149,10 +149,10 @@ function KeyPanel({ rejected, onSaved, onDismiss }: { rejected: boolean; onSaved
 
   return (
     <section data-testid="sort-bar" aria-labelledby="sort-title" className="flex max-w-[680px] flex-col gap-2 rounded-xl border border-hairline bg-background px-5 py-4">
-      <h2 id="sort-title" className="flex items-center gap-1.5 text-[15px] font-medium text-ink">
+      <h2 id="sort-title" className="flex items-center gap-1.5 text-lead font-medium text-ink">
         <Sparkles size={16} aria-hidden /> {rejected ? "TypeSafe stopped accepting your key" : "Sort the inbox automatically"}
       </h2>
-      <p className="text-[14px] text-ink-2">
+      <p className="text-body text-ink-2">
         Docs from a repo with a room of the same name already move on their own. Add a TypeSafe key and the rest go to the room that fits, or to a new
         room named after their repo once three of them are waiting.
       </p>
@@ -168,7 +168,7 @@ function KeyPanel({ rejected, onSaved, onDismiss }: { rejected: boolean; onSaved
           value={key}
           onChange={(e) => setKey(e.target.value)}
           placeholder="TypeSafe API key"
-          className="h-8 min-w-0 flex-1 basis-[240px] rounded-md border border-hairline bg-surface px-2.5 font-mono text-[13px] text-ink outline-none focus-visible:border-ink"
+          className="h-8 min-w-0 flex-1 basis-[240px] rounded-md border border-hairline bg-surface px-2.5 font-mono text-body text-ink outline-none focus-visible:border-ink"
         />
         <Button type="submit" size="sm" disabled={busy || !key.trim()}>
           {busy ? "Checking…" : "Turn on"}
@@ -183,11 +183,11 @@ function KeyPanel({ rejected, onSaved, onDismiss }: { rejected: boolean; onSaved
         ) : null}
       </form>
       {error ? (
-        <p role="alert" className="text-[14px] text-[#c13515]">
+        <p role="alert" className="text-body text-error">
           {error}
         </p>
       ) : null}
-      <p className="text-[13px] text-ink-3">
+      <p className="text-body text-ink-3">
         Each doc's title, its path inside the repo and its first 2,000 characters go to TypeSafe. A doc moves only when the answer is at least 70% sure.
         The key stays in your Keychain.
       </p>

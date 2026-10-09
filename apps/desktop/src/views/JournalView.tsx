@@ -56,8 +56,8 @@ function RowLabel({ avatar, name, count }: { avatar: ReactNode; name: string; co
   return (
     <div className="flex items-center gap-2">
       {avatar}
-      <span className="text-[15px] font-medium text-ink">{name}</span>
-      <span className="text-[15px] text-[#929292]">{count}</span>
+      <span className="text-lead font-medium text-ink">{name}</span>
+      <span className="text-lead text-ink-3">{count}</span>
     </div>
   );
 }
@@ -113,13 +113,13 @@ function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly No
         aria-label="New note"
         aria-busy={busy || undefined}
         onClick={() => void create()}
-        className="flex h-[150px] w-[160px] shrink-0 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#ddd] bg-white text-ink-2 hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+        className="flex h-[150px] w-[160px] shrink-0 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-hairline-strong bg-sheet text-ink-2 hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
         <Plus size={22} aria-hidden />
-        <span className="text-[15px]">New note</span>
+        <span className="text-lead">New note</span>
       </button>
       {error ? (
-        <p role="alert" className="flex items-center gap-1.5 text-[14px] text-[#c13515]">
+        <p role="alert" className="flex items-center gap-1.5 text-body text-error">
           <CircleAlert size={16} aria-hidden />
           {error}
         </p>
@@ -136,10 +136,10 @@ function NoteCard({ note, onOpen, now }: { note: Note; onOpen: (newTab: boolean)
       aria-label={name}
       onClick={(e) => onOpen(wantsNewTab(e))}
       onAuxClick={(e) => e.button === 1 && onOpen(true)}
-      className="flex h-[150px] w-[220px] shrink-0 flex-col justify-between rounded-xl border border-[#ddd] bg-white p-4 text-left hover:shadow-float focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+      className="flex h-[150px] w-[220px] shrink-0 flex-col justify-between rounded-xl border border-hairline bg-sheet p-4 text-left hover:shadow-float focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
     >
-      <span className="line-clamp-3 text-[15px] font-medium text-ink">{name}</span>
-      <span className="font-mono text-[12px] text-[#929292]">{dateLabel(note.updatedAt, now)}</span>
+      <span className="line-clamp-3 text-lead font-medium text-ink">{name}</span>
+      <span className="font-mono text-small text-ink-3">{dateLabel(note.updatedAt, now)}</span>
     </button>
   );
 }
@@ -175,7 +175,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   let body: ReactNode;
   if (day === undefined) {
     body = loadError ? (
-      <div className="flex flex-1 items-center justify-center text-[17px] text-ink-2">{GENERIC_ERROR}</div>
+      <div className="flex flex-1 items-center justify-center text-heading text-ink-2">{GENERIC_ERROR}</div>
     ) : (
       <div className="flex-1" />
     );
@@ -185,7 +185,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
         <section aria-label="From agents" className="flex flex-col gap-4">
           <RowLabel
             avatar={
-              <span className="grid size-6 place-items-center overflow-hidden rounded-full bg-[#f2f2f2]">
+              <span className="grid size-6 place-items-center overflow-hidden rounded-full bg-surface">
                 <img src={otterAvatar} alt="" className="size-5" />
               </span>
             }
@@ -215,7 +215,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
         <section aria-label="From me" className="flex flex-col gap-4">
           <RowLabel
             avatar={
-              <span aria-hidden={!initial} className="grid size-6 place-items-center rounded-full bg-[#222] text-[12px] text-white">
+              <span aria-hidden={!initial} className="grid size-6 place-items-center rounded-full bg-ink text-small text-pane">
                 {initial}
               </span>
             }
@@ -235,11 +235,11 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   }
 
   return (
-    <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto bg-white px-12 pt-9 pb-6">
+    <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto bg-pane px-12 pt-9 pb-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>
-          {isToday ? <span className="text-[17px] text-ink-2">Today</span> : null}
+          <h1 className="text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>
+          {isToday ? <span className="text-heading text-ink-2">Today</span> : null}
         </div>
         <WeekStrip date={date} onChange={setDate} />
       </header>

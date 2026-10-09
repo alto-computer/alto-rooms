@@ -118,17 +118,17 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             // Browser style: the home page replaces this tab; ⌘/middle click opens it in a new one.
             onClick={(e) => viewer.go({ kind: "new" }, wantsNewTab(e))}
             onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "new" }, true)}
-            className="-my-1 -ml-1.5 flex items-center gap-2.5 rounded-lg py-1 pr-2 pl-1.5 hover:bg-[#f2f2f2] focus-visible:outline-2 focus-visible:outline-ink"
+            className="-my-1 -ml-1.5 flex items-center gap-2.5 rounded-lg py-1 pr-2 pl-1.5 hover:bg-surface focus-visible:outline-2 focus-visible:outline-ink"
           >
             <img src={logo} alt="" width={26} height={26} className="size-[26px] shrink-0" />
-            <span className="text-[17px] font-medium text-ink">Rooms</span>
+            <span className="text-heading font-medium text-ink">Rooms</span>
           </button>
           <IconTip label="Hide sidebar" shortcut="⌘B">
             <button
               type="button"
               aria-label="Hide sidebar (⌘B)"
               onClick={() => viewer.setSidebarOpen(false)}
-              className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+              className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
             >
               <PanelLeft {...ICON} />
             </button>
@@ -144,7 +144,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             type="button"
             onClick={() => openJournal(viewer)}
             aria-current={active?.kind === "journal" ? "page" : undefined}
-            className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "journal" && "bg-[#ebebeb] hover:bg-[#ebebeb]")}
+            className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "journal" && "bg-surface-strong hover:bg-surface-strong")}
           >
             <Calendar {...ICON} className="shrink-0 text-ink" />
             <span className="truncate">Journal</span>
@@ -152,14 +152,14 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
         </nav>
 
         <div className="mt-5 flex min-h-7 items-center justify-between pl-2.5">
-          <span className="text-[12px] text-ink-3">Your rooms</span>
+          <span className="text-small text-ink-3">Your rooms</span>
           {readOnly ? null : (
             <IconTip label="New room">
               <button
                 type="button"
                 aria-label="New room"
                 onClick={() => setCreating(true)}
-                className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+                className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
               >
                 <Plus size={16} strokeWidth={1.75} aria-hidden />
               </button>
@@ -186,7 +186,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
         </ul>
         <PluginItems />
         {moveFailed.shown ? (
-          <p role="status" className="mt-2 flex items-center gap-1.5 px-2.5 text-[13px] text-[#c13515]">
+          <p role="status" className="mt-2 flex items-center gap-1.5 px-2.5 text-body text-error">
             <CircleAlert size={16} aria-hidden className="shrink-0" />
             {moveError}
           </p>

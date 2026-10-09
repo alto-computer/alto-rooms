@@ -52,7 +52,7 @@ export function ShareMenu({ artifact }: { artifact: Artifact }) {
           <Share size={15} aria-hidden />
         </DropdownMenuTrigger>
       </IconTip>
-      <DropdownMenuContent align="end" alignOffset={-toGroupEnd} sideOffset={6} className="w-auto min-w-44 text-[13px]">
+      <DropdownMenuContent align="end" alignOffset={-toGroupEnd} sideOffset={6} className="w-auto min-w-44 text-body">
         <DropdownMenuItem onSelect={copyPath}>
           <Copy aria-hidden />
           Copy file path
