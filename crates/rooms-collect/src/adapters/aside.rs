@@ -91,8 +91,6 @@ impl Adapter for Aside {
         }
         for (i, e) in out[start..].iter_mut().enumerate() { e.sub = i as u32; }
     }
-
-    fn resume_command(&self, session: &str) -> String { format!("aside session resume {session}") }
 }
 
 impl Aside {

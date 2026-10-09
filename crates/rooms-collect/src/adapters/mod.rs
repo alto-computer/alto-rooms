@@ -40,8 +40,6 @@ pub trait Adapter: Send + Sync {
     fn discover(&self) -> Vec<LogFile>;
     /// Events of one complete line starting at byte `at`.
     fn parse_line(&self, line: &[u8], at: u64, file: &LogFile, ctx: &mut FileCtx, out: &mut Vec<Event>);
-    /// How to continue a session from a terminal.
-    fn resume_command(&self, session: &str) -> String;
 }
 
 /// Where each agent keeps its logs. Defaults are under the user's home; tests override them.

@@ -1,5 +1,5 @@
 //! Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (cold ones compressed to `.jsonl.zst`)
-//! and `~/.codex/archived_sessions/rollout-*`.
+//! and `~/.codex/archived_sessions/rollout-*`, plus `~/.codex/session_index.jsonl` for thread names.
 use super::{texts, tool_text, walk, Adapter, FileCtx, LogFile};
 use crate::event::{parse_ts, Event, Kind, Role};
 use crate::pathutil::{is_html, resolve};
@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub struct Codex { pub root: PathBuf, pub user_home: PathBuf }
+
+/// The key of `~/.codex/session_index.jsonl`: `{"id", "thread_name", "updated_at"}` per line.
+const INDEX_KEY: &str = "session_index.jsonl";
 
 fn patch_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
@@ -37,7 +40,11 @@ impl Adapter for Codex {
     fn discover(&self) -> Vec<LogFile> {
         let mut paths = Vec::new();
         walk(&self.root, &is_rollout, &mut paths);
-        if let Some(parent) = self.root.parent() { walk(&parent.join("archived_sessions"), &is_rollout, &mut paths); }
+        if let Some(parent) = self.root.parent() {
+            walk(&parent.join("archived_sessions"), &is_rollout, &mut paths);
+            let index = parent.join(INDEX_KEY);
+            if index.is_file() { paths.push(index); }
+        }
         paths.into_iter().map(|path| {
             let name = path.file_name().unwrap().to_string_lossy();
             let compressed = name.ends_with(".zst");
@@ -46,9 +53,21 @@ impl Adapter for Codex {
         }).collect()
     }
 
-    fn parse_line(&self, line: &[u8], at: u64, _file: &LogFile, ctx: &mut FileCtx, out: &mut Vec<Event>) {
+    fn parse_line(&self, line: &[u8], at: u64, file: &LogFile, ctx: &mut FileCtx, out: &mut Vec<Event>) {
         let Ok(rec) = serde_json::from_slice::<Value>(line) else { return };
         let len = line.len() as u64;
+        if file.key == INDEX_KEY {
+            let id = rec.get("id").and_then(Value::as_str);
+            let name = rec.get("thread_name").and_then(Value::as_str).filter(|t| !t.trim().is_empty());
+            if let (Some(id), Some(name)) = (id, name) {
+                let mut e = Event::new(Kind::SessionSeen, at, len);
+                e.session = Some(id.to_string());
+                e.ts = rec.get("updated_at").and_then(parse_ts);
+                e.title = Some(name.to_string());
+                out.push(e);
+            }
+            return;
+        }
         let payload = rec.get("payload").cloned().unwrap_or(Value::Null);
         let ts = rec.get("timestamp").and_then(parse_ts);
         let start = out.len();
@@ -96,8 +115,6 @@ impl Adapter for Codex {
         }
         for (i, e) in out[start..].iter_mut().enumerate() { e.sub = i as u32; }
     }
-
-    fn resume_command(&self, session: &str) -> String { format!("codex resume {session}") }
 }
 
 impl Codex {

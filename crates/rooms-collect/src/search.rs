@@ -1,7 +1,9 @@
 //! Searching the indexed conversations: matches grouped by session, best first, each with an
 //! excerpt read back from the log (or its archived copy) and the command that resumes it.
 use crate::archive;
+use crate::conversations::title;
 use crate::reader::read_chunk;
+use rooms_protocol::{Agent, SessionId};
 use rusqlite::{params_from_iter, types::Value as Sql, Connection};
 use serde::Serialize;
 
@@ -36,10 +38,8 @@ pub fn fts_query(text: &str) -> Option<String> {
 }
 
 pub fn resume_command(agent: &str, session: &str) -> String {
-    match agent {
-        "claude-code" => format!("claude --resume {session}"),
-        "codex" => format!("codex resume {session}"),
-        "aside" => format!("aside session resume {session}"),
+    match (Agent::parse(agent), SessionId::parse(session)) {
+        (Some(a), Some(s)) => a.resume_argv(&s).join(" "),
         _ => session.to_string(),
     }
 }
@@ -81,17 +81,6 @@ pub fn search(c: &Connection, q: &Query) -> rusqlite::Result<Vec<Hit>> {
             .or_else(|| r.preview.clone()).unwrap_or_default();
     }
     Ok(hits)
-}
-
-/// A session's title: the agent's own summary when it wrote one, else its first user message.
-fn title(c: &Connection, agent: &str, session: &str) -> rusqlite::Result<Option<String>> {
-    use rusqlite::OptionalExtension;
-    let t: Option<String> = c.query_row(
-        "SELECT preview FROM events WHERE agent=?1 AND session=?2 AND kind='session.seen' AND preview IS NOT NULL ORDER BY rowid DESC LIMIT 1",
-        [agent, session], |r| r.get(0)).optional()?;
-    if t.is_some() { return Ok(t); }
-    c.query_row("SELECT preview FROM events WHERE agent=?1 AND session=?2 AND kind='message' AND role='user' ORDER BY rowid LIMIT 1",
-        [agent, session], |r| r.get(0)).optional()
 }
 
 /// The text of the matching log line: from the log, else from the archive (the log may be gone).

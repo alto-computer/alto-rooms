@@ -8,6 +8,7 @@
 pub mod adapters;
 pub mod archive;
 pub mod config;
+pub mod conversations;
 pub mod daemon;
 pub mod event;
 pub mod filter;

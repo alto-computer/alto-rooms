@@ -4,6 +4,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 
 pub const SCHEMA_VERSION: &str = "1";
+/// Changed when an adapter learns to read more from lines it has already read (titles). Every
+/// log in the search window is then read again from the start; inserts skip events already
+/// stored, and the archive is kept (a schema bump would delete it).
+pub const REINDEX: &str = "titles";
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -29,6 +33,7 @@ CREATE TABLE IF NOT EXISTS events(
   src_path TEXT NOT NULL, file_key TEXT NOT NULL, src_offset INTEGER NOT NULL, src_len INTEGER NOT NULL,
   preview TEXT);
 CREATE INDEX IF NOT EXISTS events_kind_rowid ON events(kind, rowid);
+CREATE INDEX IF NOT EXISTS events_kind_ts ON events(kind, ts);
 CREATE INDEX IF NOT EXISTS events_session ON events(agent, session);
 CREATE INDEX IF NOT EXISTS events_src ON events(src_path);
 CREATE TABLE IF NOT EXISTS sink_cursors(sink TEXT PRIMARY KEY, last_rowid INTEGER NOT NULL);
@@ -69,6 +74,11 @@ fn try_open(path: &Path) -> rusqlite::Result<Connection> {
     c.pragma_update(None, "cache_size", -4000)?; // ~4 MB page cache
     c.execute_batch(SCHEMA)?;
     c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?1)", [SCHEMA_VERSION])?;
+    let reindexed: Option<String> = c.query_row("SELECT value FROM meta WHERE key='reindex'", [], |r| r.get(0)).optional()?;
+    if reindexed.as_deref() != Some(REINDEX) {
+        c.execute("UPDATE files SET offset=0, ctx=NULL", [])?;
+        c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('reindex', ?1)", [REINDEX])?;
+    }
     Ok(c)
 }
 
@@ -178,6 +188,23 @@ mod tests {
         remove(&p);
         std::fs::write(&p, b"this is not a database at all, not even close............................................").unwrap();
         assert_eq!(sink_cursor(&open(&p).unwrap(), "linker").unwrap(), 0, "garbage is rebuilt");
+    }
+
+    #[test]
+    fn a_new_reindex_mark_rereads_logs_once_and_keeps_the_archive() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("c.db");
+        let row = |c: &Connection| c.query_row("SELECT offset, ctx, archived_to FROM files", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, i64>(2)?))).unwrap();
+        {
+            let c = open(&p).unwrap();
+            c.execute("INSERT INTO files(path, agent, key, offset, ctx, archived_to) VALUES('/l', 'codex', 'k', 90, '{}', 90)", []).unwrap();
+            c.execute("UPDATE meta SET value='older' WHERE key='reindex'", []).unwrap();
+        }
+        let c = open(&p).unwrap();
+        assert_eq!(row(&c), (0, None, 90));
+        c.execute("UPDATE files SET offset=90", []).unwrap();
+        drop(c);
+        assert_eq!(row(&open(&p).unwrap()).0, 90, "only once");
     }
 
     #[test]

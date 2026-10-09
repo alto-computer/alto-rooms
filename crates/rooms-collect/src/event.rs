@@ -3,6 +3,8 @@ use chrono::{DateTime, TimeZone, Utc};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
+pub const PREVIEW_CHARS: usize = 240;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind { SessionSeen, Message, ToolCall, FileWritten }
 
@@ -62,11 +64,11 @@ impl Event {
         hex::encode(&h.finalize()[..16])
     }
 
-    /// At most 240 characters of the text, whitespace collapsed.
+    /// At most `PREVIEW_CHARS` characters of the text, whitespace collapsed.
     pub fn preview(&self) -> Option<String> {
         let t = self.text.as_deref().or(self.title.as_deref())?;
         let flat = t.split_whitespace().collect::<Vec<_>>().join(" ");
-        Some(flat.chars().take(240).collect())
+        Some(flat.chars().take(PREVIEW_CHARS).collect())
     }
 }
 
