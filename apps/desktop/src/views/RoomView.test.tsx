@@ -168,7 +168,7 @@ describe("RoomView", () => {
   it("an empty room shows the empty state with the path chip", async () => {
     await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "벤치마크")], artifacts: { r1: [] } });
     expect(screen.getByText("No docs yet")).toBeInTheDocument();
-    expect(screen.getByAltText("Clew the otter, peeking out of the water")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Clew the otter, peeking out of the water" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\/h\/rooms\/r1/ })).toBeInTheDocument();
   });
 

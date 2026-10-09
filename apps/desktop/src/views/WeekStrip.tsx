@@ -24,7 +24,7 @@ export function WeekStrip({ date, onChange }: { date: string; onChange: (date: s
             className={cn(
               "flex min-h-11 w-11 flex-col items-center justify-center rounded-lg leading-tight",
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
-              selected ? "bg-ink text-pane" : "text-ink-2 hover:bg-surface",
+              selected ? "bg-sheet font-semibold text-ink shadow-sheet" : "text-ink-2 hover:bg-surface",
             )}
           >
             <span aria-hidden className="text-small">
