@@ -86,7 +86,7 @@ fn copy_code(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
     Ok(())
 }
 
-/// A file of a valid plugin to serve, with the permissions its manifest declares.
+/// A file of a valid, enabled plugin to serve, with the permissions its manifest declares.
 pub struct PluginAsset { pub path: PathBuf, pub permissions: Vec<String> }
 
 impl RoomsCore {
