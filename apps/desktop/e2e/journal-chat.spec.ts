@@ -45,9 +45,12 @@ test("ask about the viewed day, and keep each day's thread and draft across day 
   await input.press("Enter");
   await expect(page.getByText(/^Read · (dream|report)\.html$|^Read · plan\.md$/)).toBeVisible({ timeout: 10_000 });
 
+  const question = page.getByText("What did I do today?", { exact: true });
   const answer = page.getByText("Day answer to What did I do today? (3 docs)");
   const other = otherDay();
   await showDay(page, other);
+  // The bar moves to the other day once that day has loaded.
+  await expect(question).toHaveCount(0);
   await expect(input).toHaveValue("");
   await expect(page.getByText(/^Read · /)).toHaveCount(0);
   await input.fill("A draft for the other day");
@@ -57,6 +60,7 @@ test("ask about the viewed day, and keep each day's thread and draft across day 
   await expect(input).toHaveValue("");
 
   await showDay(page, other);
+  await expect(question).toHaveCount(0);
   await expect(input).toHaveValue("A draft for the other day");
   await expect(answer).toHaveCount(0);
 

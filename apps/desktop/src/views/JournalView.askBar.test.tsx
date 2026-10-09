@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AskSubject } from "@/ask/askSubjects";
 import { useViewer } from "@/data/hooks";
@@ -41,12 +41,25 @@ function holdFrames() {
 
 const subject = () => JSON.parse(screen.getByTestId("ask-bar").dataset.subject!);
 
-it("asks about the viewed day, and follows the week strip to another day", async () => {
-  await renderWithStores(<Host />, { viewer: journalViewer("2026-10-05") });
+it("asks about the viewed day, and moves to another day only once that day has loaded", async () => {
+  const { client } = await renderWithStores(<Host />, { viewer: journalViewer("2026-10-05") });
   await screen.findByTestId("ask-bar");
   expect(subject()).toEqual({ kind: "day", date: "2026-10-05" });
+  const load = client.journalDay;
+  let arrive: () => void = () => {};
+  vi.spyOn(client, "journalDay").mockImplementation((date: string) => new Promise((resolve) => (arrive = () => resolve(load(date)))));
   fireEvent.click(screen.getByRole("button", { name: "Oct 6" }));
-  expect(subject()).toEqual({ kind: "day", date: "2026-10-06" });
+  await act(() => new Promise((r) => setTimeout(r, 50)));
+  expect(subject()).toEqual({ kind: "day", date: "2026-10-05" });
+  await act(async () => arrive());
+  await waitFor(() => expect(subject()).toEqual({ kind: "day", date: "2026-10-06" }));
+});
+
+it("moves to a day that fails to load, too", async () => {
+  await renderWithStores(<Host />, { viewer: journalViewer("2026-10-05"), dayErrors: { "2026-10-06": new Error("boom") } });
+  await screen.findByTestId("ask-bar");
+  fireEvent.click(screen.getByRole("button", { name: "Oct 6" }));
+  await waitFor(() => expect(subject()).toEqual({ kind: "day", date: "2026-10-06" }));
 });
 
 it("never mounts the day's ask bar in read-only", async () => {

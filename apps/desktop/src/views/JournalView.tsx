@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { RoomsApiError, type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
 import { AskBar } from "@/ask/AskBar";
@@ -161,8 +161,15 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const initial = useViewerInitial();
   const readOnly = useReadOnly();
-  // The ask bar mounts once the day's cards have painted, so it never delays them.
-  const barReady = useFrameAfter(day !== undefined);
+  // The ask bar mounts once the day's cards have painted, and moves to a new day only after that day's
+  // cards are in, so it never delays them.
+  const settled = day !== undefined || !!loadError;
+  const barReady = useFrameAfter(settled);
+  const [barDate, setBarDate] = useState(date);
+  useEffect(() => {
+    if (settled) setBarDate(date);
+  }, [settled, date]);
+  const bar = useMemo(() => <AskBar subject={{ kind: "day", date: barDate }} />, [barDate]);
 
   // New-doc dots: per artifact, against its own room's last visit — as in RoomView.
   const visits = useVisitsAtArrival();
@@ -255,7 +262,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
         </header>
         {body}
       </div>
-      {barReady && !readOnly ? <AskBar subject={{ kind: "day", date }} /> : null}
+      {barReady && !readOnly ? bar : null}
     </div>
   );
 }
