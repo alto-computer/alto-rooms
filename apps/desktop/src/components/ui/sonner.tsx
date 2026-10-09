@@ -12,8 +12,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
       toastOptions={{
         unstyled: true,
         classNames: {
+          // Sonner positions a toast absolutely inside its 356px toaster band; with both insets set,
+          // mx-auto centres the pill there and w-fit keeps it to its text.
           toast:
-            "mx-auto flex w-fit items-center gap-2 rounded-full border-0 bg-ink px-3.5 py-2 text-body text-pane shadow-float",
+            "inset-x-0 mx-auto flex w-fit items-center gap-2 rounded-full border-0 bg-ink px-3.5 py-2 text-body text-pane shadow-float",
           title: "font-normal",
           icon: "m-0 flex size-4 items-center justify-center",
         },
@@ -35,11 +37,6 @@ const Toaster = ({ ...props }: ToasterProps) => {
           <Loader2Icon className="size-4 animate-spin" />
         ),
       }}
-      style={
-        {
-          "--width": "max-content",
-        } as React.CSSProperties
-      }
       {...props}
     />
   )

@@ -78,7 +78,23 @@ test("the doc tab's Share menu copies the doc's path; the app-only actions stay 
   await page.getByRole("menuitem", { name: "Copy file path" }).click();
   await expect(page.getByText("Copied file path")).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(path.join(daemon.home, "연구-도구", "a.html"));
+  await expectOneLinePill(page, "Copied file path");
 });
+
+/** The toast is one line of text with room on either side, not a word or a letter per line. */
+async function expectOneLinePill(page: Page, text: string) {
+  const toast = page.locator("[data-sonner-toast]").filter({ hasText: text });
+  const shape = await toast.evaluate((el, text) => {
+    const box = el.getBoundingClientRect();
+    const title = el.querySelector("[data-title]")!;
+    const style = getComputedStyle(title);
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    return { width: box.width, height: box.height, textWidth: ctx.measureText(text).width, lineHeight: parseFloat(style.lineHeight) };
+  }, text);
+  expect(shape.height, `toast ${JSON.stringify(shape)} should be one line tall`).toBeLessThan(shape.lineHeight * 2);
+  expect(shape.width, `toast ${JSON.stringify(shape)} should be wider than its text`).toBeGreaterThan(shape.textWidth);
+}
 
 test("an open doc reloads when its file is rewritten", async ({ page, daemon }) => {
   await openApp(page);
