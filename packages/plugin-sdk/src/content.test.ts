@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { connectContent } from "./content";
 
 function fakeParent() {
@@ -65,5 +65,17 @@ describe("connectContent", () => {
     c.onAction((id, s) => got.push([id, s?.text]));
     host.deliver({ rooms: "content", v: 1, plugin: "marker", type: "selection.action", actionId: "mark" });
     expect(got).toEqual([["mark", "hello world"]]);
+  });
+});
+
+describe("content module", () => {
+  it("loads without the panel SDK, so a content script bundle and index.ts share no import cycle", async () => {
+    vi.resetModules();
+    vi.doMock("./index", () => {
+      throw new Error("content.ts imported index.ts");
+    });
+    const mod = await import("./content");
+    expect(typeof mod.connectContent).toBe("function");
+    vi.doUnmock("./index");
   });
 });

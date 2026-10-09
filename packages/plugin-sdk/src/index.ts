@@ -6,6 +6,7 @@
  * source is `window.parent` (an artifact iframe beside it could post too).
  * Every message carries `rooms: 1`.
  */
+import { PluginError, type PluginErrorCode } from "./errors";
 
 export type PluginContext = { slot: "artifact.sidePanel"; artifact: PluginArtifact } | { slot: "tab" };
 
@@ -23,24 +24,7 @@ export interface PluginArtifact {
   createdAt: string;
 }
 
-export type PluginErrorCode =
-  | "permission_denied"
-  | "invalid_path"
-  | "too_large"
-  | "not_found"
-  | "write_failed"
-  | "unknown_method"
-  | "rate_limited"
-  | "timeout";
-
-export class PluginError extends Error {
-  code: PluginErrorCode;
-  constructor(code: PluginErrorCode, message: string = code) {
-    super(message);
-    this.name = "PluginError";
-    this.code = code;
-  }
-}
+export { PluginError, type PluginErrorCode } from "./errors";
 
 export interface RoomsPlugin {
   readonly pluginId: string;

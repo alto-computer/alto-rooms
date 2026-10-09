@@ -170,8 +170,8 @@ rooms.ready();
 
 | Call | What it does |
 | --- | --- |
-| `storage.read/write/list/delete` | Your data for this document only. Paths are relative to `docs/<fileKey>/` in your `data/`, so your tab or panel finds them there. Up to 1 MiB a write, and 20 writes or deletes a second for the document |
-| `setActions(items)` | Replaces your buttons in the selection bar, shown after Ask: up to 6 `{ id, title, color? }`, titles cut to 24 characters, `color` any CSS color |
+| `storage.read/write/list/delete` | Your data for this document only. Paths are relative to `docs/<fileKey>/` in your `data/`, so your tab or panel finds them there. Up to 1 MiB a write, 20 writes or deletes a second, and 100 reads or lists a second for the document |
+| `setActions(items)` | Replaces your buttons in the selection bar, shown after Ask: up to 6 `{ id, title, color? }`, titles cut to 24 characters with control and bidi formatting characters removed, `color` any CSS color |
 | `onAction(cb)` | Calls `cb(id, selection)` when one of your buttons is clicked. `selection` is the last `{ text, range }` selected in the document, since the click can clear the live selection |
 | `onDataChanged(cb)` | Calls `cb(path)` when another frame of your plugin changed a file in this document's folder |
 | `ready()` | Tells the app the script is listening |

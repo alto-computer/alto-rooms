@@ -6,7 +6,7 @@
  * messages whose source is `window.parent`: the document's own script shares
  * this window and can post to it.
  */
-import { PluginError, type PluginErrorCode } from "./index";
+import { PluginError, type PluginErrorCode } from "./errors";
 
 /** A button in the app's selection bar, shown after Ask while text is selected in the document. */
 export interface ContentAction {
