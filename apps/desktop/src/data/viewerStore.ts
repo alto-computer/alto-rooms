@@ -391,10 +391,6 @@ export class ViewerStore {
     this.emit();
   }
 
-  pendingReveal(id: string): Reveal | undefined {
-    return this.reveals.get(id);
-  }
-
   /** The anchor waiting for tab `id`, which is forgotten: the doc hands it over once. */
   takeReveal(id: string): Reveal | undefined {
     const r = this.reveals.get(id);

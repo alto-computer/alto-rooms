@@ -150,19 +150,20 @@ function useContentChannel(
       : null;
     channel.current = ch;
     setDeclared(new Map(session.actions));
-    // An anchor for a plugin with no content script here has nowhere to go, so it is dropped too.
+    // Taken even without a channel: no script in this frame could ever receive it.
     const deliver = () => {
       const r = viewer.takeReveal(tabId);
       if (r) ch?.reveal(r.pluginId, r.anchor);
     };
     deliver();
     const stopReveals = viewer.subscribe(deliver);
-    const onMessage = (e: MessageEvent) => ch?.receive(e);
+    if (!ch) return stopReveals;
+    const onMessage = (e: MessageEvent) => ch.receive(e);
     window.addEventListener("message", onMessage);
     return () => {
       stopReveals();
       window.removeEventListener("message", onMessage);
-      ch?.dispose();
+      ch.dispose();
       channel.current = null;
     };
   }, [frame, fileKey, ids, session, client, viewer, tabId]);

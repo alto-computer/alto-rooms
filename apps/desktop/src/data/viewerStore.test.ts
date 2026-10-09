@@ -452,10 +452,8 @@ describe("ViewerStore: reveals", () => {
     st.subscribe(heard);
     st.reveal(id, { pluginId: "marker", anchor: { mark: "x" } });
     expect(heard).toHaveBeenCalledTimes(1);
-    expect(st.pendingReveal(id)).toEqual({ pluginId: "marker", anchor: { mark: "x" } });
     expect(st.takeReveal(id)).toEqual({ pluginId: "marker", anchor: { mark: "x" } });
-    expect(st.pendingReveal(id)).toBeUndefined();
-    expect(st.takeReveal(id)).toBeUndefined();
+    expect(st.takeReveal(id), "handed over once").toBeUndefined();
   });
 
   it("drops a waiting anchor when its tab closes or shows something else, so a reopened doc gets none", () => {
@@ -465,11 +463,11 @@ describe("ViewerStore: reveals", () => {
     st.close(id);
     st.reopen();
     const back = st.getState().activeId!;
-    expect(st.pendingReveal(id)).toBeUndefined();
-    expect(st.pendingReveal(back)).toBeUndefined();
+    expect(st.takeReveal(id)).toBeUndefined();
+    expect(st.takeReveal(back)).toBeUndefined();
     st.reveal(back, { pluginId: "marker", anchor: 2 });
     st.navigate({ kind: "doc", roomId: "r1", artifactId: "b" });
-    expect(st.pendingReveal(back)).toBeUndefined();
+    expect(st.takeReveal(back)).toBeUndefined();
   });
 
   it("only queues for a doc tab that exists", () => {
@@ -477,8 +475,8 @@ describe("ViewerStore: reveals", () => {
     const room = st.open({ kind: "room", roomId: "r1" });
     st.reveal(room, { pluginId: "marker", anchor: 1 });
     st.reveal("gone", { pluginId: "marker", anchor: 1 });
-    expect(st.pendingReveal(room)).toBeUndefined();
-    expect(st.pendingReveal("gone")).toBeUndefined();
+    expect(st.takeReveal(room)).toBeUndefined();
+    expect(st.takeReveal("gone")).toBeUndefined();
   });
 
   it("never writes an anchor to storage", () => {
@@ -489,6 +487,6 @@ describe("ViewerStore: reveals", () => {
     st.setSidebarOpen(false);
     st.flush();
     expect(storage.map.get(VIEWER_STORAGE_KEY)).not.toContain("secret-anchor");
-    expect(new ViewerStore(storage, clock().now).pendingReveal(id)).toBeUndefined();
+    expect(new ViewerStore(storage, clock().now).takeReveal(id)).toBeUndefined();
   });
 });
