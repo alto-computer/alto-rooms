@@ -93,8 +93,10 @@ pub(crate) const MAX_LISTED: usize = 400;
 /// The most bytes the document lines take. A template with `{prompt}` passes the prompt as one argv
 /// element, and macOS caps argv plus the environment at 1 MiB; this, the earlier Q&A
 /// (`PRIOR_CHARS_ARGV`, at most 4 bytes a char) and the question stay under 400 KiB. The
-/// `{scope_settings}` element holds one rule per listed line, at most twice its bytes, so a template
-/// with both stays under 1 MiB.
+/// `{scope_settings}` element holds one rule per listed line, at most three times its bytes: `*`,
+/// `?`, `[` and `]` gain a backslash that JSON then doubles. That is at most 768 KiB, under 1 MiB
+/// alone; a template with both `{prompt}` and `{scope_settings}` passes 1 MiB only when most listed
+/// path bytes are those four characters. The built-in claude-code template sends the prompt on stdin.
 pub(crate) const MAX_LISTING_BYTES: usize = 256 * 1024;
 /// A title is the doc's own `<title>`, which an agent or a web page wrote.
 const MAX_TITLE_CHARS: usize = 120;
