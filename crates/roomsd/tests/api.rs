@@ -257,6 +257,25 @@ async fn doc_variant_injects_bridge_then_content_scripts() {
 }
 
 #[tokio::test]
+async fn a_policy_before_a_late_head_lands_after_the_block() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/desktop/e2e/fixtures/csp/csp-implied-head.html")).unwrap();
+    std::fs::write(d.path().join("a/x.html"), &doc).unwrap();
+    install_marker(d.path(), "marker");
+    st.core.set_plugin_enabled("marker", true, None).unwrap();
+    let files = build_files_router(st.clone());
+    let r = files.oneshot(get(&format!("/{}/x.html?doc=1", room.id), FILES_HOST)).await.unwrap();
+    let body = text(r).await;
+    let at = "<!doctype html>\n<html>".len();
+    assert_eq!(&body[..at], &doc[..at]);
+    let (block, after) = body[at..].split_at(body.len() - doc.len());
+    assert!(block.starts_with("<script data-rooms-bridge>") && block.contains("_plugins/marker/content.js") && block.ends_with("</script>\n"), "{block}");
+    assert_eq!(after, &doc[at..], "the <meta> before <head> opens the head itself, so the block goes right after <html> and the late <head> stays where it was");
+    assert!(after.starts_with("\n<meta http-equiv"), "{after}");
+}
+
+#[tokio::test]
 async fn card_variant_has_only_the_bridge() {
     let (d, _app, st) = app(false, "127.0.0.1:5000");
     let room = st.core.create_room("a").unwrap();
