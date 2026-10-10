@@ -13,8 +13,15 @@ pub struct RoomRecord {
     pub dev: Option<u64>,
     pub ino: Option<u64>,
     /// Kept out of the file while unset, so a neutral room's record reads as it did before pins.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "color_or_unpinned", skip_serializing_if = "Option::is_none")]
     pub color: Option<RoomColor>,
+}
+
+/// A colour this build does not know (a newer build's, or a hand edit) reads as unpinned, so it
+/// never turns the whole state file corrupt.
+fn color_or_unpinned<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<RoomColor>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// Which plugins the user turned on, and the permissions they saw when they did.
@@ -157,6 +164,28 @@ mod tests {
         s.save().unwrap();
         assert!(std::fs::read_to_string(dir.join("state.json")).unwrap().contains(r#""color": "clay""#));
         assert_eq!(StateStore::load(&dir).unwrap().find("a").unwrap().color, Some(RoomColor::Clay));
+    }
+
+    #[test]
+    fn unknown_colour_reads_as_unpinned_and_keeps_the_rest() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join(".rooms");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A colour from a newer build (or a hand edit) this build does not know.
+        std::fs::write(
+            dir.join("state.json"),
+            r#"{"rooms":[
+                {"id":"a","name":"A","kind":"owned","path":"/x/a","dev":null,"ino":null,"color":"teal"},
+                {"id":"b","name":"B","kind":"owned","path":"/x/b","dev":null,"ino":null,"color":"sage"}
+            ],"plugins":{"enabled":["p"],"grants":{"p":["net"]}}}"#,
+        )
+        .unwrap();
+        let s = StateStore::load(&dir).unwrap();
+        assert_eq!(s.rooms.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["b", "a"]);
+        assert_eq!(s.find("a").unwrap().color, None);
+        assert_eq!(s.find("b").unwrap().color, Some(RoomColor::Sage));
+        assert_eq!(s.plugins.grants.get("p"), Some(&vec!["net".to_string()]));
+        assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().contains("corrupt")));
     }
 
     #[test]
