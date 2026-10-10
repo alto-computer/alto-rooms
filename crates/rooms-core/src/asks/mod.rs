@@ -284,7 +284,10 @@ impl Asks {
                 let (name, entries) = core.room_context(room_id).map_err(listing_error)?;
                 (Listing::Room(name), entries)
             }
-            AskScope::Day { date } => (Listing::Day(date.clone()), core.day_context(date).map_err(listing_error)?),
+            AskScope::Day { date } => {
+                let (entries, sessions) = core.day_context(date).map_err(listing_error)?;
+                (Listing::Day { date: date.clone(), sessions }, entries)
+            }
         };
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
         let plan = profiles.plan_listing();
@@ -789,9 +792,9 @@ mod tests {
         let mut count = 0;
         for _ in 0..30 {
             let t = std::time::Instant::now();
-            let entries = core.day_context(&today).unwrap();
-            count = entries.len();
-            build_scope_prompt(&Listing::Day(today.clone()), &entries, &ctx, "q");
+            let (entries, sessions) = core.day_context(&today).unwrap();
+            count = entries.len() + sessions.len();
+            build_scope_prompt(&Listing::Day { date: today.clone(), sessions }, &entries, &ctx, "q");
             ms.push(t.elapsed().as_secs_f64() * 1e3);
         }
         println!("day of {count} items: p50 {:.2} ms  p95 {:.2} ms", pct(ms.clone(), 0.5), pct(ms, 0.95));

@@ -3,7 +3,7 @@
 //! Note IO runs without `Inner`, under `notes_lock` (lock order: notes_lock → Inner); `Inner` is
 //! taken only to emit.
 
-use crate::asks::prompt::ContextEntry;
+use crate::asks::prompt::{ContextEntry, SessionEntry};
 use crate::core::RoomsCore;
 use crate::error::CoreError;
 use crate::lock::lock;
@@ -13,6 +13,18 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 const MAX_NOTE_BYTES: usize = 1_048_576;
+
+/// `09:10–11:40` in local time; an end on a day other than `day` carries its date.
+fn local_span(day: &str, from: &str, to: &str) -> String {
+    let at = |t: &str| match chrono::DateTime::parse_from_rfc3339(t) {
+        Ok(t) => {
+            let t = t.with_timezone(&chrono::Local);
+            if t.format("%Y-%m-%d").to_string() == day { t.format("%H:%M").to_string() } else { t.format("%Y-%m-%d %H:%M").to_string() }
+        }
+        Err(_) => t.to_string(),
+    };
+    format!("{}–{}", at(from), at(to))
+}
 
 impl RoomsCore {
     pub fn journal_day(&self, date: &IsoDate) -> Result<JournalDay, CoreError> {
@@ -39,11 +51,11 @@ impl RoomsCore {
         Ok(JournalDay { date: date.clone(), artifacts, notes, conversations: self.day_conversations(date) })
     }
 
-    /// What a day ask lists: every item `journal_day` shows, in its order, as realpaths. Each item
-    /// kind maps here and nowhere else, so a new `JournalDay` field stops compiling until it does.
-    pub(crate) fn day_context(&self, day: &IsoDate) -> Result<Vec<ContextEntry>, CoreError> {
-        // A session is an agent log, not a file the day holds; the listing names files the agent may read.
-        let JournalDay { date, artifacts, notes, conversations: _ } = self.journal_day(day)?;
+    /// What a day ask lists: every file `journal_day` shows, in its order, as realpaths, and its
+    /// sessions newest first. Each item kind maps here and nowhere else, so a new `JournalDay` field
+    /// stops compiling until it does.
+    pub(crate) fn day_context(&self, day: &IsoDate) -> Result<(Vec<ContextEntry>, Vec<SessionEntry>), CoreError> {
+        let JournalDay { date, artifacts, notes, conversations } = self.journal_day(day)?;
         let names: HashMap<RoomId, String> = lock(&self.inner).state.rooms.iter().map(|r| (r.id.clone(), r.name.clone())).collect();
         let label = |a: &Artifact| match a.room_id.as_str() {
             JOURNAL_ROOM_ID if Path::new(&a.rel_path).file_name().is_some_and(|n| n == "dream.html") => "Review".to_string(),
@@ -58,7 +70,16 @@ impl RoomsCore {
             let path = std::fs::canonicalize(self.home.join("journal").join(&n.rel_path)).ok()?;
             Some(ContextEntry { label: "Note".into(), title: n.name, path, day: date.clone() })
         });
-        Ok(artifacts.chain(notes).collect())
+        // A session is named by what collect.db summarized, never by its log: the listing's paths
+        // are the files the agent may read, and a session's log is not one of them.
+        let sessions = conversations.into_iter().rev().map(|JournalConversation { conversation: c, .. }| SessionEntry {
+            title: c.title.clone().or_else(|| c.last_reply.clone()).unwrap_or_else(|| "Untitled session".into()),
+            agent: c.id.agent,
+            span: local_span(&date, &c.started_at, &c.ended_at),
+            room: c.room_id.as_ref().map(|id| names.get(id).cloned().unwrap_or_else(|| id.to_string())),
+            last_reply: c.last_reply,
+        });
+        Ok((artifacts.chain(notes).collect(), sessions.collect()))
     }
 
     pub fn save_note(&self, date: &IsoDate, name: &str, body: &str) -> Result<Note, CoreError> {
@@ -159,7 +180,8 @@ mod tests {
         core.backfill_all().unwrap();
         core.save_note(&day, "회고.md", "x").unwrap();
 
-        let entries = core.day_context(&day).unwrap();
+        let (entries, sessions) = core.day_context(&day).unwrap();
+        assert!(sessions.is_empty(), "no collect.db, no sessions");
         let JournalDay { artifacts, notes, .. } = core.journal_day(&day).unwrap();
         assert_eq!(entries.len(), artifacts.len() + notes.len());
         let got: Vec<(&str, &str)> = entries.iter().map(|e| (e.label.as_str(), e.title.as_str())).collect();

@@ -311,6 +311,22 @@ mod tests {
     }
 
     #[test]
+    fn a_day_ask_names_the_days_sessions_newest_first_with_their_rooms() {
+        let f = fixture();
+        message(&f.data, "s1", "user", &local(1, 9, 0), "plan the launch");
+        message(&f.data, "s1", "assistant", &local(1, 9, 30), "planned");
+        message(&f.data, "s2", "assistant", &local(1, 11, 0), "a reply with no prompt before it");
+        let room = f.core.create_room("Launch").unwrap();
+        f.core.set_conversation_room(&id("s1"), Some(room.id)).unwrap();
+        let (_, sessions) = f.core.day_context(&"2026-10-01".into()).unwrap();
+        let got: Vec<_> = sessions.iter().map(|s| (s.title.as_str(), s.span.as_str(), s.room.as_deref(), s.last_reply.as_deref())).collect();
+        assert_eq!(got, [
+            ("a reply with no prompt before it", "11:00–11:00", None, Some("a reply with no prompt before it")),
+            ("plan the launch", "09:00–09:30", Some("Launch"), Some("planned")),
+        ]);
+    }
+
+    #[test]
     fn memberships_of_a_deleted_room_are_dropped() {
         let f = fixture();
         message(&f.data, "s1", "user", &local(1, 10, 0), "hi");

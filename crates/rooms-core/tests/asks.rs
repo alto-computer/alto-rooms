@@ -562,6 +562,30 @@ async fn an_aside_ask_resumes_that_session_under_its_account() {
 }
 
 #[tokio::test]
+async fn a_day_ask_lists_the_days_sessions_but_never_their_logs() {
+    let (d, core, _doc, _room) = setup("");
+    let data = d.path().join("collect");
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    let at = |h: u32| chrono::Local::now().date_naive().and_hms_opt(h, 0, 0).unwrap().and_local_timezone(chrono::Local).unwrap()
+        .with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let log = "/Users/me/.claude/projects/-work/D-1.jsonl";
+    for (id, role, ts, text) in [("e1", "user", at(9), "plan the \"launch\"\nnow"), ("e2", "assistant", at(10), "Planned: three steps")] {
+        db.execute("INSERT INTO events(id, kind, agent, session, ts, cwd, role, src_path, file_key, src_offset, src_len, preview)
+                    VALUES(?1, 'message', 'claude-code', 'D-1', ?2, '/work/secret', ?3, ?4, 'k', 0, 0, ?5)",
+            [id, ts.as_str(), role, log, text]).unwrap();
+    }
+    core.set_collect_data(&data);
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let t = asks.start(&AskScope::Day { date }, "what happened?", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.contains("Sessions (1):\n- \"plan the \\\"launch\\\" now\" (claude-code, 09:00–10:00) last reply: \"Planned: three steps\"\n"), "{}", done.answer);
+    assert!(!done.answer.contains(log) && !done.answer.contains(".jsonl") && !done.answer.contains("/work/secret"), "{}", done.answer);
+    asks.shutdown().await;
+}
+
+#[tokio::test]
 async fn room_ask_streams_progress_under_its_scope() {
     let (d, core, _doc, room_id) = setup("");
     let script = d.path().join("stream-agent.sh");

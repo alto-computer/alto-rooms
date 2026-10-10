@@ -19,7 +19,7 @@ pub(crate) const DEFAULT_PREAMBLE: &str =
 /// The claude-code profile also enforces the list (`claude_read_scope`; `load` refuses one without
 /// `{scope_settings}`); other agents get only these words.
 pub(crate) const SCOPE_PREAMBLE: &str =
-    "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder, not even the folder a listed file is in, and never search without a path. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
+    "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder, not even the folder a listed file is in, and never search without a path. A Journal day also lists its agent sessions, each by its quoted title with the start of its last reply; a session has no file here, so don't look for one. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
 /// A conversation ask's preamble; agents.toml's `preamble` is about docs.
 pub(crate) const CONVERSATION_PREAMBLE: &str =
