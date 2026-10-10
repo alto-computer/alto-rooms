@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
@@ -7,6 +7,7 @@ import { Composer } from "./Composer";
 import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThreadSheet } from "./ThreadSheet";
 import { preloadAnswer } from "./Turn";
+import { surfaceHub } from "@/surfaces/surfaceHub";
 import { ErrorText } from "./ui";
 import { useAskTarget } from "./useAskTarget";
 import { useComposer } from "./useComposer";
@@ -29,7 +30,8 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const { open, threads, live } = useAsks();
   const readOnly = useReadOnly();
   const shown = open && !readOnly;
-  const { scope } = framing;
+  // The scope is the bar's identity (it remounts when the key changes), so one object serves the memoized turns.
+  const scope = useState(() => framing.scope)[0];
   const key = scopeKey(scope);
   const thread = threads[key];
   const turns = thread?.turns ?? [];
@@ -50,6 +52,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   useLoadThread(scope, shown && !(thread?.loaded ?? false));
   useFocusRules({ open, shown, quoteCount: composer.quotes.length, runningId: running?.id, input, container, setUnfolded, setAnnounce });
   useFoldOnOutsideClick(container, shown, () => setUnfolded(false));
+  useUnfoldForReveal(key, setUnfolded);
 
   // Stable for the memoized turns.
   const retryWith = useRef<(t: AskTurn) => void>(() => {});
@@ -82,6 +85,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
       {showThread ? (
         <ThreadSheet
           turns={turns}
+          scope={scope}
           header={framing.header}
           noteTarget={noteTarget}
           live={live}
@@ -168,6 +172,15 @@ function useFocusRules({ open, shown, quoteCount, runningId, input, container, s
     }
     wasRunning.current = runningId;
   }, [runningId, shown, input, container, setAnnounce]);
+}
+
+/** A plugin opened this thread at one of its ranges: the thread unfolds so the answer can show it. */
+function useUnfoldForReveal(key: string, setUnfolded: (v: boolean) => void) {
+  const { reveal } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
+  const mine = reveal && scopeKey(reveal.id.scope) === key;
+  useEffect(() => {
+    if (mine) setUnfolded(true);
+  }, [mine, setUnfolded]);
 }
 
 /** A click outside the bar folds the thread, like Esc. A click in the doc iframe never reaches this document, so focus moving into an iframe counts too. */

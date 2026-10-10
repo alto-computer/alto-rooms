@@ -1,8 +1,9 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useSyncExternalStore, type RefObject } from "react";
 import { ArrowDown } from "lucide-react";
-import type { AskTurn } from "@alto-rooms/protocol-ts";
-import { askAction, SelectionBar } from "@/selection/SelectionBar";
-import { useTextSelection } from "@/selection/useTextSelection";
+import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
+import { askAction, SelectionBar, type SelectionAction } from "@/selection/SelectionBar";
+import { useTextSelection, type SelectionRect } from "@/selection/useTextSelection";
+import { surfaceHub, type SurfaceMenu } from "@/surfaces/surfaceHub";
 import type { Live } from "./asksStore";
 import type { NoteTargetOf, TurnHeader } from "./askSubjects";
 import { PendingTurn, Turn } from "./Turn";
@@ -46,12 +47,44 @@ function useFollow(sheet: RefObject<HTMLDivElement | null>, turns: AskTurn[], li
   return follow;
 }
 
+/** Where a plugin's menu goes: under the last line of its range, relative to `box`. */
+function menuRect(menu: SurfaceMenu, box: HTMLElement): SelectionRect {
+  const rects = menu.range.getClientRects();
+  const r = rects.length ? rects[rects.length - 1] : menu.range.getBoundingClientRect();
+  const b = box.getBoundingClientRect();
+  return { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height };
+}
+
+/** A plugin's menu over one of its painted ranges in this sheet, until a click elsewhere or Esc. */
+function useRangeMenu(sheet: RefObject<HTMLDivElement | null>): SurfaceMenu | null {
+  const { menu } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
+  const mine = menu && sheet.current?.contains(menu.range.startContainer) ? menu : null;
+  useEffect(() => {
+    if (!mine) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!(e.target instanceof Element) || !e.target.closest("[data-selection-ask]")) surfaceHub.closeMenu();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") surfaceHub.closeMenu();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [mine]);
+  return mine;
+}
+
 /**
- * A thread above the ask bar: its turns, a question on its way, and an "Ask" button over text
- * selected in an answer (it becomes a quote).
+ * A thread above the ask bar: its turns, a question on its way, and a bar over text selected in
+ * an answer: "Ask" (it becomes a quote), then the buttons of the plugins that mark answers.
  */
-export function ThreadSheet({ turns, header, noteTarget, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
+export function ThreadSheet({ turns, scope, header, noteTarget, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
   turns: AskTurn[];
+  /** The thread's scope. Keep it stable: turns are memoized. */
+  scope: AskScope;
   header: (t: AskTurn) => TurnHeader;
   /** Where "Save as note" files a finished answer; null shows no save button. Keep it stable: turns are memoized. */
   noteTarget: NoteTargetOf | null;
@@ -66,7 +99,9 @@ export function ThreadSheet({ turns, header, noteTarget, live, loadError, pendin
   const box = useRef<HTMLDivElement>(null);
   const sheet = useRef<HTMLDivElement>(null);
   const { away, toBottom } = useFollow(sheet, turns, live, !!pending);
-  const selection = useTextSelection(sheet, box, true);
+  const selection = useTextSelection(sheet, box, true, surfaceHub.locate);
+  const { actions: surfaceActions } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
+  const menu = useRangeMenu(sheet);
   const last = turns.at(-1);
   const head = last ? header(last) : null;
   const leftOut = last && (last.kind ?? "question") === "question" ? last.leftOut : 0;
@@ -83,7 +118,7 @@ export function ThreadSheet({ turns, header, noteTarget, live, loadError, pendin
         ) : null}
         <div className="space-y-4">
           {turns.map((t, i) => (
-            <Turn key={t.id} t={t} live={live[t.id]} old={i < turns.length - RECENT_TURNS} noteTarget={noteTarget} onRetry={onRetry} />
+            <Turn key={t.id} t={t} scope={scope} live={live[t.id]} old={i < turns.length - RECENT_TURNS} noteTarget={noteTarget} onRetry={onRetry} />
           ))}
           {/* Until its turn shows up; a question that waits behind a running one shows in the queue instead. */}
           {pending && !turns.some((t) => t.status === "running") ? <PendingTurn pending={pending} /> : null}
@@ -109,7 +144,27 @@ export function ThreadSheet({ turns, header, noteTarget, live, loadError, pendin
               document.getSelection()?.removeAllRanges();
               selection.dismiss();
             }),
+            ...(selection.picked.span
+              ? surfaceActions.map(
+                  (a): SelectionAction => ({
+                    key: `${a.plugin}:${a.id}`,
+                    title: a.title,
+                    color: a.color,
+                    run: () => {
+                      surfaceHub.runAction(a.plugin, a.id, selection.picked!.span!);
+                      document.getSelection()?.removeAllRanges();
+                      selection.dismiss();
+                    },
+                  }),
+                )
+              : []),
           ]}
+        />
+      ) : null}
+      {menu && box.current ? (
+        <SelectionBar
+          rect={menuRect(menu, box.current)}
+          actions={menu.items.map((a): SelectionAction => ({ key: `${menu.plugin}:${a.id}`, title: a.title, color: a.color, run: () => surfaceHub.runMenu(a.id) }))}
         />
       ) : null}
     </div>
