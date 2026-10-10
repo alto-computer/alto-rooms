@@ -750,7 +750,7 @@ describe("background frames", () => {
     expect(h.client.setPluginEnabled).toHaveBeenCalledWith("tagger", true, ["surfaces.text"]);
     const f = screen.getByTitle("Tagger") as HTMLIFrameElement;
     expect(f.src).toBe("http://files.test/_plugins/tagger/background.html");
-    expect(f.sandbox.toString()).toBe("allow-scripts");
+    expect(f.getAttribute("sandbox")).toBe("allow-scripts");
     expect(f.closest("[data-background-frames]")).toHaveAttribute("hidden");
     expect(screen.queryByRole("tab", { name: "Tagger" })).toBeNull();
     Object.assign(h.state.plugins[0], { enabled: false });
