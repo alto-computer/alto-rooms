@@ -118,11 +118,10 @@ describe("JournalView: the daybook", () => {
     for (const [item, first] of [[manyItem, "줄 1"], [wideItem, wide]] as const) {
       const body = (await within(item).findByText(first)).closest("[data-note-preview]");
       expect(body).toHaveClass("line-clamp-4", "break-keep", "[overflow-wrap:anywhere]");
-      expect(within(item).getByText("…")).toBeInTheDocument();
       expect(within(item).getByText("The note goes on")).toHaveClass("sr-only");
     }
     expect(await within(shortItem).findByText("한 줄")).toBeInTheDocument();
-    expect(within(shortItem).queryByText("…")).toBeNull();
+    expect(within(shortItem).queryByText("The note goes on")).toBeNull();
     expect(within(daybook()).queryAllByLabelText(/more lines/)).toEqual([]);
   });
 

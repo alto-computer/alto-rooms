@@ -67,7 +67,7 @@ const NOTE_SOURCE_LINES = 12;
 
 /**
  * The start of a note as it reads: bullets as a list, the rest as paragraphs, clamped to four
- * rendered lines (a long line wraps into several), then "…" when the note goes on.
+ * rendered lines (a long line wraps into several), ending in "…" when the note goes on.
  */
 function NoteText({ text }: { text: string }) {
   const all = text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -109,12 +109,8 @@ function NoteText({ text }: { text: string }) {
           ),
         )}
       </div>
-      {overflows || all.length > lines.length ? (
-        <p className="mt-1 text-ink-3">
-          <span aria-hidden>…</span>
-          <span className="sr-only">The note goes on</span>
-        </p>
-      ) : null}
+      {/* The clamp draws its own "…" at the end of the fourth line (Chromium and WebKit alike). */}
+      {overflows || all.length > lines.length ? <p className="sr-only">The note goes on</p> : null}
     </>
   );
 }
