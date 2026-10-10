@@ -1,4 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
+import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
@@ -175,6 +176,27 @@ describe("Session view", () => {
   it("says when roomsd no longer knows the session", async () => {
     await renderWithStores(<ConversationView id={{ agent: "codex", session: "gone" }} />, { rooms: ROOMS });
     expect(await screen.findByText("This session is gone")).toBeInTheDocument();
+  });
+
+  it("its tab label and its view load the session once per focus between them", async () => {
+    const c = conversation("s7", { title: "Weekly report W41" });
+    const h = await renderWithStores(<><TabLabel tab={{ id: "t", kind: "conversation", ...ID }} /><ConversationView id={ID} /></>, { rooms: ROOMS, conversations: [c] });
+    expect(await screen.findAllByText("Weekly report W41")).not.toHaveLength(0);
+    const before = h.client.getConversation.mock.calls.length;
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    expect(h.client.getConversation.mock.calls.length - before).toBe(1);
+  });
+
+  it("keeps showing the session when a refetch fails or answers 404", async () => {
+    const h = await renderWithStores(<ConversationView id={ID} />, { rooms: ROOMS, conversations: [conversation("s7", { title: "Weekly report W41" })] });
+    await screen.findByRole("heading", { name: "Weekly report W41" });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const e of [new RoomsApiError(404, "not found", "not_found"), new RoomsApiError(500, "collect.db: busy", "internal")]) {
+      h.client.getConversation.mockRejectedValueOnce(e);
+      await act(async () => void window.dispatchEvent(new Event("focus")));
+      expect(screen.getByRole("heading", { name: "Weekly report W41" })).toBeInTheDocument();
+      expect(screen.queryByText("This session is gone")).toBeNull();
+    }
   });
 
   it("its tab is labelled with the title", async () => {
