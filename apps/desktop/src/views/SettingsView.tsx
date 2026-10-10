@@ -11,20 +11,38 @@ import { Row, Section } from "./settingsUi";
 /** The Settings tab: Appearance, Auto-sort and Plugins in one column. */
 export function SettingsView() {
   const ref = useRef<HTMLDivElement>(null);
+  const column = useRef<HTMLDivElement>(null);
 
-  // "Plugin settings…" and the inbox's auto-sort line ask for a section.
+  // "Plugin settings…" and the inbox's auto-sort line ask for a section. Sections load their state
+  // after mount and grow, so the jump is made again on each resize until the user scrolls.
   useEffect(() => {
+    const root = ref.current!;
+    let pending: string | null = null;
+    const jump = () => {
+      if (pending) root.querySelector(`#${pending}`)?.scrollIntoView({ block: "start" });
+    };
     const show = () => {
       const s = takeSettingsSection();
-      if (s) ref.current?.querySelector(`#${settingsSectionId(s)}`)?.scrollIntoView({ block: "start" });
+      if (!s) return;
+      pending = settingsSectionId(s);
+      jump();
     };
+    const settle = () => void (pending = null);
+    const resized = new ResizeObserver(jump);
+    resized.observe(column.current!);
+    for (const e of ["wheel", "pointerdown", "keydown"]) root.addEventListener(e, settle, { passive: true });
     show();
-    return onSettingsSection(show);
+    const off = onSettingsSection(show);
+    return () => {
+      off();
+      resized.disconnect();
+      for (const e of ["wheel", "pointerdown", "keydown"]) root.removeEventListener(e, settle);
+    };
   }, []);
 
   return (
     <div ref={ref} data-scroll-root className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:thin]">
-      <div className="mx-auto flex w-full max-w-[640px] flex-col gap-8 px-8 pt-12 pb-16">
+      <div ref={column} className="mx-auto flex w-full max-w-[640px] flex-col gap-8 px-8 pt-12 pb-16">
         <h1 className="px-1 font-display text-display font-medium tracking-[-0.015em] text-ink">Settings</h1>
         <AppearanceSection />
         <AutoSortSettings />
