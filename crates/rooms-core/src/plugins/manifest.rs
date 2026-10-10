@@ -21,6 +21,7 @@ pub struct Manifest {
     pub slots: PluginSlots,
     pub(crate) tools: Vec<ManifestTool>,
     pub content_scripts: Vec<String>,
+    pub background: Option<String>,
 }
 
 /// A tool declared in `manifest.json`: `input` is a JSON Schema for the agent (stored, not enforced);
@@ -101,6 +102,14 @@ fn content_scripts(v: Option<&Value>) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+fn background(v: Option<&Value>) -> Result<Option<String>, String> {
+    let Some(v) = v else { return Ok(None) };
+    match v.as_str() {
+        Some(s) if valid_code_path(s) && s.ends_with(".html") => Ok(Some(s.to_string())),
+        _ => Err(format!("background must be an .html file in the plugin folder, outside data/: {v}")),
+    }
+}
+
 fn title(v: &Value) -> Result<String, String> {
     let t = v.get("title").and_then(Value::as_str).unwrap_or("").trim();
     if t.is_empty() || t.chars().count() > 24 { return Err("slot title must be 1–24 characters".into()); }
@@ -150,19 +159,25 @@ pub fn load_manifest(dir: &Path) -> Result<Manifest, String> {
         (true, true) => return Err("artifact.content needs contentScripts".into()),
         _ => {}
     }
-    if slots.artifact_side_panel.is_none() && slots.tab.is_none() && content_scripts.is_empty() {
-        return Err("declare at least one slot or content script".into());
+    let background = background(v.get("background"))?;
+    match (background.is_some(), permissions.iter().any(|p| p == "surfaces.text")) {
+        (true, false) => return Err("background needs the surfaces.text permission".into()),
+        (false, true) => return Err("surfaces.text needs a background page".into()),
+        _ => {}
+    }
+    if slots.artifact_side_panel.is_none() && slots.tab.is_none() && content_scripts.is_empty() && background.is_none() {
+        return Err("declare at least one slot, content script or background page".into());
     }
     let tools = tools(v.get("tools"))?;
-    Ok(Manifest { id, name, version, min_app_version, description, entry, permissions, slots, tools, content_scripts })
+    Ok(Manifest { id, name, version, min_app_version, description, entry, permissions, slots, tools, content_scripts, background })
 }
 
-/// Changes when the manifest, the entry file or a content script changes (first 12 hex of a sha256).
+/// Changes when the manifest, the entry file, a content script or the background page changes (first 12 hex of a sha256).
 pub fn rev(dir: &Path, m: &Manifest) -> String {
     use sha2::Digest;
     let mut h = sha2::Sha256::new();
     h.update(std::fs::read(dir.join("manifest.json")).unwrap_or_default());
-    for file in std::iter::once(&m.entry).chain(&m.content_scripts) {
+    for file in std::iter::once(&m.entry).chain(&m.content_scripts).chain(&m.background) {
         let Ok(meta) = std::fs::metadata(dir.join(file)) else { continue };
         h.update(meta.len().to_le_bytes());
         let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0);
@@ -354,7 +369,7 @@ mod tests {
         assert_eq!(m.slots, PluginSlots::default());
         assert_eq!(m.content_scripts, vec!["content.js".to_string()]);
         let none = content("none", r#"["artifact.content"]"#, r#"["content.js"]"#, "{}").replace(r#""permissions":["artifact.content"],"contentScripts":["content.js"],"#, "");
-        assert!(reason(d.path(), "none", &none).contains("slot or content script"));
+        assert!(reason(d.path(), "none", &none).contains("slot, content script or background"));
     }
 
     #[test]
@@ -366,6 +381,49 @@ mod tests {
         let r1 = rev(&dir, &m);
         assert_eq!(r1, rev(&dir, &m));
         fs::write(dir.join("content.js"), "mark(); mark()").unwrap();
+        assert_ne!(rev(&dir, &m), r1);
+    }
+
+    fn with_background(folder: &str, permissions: &str, background: &str, slots: &str) -> String {
+        format!(r#"{{"id":"{folder}","name":"Tagger","version":"0.1.0","minAppVersion":"0.3.0","permissions":{permissions},"background":{background},"slots":{slots}}}"#)
+    }
+
+    #[test]
+    fn background_needs_surfaces_text_and_back() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path();
+        let m = load_manifest(&plugin(h, "tagger", &with_background("tagger", r#"["surfaces.text"]"#, r#""background.html""#, "{}"))).unwrap();
+        assert_eq!(m.background.as_deref(), Some("background.html"));
+        assert_eq!(m.slots, PluginSlots::default());
+        assert!(load_manifest(&plugin(h, "echo", OK)).unwrap().background.is_none());
+        assert!(reason(h, "aa", &with_background("aa", r#"["rooms.read"]"#, r#""background.html""#, "{}")).contains("surfaces.text"));
+        let without = OK.replacen(r#""id":"echo""#, r#""id":"bb""#, 1).replace(r#"["rooms.read"]"#, r#"["surfaces.text"]"#);
+        assert!(reason(h, "bb", &without).contains("background"));
+        let none = with_background("cc", "[]", "null", "{}").replace(r#""background":null,"#, "");
+        assert!(reason(h, "cc", &none).contains("background page"));
+    }
+
+    #[test]
+    fn background_path_is_checked() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path();
+        let perm = r#"["surfaces.text"]"#;
+        for (i, bad) in [r#""../bg.html""#, r#""data/bg.html""#, r#""bg.js""#, r#""/bg.html""#, "3", "[]"].iter().enumerate() {
+            let f = format!("b{i}");
+            assert!(reason(h, &f, &with_background(&f, perm, bad, "{}")).contains("background must be"), "{bad}");
+        }
+        assert_eq!(load_manifest(&plugin(h, "deep", &with_background("deep", perm, r#""pages/bg.html""#, "{}"))).unwrap().background.as_deref(), Some("pages/bg.html"));
+    }
+
+    #[test]
+    fn rev_changes_with_a_background_page() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = plugin(d.path(), "tagger", &with_background("tagger", r#"["surfaces.text"]"#, r#""background.html""#, "{}"));
+        fs::write(dir.join("background.html"), "<p>one</p>").unwrap();
+        let m = load_manifest(&dir).unwrap();
+        let r1 = rev(&dir, &m);
+        assert_eq!(r1, rev(&dir, &m));
+        fs::write(dir.join("background.html"), "<p>one, then two</p>").unwrap();
         assert_ne!(rev(&dir, &m), r1);
     }
 

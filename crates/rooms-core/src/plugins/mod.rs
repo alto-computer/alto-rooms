@@ -116,13 +116,13 @@ impl RoomsCore {
                 PluginInfo {
                     id: m.id, name: m.name, version: m.version, min_app_version: m.min_app_version, description: m.description,
                     entry: m.entry, permissions: m.permissions, slots: m.slots, status: PluginStatus::Ok, reason: None,
-                    enabled, granted, needs_approval, rev,
+                    enabled, granted, needs_approval, rev, background: m.background,
                 }
             }
             Err(reason) => PluginInfo {
                 id: folder.clone(), name: folder, version: String::new(), min_app_version: String::new(), description: None,
                 entry: String::new(), permissions: Vec::new(), slots: PluginSlots::default(), status: PluginStatus::Invalid,
-                reason: Some(reason), enabled: false, granted: None, needs_approval: false, rev: String::new(),
+                reason: Some(reason), enabled: false, granted: None, needs_approval: false, rev: String::new(), background: None,
             },
         }
     }
