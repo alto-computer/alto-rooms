@@ -58,10 +58,10 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     if (!r.ok) throw await failure(r);
     return { data: (await r.json()) as T, seq: Number(r.headers.get("x-rooms-seq") ?? 0) };
   };
-  const write = async <T>(method: string, path: string, body: string, type = "application/json"): Promise<T> => {
+  const write = async <T>(method: string, path: string, body: string, type = "application/json", extra: Record<string, string> = {}): Promise<T> => {
     const r = await fetch(baseUrl + path, {
       method,
-      headers: { "content-type": type, ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      headers: { "content-type": type, ...(token ? { authorization: `Bearer ${token}` } : {}), ...extra },
       body,
     });
     if (!r.ok) throw await failure(r);
@@ -103,6 +103,9 @@ export function createRoomsClient(baseUrl: string, token?: string) {
       write<Room>("PUT", `/v1/rooms/${encodeURIComponent(id)}/color`, JSON.stringify({ color })),
     saveNote: (date: string, name: string, body: string) =>
       write<Note>("PUT", `/v1/journal/${date}/notes/${encodeURIComponent(name)}`, body, "text/markdown"),
+    /** Creates a note and never replaces one: 409 `note_exists` if the name (or a case variant of it) is taken. */
+    createNote: (date: string, name: string, body: string) =>
+      write<Note>("PUT", `/v1/journal/${date}/notes/${encodeURIComponent(name)}`, body, "text/markdown", { "if-none-match": "*" }),
     /** Renames a note in place; 404 `not_found` if `from` is gone, 409 `note_exists` if `to` is taken (case-insensitively). */
     renameNote: (date: string, from: string, to: string) =>
       write<Note>("POST", `/v1/journal/${date}/notes/${encodeURIComponent(from)}/rename`, JSON.stringify({ to })),

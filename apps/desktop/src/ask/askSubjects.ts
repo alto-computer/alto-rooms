@@ -1,5 +1,7 @@
-import type { Artifact, AskScope, AskTarget, AskTurn, Conversation } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTarget, AskTurn, Conversation, Room } from "@alto-rooms/protocol-ts";
 import { AGENT_NAMES } from "@/lib/agents";
+import { conversationTitle } from "@/lib/conversations";
+import { localDate } from "@/lib/dates";
 import { modelLabel } from "./askModel";
 
 /**
@@ -14,6 +16,12 @@ export type AskSubject =
 
 export type TurnHeader = { text: string; title?: string };
 
+/** Where "Save as note" files an answer: a Journal day, and the line on top naming where the answer came from. */
+export type NoteTarget = { date: string; source: string | null };
+
+/** Resolved when the user saves, so it names the room as it is called then and the day it is then. */
+export type NoteTargetOf = (now: Date, rooms: readonly Room[]) => NoteTarget;
+
 /** How a bar presents its subject: what the shared Composer and ThreadSheet show for it. */
 export type SubjectFraming = {
   scope: AskScope;
@@ -26,6 +34,8 @@ export type SubjectFraming = {
   hint: (target: AskTarget | null) => string | null;
   /** A quiet line under the bar about where asks go; null or absent says nothing. */
   note?: (target: AskTarget | null) => string | null;
+  /** Where an answer is saved as a note; null when this subject's answers can't be saved. */
+  noteTarget: NoteTargetOf | null;
 };
 
 const agentAndModel = (t: AskTurn) => [t.agent, t.model ? modelLabel(t.model) : null];
@@ -44,6 +54,7 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         },
         agent: subject.artifact.source.agent ?? "Default agent",
         hint: () => null,
+        noteTarget: null,
       };
     case "conversation": {
       const { id } = subject.conversation;
@@ -59,6 +70,7 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         hint: () => null,
         // Aside asks append to the real session (roomsd resumes it); Claude Code and Codex fork it.
         note: (target) => (id.agent === "aside" && target?.mode !== "new" ? "Asks continue this Aside session; it can use the browser." : null),
+        noteTarget: (now) => ({ date: localDate(now), source: `Session: ${conversationTitle(subject.conversation)}` }),
       };
     }
     case "room":
@@ -68,6 +80,10 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         header: agentHeader,
         agent: "Default agent",
         hint: (target) => (target?.scoped ? "Reads only this room's artifacts" : null),
+        noteTarget: (now, rooms) => ({
+          date: localDate(now),
+          source: `Room: ${rooms.find((r) => r.id === subject.roomId)?.name ?? subject.roomId}`,
+        }),
       };
     case "day":
       return {
@@ -76,6 +92,7 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         header: agentHeader,
         agent: "Default agent",
         hint: (target) => (target?.scoped ? "Reads only this day's items" : null),
+        noteTarget: () => ({ date: subject.date, source: null }),
       };
   }
 }

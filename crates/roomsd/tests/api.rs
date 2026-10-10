@@ -79,6 +79,16 @@ async fn cors_preflight_allows_tauri_only() {
 }
 
 #[tokio::test]
+async fn cors_preflight_allows_a_create_only_note_put() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let r = app.oneshot(Request::options("/v1/journal/2026-10-05/notes/a").header("host", API_HOST)
+        .header("origin", "tauri://localhost").header("access-control-request-method", "PUT")
+        .header("access-control-request-headers", "authorization,content-type,if-none-match").body(Body::empty()).unwrap()).await.unwrap();
+    let allowed = r.headers()["access-control-allow-headers"].to_str().unwrap().to_ascii_lowercase();
+    assert!(allowed.contains("if-none-match"), "{allowed}");
+}
+
+#[tokio::test]
 async fn create_room_requires_token_host_and_loopback() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
     let ok = app.clone().oneshot(post("/v1/rooms", r#"{"name":"연구 도구"}"#, Some("t0k"), "127.0.0.1:4317")).await.unwrap();
@@ -670,6 +680,54 @@ async fn note_rename_missing_is_404_and_taken_is_409() {
     let r = app.oneshot(post("/v1/journal/2026-10-05/notes/a/rename", r#"{"to":"B"}"#, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::CONFLICT);
     assert_eq!(body_json(r).await["error"], "note_exists");
+}
+
+#[tokio::test]
+async fn note_put_with_if_none_match_only_creates() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let create = |name: &str, body: &str| Request::put(format!("/v1/journal/2026-10-05/notes/{name}"))
+        .header("host", API_HOST).header("authorization", "Bearer t0k").header("if-none-match", "*")
+        .header("content-type", "text/markdown").body(Body::from(body.to_string())).unwrap();
+    let r = app.clone().oneshot(create("a", "first")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await["name"], "a.md");
+    let r = app.clone().oneshot(create("A", "second")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::CONFLICT);
+    assert_eq!(body_json(r).await["error"], "note_exists");
+    let r = app.clone().oneshot(get("/v1/journal/2026-10-05/notes/a", API_HOST)).await.unwrap();
+    assert_eq!(&r.into_body().collect().await.unwrap().to_bytes()[..], b"first");
+    assert_eq!(put_note(&app, "a", "edited").await, StatusCode::OK);
+    let r = app.oneshot(get("/v1/journal/2026-10-05/notes/a", API_HOST)).await.unwrap();
+    assert_eq!(&r.into_body().collect().await.unwrap().to_bytes()[..], b"edited");
+}
+
+#[tokio::test]
+async fn note_put_if_none_match_never_overwrites() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let put = |name: &str, tags: &[&str]| {
+        let mut b = Request::put(format!("/v1/journal/2026-10-05/notes/{name}"))
+            .header("host", API_HOST).header("authorization", "Bearer t0k").header("content-type", "text/markdown");
+        for t in tags { b = b.header("if-none-match", *t); }
+        b.body(Body::from("clobber")).unwrap()
+    };
+    assert_eq!(put_note(&app, "a", "kept").await, StatusCode::OK);
+    for tags in [&[" *"][..], &["*, \"abc\""], &["\"abc\"", "*"], &[" * , "]] {
+        let r = app.clone().oneshot(put("a", tags)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::CONFLICT, "{tags:?}");
+        assert_eq!(body_json(r).await["error"], "note_exists", "{tags:?}");
+    }
+    for tags in [&["\"abc\""][..], &["W/\"abc\""], &[""], &[","], &["**"]] {
+        let r = app.clone().oneshot(put("a", tags)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{tags:?}");
+        assert_eq!(body_json(r).await["error"], "invalid_input", "{tags:?}");
+    }
+    assert_eq!(st.core.read_note(&"2026-10-05".to_string(), "a").unwrap(), "kept");
+    let r = app.clone().oneshot(put("new", &["\"abc\""])).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert!(st.core.read_note(&"2026-10-05".to_string(), "new").is_err(), "a rejected create writes nothing");
+    let r = app.oneshot(put("new", &[" * "])).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(st.core.read_note(&"2026-10-05".to_string(), "new").unwrap(), "clobber");
 }
 
 #[tokio::test]

@@ -1,4 +1,5 @@
-import type { Note } from "@alto-rooms/protocol-ts";
+import { RoomsApiError, type Note } from "@alto-rooms/protocol-ts";
+import { splitQuotes } from "@/ask/quotes";
 
 /** A note's name without its file extension: strips exactly one trailing `.md`, case-insensitively. */
 export function noteBase(name: string): string {
@@ -43,6 +44,65 @@ export function firstNewNoteNames(notes: readonly Note[], count: number): string
     if (!findNote(notes, candidate)) out.push(candidate);
   }
   return out;
+}
+
+/** Longest name a saved answer takes: roomsd allows 60 characters, which leaves room for " (2)". */
+export const MAX_QUESTION_NAME = 55;
+
+/** A name's length as roomsd counts it: code points of the NFC name without its `.md`. */
+export const noteNameLength = (name: string) => Array.from(noteBase(name.trim()).normalize("NFC")).length;
+/** The name of a saved answer whose question leaves nothing usable. */
+const ANSWER_NOTE = "Answer";
+
+/** At most `max` characters of `s`, cut at the last space when there is one. */
+function cutAtWord(s: string, max: number): string {
+  const chars = Array.from(s);
+  if (chars.length <= max) return s;
+  const head = chars.slice(0, max + 1).join("");
+  const space = head.lastIndexOf(" ");
+  return space > 0 ? head.slice(0, space) : chars.slice(0, max).join("");
+}
+
+/**
+ * A note name for a saved answer: the question without its quotes, on one line, with what roomsd
+ * refuses in a name (control characters, `/`, `\`, `:`, `..`, a leading dot) taken out.
+ */
+export function noteNameFromQuestion(question: string): string {
+  const cleaned = splitQuotes(question)
+    .text.normalize("NFC")
+    .replace(/[\p{Cc}/\\:]|\.{2,}/gu, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s.]+/, "")
+    .trim();
+  return cutAtWord(cleaned, MAX_QUESTION_NAME).trim() || ANSWER_NOTE;
+}
+
+/** The first `count` of `base`, `base (2)`, `base (3)`, … not taken in `notes` (case-insensitively). */
+export function freeNoteNames(base: string, notes: readonly Note[], count: number): string[] {
+  const out: string[] = [];
+  for (let i = 1; out.length < count; i++) {
+    const candidate = i === 1 ? base : `${base} (${i})`;
+    if (!findNote(notes, candidate)) out.push(candidate);
+  }
+  return out;
+}
+
+/**
+ * Creates a note under the first of `names` that is free and returns its file name, or null when
+ * every name is taken. Never saves over a note: `create` must refuse a taken name with 409
+ * `note_exists` (roomsd's create-only PUT does), and the next name is tried.
+ */
+export async function createUnderFreeName(names: readonly string[], create: (fileName: string) => Promise<Note>): Promise<string | null> {
+  for (const candidate of names) {
+    const fileName = noteFileName(candidate);
+    try {
+      const saved = await create(fileName);
+      return saved?.name || fileName;
+    } catch (e) {
+      if (!(e instanceof RoomsApiError && e.code === "note_exists")) throw e;
+    }
+  }
+  return null;
 }
 
 /*
