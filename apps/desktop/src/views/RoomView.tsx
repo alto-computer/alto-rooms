@@ -124,7 +124,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   } else if (artifacts.length === 0) {
     // A room holding only sessions shows them; whether it does is known once they are listed.
     if (listed === undefined || !info) body = null;
-    else if (conversations.length) body = <p className="px-10 pt-7 text-small text-ink-3">No artifacts in this room yet</p>;
+    else if (conversations.length) body = <p className="px-10 pt-7 pb-6 text-small text-ink-3">No artifacts in this room yet</p>;
     else body = <EmptyRoom room={room} home={info.home} />;
   } else {
     body = (
