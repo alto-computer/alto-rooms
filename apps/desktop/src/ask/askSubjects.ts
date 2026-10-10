@@ -24,6 +24,8 @@ export type SubjectFraming = {
   agent: string;
   /** Said beside the agent chip about what the agent may read; null says nothing. */
   hint: (target: AskTarget | null) => string | null;
+  /** A quiet line under the bar about where asks go; null or absent says nothing. */
+  note?: (target: AskTarget | null) => string | null;
 };
 
 const agentAndModel = (t: AskTurn) => [t.agent, t.model ? modelLabel(t.model) : null];
@@ -55,6 +57,8 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         },
         agent: AGENT_NAMES[id.agent],
         hint: () => null,
+        // Aside asks append to the real session (roomsd resumes it); Claude Code and Codex fork it.
+        note: (target) => (id.agent === "aside" && target?.mode !== "new" ? "Asks continue this Aside session; it can use the browser." : null),
       };
     }
     case "room":

@@ -35,6 +35,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const turns = thread?.turns ?? [];
   const running = turns.find((t) => t.status === "running");
   const { target, model, pick, modelFor } = useAskTarget(scope, shown);
+  const note = framing.note?.(target);
   const composer = useComposer(scope, model);
   const [unfolded, setUnfolded] = useState(true);
   const [dragging, setDragging] = useState(false);
@@ -109,6 +110,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
         onFold={() => setUnfolded(false)}
         onFocus={() => setUnfolded(true)}
       />
+      {note ? <p className="pointer-events-auto -mt-1.5 rounded-full bg-sheet/90 px-2 text-caption text-ink-3">{note}</p> : null}
     </div>
   );
 }

@@ -40,6 +40,17 @@ describe("frameSubject", () => {
     expect(f.hint(target(true))).toBeNull();
   });
 
+  it("says an Aside session ask continues that session, and only for Aside", () => {
+    const conversation: Conversation = { id: { agent: "aside", session: "A1" }, title: null, cwd: null, startedAt: "", endedAt: "", messages: 2, lastReply: null, artifactsWritten: [], roomId: null };
+    const f = frameSubject({ kind: "conversation", conversation });
+    const line = "Asks continue this Aside session; it can use the browser.";
+    expect(f.note?.(null)).toBe(line);
+    expect(f.note?.({ agent: "aside", mode: "resume", models: [], scoped: false })).toBe(line);
+    expect(f.note?.({ agent: "aside", mode: "new", models: [], scoped: false })).toBeNull();
+    const codex = frameSubject({ kind: "conversation", conversation: { ...conversation, id: { agent: "codex", session: "S1" } } });
+    expect(codex.note?.(null) ?? null).toBeNull();
+  });
+
   it("frames a room by its id, with no thread-that-made-it wording and a read hint only when scoped", () => {
     const f = frameSubject({ kind: "room", roomId: "r1" });
     expect(scopeKey(f.scope)).toBe("room:r1");

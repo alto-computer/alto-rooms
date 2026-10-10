@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Artifact, AskScope, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTarget, AskTurn, Conversation } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
@@ -744,5 +744,28 @@ describe("AskBar for a day", () => {
     expect(input().value).toBe("");
     act(() => show("2026-10-05"));
     expect(input().value).toBe("월요일?");
+  });
+});
+
+describe("AskBar for a session", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  const session = (agent: "aside" | "codex"): Conversation => ({
+    id: { agent, session: "S1" }, title: "t", cwd: null, startedAt: "", endedAt: "", messages: 2, lastReply: null, artifactsWritten: [], roomId: null,
+  });
+
+  it("says under the bar that an Aside session's asks continue it; a Codex session says nothing", async () => {
+    const target: AskTarget = { agent: "aside", mode: "resume", models: [], scoped: false };
+    const first = await renderWithStores(<AskBar subject={{ kind: "conversation", conversation: session("aside") }} />, {
+      rooms: [room("r1", "R")], askTargets: { "conversation:aside:S1": target },
+    });
+    expect(await screen.findByText("Asks continue this Aside session; it can use the browser.")).toBeTruthy();
+    first.unmount();
+    await renderWithStores(<AskBar subject={{ kind: "conversation", conversation: session("codex") }} />, { rooms: [room("r1", "R")] });
+    await screen.findByPlaceholderText("Ask about this session…");
+    expect(screen.queryByText(/continue this Aside session/)).toBeNull();
   });
 });
