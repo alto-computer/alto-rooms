@@ -86,6 +86,8 @@ export function fakeClient(
     askTargets?: Record<string, AskTarget | Error>;
     /** Conversations roomsd knows, each in the room its `roomId` names. */
     conversations?: Conversation[];
+    /** What listing a room's conversations throws, by room id. */
+    conversationErrors?: Record<string, Error>;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -226,7 +228,11 @@ export function fakeClient(
       if (!c) throw new RoomsApiError(404, "not found", "not_found");
       return { data: c, seq };
     }),
-    listRoomConversations: vi.fn(async (roomId: string) => ({ data: state.conversations.filter((c) => c.roomId === roomId), seq })),
+    listRoomConversations: vi.fn(async (roomId: string) => {
+      const err = opts.conversationErrors?.[roomId];
+      if (err) throw err;
+      return { data: state.conversations.filter((c) => c.roomId === roomId), seq };
+    }),
     // Like roomsd, minus the conversation.moved event (tests emit it).
     setConversationRoom: vi.fn(async (id: ConversationId, roomId: string | null): Promise<Conversation> => {
       const i = state.conversations.findIndex((c) => c.id.agent === id.agent && c.id.session === id.session);

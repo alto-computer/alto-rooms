@@ -1,12 +1,13 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { useState } from "react";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversation, renderWithStores, room } from "@/test/fakes";
 import { RoomView } from "./RoomView";
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 const today = "2026-10-05";
@@ -59,6 +60,29 @@ describe("Room: conversations", () => {
     fireEvent.click(second, { metaKey: true });
     const sessions = h.viewer.getState().tabs.filter((t) => t.kind === "conversation");
     expect(sessions.map((t) => (t.kind === "conversation" ? t.session : null)).sort()).toEqual(["s1", "s2"]);
+  });
+
+  it("says so in the Sessions area when the first list fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await renderWithStores(<RoomView roomId="p" />, {
+      rooms: [room("p", "벤치마크", { artifactCount: 1 })],
+      artifacts: { p: [artifact("a1")] },
+      conversationErrors: { p: new Error("down") },
+    });
+    expect(within(await screen.findByRole("region", { name: "Sessions" })).getByText("Couldn't load this room's sessions")).toBeInTheDocument();
+  });
+
+  it("keeps the sessions it showed when a refetch fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = await renderWithStores(<RoomView roomId="p" />, {
+      rooms: [room("p", "벤치마크", { artifactCount: 1 })],
+      artifacts: { p: [artifact("a1")] },
+      conversations: [conversation("s1", { title: "Cold start", roomId: "p" })],
+    });
+    await screen.findByText("Cold start");
+    h.client.listRoomConversations.mockRejectedValueOnce(new Error("down"));
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    expect(within(screen.getByRole("region", { name: "Sessions" })).getByText("Cold start")).toBeInTheDocument();
   });
 
   it("has no filter and no conversations section when the room has none", async () => {

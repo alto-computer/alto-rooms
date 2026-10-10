@@ -14,14 +14,15 @@ function touches(e: RoomsEvent, roomId: string): boolean {
 }
 
 /**
- * The conversations added to a room, last active first; `undefined` until the first answer.
+ * The conversations added to a room, last active first; `undefined` until the first answer,
+ * `"error"` when that answer was a failure.
  * Refetched when one moves in or out (`conversation.moved`), on a resync, and when the window
  * gets focus (their last replies change in the agents' logs, which send no event).
  */
-export function useRoomConversations(roomId: string): Conversation[] | undefined {
+export function useRoomConversations(roomId: string): Conversation[] | "error" | undefined {
   const client = useClient();
   const store = useRoomsStore();
-  const [loaded, setLoaded] = useState<{ roomId: string; list: Conversation[] } | undefined>(undefined);
+  const [loaded, setLoaded] = useState<{ roomId: string; list: Conversation[] | "error" } | undefined>(undefined);
   useEffect(() => {
     let live = true;
     let latest = 0;
@@ -33,7 +34,8 @@ export function useRoomConversations(roomId: string): Conversation[] | undefined
         },
         (e: unknown) => {
           console.warn("could not list the room's conversations", e);
-          if (live && mine === latest) setLoaded((l) => (l?.roomId === roomId ? l : { roomId, list: [] }));
+          // A failed refetch keeps what is shown; only a first load shows the error.
+          if (live && mine === latest) setLoaded((l) => (l?.roomId === roomId && l.list !== "error" ? l : { roomId, list: "error" }));
         },
       );
     };

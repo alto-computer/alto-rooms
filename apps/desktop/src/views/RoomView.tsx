@@ -63,15 +63,19 @@ function FilterRow({ value, onChange, artifacts, conversations }: { value: Filte
 }
 
 /** The room's conversations, below its artifacts and quieter than them. */
-function Conversations({ list, alone }: { list: Conversation[]; alone: boolean }) {
+function Conversations({ list, alone }: { list: Conversation[] | "error"; alone: boolean }) {
   return (
     <section aria-label="Sessions" className={cn("px-10 pb-10", alone && "pt-7")}>
       <h2 className="mb-3 text-small font-semibold tracking-[0.02em] text-ink-3">Sessions</h2>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(400px,1fr))] gap-4">
-        {list.map((c) => (
-          <ConversationCard key={conversationKey(c.id)} conversation={c} />
-        ))}
-      </div>
+      {list === "error" ? (
+        <p className="text-small text-ink-2">Couldn't load this room's sessions</p>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(400px,1fr))] gap-4">
+          {list.map((c) => (
+            <ConversationCard key={conversationKey(c.id)} conversation={c} />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -95,7 +99,8 @@ export function RoomView({ roomId }: { roomId: string }) {
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:room:${roomId}`, !!artifacts?.length && !!info);
 
   const baseline = useVisitsAtArrival().since(roomId);
-  const conversations = useRoomConversations(roomId) ?? [];
+  const listed = useRoomConversations(roomId);
+  const conversations = Array.isArray(listed) ? listed : [];
   // A tab moved to another room starts that room on All.
   const [picked, setPicked] = useState<{ roomId: string; filter: Filter } | null>(null);
   const filter = picked?.roomId === roomId ? picked.filter : "all";
@@ -189,6 +194,7 @@ export function RoomView({ roomId }: { roomId: string }) {
         </RoomBand>
         {conversations.length ? <FilterRow value={filter} onChange={(f) => setPicked({ roomId, filter: f })} artifacts={artifacts?.length ?? room.artifactCount} conversations={conversations.length} /> : null}
         {body}
+        {listed === "error" ? <Conversations list="error" alone={false} /> : null}
         {conversations.length && shows("conversations") ? <Conversations list={conversations} alone={!shows("artifacts")} /> : null}
       </div>
       {barReady && !readOnly ? <AskBar subject={{ kind: "room", roomId }} /> : null}
