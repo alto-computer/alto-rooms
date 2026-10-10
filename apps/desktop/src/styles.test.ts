@@ -54,6 +54,7 @@ describe("app code", () => {
     expect(offending(/#(?!000(?![0-9a-fA-F]))[0-9a-fA-F]{3,8}(?![0-9a-zA-Z])/)).toEqual([]);
     expect(offending(/\b(text|border|ring|outline)-(white|black)\b|\bbg-black\b/)).toEqual([]);
     expect(offending(/\bbg-white\b/, (name) => WHITE_PAGE_FILES.includes(name))).toEqual([]);
+    expect(offending(/\b(rgba?|hsla?)\(/)).toEqual([]);
   });
 
   it("uses the type scale, not arbitrary pixel sizes", () => {

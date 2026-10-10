@@ -133,7 +133,7 @@ function Loaded({ conversation }: { conversation: Conversation }) {
         <Breadcrumb conversation={conversation} room={room} />
         <div role="group" aria-label="Session actions" className="ml-auto flex shrink-0 items-center gap-2">
           <ConversationRoomMenu conversation={conversation} room={room} />
-          <ContinueButton conversation={conversation} className="h-7 rounded-lg px-2.5 text-body" />
+          <ContinueButton conversation={conversation} />
         </div>
       </header>
       <div className="relative flex min-h-0 flex-1">
