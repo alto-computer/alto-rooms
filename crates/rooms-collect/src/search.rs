@@ -37,9 +37,11 @@ pub fn fts_query(text: &str) -> Option<String> {
     (n > 0).then(|| words.into_iter().enumerate().map(|(i, w)| if i + 1 == n { format!("{w}*") } else { w }).collect::<Vec<_>>().join(" "))
 }
 
+/// The command that resumes a session, or just its id when none is safe to print: the id is the only
+/// argument after `--resume`/`resume`, and a leading dash would read as a flag.
 pub fn resume_command(agent: &str, session: &str) -> String {
     match (Agent::parse(agent), SessionId::parse(session)) {
-        (Some(a), Some(s)) => a.resume_argv(&s).join(" "),
+        (Some(a), Some(s)) if !session.starts_with('-') => a.resume_argv(&s).join(" "),
         _ => session.to_string(),
     }
 }
@@ -134,6 +136,13 @@ pub fn excerpt(text: &str, query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_command_never_puts_a_dash_id_after_resume() {
+        assert_eq!(resume_command("claude-code", "abc-1"), "claude --resume abc-1");
+        assert_eq!(resume_command("claude-code", "--help"), "--help");
+        assert_eq!(resume_command("codex", "-x"), "-x");
+    }
 
     #[test]
     fn queries_and_excerpts() {
