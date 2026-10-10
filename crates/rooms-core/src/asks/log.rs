@@ -32,18 +32,20 @@ struct Stored {
     kind: AskKind,
     #[serde(default)]
     left_out: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
 }
 
 impl Stored {
     fn of(turn: &AskTurn) -> Self {
-        let AskTurn { id, scope, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out } = turn.clone();
+        let AskTurn { id, scope, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out, session } = turn.clone();
         let file_key = match scope { AskScope::Doc { file_key } => Some(file_key), AskScope::Room { .. } | AskScope::Day { .. } | AskScope::Conversation { .. } => None };
-        Self { id, file_key, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out }
+        Self { id, file_key, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out, session }
     }
 
     fn into_turn(self, scope: &AskScope) -> AskTurn {
-        let Stored { id, file_key: _, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out } = self;
-        AskTurn { id, scope: scope.clone(), question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out }
+        let Stored { id, file_key: _, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out, session } = self;
+        AskTurn { id, scope: scope.clone(), question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out, session }
     }
 }
 
@@ -100,7 +102,7 @@ mod tests {
 
     fn t(id: &str, status: AskStatus, answer: &str) -> AskTurn {
         AskTurn { id: id.into(), scope: doc(), question: "q".into(), answer: answer.into(), agent: "a".into(), model: None,
-            mode: AskMode::New, status, error: None, started_at: "s".into(), ended_at: None, images: vec![], kind: Default::default(), left_out: 0 }
+            mode: AskMode::New, status, error: None, started_at: "s".into(), ended_at: None, images: vec![], kind: Default::default(), left_out: 0, session: None }
     }
 
     #[test]

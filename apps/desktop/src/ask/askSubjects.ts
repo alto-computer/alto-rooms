@@ -46,9 +46,9 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         scope: { kind: "doc", fileKey: subject.artifact.fileKey },
         placeholder: "Ask about this artifact…",
         header: (t) => {
-          const how = t.mode === "resume" ? "continuing the thread that made it" : "New conversation";
+          const how = { resume: "continuing the thread that made it", continue: "continuing this conversation", new: "New conversation" }[t.mode];
           const text = [...agentAndModel(t), how].filter(Boolean).join(" · ");
-          return t.mode === "resume" ? { text } : { text, title: "Couldn't find the thread that made this artifact" };
+          return t.mode === "new" ? { text, title: "Couldn't find the thread that made this artifact" } : { text };
         },
         agent: subject.artifact.source.agent ?? "Default agent",
         noteTarget: null,
@@ -59,9 +59,9 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         scope: { kind: "conversation", agent: id.agent, session: id.session },
         placeholder: "Ask about this session…",
         header: (t) => {
-          const how = t.mode === "resume" ? "continuing this session" : "New session";
+          const how = { resume: "continuing this session", continue: "continuing this conversation", new: "New session" }[t.mode];
           const text = [...agentAndModel(t), how].filter(Boolean).join(" · ");
-          return t.mode === "resume" ? { text } : { text, title: "Couldn't resume this session" };
+          return t.mode === "new" ? { text, title: "Couldn't resume this session" } : { text };
         },
         agent: AGENT_NAMES[id.agent],
         // Aside asks append to the real session (roomsd resumes it); Claude Code and Codex fork it.

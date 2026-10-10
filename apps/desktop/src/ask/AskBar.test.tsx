@@ -15,7 +15,7 @@ const doc: Artifact = {
 };
 const turn = (extra: Partial<AskTurn>): AskTurn => ({
   id: "t1", scope: { kind: "doc", fileKey: "k1" }, question: "왜?", answer: "", agent: "claude-code", model: null, mode: "resume", status: "running",
-  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, ...extra,
+  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, session: null, ...extra,
 });
 
 let store: ReturnType<typeof useAsksStore>;
@@ -78,6 +78,12 @@ describe("AskBar", () => {
     await setup({ k1: [turn({ mode: "new", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
     const head = await screen.findByText("claude-code · New conversation");
     expect(head.getAttribute("title")).toBe("Couldn't find the thread that made this artifact");
+  });
+
+  it("says when a question went on in the conversation the thread started", async () => {
+    await setup({ k1: [turn({ mode: "continue", session: "S1", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+    const head = await screen.findByText("claude-code · continuing this conversation");
+    expect(head.getAttribute("title")).toBeNull();
   });
 
   it("puts a copy button under each finished answer", async () => {

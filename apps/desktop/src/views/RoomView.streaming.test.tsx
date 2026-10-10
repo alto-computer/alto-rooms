@@ -22,7 +22,7 @@ const docs: Artifact[] = Array.from({ length: 40 }, (_, i) => ({
 const scope: AskScope = { kind: "room", roomId: "r1" };
 const running: AskTurn = {
   id: "t1", scope, question: "q", answer: "", agent: "claude-code", model: null, mode: "new", status: "running",
-  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0,
+  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, session: null,
 };
 
 it("never re-renders the card grid while a room answer streams", async () => {

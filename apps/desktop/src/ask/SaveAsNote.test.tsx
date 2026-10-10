@@ -15,7 +15,7 @@ const doc: Artifact = {
 const roomScope: AskScope = { kind: "room", roomId: "r1" };
 const turn = (scope: AskScope, extra: Partial<AskTurn> = {}): AskTurn => ({
   id: "t1", scope, question: "> picked\n\n회의에서 정한 것들 정리해줘", answer: "- 금요일 배포\n- 리뷰는 둘", agent: "claude-code", model: null, mode: "new",
-  status: "done", error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: "2026-10-06T10:00:09+09:00", images: [], kind: "question", leftOut: 0, ...extra,
+  status: "done", error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: "2026-10-06T10:00:09+09:00", images: [], kind: "question", leftOut: 0, session: null, ...extra,
 });
 const NAME = "회의에서 정한 것들 정리해줘";
 const ROOM_NOTE = `Room: Planning\n\n## ${NAME}\n\n- 금요일 배포\n- 리뷰는 둘`;

@@ -10,7 +10,7 @@ const doc: Artifact = {
 };
 const turn = (extra: Partial<AskTurn>): AskTurn => ({
   id: "t1", scope: { kind: "doc", fileKey: "k1" }, question: "q", answer: "a", agent: "claude-code", model: "haiku", mode: "resume", status: "done",
-  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: "2026-10-06T10:00:01+09:00", images: [], kind: "question", leftOut: 0, ...extra,
+  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: "2026-10-06T10:00:01+09:00", images: [], kind: "question", leftOut: 0, session: null, ...extra,
 });
 const room: Room = { id: "r1", name: "Planning", kind: "owned", path: "/p", status: "ok", artifactCount: 1, updatedAt: null, color: null };
 const late = new Date(2026, 9, 9, 23, 30);

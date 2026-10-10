@@ -9,7 +9,7 @@ const docScope = (fileKey: string): AskScope => ({ kind: "doc", fileKey });
 
 const turn = (id: string, status: AskTurn["status"], extra: Partial<AskTurn> = {}): AskTurn => ({
   id, scope: docScope("k1"), question: "q", answer: "", agent: "claude-code", model: null, mode: "resume", status,
-  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, ...extra,
+  error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, session: null, ...extra,
 });
 
 const doc = docScope("k1");

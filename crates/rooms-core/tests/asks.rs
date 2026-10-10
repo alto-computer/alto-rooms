@@ -640,3 +640,96 @@ async fn room_ask_limits_reads_to_its_listed_files() {
     assert!(!done.answer.contains("[--settings]") && !done.answer.contains("dontAsk"), "{}", done.answer);
     asks.shutdown().await;
 }
+
+/// An agent that keeps sessions: `fork`/`new` start one (S1, S2, …), `cont <id>` continues it, or
+/// fails without a word once `gone` exists next to the script. It answers with its argv and keeps
+/// its last stdin in `input`.
+fn session_agent(home: &std::path::Path) -> std::path::PathBuf {
+    let dir = home.join("agent");
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("session-agent.sh");
+    std::fs::write(&script, concat!(
+        "#!/bin/sh\n",
+        "d=$(dirname \"$0\"); cat > \"$d/input\"\n",
+        "case \"$1\" in\n",
+        "  cont) [ -f \"$d/gone\" ] && { echo 'no such session' >&2; exit 1; }; sid=\"$2\" ;;\n",
+        "  *) n=$(($(cat \"$d/count\" 2>/dev/null || echo 0) + 1)); echo $n > \"$d/count\"; sid=\"S$n\" ;;\n",
+        "esac\n",
+        "printf '{\"type\":\"init\",\"sid\":\"%s\"}\\n{\"type\":\"result\",\"text\":\"%s\"}\\n' \"$sid\" \"$*\"\n",
+    )).unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let s = script.display();
+    std::fs::write(home.join(".rooms/agents.toml"), format!(concat!(
+        "[agents.claude-code]\nresume = [\"{s}\", \"fork\", \"{{session}}\"]\nnew = [\"{s}\", \"new\", \"--settings\", \"{{scope_settings}}\"]\ncontinue = [\"{s}\", \"cont\", \"{{session}}\"]\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"init\" }}\nsession = \"/sid\"\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"result\" }}\nanswer = \"/text\"\n",
+    ), s = s)).unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn later_questions_continue_the_fork_the_first_one_made() {
+    let (d, core, doc, _room) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="ORIG">"#);
+    let agent = session_agent(d.path());
+    let input = || std::fs::read_to_string(agent.join("input")).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let ask = |q: &str| asks.start(&doc, q, None).unwrap();
+    assert_eq!(asks.target(&doc).unwrap().mode, AskMode::Resume);
+
+    // The first question forks the doc's conversation; the fork's id is kept on the turn.
+    let t1 = wait_done(&mut rx, &ask("first").id).await;
+    assert_eq!((t1.mode, t1.answer.as_str(), t1.session.as_deref()), (AskMode::Resume, "fork ORIG", Some("S1")));
+    assert!(input().ends_with("Question: first"), "{}", input());
+
+    // The next one goes to that fork with the question alone.
+    assert_eq!(asks.target(&doc).unwrap().mode, AskMode::Continue);
+    let t2 = ask("second");
+    assert_eq!((t2.mode, t2.session.as_deref()), (AskMode::Continue, Some("S1")));
+    let t2 = wait_done(&mut rx, &t2.id).await;
+    assert_eq!((t2.status, t2.answer.as_str(), t2.session.as_deref()), (AskStatus::Done, "cont S1", Some("S1")));
+    assert_eq!(input(), "Question: second");
+
+    // /new starts over: a new fork of the doc's conversation, nothing earlier sent along.
+    asks.start_with(&doc, Request::command(AskKind::Clear)).unwrap();
+    assert_eq!(asks.target(&doc).unwrap().mode, AskMode::Resume);
+    let t3 = wait_done(&mut rx, &ask("third").id).await;
+    assert_eq!((t3.answer.as_str(), t3.session.as_deref()), ("fork ORIG", Some("S2")));
+    assert!(!input().contains("Previous Q&A"), "{}", input());
+
+    // The agent no longer has S2: the question is asked as a first one, with the Q&A since /new.
+    std::fs::write(agent.join("gone"), "").unwrap();
+    let t4 = ask("fourth");
+    assert_eq!(t4.mode, AskMode::Continue);
+    let t4 = wait_done(&mut rx, &t4.id).await;
+    assert_eq!((t4.status, t4.mode, t4.answer.as_str(), t4.session.as_deref()), (AskStatus::Done, AskMode::Resume, "fork ORIG", Some("S3")));
+    assert!(input().contains("Previous Q&A:\nQ: third\nA: fork ORIG\n") && input().ends_with("Question: fourth"), "{}", input());
+    let th = asks.thread(&doc).unwrap();
+    assert_eq!(th.iter().map(|t| t.session.as_deref()).collect::<Vec<_>>(), [Some("S1"), Some("S1"), None, Some("S2"), Some("S3")]);
+}
+
+#[tokio::test]
+async fn a_new_run_is_never_continued_and_a_real_failure_is_not_asked_again() {
+    let (d, core, doc, _room) = setup("");
+    let agent = session_agent(d.path());
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    // A `new` run's session isn't kept, so the next question starts anew too.
+    for q in ["first", "second"] {
+        let t = wait_done(&mut rx, &asks.start(&doc, q, None).unwrap().id).await;
+        assert_eq!((t.mode, t.answer.as_str(), t.session), (AskMode::New, "new", None));
+    }
+
+    let (d, core, doc, _room) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="ORIG">"#);
+    let agent2 = session_agent(d.path());
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t1 = wait_done(&mut rx, &asks.start(&doc, "first", None).unwrap().id).await;
+    assert_eq!(t1.session.as_deref(), Some("S1"));
+    // A real failure in the fork (an error after it started) stays a failure.
+    std::fs::write(agent2.join("session-agent.sh"), "#!/bin/sh\ncat >/dev/null; echo '{\"type\":\"init\",\"sid\":\"S1\"}'; echo boom >&2; exit 3\n").unwrap();
+    let t2 = wait_done(&mut rx, &asks.start(&doc, "second", None).unwrap().id).await;
+    assert_eq!((t2.status, t2.mode, t2.session.as_deref()), (AskStatus::Failed, AskMode::Continue, Some("S1")));
+    assert!(t2.error.unwrap().contains("boom"));
+    drop(agent);
+}

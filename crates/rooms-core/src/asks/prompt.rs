@@ -42,10 +42,20 @@ impl Context<'_> {
     pub fn is_empty(&self) -> bool { self.summary.is_none() && self.turns.is_empty() && self.left_out == 0 }
 }
 
+/// Where a conversation starts over: `/new`, or a `/compact` that produced its summary.
+fn starts_over(t: &AskTurn) -> bool { t.kind == AskKind::Clear || (t.kind == AskKind::Compact && t.status == AskStatus::Done) }
+
+/// The agent session the next question to `agent` continues: the latest one a turn since the
+/// conversation last started over ran in, whatever became of that turn (a stopped question
+/// stays in the session, as it would in the agent's own CLI).
+pub(crate) fn chain_head<'a>(prior: &'a [AskTurn], agent: &str) -> Option<&'a str> {
+    let since = prior.iter().rposition(starts_over).map_or(prior, |i| &prior[i + 1..]);
+    since.iter().rev().filter(|t| t.agent == agent).find_map(|t| t.session.as_deref().filter(|s| valid_ident(s)))
+}
+
 /// The newest answered questions that fit in `budget` characters along with the summary.
 pub(crate) fn context(prior: &[AskTurn], budget: usize) -> Context<'_> {
-    let ends = |t: &AskTurn| t.kind == AskKind::Clear || (t.kind == AskKind::Compact && t.status == AskStatus::Done);
-    let (summary, since) = match prior.iter().rposition(ends) {
+    let (summary, since) = match prior.iter().rposition(starts_over) {
         Some(i) if prior[i].kind == AskKind::Compact => (Some(prior[i].answer.as_str()), &prior[i + 1..]),
         Some(i) => (None, &prior[i + 1..]),
         None => (None, prior),
@@ -64,6 +74,10 @@ pub(crate) fn with_image_paths(question: &str, paths: &[String]) -> String {
     let list: Vec<String> = paths.iter().map(|p| format!("- {p}")).collect();
     format!("{question}\n\nAttached images (open each one to see it):\n{}", list.join("\n"))
 }
+
+/// A continued fork already has the preamble, what it is about and every earlier Q&A: it gets the
+/// question alone.
+pub(crate) fn continue_prompt(question: &str) -> String { format!("Question: {question}") }
 
 pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, file_key: &str, ctx: &Context, question: &str) -> String {
     let mut out = format!("{preamble}\n\nDocument: {file}\nRooms doc: {file_key}\n");
@@ -196,7 +210,7 @@ mod tests {
 
     fn turn(q: &str, a: &str, status: AskStatus) -> AskTurn {
         AskTurn { id: q.into(), scope: AskScope::Doc { file_key: "k".into() }, question: q.into(), answer: a.into(), agent: "x".into(), model: None,
-            mode: AskMode::New, status, error: None, started_at: "t".into(), ended_at: None, images: vec![], kind: AskKind::Question, left_out: 0 }
+            mode: AskMode::New, status, error: None, started_at: "t".into(), ended_at: None, images: vec![], kind: AskKind::Question, left_out: 0, session: None }
     }
 
     fn of(kind: AskKind, a: &str) -> AskTurn { AskTurn { kind, ..turn("", a, AskStatus::Done) } }
@@ -373,6 +387,36 @@ mod tests {
         let bare = Conversation { title: None, cwd: None, ..c };
         assert_eq!(build_conversation_prompt(&bare, &context(&[], PRIOR_CHARS_ARGV), "q"),
             format!("{CONVERSATION_PREAMBLE}\n\nAgent: codex, session s-1\n\nQuestion: q"));
+    }
+
+    fn ran(agent: &str, session: Option<&str>, status: AskStatus) -> AskTurn {
+        AskTurn { agent: agent.into(), session: session.map(str::to_string), ..turn("q", "a", status) }
+    }
+
+    #[test]
+    fn chain_head_is_the_latest_session_since_starting_over() {
+        assert_eq!(chain_head(&[], "x"), None);
+        let mut t = vec![ran("x", Some("S1"), AskStatus::Done), ran("x", None, AskStatus::Failed)];
+        assert_eq!(chain_head(&t, "x"), Some("S1"));
+        // a stopped question that got a session still counts
+        t.push(ran("x", Some("S1"), AskStatus::Cancelled));
+        assert_eq!(chain_head(&t, "x"), Some("S1"));
+        // another agent's session is not this one's
+        t.push(ran("y", Some("T1"), AskStatus::Done));
+        assert_eq!((chain_head(&t, "x"), chain_head(&t, "y")), (Some("S1"), Some("T1")));
+        // a flag-shaped id is never used
+        t.push(ran("x", Some("-x"), AskStatus::Done));
+        assert_eq!(chain_head(&t, "x"), Some("S1"));
+        // /new starts over
+        t.push(of(AskKind::Clear, ""));
+        assert_eq!(chain_head(&t, "x"), None);
+        t.push(ran("x", Some("S2"), AskStatus::Done));
+        assert_eq!(chain_head(&t, "x"), Some("S2"));
+        // a compact that failed doesn't; one that summarized does
+        t.push(AskTurn { kind: AskKind::Compact, ..ran("x", Some("S2"), AskStatus::Failed) });
+        assert_eq!(chain_head(&t, "x"), Some("S2"));
+        t.push(AskTurn { kind: AskKind::Compact, ..ran("x", Some("S2"), AskStatus::Done) });
+        assert_eq!(chain_head(&t, "x"), None);
     }
 
     #[test]

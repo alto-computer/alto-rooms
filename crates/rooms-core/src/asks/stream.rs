@@ -23,16 +23,19 @@ pub(crate) struct EventRule {
     /// Start the streamed answer over (e.g. a new model message after a tool call).
     #[serde(default)]
     pub clear: bool,
+    /// The agent's own session id; the first one seen is the run's. A profile with this and a
+    /// `continue` template sends later questions to that session (see `agents.rs`).
+    pub session: Option<String>,
 }
 
 impl EventRule {
     pub fn check(&self) -> Result<(), String> {
-        let pointers = self.when.keys().chain(&self.delta).chain(&self.answer).chain(&self.activity);
+        let pointers = self.when.keys().chain(&self.delta).chain(&self.answer).chain(&self.activity).chain(&self.session);
         if let Some(p) = pointers.into_iter().find(|p| !p.starts_with('/')) {
             return Err(format!("\"{p}\" is not a JSON pointer (it must start with /)"));
         }
-        let does = self.delta.is_some() || self.answer.is_some() || !self.activity.is_empty() || self.label.is_some() || self.clear;
-        if does { Ok(()) } else { Err("a rule needs delta, answer, activity, label or clear".into()) }
+        let does = self.delta.is_some() || self.answer.is_some() || !self.activity.is_empty() || self.label.is_some() || self.clear || self.session.is_some();
+        if does { Ok(()) } else { Err("a rule needs delta, answer, activity, label, clear or session".into()) }
     }
 
     fn matches(&self, v: &Value) -> bool {
@@ -74,12 +77,13 @@ pub(crate) struct Reader<'r> {
     draft: String,
     answer: Option<String>,
     activity: Option<String>,
+    session: Option<String>,
     saw_json: bool,
 }
 
 impl<'r> Reader<'r> {
     pub fn new(rules: &'r [EventRule]) -> Self {
-        Self { rules, pending: Vec::new(), draft: String::new(), answer: None, activity: None, saw_json: false }
+        Self { rules, pending: Vec::new(), draft: String::new(), answer: None, activity: None, session: None, saw_json: false }
     }
 
     /// Takes the complete lines in `bytes`; a partial last line waits for the next call or `finish`.
@@ -102,6 +106,9 @@ impl<'r> Reader<'r> {
         self.saw_json = true;
         for r in self.rules.iter().filter(|r| r.matches(&v)) {
             if r.clear { self.draft.clear(); }
+            if self.session.is_none() {
+                self.session = r.session.as_deref().and_then(|p| find(&v, p)).and_then(Value::as_str).map(str::to_string);
+            }
             if let Some(s) = r.delta.as_deref().and_then(|p| find(&v, p)).and_then(Value::as_str) {
                 self.draft.push_str(s);
                 self.activity = None;
@@ -125,6 +132,9 @@ impl<'r> Reader<'r> {
     pub fn text(&self) -> &str { self.answer.as_deref().unwrap_or(&self.draft) }
 
     pub fn activity(&self) -> Option<&str> { self.activity.as_deref() }
+
+    /// The first session id a `session` rule read, unchecked: it is the agent's output.
+    pub fn session(&self) -> Option<&str> { self.session.as_deref() }
 }
 
 #[cfg(test)]
@@ -199,7 +209,29 @@ mod tests {
     }
 
     #[test]
+    fn the_first_session_id_seen_is_the_runs() {
+        let rules = [
+            rule("match = { \"/type\" = \"system\", \"/subtype\" = \"init\" }\nsession = \"/session_id\""),
+            rule("match = { \"/type\" = \"thread.started\" }\nsession = \"/thread_id\""),
+            rule("match = { \"/type\" = \"result\" }\nanswer = \"/result\""),
+        ];
+        let session = |lines: &[&str]| {
+            let mut r = Reader::new(&rules);
+            for l in lines { r.push(format!("{l}\n").as_bytes()); }
+            r.finish();
+            r.session().map(str::to_string)
+        };
+        assert_eq!(session(&[r#"{"type":"system","subtype":"init","session_id":"S1"}"#, r#"{"type":"result","result":"a"}"#]).as_deref(), Some("S1"));
+        assert_eq!(session(&[r#"{"type":"thread.started","thread_id":"T1"}"#, r#"{"type":"thread.started","thread_id":"T2"}"#]).as_deref(), Some("T1"));
+        // a matching line without the field, or with a non-string, reads nothing
+        assert_eq!(session(&[r#"{"type":"system","subtype":"init"}"#, r#"{"type":"thread.started","thread_id":7}"#]), None);
+        assert_eq!(session(&[r#"{"type":"system","subtype":"hook","session_id":"S9"}"#]), None);
+    }
+
+    #[test]
     fn rule_checks() {
+        assert!(rule("session = \"/id\"").check().is_ok());
+        assert!(rule("session = \"id\"").check().unwrap_err().contains("JSON pointer"));
         assert!(rule("delta = \"/t\"").check().is_ok());
         assert!(rule("match = { \"/type\" = \"x\" }").check().unwrap_err().contains("needs"));
         assert!(rule("delta = \"t\"").check().unwrap_err().contains("JSON pointer"));

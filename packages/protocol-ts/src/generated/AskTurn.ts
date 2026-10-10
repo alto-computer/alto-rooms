@@ -25,4 +25,9 @@ images: Array<string>, kind: AskKind,
 /**
  * Earlier answers in this conversation that were too many or too long to send along.
  */
-leftOut: number, };
+leftOut: number, 
+/**
+ * The agent's own session this turn ran in, read from its output; the next question
+ * continues it. `None` when the profile doesn't say how to read it.
+ */
+session: string | null, };
