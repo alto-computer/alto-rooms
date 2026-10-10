@@ -60,11 +60,37 @@ impl RoomsCore {
         Ok(artifacts.chain(notes).collect())
     }
 
+    /// Writes `journal/<date>/<name>.md`, replacing what is there (editing a note).
     pub fn save_note(&self, date: &IsoDate, name: &str, body: &str) -> Result<Note, CoreError> {
+        self.write_note(date, name, body, |tmp, path| Ok(std::fs::rename(tmp, path)?))
+    }
+
+    /// Writes a new `journal/<date>/<name>.md`, or `NoteExists` if any note is there already: the
+    /// name itself (the hard link fails atomically, whoever wrote it), or one that folds to it
+    /// case-insensitively, as `rename_note` refuses.
+    pub fn create_note(&self, date: &IsoDate, name: &str, body: &str) -> Result<Note, CoreError> {
+        self.write_note(date, name, body, |tmp, path| {
+            let key = slug_key(&path.file_name().unwrap_or_default().to_string_lossy());
+            let dir = path.parent().ok_or(CoreError::NotFound)?;
+            // The scan is race-free only against in-process callers, which `notes_lock` serializes.
+            // A writer outside roomsd can land a file between the scan and the link; the hard link
+            // still refuses an exact-name clash then. The race test proves the lock, not the link.
+            let clash = std::fs::read_dir(dir)?.flatten().any(|e| slug_key(&e.file_name().to_string_lossy()) == key);
+            if clash { return Err(CoreError::NoteExists); }
+            std::fs::hard_link(tmp, path).map_err(|e| match e.kind() {
+                std::io::ErrorKind::AlreadyExists => CoreError::NoteExists,
+                _ => e.into(),
+            })
+        })
+    }
+
+    /// Writes `body` to a temp file beside the note, then `commit`s it to the note's path. The temp
+    /// file is gone afterwards either way (moved by a rename, unlinked after a hard link).
+    fn write_note(&self, date: &IsoDate, name: &str, body: &str, commit: impl FnOnce(&Path, &Path) -> Result<(), CoreError>) -> Result<Note, CoreError> {
         validate_iso_date(date)?;
         let name = validate_note_name(name)?;
         if body.len() > MAX_NOTE_BYTES { return Err(CoreError::InvalidInput("note too large".into())); }
-        // `notes_lock` is held across the write, the rename and the emit so NoteSaved order
+        // `notes_lock` is held across the write, the commit and the emit so NoteSaved order
         // equals file order.
         let _notes = lock(&self.notes_lock);
         let dir = self.home.join("journal").join(date);
@@ -72,7 +98,9 @@ impl RoomsCore {
         let path = dir.join(&name);
         let tmp = dir.join(format!(".{name}.{}.tmp", nanoid::nanoid!(8)));
         std::fs::write(&tmp, body)?;
-        std::fs::rename(&tmp, &path)?;
+        let committed = commit(&tmp, &path);
+        let _ = std::fs::remove_file(&tmp);
+        committed?;
         let (_, updated) = crate::meta::file_times(&path);
         let note = Note { date: date.clone(), name: name.clone(), rel_path: format!("{date}/{name}"), updated_at: updated, author: Author::Me };
         let mut inner = lock(&self.inner);

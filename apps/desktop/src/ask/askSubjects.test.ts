@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Artifact, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskTarget, AskTurn, Room } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { frameSubject } from "./askSubjects";
 
@@ -12,6 +12,8 @@ const turn = (extra: Partial<AskTurn>): AskTurn => ({
   id: "t1", scope: { kind: "doc", fileKey: "k1" }, question: "q", answer: "a", agent: "claude-code", model: "haiku", mode: "resume", status: "done",
   error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: "2026-10-06T10:00:01+09:00", images: [], kind: "question", leftOut: 0, ...extra,
 });
+const room: Room = { id: "r1", name: "Planning", kind: "owned", path: "/p", status: "ok", artifactCount: 1, updatedAt: null };
+const late = new Date(2026, 9, 9, 23, 30);
 const target = (scoped: boolean): AskTarget => ({ agent: "claude-code", mode: "new", models: [], scoped });
 
 describe("frameSubject", () => {
@@ -49,5 +51,21 @@ describe("frameSubject", () => {
     expect(f.header(turn({ mode: "new" }))).toEqual({ text: "claude-code · Haiku" });
     expect(f.hint(target(true))).toBe("Reads only this day's items");
     expect(f.hint(target(false))).toBeNull();
+  });
+
+  describe("noteTarget", () => {
+    it("saves no doc answer", () => {
+      expect(frameSubject({ kind: "doc", artifact: doc }).noteTarget).toBeNull();
+    });
+
+    it("saves a room answer into today's Journal, named by the room as it is called at save time", () => {
+      const save = frameSubject({ kind: "room", roomId: "r1" }).noteTarget!;
+      expect(save(late, [room])).toEqual({ date: "2026-10-09", source: "Room: Planning" });
+      expect(save(new Date(2026, 9, 10, 0, 5), [{ ...room, name: "Renamed" }])).toEqual({ date: "2026-10-10", source: "Room: Renamed" });
+    });
+
+    it("saves a day answer into the viewed day, whatever today is, with no source line", () => {
+      expect(frameSubject({ kind: "day", date: "2026-10-01" }).noteTarget!(late, [room])).toEqual({ date: "2026-10-01", source: null });
+    });
   });
 });

@@ -3,9 +3,11 @@ import type { AskTurn } from "@alto-rooms/protocol-ts";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import type { Live } from "./asksStore";
+import type { NoteTargetOf } from "./askSubjects";
 import { TurnImages } from "./attachments";
 import { CopyAnswerButton } from "./CopyAnswerButton";
 import { splitQuotes } from "./quotes";
+import { SaveAsNote } from "./SaveAsNote";
 import { ThinkingLine } from "./ThinkingLine";
 import { ErrorText, TextButton } from "./ui";
 import type { Pending } from "./useComposer";
@@ -63,7 +65,7 @@ function Divider({ children }: { children: string }) {
 }
 
 /** A question and its answer: streaming in with what the agent is doing, then whole, stopped, or failed with Retry. */
-function QuestionTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: (t: AskTurn) => void }) {
+function QuestionTurn({ t, live, noteTarget, onRetry }: { t: AskTurn; live?: Live; noteTarget: NoteTargetOf | null; onRetry: (t: AskTurn) => void }) {
   const running = t.status === "running";
   const answer = running ? live?.answer : t.answer;
   return (
@@ -75,8 +77,9 @@ function QuestionTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: 
       {t.status === "cancelled" ? <div className="text-[12.5px] text-ink-2">Stopped</div> : null}
       {t.status === "failed" ? <Failure t={t} onRetry={onRetry} /> : null}
       {!running && t.answer ? (
-        <div className="-my-1.5 flex items-center gap-2 text-[11.5px] text-ink-2">
+        <div className="-my-1.5 flex flex-wrap items-center gap-x-1 text-[11.5px] text-ink-2">
           <CopyAnswerButton text={t.answer} />
+          {t.status === "done" && noteTarget ? <SaveAsNote question={t.question} answer={t.answer} target={noteTarget} /> : null}
         </div>
       ) : null}
     </>
@@ -110,13 +113,19 @@ function CompactTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: (
  * sent along anymore). Memoized: progress re-renders the thread ten times a second, and only the
  * running turn changes. An `old` turn skips layout and paint while off screen.
  */
-export const Turn = memo(function Turn({ t, live, old, onRetry }: { t: AskTurn; live?: Live; old: boolean; onRetry: (t: AskTurn) => void }) {
+export const Turn = memo(function Turn({ t, live, old, noteTarget, onRetry }: {
+  t: AskTurn;
+  live?: Live;
+  old: boolean;
+  noteTarget: NoteTargetOf | null;
+  onRetry: (t: AskTurn) => void;
+}) {
   const kind = t.kind ?? "question";
   return (
     <div data-turn-id={t.id} className={cn("space-y-2", old && "[contain-intrinsic-size:auto_160px] [content-visibility:auto]")}>
       {kind === "clear" ? <Divider>New conversation</Divider> : null}
       {kind === "compact" ? <CompactTurn t={t} live={live} onRetry={onRetry} /> : null}
-      {kind === "question" ? <QuestionTurn t={t} live={live} onRetry={onRetry} /> : null}
+      {kind === "question" ? <QuestionTurn t={t} live={live} noteTarget={noteTarget} onRetry={onRetry} /> : null}
     </div>
   );
 });

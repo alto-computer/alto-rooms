@@ -516,7 +516,7 @@ describe("AppShell: a new note, then its name", () => {
     expect(activeTab()).toHaveTextContent("New Note");
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Note" })).toHaveFocus());
     // roomsd announces the new note; the store refetches the day.
-    h.state.days[date] = { notes: [(await h.client.saveNote.mock.results[0].value) as Note] };
+    h.state.days[date] = { notes: [(await h.client.createNote.mock.results[0].value) as Note] };
     await act(async () => {
       h.emit({ type: "note.saved", note: h.state.days[date].notes![0] });
     });

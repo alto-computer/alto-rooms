@@ -601,6 +601,39 @@ fn rename_note_never_overwrites_an_existing_target() {
 }
 
 #[test]
+fn create_note_never_replaces_a_note_on_disk() {
+    let (d, core) = home();
+    let file = d.path().join("journal/2026-10-05/a.md");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "written outside roomsd").unwrap();
+    assert!(matches!(core.create_note(&day(), "a", "new"), Err(CoreError::NoteExists)));
+    assert!(matches!(core.create_note(&day(), "A.md", "new"), Err(CoreError::NoteExists)));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "written outside roomsd");
+    let n = core.create_note(&day(), "b", "B").unwrap();
+    assert_eq!(n.name, "b.md");
+    assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/b.md")).unwrap(), "B");
+    let mut left: Vec<String> = fs::read_dir(file.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into()).collect();
+    left.sort();
+    assert_eq!(left, vec!["a.md".to_string(), "b.md".to_string()], "no temp files left behind");
+    core.save_note(&day(), "a", "edited").unwrap();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "edited", "a plain save still edits in place");
+}
+
+#[test]
+fn create_note_racing_creators_one_wins() {
+    let (d, core) = home();
+    let core = std::sync::Arc::new(core);
+    let results: Vec<_> = (0..8).map(|i| {
+        let core = core.clone();
+        std::thread::spawn(move || core.create_note(&day(), "race", &format!("body {i}")).map(|_| i))
+    }).collect::<Vec<_>>().into_iter().map(|h| h.join().unwrap()).collect();
+    let winners: Vec<usize> = results.iter().filter_map(|r| r.as_ref().ok().copied()).collect();
+    assert_eq!(winners.len(), 1, "{results:?}");
+    assert!(results.iter().all(|r| r.is_ok() || matches!(r, Err(CoreError::NoteExists))), "{results:?}");
+    assert_eq!(fs::read_to_string(d.path().join("journal/2026-10-05/race.md")).unwrap(), format!("body {}", winners[0]));
+}
+
+#[test]
 fn rename_note_allows_a_case_only_rename() {
     let (d, core) = home();
     core.save_note(&day(), "a", "A").unwrap();

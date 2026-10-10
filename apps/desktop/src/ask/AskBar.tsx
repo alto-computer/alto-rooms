@@ -54,6 +54,8 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const retryWith = useRef<(t: AskTurn) => void>(() => {});
   retryWith.current = (t: AskTurn) => composer.retry(t, modelFor(t));
   const retry = useCallback((t: AskTurn) => retryWith.current(t), []);
+  // The scope alone decides where answers are saved, and the bar remounts when it changes.
+  const noteTarget = useState(() => framing.noteTarget)[0];
 
   if (!shown) return null;
   const showThread = unfolded && (turns.length > 0 || !!thread?.error || !!composer.pending);
@@ -80,6 +82,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
         <ThreadSheet
           turns={turns}
           header={framing.header}
+          noteTarget={noteTarget}
           live={live}
           loadError={!!thread?.error}
           pending={composer.pending}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { RoomsApiError, type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
+import { type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
 import { AskBar } from "@/ask/AskBar";
 import { useFrameAfter } from "@/ask/useFrameAfter";
@@ -12,7 +12,7 @@ import { wantsNewTab } from "@/lib/nav";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { cn } from "@/lib/utils";
 import { useCurrentTabId } from "@/shell/currentTab";
-import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from "@/lib/notes";
+import { createUnderFreeName, firstNewNoteNames, noteBase, requestNoteBodyFocus } from "@/lib/notes";
 import otterAvatar from "@/assets/otter-avatar.svg";
 import { ArtifactCard } from "./ArtifactCard";
 import { useVisitsAtArrival } from "./useVisitsAtArrival";
@@ -65,14 +65,14 @@ function RowLabel({ avatar, name, count }: { avatar: ReactNode; name: string; co
   );
 }
 
-/** Most default names tried before giving up (each one already on disk costs a getNote). */
+/** Most default names tried before giving up. */
 const MAX_NEW_NOTE_TRIES = 50;
 
 /**
  * New note: no name asked. Creates the first free default name ("New Note",
  * "New Note 2", …) and opens it in a new tab with the cursor in the body.
- * Never saves over a note: a name in the day list is skipped, and since that
- * list may lag behind the disk, the rest are confirmed with getNote (404 = free).
+ * Never saves over a note: a name in the day list is skipped, and roomsd
+ * refuses one the list missed (the list may lag behind the disk).
  */
 function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly Note[]; viewer: ViewerStore }) {
   const client = useClient();
@@ -86,16 +86,8 @@ function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly No
     setBusy(true);
     setError(null);
     try {
-      for (const candidate of firstNewNoteNames(notes, MAX_NEW_NOTE_TRIES)) {
-        const fileName = noteFileName(candidate);
-        try {
-          await client.getNote(date, fileName);
-          continue; // on disk already: never overwrite it
-        } catch (e) {
-          if (!(e instanceof RoomsApiError && e.status === 404)) throw e;
-        }
-        const saved = await client.saveNote(date, fileName, "");
-        const name = saved?.name || fileName;
+      const name = await createUnderFreeName(firstNewNoteNames(notes, MAX_NEW_NOTE_TRIES), (file) => client.createNote(date, file, ""));
+      if (name) {
         requestNoteBodyFocus(date, name);
         viewer.open({ kind: "note", date, name });
         return;
