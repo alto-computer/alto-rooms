@@ -24,6 +24,10 @@ export const usable = (p: HostPlugin): boolean => p.status === "ok" && p.compati
 export const contentPlugins = (list: HostPlugin[]): HostPlugin[] =>
   list.filter((p) => usable(p) && p.permissions.includes("artifact.content")).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
+/** The usable plugins with a background page: each gets one hidden frame that hears host text surfaces. */
+export const surfacePlugins = (list: HostPlugin[]): HostPlugin[] =>
+  list.filter((p) => usable(p) && p.background !== null && p.permissions.includes("surfaces.text"));
+
 /**
  * A short key for the usable plugins that run content scripts inside documents, with their revs.
  * Part of a doc frame's URL, so the frame reloads when a plugin is turned on or off or its script

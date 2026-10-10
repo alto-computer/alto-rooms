@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAsksStore, useReadOnly, useViewer, useViewerStore } from "@/data/hooks";
 import type { Tab } from "@/data/viewerStore";
 import { cn } from "@/lib/utils";
+import { BackgroundFrames } from "@/plugins/BackgroundFrame";
 import { EnableCard } from "@/plugins/EnableCard";
 import { CurrentTabContext, TabVisibleContext } from "./currentTab";
 import { Sidebar } from "./Sidebar";
@@ -76,6 +77,7 @@ export function AppShell() {
           </Suspense>
         ) : null}
         <EnableCard />
+        <BackgroundFrames />
         <Toaster />
       </SidebarProvider>
     </TooltipProvider>

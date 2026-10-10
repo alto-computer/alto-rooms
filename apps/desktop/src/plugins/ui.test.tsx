@@ -730,3 +730,34 @@ describe("Settings › Plugins", () => {
     expect(within(section()).getByRole("switch", { name: "Echo" })).toBeChecked();
   });
 });
+
+describe("background frames", () => {
+  const tagger = (extra: Partial<PluginInfo> = {}) =>
+    plugin({ id: "tagger", name: "Tagger", slots: { artifactSidePanel: null, tab: null }, permissions: ["surfaces.text"], granted: ["surfaces.text"], background: "background.html", ...extra });
+
+  it("asks with the surfaces.text line, then runs the background page hidden, in the plugin sandbox, until the plugin is off", async () => {
+    const h = await renderWithStores(<AppShell />, {
+      rooms: [room("r1", "Bench")],
+      plugins: [tagger({ enabled: false, granted: null, needsApproval: true })],
+    });
+    await act(async () => {});
+    const card = screen.getByRole("dialog", { name: "New plugin: Tagger" });
+    expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Can read and mark chat answers"]);
+    expect(screen.queryByTitle("Tagger"), "nothing runs before the user says so").toBeNull();
+    await act(async () => {
+      fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("tagger", true, ["surfaces.text"]);
+    const f = screen.getByTitle("Tagger") as HTMLIFrameElement;
+    expect(f.src).toBe("http://files.test/_plugins/tagger/background.html");
+    expect(f.sandbox.toString()).toBe("allow-scripts");
+    expect(f.closest("[data-background-frames]")).toHaveAttribute("hidden");
+    expect(screen.queryByRole("tab", { name: "Tagger" })).toBeNull();
+    Object.assign(h.state.plugins[0], { enabled: false });
+    await act(async () => {
+      h.emit({ type: "plugins.changed" });
+    });
+    await act(async () => {});
+    expect(screen.queryByTitle("Tagger")).toBeNull();
+  });
+});
