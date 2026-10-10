@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { Artifact, Conversation, Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, FolderOpen } from "lucide-react";
+import { toast } from "sonner";
 import { AskBar } from "@/ask/AskBar";
 import { useFrameAfter } from "@/ask/useFrameAfter";
 import { Dotted } from "@/components/Dotted";
@@ -179,7 +180,16 @@ export function RoomView({ roomId }: { roomId: string }) {
           }
           actions={
             isTauri() ? (
-              <button type="button" className={bandButton} onClick={() => void showInFinder(room.path)}>
+              <button
+                type="button"
+                className={bandButton}
+                onClick={() =>
+                  showInFinder(room.path).catch((err: unknown) => {
+                    console.warn("could not show the room in Finder", err);
+                    toast.error("Couldn't show the folder in Finder", { id: "room-finder" });
+                  })
+                }
+              >
                 <FolderOpen aria-hidden />
                 Show in Finder
               </button>
