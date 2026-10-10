@@ -94,8 +94,9 @@ declare global {
       surfaces(): SurfaceId[];
       /**
        * Posts a paint with one good range and two the app must drop (an undeclared style, a range past
-       * the text), then one the app must refuse whole: a style named to break out of its rule and a
-       * color that is not one.
+       * the text), then paints the app must refuse whole: a style named to break out of its rule, a
+       * color that is not one, and colors the browser's parser admits that would carry a brace into
+       * the stylesheet or read a host token.
        */
       hostile(): void;
       open(surface: SurfaceId, rangeId: string): Promise<void>;
@@ -123,6 +124,9 @@ window.tagger = {
       });
       post({ surface, styles: { "x;}body{display:none": "red" }, ranges: [{ id: "inject", start: 0, end: 1, style: "x;}body{display:none" }] });
       post({ surface, styles: { css: "url(x)" }, ranges: [{ id: "css", start: 0, end: 1, style: "css" }] });
+      for (const color of ["var(--x, {", "var(--x, (", "env(--x, {", "var(--thread-soft)"]) {
+        post({ surface, styles: { css: color }, ranges: [{ id: "css", start: 0, end: 1, style: "css" }] });
+      }
     }
   },
   open: (surface, rangeId) => rooms.open({ surface, rangeId }),

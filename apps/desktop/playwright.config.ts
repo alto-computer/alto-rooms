@@ -20,6 +20,8 @@ export default defineConfig({
   },
   webServer: {
     command: `bun run --silent build && bunx vite preview --port ${APP_PORT} --strictPort`,
+    // The preview sends the desktop app's CSP with every document (e2e/appCsp.ts).
+    env: { ROOMS_E2E_CSP: "1" },
     url: APP_ORIGIN,
     reuseExistingServer: false,
     timeout: 120_000,
@@ -28,7 +30,7 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium" },
-    // The desktop app runs on macOS WebKit (WKWebView): pointer-heavy specs run there too.
-    { name: "webkit", use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 900 } }, testMatch: /(reorder|pins|plugins|tabs)\.spec\.ts/ },
+    // The desktop app runs on macOS WebKit (WKWebView): pointer-heavy specs and the surface paint run there too.
+    { name: "webkit", use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 900 } }, testMatch: /(reorder|pins|plugins|surface-plugins|tabs)\.spec\.ts/ },
   ],
 });

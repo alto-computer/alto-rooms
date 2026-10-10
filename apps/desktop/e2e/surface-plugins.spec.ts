@@ -6,12 +6,14 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Frame, Page } from "@playwright/test";
+import type { Frame, Locator, Page } from "@playwright/test";
 import { expect, FILES_PORT, test, type Daemon } from "./fixtures";
 import { installStreamingAgent } from "./streamingAgent";
 
 /** The highlight the tagger's first style paints into: `rooms-<plugin>-<style>`. */
 const AMBER = "rooms-tagger-important";
+/** The tagger's color for it, as the engine serializes it. */
+const AMBER_COLOR = "rgba(199, 154, 62, 0.28)";
 
 async function api(daemon: Daemon, method: string, p: string, body?: unknown) {
   const r = await fetch(`${daemon.baseUrl}${p}`, {
@@ -23,13 +25,20 @@ async function api(daemon: Daemon, method: string, p: string, body?: unknown) {
   return r.status === 204 ? null : r.json();
 }
 
-async function turnOnTagger(page: Page) {
-  const card = page.getByRole("dialog", { name: "New plugin: Tagger" });
+async function turnOn(page: Page, name: string) {
+  const card = page.getByRole("dialog", { name: `New plugin: ${name}` });
   await expect(card).toBeVisible({ timeout: 5000 });
   await expect(card.getByRole("listitem")).toHaveText(["Can read and mark chat answers"]);
   await card.getByRole("button", { name: "Turn on" }).click();
   await expect(card).toBeHidden();
 }
+const turnOnTagger = (page: Page) => turnOn(page, "Tagger");
+
+/**
+ * The background the `::highlight(name)` rule gives `el`'s text: transparent until the plugin's
+ * style rule is live. The registry alone cannot tell, since a rule the CSP dropped leaves it full.
+ */
+const paintColor = (el: Locator, name: string) => el.evaluate((p, n) => getComputedStyle(p, `::highlight(${n})`).backgroundColor, name);
 
 /** The background frame once its script is up. */
 async function backgroundFrame(page: Page): Promise<Frame> {
@@ -109,6 +118,7 @@ test("tagging words in a room answer and a doc answer paints them in their own t
   const before = await roomAnswer.locator("xpath=ancestor::*[@data-surface]").innerHTML();
   await tag(page, roomAnswer);
   await expect.poll(() => painted(page)).toEqual([roomText]);
+  expect(await paintColor(roomAnswer, AMBER), "the rule is live under the app's CSP, not only the registry").toBe(AMBER_COLOR);
   expect(await roomAnswer.locator("xpath=ancestor::*[@data-surface]").innerHTML(), "paint changes no DOM").toBe(before);
   const [turn] = (await api(daemon, "GET", `/v1/asks?scope=room:${room.id}`)) as { id: string }[];
   expect(await tagFiles(daemon)).toEqual([`answer/room/${room.id}/${turn.id}.json`]);
@@ -162,7 +172,7 @@ test("a click on a painted range shows the plugin's menu; Untag removes the pain
   expect(JSON.parse(await daemon.read(path.join(".rooms", "plugins", "tagger", "data", file)))).toEqual({ version: 1, tags: [] });
 });
 
-test("open({ surface, rangeId }) from the background is refused unless the user just clicked the plugin; then it opens the thread's tab, unfolds it, and flashes the range", async ({ page, daemon }) => {
+test("open({ surface, rangeId }) from the background is refused unless the user just clicked the plugin's button or menu item, not a range; then it opens the thread's tab, unfolds it, and flashes the range", async ({ page, daemon }) => {
   installStreamingAgent(daemon, "Room");
   await daemon.createRoom("harness");
   await daemon.write("harness/alpha.html", "<html><head><title>Alpha</title></head><body>a</body></html>");
@@ -197,7 +207,16 @@ test("open({ surface, rangeId }) from the background is refused unless the user 
   await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "Alpha", exact: true }).click();
   await expect.poll(() => painted(page)).toEqual([]);
-  expect(await open(), "right after the click on its range").toBe("ok");
+  expect(await open(), "a click on its range alone: a plugin could paint transparent ranges over a whole answer").toBe("permission_denied");
+  await expect(page.getByRole("tab", { name: "Alpha", selected: true })).toBeVisible();
+
+  // A menu item is the other gesture: the previous test's Open item is a background open on its heels.
+  await page.getByRole("tab", { name: "harness", exact: true }).click();
+  await expect.poll(() => painted(page)).toEqual([text]);
+  await tag(page, answer);
+  await page.getByRole("tab", { name: "Alpha", exact: true }).click();
+  await expect.poll(() => painted(page)).toEqual([]);
+  expect(await open(), "right after the click on its button").toBe("ok");
   await expect(page.getByRole("tab", { name: "harness", exact: true, selected: true })).toBeVisible();
   await expect.poll(() => painted(page, "rooms-flash"), { timeout: 5000, intervals: [25] }).toEqual([text]);
   await expect.poll(() => painted(page)).toEqual([text]);
@@ -208,7 +227,9 @@ test("the background frame is sandboxed without network; hostile paint is droppe
   await daemon.createRoom("harness");
   await daemon.write("harness/alpha.html", "<html><head><title>Alpha</title></head><body>a</body></html>");
   await daemon.installPlugin("tagger");
+  await daemon.installPlugin("stamper");
   await page.goto("/");
+  await turnOn(page, "Stamper");
   await turnOnTagger(page);
   const frame = await backgroundFrame(page);
   const el = page.locator('iframe[title="Tagger"]');
@@ -235,10 +256,15 @@ test("the background frame is sandboxed without network; hostile paint is droppe
     "rooms-tagger-idk",
     "rooms-tagger-important",
   ]);
-  const styles = await page.evaluate(() => document.querySelector("style[data-surface-highlights]")!.textContent);
-  expect(styles).not.toContain("display:none");
-  expect(styles).not.toContain("url(");
-  expect(styles).toContain("::highlight(rooms-tagger-important) { background-color: rgba(199,154,62,0.28); }");
+  expect(await page.evaluate(() => CSS.supports("color", "var(--x, {")), "the engine's parser admits the value the app must refuse").toBe(true);
+  const rules = await page.evaluate(() => document.adoptedStyleSheets.flatMap((s) => [...s.cssRules].map((r) => r.cssText)));
+  expect(rules.join("\n")).not.toContain("display:none");
+  expect(rules.join("\n")).not.toContain("url(");
+  expect(rules.join("\n")).not.toContain("var(--x");
+  expect(rules).toContain(`::highlight(${AMBER}) { background-color: ${AMBER_COLOR}; }`);
+  expect(await paintColor(answer, AMBER), "the tagger's own good rule still paints").toBe(AMBER_COLOR);
+  expect(await paintColor(answer, "rooms-stamper-mark"), "another plugin's rule survives the tagger's hostile values").toBe("rgb(0, 0, 255)");
+  expect(await painted(page, "rooms-stamper-mark")).toEqual([text.slice(0, 3)]);
   await expect(page.locator("body")).toBeVisible();
 
   await api(daemon, "PATCH", "/v1/plugins/tagger", { enabled: false });

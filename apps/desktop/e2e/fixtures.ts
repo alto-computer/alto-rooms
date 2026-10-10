@@ -7,9 +7,10 @@
  *   ROOMS_DEV_ORIGIN from the ports below; the daemon is killed and the home
  *   removed in teardown, even when the test fails.
  * - The ports come from ROOMS_E2E_API_PORT, ROOMS_E2E_FILES_PORT and
- *   ROOMS_E2E_APP_PORT (default 14317, 14318 and 4173), so several runs can
- *   share one machine.
+ *   ROOMS_E2E_APP_PORT (default 14317, 14318 and 4173, read in appCsp.ts), so
+ *   several runs can share one machine.
  * - The connection reaches the page through `page.addInitScript`, never the URL.
+ * - The preview serves every document under the desktop app's CSP (appCsp.ts).
  */
 import { test as base, expect } from "@playwright/test";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -17,12 +18,9 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { API_PORT, APP_ORIGIN, FILES_PORT } from "./appCsp";
 
-const envPort = (name: string, fallback: number) => Number(process.env[name] ?? fallback);
-export const API_PORT = envPort("ROOMS_E2E_API_PORT", 14317);
-export const FILES_PORT = envPort("ROOMS_E2E_FILES_PORT", 14318);
-export const APP_PORT = envPort("ROOMS_E2E_APP_PORT", 4173);
-export const APP_ORIGIN = `http://localhost:${APP_PORT}`;
+export { API_PORT, APP_ORIGIN, APP_PORT, FILES_PORT } from "./appCsp";
 const BASE = `http://127.0.0.1:${API_PORT}`;
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
