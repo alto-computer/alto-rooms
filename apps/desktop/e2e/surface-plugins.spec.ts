@@ -115,7 +115,7 @@ test("tagging words in a room answer and a doc answer paints them in their own t
 
   await openDocTab(page, "Alpha");
   await expect.poll(() => painted(page), "the room thread left the screen with its paint").toEqual([]);
-  const docAnswer = await ask(page, "Ask about this doc…", "What is this?");
+  const docAnswer = await ask(page, "Ask about this artifact…", "What is this?");
   const docText = (await docAnswer.textContent())!;
   await tag(page, docAnswer);
   await expect.poll(() => painted(page)).toEqual([docText]);
