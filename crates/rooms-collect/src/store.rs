@@ -87,7 +87,9 @@ fn try_open(path: &Path) -> rusqlite::Result<Connection> {
 
 /// Opens an existing store read-only (search). WAL gives a consistent snapshot during writes.
 pub fn open_read_only(path: &Path) -> rusqlite::Result<Connection> {
-    Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
+    let c = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+    c.pragma_update(None, "busy_timeout", 5000)?;
+    Ok(c)
 }
 
 pub fn remove(path: &Path) {
@@ -175,6 +177,15 @@ fn row_event(r: &rusqlite::Row) -> rusqlite::Result<StoredEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reader_waits_for_a_busy_writer() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("c.db");
+        open(&p).unwrap();
+        let timeout: i64 = open_read_only(&p).unwrap().pragma_query_value(None, "busy_timeout", |r| r.get(0)).unwrap();
+        assert!(timeout > 0);
+    }
 
     #[test]
     fn stale_or_broken_store_is_rebuilt() {

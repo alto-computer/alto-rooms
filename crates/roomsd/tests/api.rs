@@ -145,6 +145,19 @@ async fn without_collect_data_there_are_no_conversations() {
 }
 
 #[tokio::test]
+async fn an_unreadable_collect_db_is_500_not_404() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let data = d.path().join("collect");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(rooms_collect::store::path_in(&data), b"this is not a database at all, not even close............................................").unwrap();
+    st.core.set_collect_data(&data);
+    let r = app.clone().oneshot(get("/v1/conversations/codex/s-1", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let r = app.oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
 async fn conversations_join_and_leave_a_room() {
     let (d, app, st) = app(false, "127.0.0.1:5000");
     let data = d.path().join("collect");

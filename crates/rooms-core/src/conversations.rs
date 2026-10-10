@@ -104,6 +104,16 @@ impl RoomsCore {
         rooms_collect::store::open_read_only(&path).ok()
     }
 
+    /// `id` as collect.db has it now; `None` when it has no such session or there is no collect.db
+    /// yet. A store that is there but cannot be read is an error, never "not found".
+    fn collect_get(&self, id: &ConversationId) -> Result<Option<Conversation>, CoreError> {
+        let Some(path) = lock(&self.inner).collect_db.clone() else { return Ok(None) };
+        if !path.exists() { return Ok(None); }
+        let unreadable = |e: rusqlite::Error| CoreError::Internal(format!("collect.db: {e}"));
+        let db = rooms_collect::store::open_read_only(&path).map_err(unreadable)?;
+        collect::get(&db, id).map_err(unreadable)
+    }
+
     fn room_id_set(&self) -> HashSet<RoomId> {
         lock(&self.inner).state.rooms.iter().map(|r| r.id.clone()).collect()
     }
@@ -123,11 +133,11 @@ impl RoomsCore {
     }
 
     /// One conversation with its room: fresh from collect.db when it has it, else as its room
-    /// last saw it. `NotFound` when neither knows it.
+    /// last saw it. `NotFound` when neither knows it; `Internal` when collect.db cannot be read.
     pub fn conversation(&self, id: &ConversationId) -> Result<Conversation, CoreError> {
         let member = load(&self.home, &self.room_id_set()).remove(id);
         let room_id = member.as_ref().map(|m| m.room_id.clone());
-        match (self.collect_db().and_then(|db| collect::get(&db, id).ok().flatten()), member) {
+        match (self.collect_get(id)?, member) {
             (Some(fresh), _) => Ok(Conversation { room_id, ..fresh }),
             (None, Some(m)) => Ok(m.snapshot.conversation(id.clone(), room_id)),
             (None, None) => Err(CoreError::NotFound),
@@ -169,7 +179,7 @@ impl RoomsCore {
     /// Puts a conversation in `room` (out of any other), or out of every room (`None`). Emits
     /// `conversation.moved` when that changes where it is.
     pub fn set_conversation_room(&self, id: &ConversationId, room: Option<RoomId>) -> Result<Conversation, CoreError> {
-        let fresh = self.collect_db().and_then(|db| collect::get(&db, id).ok().flatten());
+        let fresh = self.collect_get(id)?;
         let mut inner = lock(&self.inner);
         let rooms: HashSet<RoomId> = inner.state.rooms.iter().map(|r| r.id.clone()).collect();
         if room.as_ref().is_some_and(|r| !rooms.contains(r)) { return Err(CoreError::RoomNotFound); }
@@ -279,6 +289,20 @@ mod tests {
         assert_eq!(reopened.conversation(&id("s1")).unwrap(), seen[0], "kept by its room");
         assert!(matches!(reopened.conversation(&id("s2")), Err(CoreError::NotFound)));
         assert!(reopened.journal_day(&"2026-10-01".into()).unwrap().conversations.is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_collect_db_is_an_error_not_not_found() {
+        let f = fixture();
+        let db = rooms_collect::store::path_in(&f.data);
+        rooms_collect::store::remove(&db);
+        std::fs::write(&db, b"this is not a database at all, not even close............................................").unwrap();
+        let err = f.core.conversation(&id("s1")).unwrap_err();
+        assert_eq!(err.status(), 500, "{err}");
+        let room = f.core.create_room("A").unwrap().id;
+        assert_eq!(f.core.set_conversation_room(&id("s1"), Some(room)).unwrap_err().status(), 500);
+        rooms_collect::store::remove(&db);
+        assert!(matches!(f.core.conversation(&id("s1")), Err(CoreError::NotFound)), "no collect.db yet");
     }
 
     #[test]
