@@ -161,6 +161,20 @@ describe("ViewerStore", () => {
     expect(s.history.r.back).toEqual([{ kind: "journal", date: "2026-10-09" }]);
   });
 
+  it("a persisted New tab that becomes a Journal tab already open is dropped, with its history, for that tab", () => {
+    const saved = {
+      tabs: [{ id: "j", kind: "journal", date: "2026-10-09" }, { id: "r", kind: "room", roomId: "r1" }, { id: "n", kind: "new" }],
+      activeId: "n",
+      history: { n: { back: [{ kind: "room", roomId: "r2" }], forward: [] } },
+      firstRunAt: "2026-10-01T00:00:00.000Z",
+    };
+    const st = new ViewerStore(memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify(saved) }), clock("2026-10-09T12:00:00").now);
+    const s = st.getState();
+    expect(s.tabs).toEqual([{ id: "j", kind: "journal", date: "2026-10-09" }, { id: "r", kind: "room", roomId: "r1" }]);
+    expect(s.activeId).toBe("j");
+    expect(s.history).toEqual({});
+  });
+
   it("activateAt picks by index (-1 = last); cycle wraps around", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const n = st.getState().tabs[0].id;

@@ -128,18 +128,25 @@ function parseState(raw: string | null, today: string): ViewerState | null {
     if (!v || typeof v !== "object" || !Array.isArray(v.tabs) || !isStr(v.firstRunAt)) return null;
     const tabs: Tab[] = [];
     const seen = new Set<string>();
+    // A migrated New tab can equal a Journal tab already open; it goes, and stands for that one.
+    const twinOf = new Map<string, string>();
     for (const t of v.tabs) {
       const tab = parseTab(t, today);
-      if (tab && !seen.has(tab.id)) {
-        seen.add(tab.id);
-        tabs.push(tab);
+      if (!tab || seen.has(tab.id) || twinOf.has(tab.id)) continue;
+      const twin = tabs.find((x) => sameTab(x, tab));
+      if (twin) {
+        twinOf.set(tab.id, twin.id);
+        continue;
       }
+      seen.add(tab.id);
+      tabs.push(tab);
     }
     const lastVisit: Record<string, string> = {};
     if (v.lastVisit && typeof v.lastVisit === "object") {
       for (const [k, t] of Object.entries(v.lastVisit as Record<string, unknown>)) if (isStr(t)) lastVisit[k] = t;
     }
-    const activeId = isStr(v.activeId) && seen.has(v.activeId) ? v.activeId : (tabs[0]?.id ?? null);
+    const savedActive = isStr(v.activeId) ? (twinOf.get(v.activeId) ?? v.activeId) : null;
+    const activeId = savedActive && seen.has(savedActive) ? savedActive : (tabs[0]?.id ?? null);
     return {
       tabs,
       pluginPanel: parsePluginPanel(v.pluginPanel),
