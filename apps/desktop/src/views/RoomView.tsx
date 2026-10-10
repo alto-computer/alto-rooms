@@ -19,7 +19,7 @@ import { ArtifactCard } from "./ArtifactCard";
 import { ConversationCard } from "./ConversationCard";
 import { EditableTitle } from "./EditableTitle";
 import { EmptyRoom } from "./EmptyRoom";
-import { bandButton, perchFor, RoomBand } from "./RoomBand";
+import { bandButton, perchFor, RoomBand, type Perch } from "./RoomBand";
 import { SortBar } from "./SortBar";
 import { useVisitsAtArrival } from "./useVisitsAtArrival";
 import { INBOX_ID } from "@/lib/drag";
@@ -114,13 +114,18 @@ export function RoomView({ roomId }: { roomId: string }) {
     return info ? <Centered>This room is gone</Centered> : <div className="flex-1 bg-pane" />;
   }
 
+  // An empty room's Clew waits for its sessions: with some, it perches as over a few cards.
+  const perch: Perch = !info || !artifacts ? null : artifacts.length ? perchFor(artifacts.length) : listed === undefined ? null : conversations.length ? "end" : "start";
   let body: ReactNode;
   if (!shows("artifacts")) {
     body = null;
   } else if (artifacts === undefined) {
     body = loadError ? <Centered>{GENERIC_ERROR}</Centered> : null;
   } else if (artifacts.length === 0) {
-    body = info ? <EmptyRoom room={room} home={info.home} /> : null;
+    // A room holding only sessions shows them; whether it does is known once they are listed.
+    if (listed === undefined || !info) body = null;
+    else if (conversations.length) body = <p className="px-10 pt-7 text-small text-ink-3">No artifacts in this room yet</p>;
+    else body = <EmptyRoom room={room} home={info.home} />;
   } else {
     body = (
       <div data-grid className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-6 px-10 pt-7 pb-10">
@@ -152,7 +157,7 @@ export function RoomView({ roomId }: { roomId: string }) {
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} data-scroll-root className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:thin]", !readOnly && "pb-24")}>
         <RoomBand
-          perch={info && artifacts ? perchFor(artifacts.length) : null}
+          perch={perch}
           title={
             <EditableTitle
               key={room.id}

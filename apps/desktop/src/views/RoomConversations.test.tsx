@@ -85,6 +85,18 @@ describe("Room: conversations", () => {
     expect(within(screen.getByRole("region", { name: "Sessions" })).getByText("Cold start")).toBeInTheDocument();
   });
 
+  it("a room with sessions and no artifacts shows the sessions, not the empty room", async () => {
+    await renderWithStores(<RoomView roomId="p" />, {
+      rooms: [room("p", "벤치마크")],
+      artifacts: { p: [] },
+      conversations: [conversation("s1", { title: "Cold start", roomId: "p" })],
+    });
+    expect(within(await screen.findByRole("region", { name: "Sessions" })).getByText("Cold start")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing in 벤치마크 yet")).toBeNull();
+    expect(screen.getByText("No artifacts in this room yet")).toBeInTheDocument();
+    expect(screen.getByTestId("room-band")).toHaveAttribute("data-perch", "end");
+  });
+
   it("has no filter and no conversations section when the room has none", async () => {
     const h = await renderWithStores(<RoomView roomId="p" />, { rooms: [room("p", "벤치마크", { artifactCount: 1 })], artifacts: { p: [artifact("a1")] } });
     await waitFor(() => expect(h.client.listRoomConversations).toHaveBeenCalledWith("p"));
