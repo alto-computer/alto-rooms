@@ -1,16 +1,23 @@
 // The tagger's background page for the e2e tests: one "Tag" button over answer text, tags stored per
 // answer as quote + context and re-anchored on every open, a menu on a tagged range with Untag and
 // Open. `window.tagger` lets a test post hostile paint or call open from this frame.
-import { connect, connectSurfaces, surfacePath, type SurfaceId, type SurfaceRange } from "@alto-rooms/plugin-sdk";
+import { connect, connectSurfaces, surfacePath, type SurfaceId, type SurfaceRange, type SurfaceStyles } from "@alto-rooms/plugin-sdk";
 
 type Tag = { id: string; quote: string; prefix: string; suffix: string; start: number };
 type File = { version: 1; tags: Tag[] };
 
 const CONTEXT = 40;
-const COLORS = ["amber", "green", "red", "violet", "blue", "gray"] as const;
+/** Hi-Lighter's four document colors, so an answer tag reads like a document highlight. */
+const STYLES: SurfaceStyles = {
+  important: "rgba(199,154,62,0.28)",
+  agree: "rgba(122,153,113,0.26)",
+  disagree: "rgba(190,114,87,0.24)",
+  idk: "rgba(142,132,160,0.26)",
+};
+const STYLE_NAMES = Object.keys(STYLES);
 
 const rooms = await connect();
-const surfaces = connectSurfaces("tagger");
+const surfaces = connectSurfaces();
 const open = new Map<string, { surface: SurfaceId; text: string }>();
 const file = (s: SurfaceId) => `${surfacePath(s)}.json`;
 
@@ -34,9 +41,9 @@ async function repaint(s: SurfaceId) {
   const ranges: SurfaceRange[] = [];
   tags.forEach((t, i) => {
     const start = anchor(entry.text, t);
-    if (start >= 0) ranges.push({ id: t.id, start, end: start + t.quote.length, color: COLORS[i % COLORS.length] });
+    if (start >= 0) ranges.push({ id: t.id, start, end: start + t.quote.length, style: STYLE_NAMES[i % STYLE_NAMES.length] });
   });
-  surfaces.paint(s, ranges);
+  surfaces.paint(s, ranges, STYLES);
 }
 
 surfaces.onOpen((s, text) => {
@@ -85,7 +92,11 @@ declare global {
   interface Window {
     tagger: {
       surfaces(): SurfaceId[];
-      /** Posts a paint with one good range and three the app must drop: a CSS color, a style injection, a range past the text. */
+      /**
+       * Posts a paint with one good range and two the app must drop (an undeclared style, a range past
+       * the text), then one the app must refuse whole: a style named to break out of its rule and a
+       * color that is not one.
+       */
       hostile(): void;
       open(surface: SurfaceId, rangeId: string): Promise<void>;
       tagged(): Promise<string[]>;
@@ -99,22 +110,19 @@ declare global {
 window.tagger = {
   surfaces: () => [...open.values()].map((e) => e.surface),
   hostile() {
+    const post = (m: Record<string, unknown>) => window.parent.postMessage({ rooms: "surface", v: 1, type: "paint", ...m }, "*");
     for (const { surface, text } of open.values()) {
-      window.parent.postMessage(
-        {
-          rooms: "surface",
-          v: 1,
-          type: "paint",
-          surface,
-          ranges: [
-            { id: "ok", start: 0, end: 4, color: "green" },
-            { id: "css", start: 0, end: 1, color: "url(x)" },
-            { id: "inject", start: 0, end: 1, color: "x;}body{display:none" },
-            { id: "past", start: 0, end: text.length + 10, color: "red" },
-          ],
-        },
-        "*",
-      );
+      post({
+        surface,
+        styles: STYLES,
+        ranges: [
+          { id: "ok", start: 0, end: 4, style: "agree" },
+          { id: "undeclared", start: 0, end: 1, style: "pink" },
+          { id: "past", start: 0, end: text.length + 10, style: "disagree" },
+        ],
+      });
+      post({ surface, styles: { "x;}body{display:none": "red" }, ranges: [{ id: "inject", start: 0, end: 1, style: "x;}body{display:none" }] });
+      post({ surface, styles: { css: "url(x)" }, ranges: [{ id: "css", start: 0, end: 1, style: "css" }] });
     }
   },
   open: (surface, rangeId) => rooms.open({ surface, rangeId }),
@@ -125,7 +133,7 @@ window.tagger = {
     if (!longest) return;
     const step = Math.max(6, Math.floor(longest.text.length / n));
     const ranges: SurfaceRange[] = [];
-    for (let i = 0; i < n && i * step + 5 <= longest.text.length; i++) ranges.push({ id: `m${i}`, start: i * step, end: i * step + 5, color: "amber" });
-    surfaces.paint(longest.surface, ranges);
+    for (let i = 0; i < n && i * step + 5 <= longest.text.length; i++) ranges.push({ id: `m${i}`, start: i * step, end: i * step + 5, style: "important" });
+    surfaces.paint(longest.surface, ranges, STYLES);
   },
 };

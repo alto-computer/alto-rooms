@@ -63,7 +63,7 @@ describe("TextSurface", () => {
       </TextSurface>,
     );
     await act(async () => {});
-    seat.receive({ rooms: "surface", v: 1, type: "paint", surface: id, ranges: [{ id: "q", start: 4, end: 9, color: "amber" }] });
+    seat.receive({ rooms: "surface", v: 1, type: "paint", surface: id, styles: { amber: "#c79a3e" }, ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
     const text = view.container.querySelector("p")!.firstChild!;
     (document as unknown as { caretPositionFromPoint: unknown }).caretPositionFromPoint = (x: number) => ({ offsetNode: text, offset: x });
     const root = view.container.querySelector("[data-surface]") as HTMLElement;

@@ -202,11 +202,12 @@ The page uses `connect()` for storage and `open`, and `connectSurfaces` from SDK
 import { connect, connectSurfaces, surfacePath } from "@alto-rooms/plugin-sdk";
 
 const rooms = await connect();
-const surfaces = connectSurfaces("highlight");
+const surfaces = connectSurfaces();
+const styles = { yellow: "rgba(255, 212, 0, 0.35)" };
 surfaces.setActions([{ id: "yellow", title: "Highlight", color: "#ffd400" }]);
 surfaces.onOpen(async (surface, text) => {
   const saved = JSON.parse((await rooms.storage.read(`${surfacePath(surface)}.json`)) ?? "[]");
-  surfaces.paint(surface, saved.map((h) => ({ id: h.id, start: text.indexOf(h.quote), end: text.indexOf(h.quote) + h.quote.length, color: "amber" })));
+  surfaces.paint(surface, saved.map((h) => ({ id: h.id, start: text.indexOf(h.quote), end: text.indexOf(h.quote) + h.quote.length, style: "yellow" })), styles);
 });
 surfaces.onAction((id, { surface, start, end, text }) => save(surface, { quote: text, start, end }));
 surfaces.onRangeClick((surface, rangeId) => surfaces.menu(surface, rangeId, [{ id: "delete", title: "Delete" }]));
@@ -219,7 +220,7 @@ surfaces.ready();
 | `onClose(cb)` | The answer left the screen. Its paint went with it |
 | `setActions(items)` | Replaces your buttons in the selection bar over answers, shown after Ask: up to 6 `{ id, title, color? }`, as for content scripts |
 | `onAction(cb)` | Calls `cb(id, { surface, start, end, text })` when one of your buttons is clicked over a selection in an answer |
-| `paint(surface, ranges)` | Replaces your ranges on that answer: up to 1,000 `{ id, start, end, color }`. `color` is one of `amber`, `green`, `red`, `violet`, `blue`, `gray`; the app owns the paint and draws it with the CSS Custom Highlight API, so the answer's DOM never changes. A range outside the text, a repeated id, or another color is dropped; the rest paint |
+| `paint(surface, ranges, styles?)` | Replaces your ranges on that answer: up to 1,000 `{ id, start, end, style }`. `styles` maps each style name (up to 32 of `a-z 0-9 -`, starting with a letter) to any CSS color the browser accepts, up to 64 characters; names stay declared for later paints, up to 16 per plugin. The app draws each style as one `::highlight` rule with that `background-color`, so the answer's DOM never changes. A range outside the text, a repeated id, or an undeclared style is dropped and the rest paint; a bad style name or color refuses the whole paint |
 | `onRangeClick(cb)` | The user clicked one of your painted ranges. Answer with `menu(surface, rangeId, items)` to show up to 6 buttons there, or do nothing |
 | `onRangeAction(cb)` | Calls `cb(surface, rangeId, actionId)` when the user picks from that menu |
 | `rooms.open({ surface, rangeId })` | Opens the thread that holds the answer, unfolds it, and flashes your range once you have painted it |

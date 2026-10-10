@@ -23,10 +23,13 @@ afterEach(() => vi.unstubAllGlobals());
 const answer = (turnId: string): SurfaceId => ({ kind: "answer", scope: { kind: "room", roomId: "r1" }, turnId });
 const painted = (name: string) => (highlights.get(name)?.ranges ?? []).map((r) => r.toString());
 
+/** The styles the test plugin paints with; a paint that names none declares these. */
+const STYLES = { amber: "#c79a3e", blue: "#608cc8", green: "#7a9971" };
+
 function seat(hub: SurfaceHub, plugin = "tagger") {
   const sent: Record<string, unknown>[] = [];
   const s = hub.register(plugin, (m) => void sent.push(m));
-  const say = (m: Record<string, unknown>) => s.receive({ rooms: "surface", v: 1, ...m });
+  const say = (m: Record<string, unknown>) => s.receive({ rooms: "surface", v: 1, ...(m.type === "paint" ? { styles: STYLES } : {}), ...m });
   return { sent, say, dispose: s.dispose, types: () => sent.map((m) => m.type) };
 }
 
@@ -52,21 +55,21 @@ describe("SurfaceHub", () => {
     expect(tagger.sent[2]).toMatchObject({ surface: answer("t1") });
   });
 
-  it("paints the ranges a frame sends with the core palette, per plugin and color, and clears them with the surface", () => {
+  it("paints the ranges a frame sends with the styles it declares, per plugin and style, and clears them with the surface", () => {
     const hub = new SurfaceHub();
     surface(hub, answer("t1"), "<p>the <b>quick</b> brown fox</p>");
     const tagger = seat(hub);
-    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "a", start: 4, end: 9, color: "amber" }, { id: "b", start: 10, end: 15, color: "blue" }] });
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "a", start: 4, end: 9, style: "amber" }, { id: "b", start: 10, end: 15, style: "blue" }] });
     expect(painted("rooms-tagger-amber")).toEqual(["quick"]);
     expect(painted("rooms-tagger-blue")).toEqual(["brown"]);
-    expect(document.querySelector("style[data-surface-highlights]")!.textContent).toContain("::highlight(rooms-tagger-amber) { background-color: rgba(199, 154, 62, 0.28); }");
+    expect(document.querySelector("style[data-surface-highlights]")!.textContent).toContain(`::highlight(rooms-tagger-amber) { background-color: ${STYLES.amber}; }`);
     expect(document.body.innerHTML, "no DOM mutation").toBe("<div><p>the <b>quick</b> brown fox</p></div>");
     hub.close(surfaceKey(answer("t1")));
     expect(painted("rooms-tagger-amber")).toEqual([]);
     expect(hub.dropped).toBe(0);
   });
 
-  it("drops a bad color, a range past the end, a bad id, and a paint for a closed surface, and counts each", () => {
+  it("drops an undeclared style, a range past the end, a bad id, and a paint for a closed surface, and counts each", () => {
     const hub = new SurfaceHub();
     surface(hub, answer("t1"), "<p>0123456789</p>");
     const tagger = seat(hub);
@@ -74,25 +77,71 @@ describe("SurfaceHub", () => {
       type: "paint",
       surface: answer("t1"),
       ranges: [
-        { id: "ok", start: 0, end: 2, color: "green" },
-        { id: "css", start: 2, end: 4, color: "url(x)" },
-        { id: "style", start: 2, end: 4, color: "x;}body{display:none" },
-        { id: "past", start: 8, end: 11, color: "green" },
-        { id: "neg", start: -1, end: 2, color: "green" },
-        { id: "float", start: 0.5, end: 2, color: "green" },
-        { id: "x".repeat(65), start: 4, end: 6, color: "green" },
-        { id: "ok", start: 4, end: 6, color: "green" },
+        { id: "ok", start: 0, end: 2, style: "green" },
+        { id: "undeclared", start: 2, end: 4, style: "pink" },
+        { id: "past", start: 8, end: 11, style: "green" },
+        { id: "neg", start: -1, end: 2, style: "green" },
+        { id: "float", start: 0.5, end: 2, style: "green" },
+        { id: "x".repeat(65), start: 4, end: 6, style: "green" },
+        { id: "ok", start: 4, end: 6, style: "green" },
       ],
     });
     expect(painted("rooms-tagger-green")).toEqual(["01"]);
+    expect(hub.dropped).toBe(6);
+    tagger.say({ type: "paint", surface: answer("gone"), ranges: [{ id: "a", start: 0, end: 1, style: "green" }] });
     expect(hub.dropped).toBe(7);
-    tagger.say({ type: "paint", surface: answer("gone"), ranges: [{ id: "a", start: 0, end: 1, color: "green" }] });
-    expect(hub.dropped).toBe(8);
     tagger.say({ type: "paint", surface: answer("t1"), ranges: "no" });
-    tagger.say({ type: "paint", surface: answer("t1"), ranges: Array.from({ length: 1001 }, (_, i) => ({ id: `r${i}`, start: 0, end: 1, color: "green" })) });
-    expect(hub.dropped).toBe(10);
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: Array.from({ length: 1001 }, (_, i) => ({ id: `r${i}`, start: 0, end: 1, style: "green" })) });
+    expect(hub.dropped).toBe(9);
     expect(painted("rooms-tagger-green"), "a refused paint keeps the last good one").toEqual(["01"]);
-    expect(document.querySelector("style[data-surface-highlights]")!.textContent).not.toContain("display:none");
+  });
+
+  it("refuses a whole paint whose styles carry a bad name or a color the browser rejects, so neither reaches the stylesheet", () => {
+    const hub = new SurfaceHub();
+    surface(hub, answer("t1"), "<p>0123456789</p>");
+    const tagger = seat(hub);
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "ok", start: 0, end: 2, style: "green" }] });
+    const before = hub.dropped;
+    for (const styles of [
+      { "x;}body{display:none": "#000000" },
+      { "Green": "#000000" },
+      { "1st": "#000000" },
+      { ["x".repeat(33)]: "#000000" },
+      { css: "url(x)" },
+      { css: "red;}body{display:none" },
+      { css: "#" + "f".repeat(70) },
+      { css: 7 },
+      "green",
+      [],
+    ]) {
+      tagger.say({ type: "paint", surface: answer("t1"), styles, ranges: [{ id: "a", start: 0, end: 1, style: "green" }] });
+    }
+    expect(hub.dropped).toBe(before + 10);
+    expect(painted("rooms-tagger-green"), "a refused paint keeps the last good one").toEqual(["01"]);
+    const sheet = document.querySelector("style[data-surface-highlights]")!.textContent!;
+    expect(sheet).not.toContain("display:none");
+    expect(sheet).not.toContain("url(");
+    expect(sheet).not.toContain("Green");
+    tagger.say({ type: "paint", surface: answer("t1"), styles: Object.fromEntries(Array.from({ length: 14 }, (_, i) => [`s${i}`, "#111111"])), ranges: [] });
+    expect(hub.dropped, "17 styles in all is one too many").toBe(before + 11);
+    tagger.say({ type: "paint", surface: answer("t1"), styles: Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`s${i}`, "#111111"])), ranges: [] });
+    expect(hub.dropped, "16 is the cap").toBe(before + 11);
+  });
+
+  it("paints with any color the browser's CSS.supports accepts, the rule a plugin's action colors already follow", () => {
+    const hub = new SurfaceHub();
+    surface(hub, answer("t1"), "<p>0123456789</p>");
+    const tagger = seat(hub);
+    tagger.say({ type: "paint", surface: answer("t1"), styles: { mustard: "rgba(199,154,62,0.28)" }, ranges: [{ id: "a", start: 0, end: 2, style: "mustard" }] });
+    expect(hub.dropped, "this test's CSS.supports stub takes hex only, as the hub asked it").toBe(1);
+    vi.stubGlobal("CSS", { highlights, supports: (_: string, v: string) => v.startsWith("rgba(") });
+    tagger.say({ type: "paint", surface: answer("t1"), styles: { mustard: "rgba(199,154,62,0.28)" }, ranges: [{ id: "a", start: 0, end: 2, style: "mustard" }] });
+    expect(hub.dropped).toBe(1);
+    expect(painted("rooms-tagger-mustard")).toEqual(["01"]);
+    expect(document.querySelector("style[data-surface-highlights]")!.textContent).toContain("::highlight(rooms-tagger-mustard) { background-color: rgba(199,154,62,0.28); }");
+    tagger.say({ type: "paint", surface: answer("t1"), styles: { mustard: "rgba(1,2,3,0.5)" }, ranges: [{ id: "a", start: 2, end: 4, style: "mustard" }] });
+    expect(document.querySelector("style[data-surface-highlights]")!.textContent, "a declared name replaces its color").toContain("rgba(1,2,3,0.5)");
+    expect(painted("rooms-tagger-mustard")).toEqual(["23"]);
   });
 
   it("lists plugin actions in id order and posts a click with the selection's offsets and text", () => {
@@ -126,7 +175,7 @@ describe("SurfaceHub", () => {
     const hub = new SurfaceHub();
     const root = surface(hub, answer("t1"), "<p>the quick brown fox</p>");
     const tagger = seat(hub);
-    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, color: "amber" }] });
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
     const textNode = root.querySelector("p")!.firstChild!;
     const caret = vi.fn((x: number) => ({ offsetNode: textNode, offset: x }));
     (document as unknown as { caretPositionFromPoint: unknown }).caretPositionFromPoint = caret;
@@ -150,14 +199,14 @@ describe("SurfaceHub", () => {
     surface(hub, answer("t1"), "<p>the quick brown fox</p>");
     const tagger = seat(hub);
     tagger.say({ type: "actions", items: [{ id: "tag", title: "Tag" }] });
-    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, color: "amber" }] });
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
     expect(painted("rooms-tagger-amber")).toEqual(["quick"]);
     tagger.dispose();
     expect(highlights.has("rooms-tagger-amber")).toBe(false);
     expect(hub.getSnapshot().actions).toEqual([]);
     expect(document.querySelector("style[data-surface-highlights]")!.textContent).not.toContain("tagger");
     const again = seat(hub);
-    again.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, color: "amber" }] });
+    again.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
     expect(painted("rooms-tagger-amber")).toEqual(["quick"]);
     const before = hub.dropped;
     again.say({ rooms: 1, type: "paint" });
@@ -178,9 +227,9 @@ describe("SurfaceHub", () => {
     vi.advanceTimersByTime(500);
     expect(hub.getSnapshot().reveal, "the surface is open but the plugin has not painted yet").not.toBeNull();
     expect(highlights.has("rooms-flash")).toBe(false);
-    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "other", start: 0, end: 3, color: "amber" }] });
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "other", start: 0, end: 3, style: "amber" }] });
     expect(hub.getSnapshot().reveal, "a paint without the range is not it").not.toBeNull();
-    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, color: "amber" }] });
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
     expect(hub.getSnapshot().reveal).toBeNull();
     expect(painted("rooms-flash")).toEqual(["quick"]);
     expect(root.scrollIntoView).toHaveBeenCalledWith({ block: "center" });
@@ -199,7 +248,7 @@ describe("SurfaceHub", () => {
     const hub = new SurfaceHub();
     const root = surface(hub, answer("t1"), "<p>the quick brown fox</p>");
     const tagger = seat(hub);
-    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, color: "amber" }] });
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
     root.innerHTML = "<p>a longer answer, the quick brown fox</p>";
     hub.open(answer("t1"), root);
     expect(painted("rooms-tagger-amber"), "old offsets are not re-applied to new text").toEqual([]);

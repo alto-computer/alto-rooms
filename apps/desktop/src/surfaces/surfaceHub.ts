@@ -3,8 +3,8 @@
  * (today a finished chat answer) registers its element and text index here; every plugin with
  * `surfaces.text` gets the text in its hidden background frame and answers with ranges to paint
  * and buttons for the selection bar. Core paints with the CSS Custom Highlight API and never
- * touches the surface's DOM. Everything from a frame is untrusted: shapes, sizes, offsets and
- * colors are checked here, and a surface's ranges die with the surface.
+ * touches the surface's DOM. Everything from a frame is untrusted: shapes, sizes, offsets, style
+ * names and colors are checked here, and a surface's ranges die with the surface.
  */
 import type { AskScope } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
@@ -16,26 +16,20 @@ export type SurfaceId = { kind: "answer"; scope: AskScope; turnId: string };
 /** `answer:<scopeKey>/<turnId>`: the one name a surface has while open. */
 export const surfaceKey = (s: SurfaceId): string => `${s.kind}:${scopeKey(s.scope)}/${s.turnId}`;
 
-/** The colors a plugin may paint with. Core owns the paint, so a frame names a token, never a CSS value. */
-export const SURFACE_COLORS = {
-  amber: "rgba(199, 154, 62, 0.28)",
-  green: "rgba(122, 153, 113, 0.26)",
-  red: "rgba(190, 114, 87, 0.24)",
-  violet: "rgba(142, 132, 160, 0.26)",
-  blue: "rgba(96, 140, 200, 0.26)",
-  gray: "rgba(140, 140, 140, 0.22)",
-} as const;
-export type SurfaceColor = keyof typeof SURFACE_COLORS;
-const COLORS = Object.keys(SURFACE_COLORS) as SurfaceColor[];
 const FLASH = "rooms-flash";
 
 /** Ranges one `paint` may carry for one surface. */
 export const MAX_RANGES = 1000;
+/** Styles one plugin may declare over its lifetime; each is one `::highlight` rule. */
+export const MAX_STYLES = 16;
+const MAX_COLOR_LENGTH = 64;
 const REVEAL_WAIT_MS = 10_000;
 const ID = /^[A-Za-z0-9_.:-]{1,64}$/;
+/** A style name goes into a `::highlight()` selector as is, so it is a plain lowercase identifier. */
+const STYLE = /^[a-z][a-z0-9-]{0,31}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-export type SurfaceRange = { id: string; start: number; end: number; color: SurfaceColor };
+export type SurfaceRange = { id: string; start: number; end: number; style: string };
 /** Where a selection lies: inside one open surface, as offsets into its text. */
 export type SurfaceSpan = { key: string; start: number; end: number };
 export type SurfaceAction = ContentAction & { plugin: string };
@@ -58,14 +52,17 @@ type HostMessage =
   | { type: "range.click"; surface: SurfaceId; rangeId: string }
   | { type: "range.action"; surface: SurfaceId; rangeId: string; actionId: string };
 
+/** A plugin's style names and the color each paints with. */
+type Styles = Map<string, string>;
+
 type FrameMessage =
   | { type: "ready" }
   | { type: "actions"; items: ContentAction[] }
-  | { type: "paint"; key: string; ranges: SurfaceRange[]; dropped: number }
+  | { type: "paint"; key: string; styles: Styles; ranges: SurfaceRange[]; dropped: number }
   | { type: "menu"; key: string; rangeId: string; items: ContentAction[] };
 
 type OpenSurface = { id: SurfaceId; key: string; root: HTMLElement; index: TextIndex };
-type Seat = { id: string; post: (m: HostMessage) => void; actions: ContentAction[]; paints: Map<string, SurfaceRange[]> };
+type Seat = { id: string; post: (m: HostMessage) => void; actions: ContentAction[]; styles: Styles; paints: Map<string, SurfaceRange[]> };
 
 /** The surface a plugin named, as JSON from its frame, or null. */
 export function parseSurfaceId(v: unknown): SurfaceId | null {
@@ -82,22 +79,38 @@ export function parseSurfaceId(v: unknown): SurfaceId | null {
 
 const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
 
-/** Ranges inside `length` with a palette color and a short id; others are counted, not kept. */
-function parseRanges(v: unknown, length: number): { ranges: SurfaceRange[]; dropped: number } | null {
+/**
+ * `known` plus the styles a paint declares, or null when a name is not an identifier, a color is
+ * not one the browser accepts, or the plugin would hold more than MAX_STYLES. A declared name
+ * replaces its earlier color.
+ */
+function parseStyles(v: unknown, known: Styles): Styles | null {
+  if (v === undefined) return known;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const styles = new Map(known);
+  for (const [name, color] of Object.entries(v as Record<string, unknown>)) {
+    if (!STYLE.test(name) || typeof color !== "string" || color.length > MAX_COLOR_LENGTH || !isColor(color)) return null;
+    styles.set(name, color);
+  }
+  return styles.size <= MAX_STYLES ? styles : null;
+}
+
+/** Ranges inside `length` with a declared style and a short id; others are counted, not kept. */
+function parseRanges(v: unknown, length: number, styles: Styles): { ranges: SurfaceRange[]; dropped: number } | null {
   if (!Array.isArray(v) || v.length > MAX_RANGES) return null;
   const ranges: SurfaceRange[] = [];
   let dropped = 0;
   for (const it of v as unknown[]) {
-    const { id, start, end, color } = (it && typeof it === "object" ? it : {}) as Record<string, unknown>;
+    const { id, start, end, style } = (it && typeof it === "object" ? it : {}) as Record<string, unknown>;
     const ok =
-      typeof id === "string" && ID.test(id) && !ranges.some((r) => r.id === id) && isInt(start) && isInt(end) && start >= 0 && start < end && end <= length && typeof color === "string" && COLORS.includes(color as SurfaceColor);
-    if (ok) ranges.push({ id, start, end, color: color as SurfaceColor });
+      typeof id === "string" && ID.test(id) && !ranges.some((r) => r.id === id) && isInt(start) && isInt(end) && start >= 0 && start < end && end <= length && typeof style === "string" && styles.has(style);
+    if (ok) ranges.push({ id, start, end, style: style as string });
     else dropped++;
   }
   return { ranges, dropped };
 }
 
-function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurface>): FrameMessage | null {
+function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurface>, known: Styles): FrameMessage | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
   if (d.rooms !== "surface" || d.v !== 1) return null;
@@ -110,8 +123,9 @@ function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurf
   const open = id && surfaces.get(surfaceKey(id));
   if (!open) return null;
   if (d.type === "paint") {
-    const parsed = parseRanges(d.ranges, open.index.text.length);
-    return parsed ? { type: "paint", key: open.key, ...parsed } : null;
+    const styles = parseStyles(d.styles, known);
+    const parsed = styles && parseRanges(d.ranges, open.index.text.length, styles);
+    return styles && parsed ? { type: "paint", key: open.key, styles, ...parsed } : null;
   }
   if (d.type === "menu" && typeof d.rangeId === "string" && ID.test(d.rangeId)) {
     const items = parseActions(d.items, isColor);
@@ -123,7 +137,7 @@ function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurf
 const registry = (): HighlightRegistry | null =>
   typeof CSS !== "undefined" && "highlights" in CSS && typeof Highlight !== "undefined" ? CSS.highlights : null;
 
-const highlightName = (plugin: string, color: SurfaceColor) => `rooms-${plugin}-${color}`;
+const highlightName = (plugin: string, style: string) => `rooms-${plugin}-${style}`;
 
 /** The caret at a point, in whichever form the engine offers. */
 function caretAt(doc: Document, x: number, y: number): { node: Node; offset: number } | null {
@@ -195,13 +209,13 @@ export class SurfaceHub {
   /** One plugin's background frame: `receive` takes its messages, `dispose` forgets its paint and buttons. */
   register(plugin: string, post: (m: Record<string, unknown>) => void): { receive(data: unknown): void; dispose(): void } {
     if (!/^[a-z0-9-]{2,40}$/.test(plugin)) throw new Error(`not a plugin id: ${plugin}`);
-    const seat: Seat = { id: plugin, post: (m) => post({ rooms: "surface", v: 1, ...m }), actions: [], paints: new Map() };
+    const seat: Seat = { id: plugin, post: (m) => post({ rooms: "surface", v: 1, ...m }), actions: [], styles: new Map(), paints: new Map() };
     this.seats.set(plugin, seat);
     this.restyle();
     return {
       receive: (data) => {
         if (!data || typeof data !== "object" || (data as { rooms?: unknown }).rooms !== "surface") return;
-        const m = parseFrameMessage(data, this.surfaces);
+        const m = parseFrameMessage(data, this.surfaces, seat.styles);
         if (!m) {
           this.dropped++;
           return;
@@ -216,6 +230,10 @@ export class SurfaceHub {
             return;
           case "paint": {
             this.dropped += m.dropped;
+            if (m.styles !== seat.styles) {
+              seat.styles = m.styles;
+              this.restyle();
+            }
             seat.paints.set(m.key, m.ranges);
             this.repaint(seat);
             const r = this.snapshot.reveal;
@@ -239,7 +257,7 @@ export class SurfaceHub {
         if (this.seats.get(plugin) !== seat) return;
         this.seats.delete(plugin);
         const reg = registry();
-        for (const c of COLORS) reg?.delete(highlightName(plugin, c));
+        for (const style of seat.styles.keys()) reg?.delete(highlightName(plugin, style));
         this.restyle();
         this.set({ actions: this.allActions(), menu: this.snapshot.menu?.plugin === plugin ? null : this.snapshot.menu });
       },
@@ -333,23 +351,23 @@ export class SurfaceHub {
   private repaint(seat: Seat): void {
     const reg = registry();
     if (!reg) return;
-    const byColor = new Map<SurfaceColor, Range[]>(COLORS.map((c) => [c, []]));
+    const byStyle = new Map<string, Range[]>([...seat.styles.keys()].map((s) => [s, []]));
     for (const [key, ranges] of seat.paints) {
       const s = this.surfaces.get(key);
       if (!s) continue;
       for (const r of ranges) {
         const range = rangeAt(s.index, r.start, r.end);
-        if (range) byColor.get(r.color)!.push(range);
+        if (range) byStyle.get(r.style)!.push(range);
       }
     }
-    for (const [color, ranges] of byColor) reg.set(highlightName(seat.id, color), new Highlight(...ranges));
+    for (const [style, ranges] of byStyle) reg.set(highlightName(seat.id, style), new Highlight(...ranges));
   }
 
-  /** One rule per plugin and color, plus the flash: a plugin names a token, the stylesheet holds the value. */
+  /** One rule per plugin and style, plus the flash: the name is an identifier and the color passed `CSS.supports`, so neither can escape its rule. */
   private restyle(): void {
     if (typeof document === "undefined") return;
     const rules = [`::highlight(${FLASH}) { background-color: rgba(255, 196, 0, 0.55); }`];
-    for (const plugin of this.seats.keys()) for (const c of COLORS) rules.push(`::highlight(${highlightName(plugin, c)}) { background-color: ${SURFACE_COLORS[c]}; }`);
+    for (const seat of this.seats.values()) for (const [style, color] of seat.styles) rules.push(`::highlight(${highlightName(seat.id, style)}) { background-color: ${color}; }`);
     if (!this.style) {
       this.style = document.createElement("style");
       this.style.dataset.surfaceHighlights = "";

@@ -117,7 +117,7 @@ async function paintCost(page: Page, frame: Frame): Promise<{ latency: number; f
       w.__patched = true;
       const set = CSS.highlights.set.bind(CSS.highlights);
       CSS.highlights.set = (name, h) => {
-        if (name === "rooms-tagger-amber" && h.size === n) Object.assign(w.__paint!, { setAt: Date.now(), setSize: h.size });
+        if (name === "rooms-tagger-important" && h.size === n) Object.assign(w.__paint!, { setAt: Date.now(), setSize: h.size });
         return set(name, h);
       };
     }
@@ -128,7 +128,7 @@ async function paintCost(page: Page, frame: Frame): Promise<{ latency: number; f
       let frames = 0;
       const tick = () => {
         frames++;
-        const h = CSS.highlights.get("rooms-tagger-amber");
+        const h = CSS.highlights.get("rooms-tagger-important");
         if (h && h.size === n) w.__paint!.frames = frames;
         else if (frames < 120) requestAnimationFrame(tick);
       };
@@ -232,7 +232,7 @@ test("surface perf: selection-to-bar, 200-range paint, idle cost", async ({ page
     }
     report("paint-200-latency-ms", { label: "frame's post to CSS.highlights.set, wall clock" }, latency);
     report("paint-200-frames", { label: "rAF ticks until CSS.highlights holds 200" }, frames);
-    expect(await page.evaluate(() => CSS.highlights.get("rooms-tagger-amber")?.size)).toBe(RANGES);
+    expect(await page.evaluate(() => CSS.highlights.get("rooms-tagger-important")?.size)).toBe(RANGES);
   }
   await idle(page, `${label}, 30 turns open`);
 });

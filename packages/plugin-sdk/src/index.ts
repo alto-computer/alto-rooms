@@ -68,7 +68,7 @@ type Inbound =
   | { rooms: 1; id: string; result?: unknown; error?: { code: PluginErrorCode; message?: string } };
 
 export { connectContent, type ContentAction, type ContentSelection, type RoomsContent } from "./content";
-export { connectSurfaces, surfaceKey, surfacePath, type AnswerScope, type RoomsSurfaces, type SurfaceColor, type SurfaceId, type SurfaceRange, type SurfaceSelection } from "./surfaces";
+export { connectSurfaces, surfaceKey, surfacePath, type AnswerScope, type RoomsSurfaces, type SurfaceId, type SurfaceRange, type SurfaceSelection, type SurfaceStyles } from "./surfaces";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 

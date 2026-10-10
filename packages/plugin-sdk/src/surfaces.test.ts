@@ -19,23 +19,24 @@ const answer: SurfaceId = { kind: "answer", scope: { kind: "room", roomId: "r1" 
 const fromApp = (m: Record<string, unknown>) => ({ rooms: "surface", v: 1, ...m });
 
 describe("connectSurfaces", () => {
-  it("posts ready, actions, paint and menu with the surface envelope", () => {
-    const s = connectSurfaces("tagger");
+  it("posts ready, actions, paint and menu with the surface envelope, and passes styles through for the app to judge", () => {
+    const s = connectSurfaces();
     s.ready();
     s.setActions([{ id: "tag", title: "Tag", color: "#ffd400" }]);
-    s.paint(answer, [{ id: "a", start: 0, end: 3, color: "amber" }]);
+    s.paint(answer, [{ id: "a", start: 0, end: 3, style: "mustard" }], { mustard: "rgba(199,154,62,0.28)" });
+    s.paint(answer, [{ id: "a", start: 0, end: 3, style: "mustard" }]);
     s.menu(answer, "a", [{ id: "untag", title: "Untag" }]);
     expect(host.sent).toEqual([
       fromApp({ type: "ready" }),
       fromApp({ type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] }),
-      fromApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, color: "amber" }] }),
+      fromApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }], styles: { mustard: "rgba(199,154,62,0.28)" } }),
+      fromApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }] }),
       fromApp({ type: "menu", surface: answer, rangeId: "a", items: [{ id: "untag", title: "Untag" }] }),
     ]);
-    expect(s.pluginId).toBe("tagger");
   });
 
   it("hands each app message to its listeners, until they unsubscribe", () => {
-    const s = connectSurfaces("tagger");
+    const s = connectSurfaces();
     const got: unknown[] = [];
     const offOpen = s.onOpen((surface, text) => got.push(["open", surface, text]));
     s.onClose((surface) => got.push(["close", surface]));
@@ -59,7 +60,7 @@ describe("connectSurfaces", () => {
   });
 
   it("ignores messages from another window, another channel, or another version", () => {
-    const s = connectSurfaces("tagger");
+    const s = connectSurfaces();
     const got: unknown[] = [];
     s.onOpen((_, text) => got.push(text));
     host.deliver(fromApp({ type: "surface.open", surface: answer, text: "forged" }), window);

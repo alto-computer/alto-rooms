@@ -13,8 +13,12 @@ export type AnswerScope = { kind: "doc"; fileKey: string } | { kind: "room"; roo
 /** A piece of host text plugins may read and mark. Today: one finished chat answer. */
 export type SurfaceId = { kind: "answer"; scope: AnswerScope; turnId: string };
 
-/** The colors the app paints with. The app owns the paint, so a range names a token, never a CSS value. */
-export type SurfaceColor = "amber" | "green" | "red" | "violet" | "blue" | "gray";
+/**
+ * Your paint styles: a name to the CSS color it paints with. A name is up to 32 of `a-z 0-9 -`,
+ * starting with a letter; a color is anything the app's browser accepts for `CSS.supports("color", v)`,
+ * up to 64 characters. The app keeps up to 16 names per plugin and draws each as one highlight.
+ */
+export type SurfaceStyles = Record<string, string>;
 
 /** `[start, end)` offsets into the surface's text, as `onOpen` gave it. */
 export interface SurfaceRange {
@@ -22,7 +26,8 @@ export interface SurfaceRange {
   id: string;
   start: number;
   end: number;
-  color: SurfaceColor;
+  /** A name from the styles you declared. */
+  style: string;
 }
 
 /** What the user selected when one of your buttons was clicked. */
@@ -46,11 +51,14 @@ export function surfacePath(s: SurfaceId): string {
 }
 
 export interface RoomsSurfaces {
-  readonly pluginId: string;
   /** Replaces your buttons in the selection bar over answers, shown after Ask; at most 6. */
   setActions(items: ContentAction[]): void;
-  /** Replaces your ranges on one open surface; up to 1,000. Offsets outside the text and unknown colors are dropped. */
-  paint(surface: SurfaceId, ranges: SurfaceRange[]): void;
+  /**
+   * Replaces your ranges on one open surface; up to 1,000. `styles` declares the names the ranges
+   * use, and stays declared for later paints; a range naming an undeclared style, or outside the
+   * text, is dropped. A paint with a bad style name or color is refused whole.
+   */
+  paint(surface: SurfaceId, ranges: SurfaceRange[], styles?: SurfaceStyles): void;
   /** Shows a menu over one of your painted ranges, in the same shape as `setActions`; at most 6. */
   menu(surface: SurfaceId, rangeId: string, items: ContentAction[]): void;
   /** A surface is on screen with this text. Also fires for every open surface right after `ready()`, and again when an answer's text changes. */
@@ -74,7 +82,7 @@ type Inbound =
   | { type: "range.click"; surface: SurfaceId; rangeId: string }
   | { type: "range.action"; surface: SurfaceId; rangeId: string; actionId: string };
 
-export function connectSurfaces(pluginId: string): RoomsSurfaces {
+export function connectSurfaces(): RoomsSurfaces {
   const parent = window.parent;
   const post = (m: Record<string, unknown>) => parent.postMessage({ rooms: "surface", v: 1, ...m }, "*");
   const listeners = {
@@ -111,9 +119,8 @@ export function connectSurfaces(pluginId: string): RoomsSurfaces {
   });
 
   return {
-    pluginId,
     setActions: (items) => post({ type: "actions", items }),
-    paint: (surface, ranges) => post({ type: "paint", surface, ranges }),
+    paint: (surface, ranges, styles) => post({ type: "paint", surface, ranges, ...(styles ? { styles } : {}) }),
     menu: (surface, rangeId, items) => post({ type: "menu", surface, rangeId, items }),
     onOpen: on(listeners.open),
     onClose: on(listeners.close),

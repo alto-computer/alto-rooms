@@ -10,7 +10,8 @@ import type { Frame, Page } from "@playwright/test";
 import { expect, FILES_PORT, test, type Daemon } from "./fixtures";
 import { installStreamingAgent } from "./streamingAgent";
 
-const AMBER = "rooms-tagger-amber";
+/** The highlight the tagger's first style paints into: `rooms-<plugin>-<style>`. */
+const AMBER = "rooms-tagger-important";
 
 async function api(daemon: Daemon, method: string, p: string, body?: unknown) {
   const r = await fetch(`${daemon.baseUrl}${p}`, {
@@ -209,17 +210,24 @@ test("the background frame is sandboxed without network; hostile paint is droppe
   await expect.poll(() => painted(page)).toEqual([text]);
 
   await frame.evaluate(() => window.tagger.hostile());
-  await expect.poll(() => painted(page, "rooms-tagger-green"), "the one good range of a hostile paint is kept").toEqual([text.slice(0, 4)]);
-  expect(await painted(page, "rooms-tagger-red"), "a range past the text is dropped").toEqual([]);
+  await expect.poll(() => painted(page, "rooms-tagger-agree"), "the one good range of a hostile paint is kept").toEqual([text.slice(0, 4)]);
+  expect(await painted(page, "rooms-tagger-disagree"), "a range past the text is dropped").toEqual([]);
   expect(await painted(page), "a paint replaces the plugin's ranges on that surface").toEqual([]);
+  expect(await page.evaluate(() => [...CSS.highlights.keys()].filter((k) => k.startsWith("rooms-tagger-")).sort()), "no highlight for a refused style").toEqual([
+    "rooms-tagger-agree",
+    "rooms-tagger-disagree",
+    "rooms-tagger-idk",
+    "rooms-tagger-important",
+  ]);
   const styles = await page.evaluate(() => document.querySelector("style[data-surface-highlights]")!.textContent);
   expect(styles).not.toContain("display:none");
   expect(styles).not.toContain("url(");
+  expect(styles).toContain("::highlight(rooms-tagger-important) { background-color: rgba(199,154,62,0.28); }");
   await expect(page.locator("body")).toBeVisible();
 
   await api(daemon, "PATCH", "/v1/plugins/tagger", { enabled: false });
   await expect(el).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => CSS.highlights.has("rooms-tagger-green"))).toBe(false);
+  await expect.poll(() => page.evaluate(() => CSS.highlights.has("rooms-tagger-agree"))).toBe(false);
   await answer.click({ clickCount: 3 });
   await expect(page.getByRole("button", { name: "Ask" })).toBeVisible();
   await expect(bar(page), "Ask alone, as with no surface plugin").toHaveCount(0);
