@@ -7,8 +7,10 @@
  * Every message carries `rooms: 1`.
  */
 import { PluginError, type PluginErrorCode } from "./errors";
+import type { SurfaceId } from "./surfaces";
 
-export type PluginContext = { slot: "artifact.sidePanel"; artifact: PluginArtifact } | { slot: "tab" };
+/** Where this frame runs: beside a document, as a tab, or as the hidden background page of a plugin with `surfaces.text`. */
+export type PluginContext = { slot: "artifact.sidePanel"; artifact: PluginArtifact } | { slot: "tab" } | { slot: "background" };
 
 export interface PluginRoom {
   id: string;
@@ -52,8 +54,10 @@ export interface RoomsPlugin {
    * Opens a room or a document. From a tab, a document opens in a tab next to yours, or its open
    * tab comes forward; a room, or anything opened from a side panel, replaces the current tab.
    * `anchor`, any JSON value up to 4 KiB, goes to your content script's `onReveal` in that document.
+   * With `surface` (needs `surfaces.text`), it opens the thread that holds that answer, unfolds it,
+   * and flashes your range `rangeId` there once the answer is on screen.
    */
-  open(target: { roomId: string } | { fileKey: string; anchor?: unknown }): Promise<void>;
+  open(target: { roomId: string } | { fileKey: string; anchor?: unknown } | { surface: SurfaceId; rangeId: string }): Promise<void>;
 }
 
 type Inbound =
@@ -64,6 +68,7 @@ type Inbound =
   | { rooms: 1; id: string; result?: unknown; error?: { code: PluginErrorCode; message?: string } };
 
 export { connectContent, type ContentAction, type ContentSelection, type RoomsContent } from "./content";
+export { connectSurfaces, surfaceKey, surfacePath, type AnswerScope, type RoomsSurfaces, type SurfaceColor, type SurfaceId, type SurfaceRange, type SurfaceSelection } from "./surfaces";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 

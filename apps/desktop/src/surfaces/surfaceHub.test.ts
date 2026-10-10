@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { surfaceKey as sdkSurfaceKey } from "@alto-rooms/plugin-sdk";
 import { parseSurfaceId, SurfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
 
 /** A stand-in for the CSS Custom Highlight API: what the hub registered under which name. */
@@ -196,6 +197,18 @@ describe("SurfaceHub", () => {
     hub.open(answer("t1"), root);
     expect(painted("rooms-tagger-amber"), "old offsets are not re-applied to new text").toEqual([]);
     expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.open", text: "a longer answer, the quick brown fox" });
+  });
+});
+
+describe("surfaceKey", () => {
+  it("is the name the SDK gives the same surface", () => {
+    for (const id of [
+      answer("t1"),
+      { kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" } as SurfaceId,
+      { kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" } as SurfaceId,
+    ]) {
+      expect(surfaceKey(id)).toBe(sdkSurfaceKey(id));
+    }
   });
 });
 
