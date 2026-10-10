@@ -19,8 +19,11 @@ export type SurfaceId = { kind: "answer"; scope: AnswerScope; turnId: string };
 
 /**
  * Your paint styles: a name to the CSS color it paints with. A name is up to 32 of `a-z 0-9 -`,
- * starting with a letter; a color is anything the app's browser accepts for `CSS.supports("color", v)`,
- * up to 64 characters. The app keeps up to 16 names per plugin and draws each as one highlight.
+ * starting with a letter; a color is a hex value, a color name, or one of the color functions
+ * (`rgb`, `hsl`, `hwb`, `lab`, `lch`, `oklab`, `oklch`, `color`, `color-mix`, `light-dark`) that
+ * the app's browser accepts, up to 64 characters. Not `var()`, `env()` or any other substitution,
+ * and no quotes, braces, semicolons or escapes. The app keeps up to 16 names per plugin and draws
+ * each as one highlight.
  */
 export type SurfaceStyles = Record<string, string>;
 
