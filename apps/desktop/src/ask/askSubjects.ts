@@ -51,7 +51,7 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         scope: { kind: "conversation", agent: id.agent, session: id.session },
         placeholder: "Ask about this session…",
         header: (t) => {
-          const how = t.mode === "resume" ? "continuing this session" : "New conversation";
+          const how = t.mode === "resume" ? "continuing this session" : "New session";
           const text = [...agentAndModel(t), how].filter(Boolean).join(" · ");
           return t.mode === "resume" ? { text } : { text, title: "Couldn't resume this session" };
         },

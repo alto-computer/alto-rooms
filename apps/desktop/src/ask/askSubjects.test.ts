@@ -36,7 +36,7 @@ describe("frameSubject", () => {
     expect(f.placeholder).toBe("Ask about this session…");
     expect(f.agent).toBe("Codex");
     expect(f.header(turn({}))).toEqual({ text: "claude-code · Haiku · continuing this session" });
-    expect(f.header(turn({ mode: "new", model: null }))).toEqual({ text: "claude-code · New conversation", title: "Couldn't resume this session" });
+    expect(f.header(turn({ mode: "new", model: null }))).toEqual({ text: "claude-code · New session", title: "Couldn't resume this session" });
     expect(f.hint(target(true))).toBeNull();
   });
 
