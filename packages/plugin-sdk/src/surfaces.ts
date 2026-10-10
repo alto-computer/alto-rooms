@@ -7,8 +7,12 @@
  */
 import type { ContentAction } from "./content";
 
-/** A chat thread: a document's, a room's, or a day's. */
-export type AnswerScope = { kind: "doc"; fileKey: string } | { kind: "room"; roomId: string } | { kind: "day"; date: string };
+/** A chat thread: a document's, a room's, a day's, or an agent conversation's (asked in a fork of that session). */
+export type AnswerScope =
+  | { kind: "doc"; fileKey: string }
+  | { kind: "room"; roomId: string }
+  | { kind: "day"; date: string }
+  | { kind: "conversation"; agent: string; session: string };
 
 /** A piece of host text plugins may read and mark. Today: one finished chat answer. */
 export type SurfaceId = { kind: "answer"; scope: AnswerScope; turnId: string };
@@ -38,16 +42,28 @@ export interface SurfaceSelection {
   text: string;
 }
 
-/** The surface's one name: `answer:<scope>/<turnId>`, with the scope as `doc:<fileKey>`, `room:<roomId>` or `day:<date>`. */
-export function surfaceKey(s: SurfaceId): string {
-  const scope = s.scope.kind === "doc" ? `doc:${s.scope.fileKey}` : s.scope.kind === "room" ? `room:${s.scope.roomId}` : `day:${s.scope.date}`;
-  return `${s.kind}:${scope}/${s.turnId}`;
+/** The scope's own id: a file key, a room id, a date, or `<agent>/<session>`. */
+function scopeId(scope: AnswerScope, join: string): string {
+  switch (scope.kind) {
+    case "doc":
+      return scope.fileKey;
+    case "room":
+      return scope.roomId;
+    case "day":
+      return scope.date;
+    case "conversation":
+      return `${scope.agent}${join}${scope.session}`;
+  }
 }
 
-/** The same name as a storage path: `answer/doc/<fileKey>/<turnId>`. Ids and dates fit the path rules. */
+/** The surface's one name: `answer:<scope>/<turnId>`, with the scope as `doc:<fileKey>`, `room:<roomId>`, `day:<date>` or `conversation:<agent>:<session>`. */
+export function surfaceKey(s: SurfaceId): string {
+  return `${s.kind}:${s.scope.kind}:${scopeId(s.scope, ":")}/${s.turnId}`;
+}
+
+/** The same name as a storage path: `answer/doc/<fileKey>/<turnId>`, or `answer/conversation/<agent>/<session>/<turnId>`. Ids, dates and sessions fit the path rules. */
 export function surfacePath(s: SurfaceId): string {
-  const id = s.scope.kind === "doc" ? s.scope.fileKey : s.scope.kind === "room" ? s.scope.roomId : s.scope.date;
-  return `${s.kind}/${s.scope.kind}/${id}/${s.turnId}`;
+  return `${s.kind}/${s.scope.kind}/${scopeId(s.scope, "/")}/${s.turnId}`;
 }
 
 export interface RoomsSurfaces {

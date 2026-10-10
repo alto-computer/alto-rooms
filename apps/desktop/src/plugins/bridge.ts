@@ -118,6 +118,8 @@ async function surfaceTab(surface: SurfaceId, deps: BridgeDeps): Promise<TabInpu
       return { kind: "room", roomId: scope.roomId };
     case "day":
       return { kind: "journal", date: scope.date };
+    case "conversation":
+      return { kind: "conversation", agent: scope.agent, session: scope.session };
   }
 }
 

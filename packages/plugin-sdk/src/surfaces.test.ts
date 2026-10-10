@@ -76,6 +76,8 @@ describe("surface names", () => {
     expect(surfaceKey(answer)).toBe("answer:room:r1/t1");
     expect(surfaceKey({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" })).toBe("answer:doc:0123456789abcdef/t1");
     expect(surfaceKey({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" })).toBe("answer:day:2026-10-10/t1");
+    expect(surfaceKey({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })).toBe("answer:conversation:codex:s_1-2/t1");
+    expect(surfacePath({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })).toBe("answer/conversation/codex/s_1-2/t1");
     expect(surfacePath(answer)).toBe("answer/room/r1/t1");
     expect(surfacePath({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "V1StGXR8_Z5jdHi6" })).toBe("answer/day/2026-10-10/V1StGXR8_Z5jdHi6");
   });

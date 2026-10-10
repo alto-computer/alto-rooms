@@ -340,6 +340,7 @@ describe("surfaceKey", () => {
       answer("t1"),
       { kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" } as SurfaceId,
       { kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" } as SurfaceId,
+      { kind: "answer", scope: { kind: "conversation", agent: "claude-code", session: "abc-123" }, turnId: "t1" } as SurfaceId,
     ]) {
       expect(surfaceKey(id)).toBe(sdkSurfaceKey(id));
     }
@@ -350,7 +351,11 @@ describe("parseSurfaceId", () => {
   it("accepts an answer in a doc, room or day thread and nothing else", () => {
     expect(parseSurfaceId({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" })).toEqual({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" });
     expect(parseSurfaceId({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" })!.scope).toEqual({ kind: "day", date: "2026-10-10" });
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })!.scope).toEqual({ kind: "conversation", agent: "codex", session: "s_1-2" });
     for (const bad of [
+      { kind: "answer", scope: { kind: "conversation", agent: "cursor", session: "s1" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s 1" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "conversation", agent: "codex", session: "x".repeat(129) }, turnId: "t1" },
       null,
       "answer:room:r1/t1",
       { kind: "note", scope: { kind: "room", roomId: "r1" }, turnId: "t1" },

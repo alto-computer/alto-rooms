@@ -216,7 +216,7 @@ surfaces.ready();
 
 | Call | What it does |
 | --- | --- |
-| `onOpen(cb)` | Calls `cb(surface, text)` when an answer is on screen, for every open answer right after `ready()`, and again when an answer's text changes. `surface` is `{ kind: "answer", scope, turnId }`, `scope` one of `{ kind: "doc", fileKey }`, `{ kind: "room", roomId }`, `{ kind: "day", date }`. `text` is the answer's text content, so offsets you store point into it; keep the quote and some context too, and re-anchor on each open |
+| `onOpen(cb)` | Calls `cb(surface, text)` when an answer is on screen, for every open answer right after `ready()`, and again when an answer's text changes. `surface` is `{ kind: "answer", scope, turnId }`, `scope` one of `{ kind: "doc", fileKey }`, `{ kind: "room", roomId }`, `{ kind: "day", date }`, `{ kind: "conversation", agent, session }`. `text` is the answer's text content, so offsets you store point into it; keep the quote and some context too, and re-anchor on each open |
 | `onClose(cb)` | The answer left the screen. Its paint went with it |
 | `setActions(items)` | Replaces your buttons in the selection bar over answers, shown after Ask: up to 6 `{ id, title, color? }`, as for content scripts |
 | `onAction(cb)` | Calls `cb(id, { surface, start, end, text })` when one of your buttons is clicked over a selection in an answer |

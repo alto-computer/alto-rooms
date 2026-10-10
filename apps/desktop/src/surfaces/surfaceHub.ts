@@ -8,6 +8,7 @@
  */
 import type { AskScope } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
+import { isAgent } from "@/lib/agents";
 import { isColor, parseActions, type ContentAction } from "@/plugins/contentChannel";
 import { buildIndex, offsetOf, rangeAt, type TextIndex } from "./surfaceIndex";
 
@@ -28,6 +29,8 @@ const ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 /** A style name goes into a `::highlight()` selector as is, so it is a plain lowercase identifier. */
 const STYLE = /^[a-z][a-z0-9-]{0,31}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** roomsd's session id rule. */
+const SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 
 export type SurfaceRange = { id: string; start: number; end: number; style: string };
 /** Where a selection lies: inside one open surface, as offsets into its text, with that slice of it. */
@@ -82,6 +85,9 @@ export function parseSurfaceId(v: unknown): SurfaceId | null {
   if (s.kind === "doc" && str(s.fileKey)) return { kind: "answer", scope: { kind: "doc", fileKey: s.fileKey }, turnId };
   if (s.kind === "room" && str(s.roomId)) return { kind: "answer", scope: { kind: "room", roomId: s.roomId }, turnId };
   if (s.kind === "day" && typeof s.date === "string" && DATE.test(s.date)) return { kind: "answer", scope: { kind: "day", date: s.date }, turnId };
+  if (s.kind === "conversation" && isAgent(s.agent) && typeof s.session === "string" && SESSION.test(s.session)) {
+    return { kind: "answer", scope: { kind: "conversation", agent: s.agent, session: s.session }, turnId };
+  }
   return null;
 }
 
@@ -394,7 +400,7 @@ export class SurfaceHub {
   /** One rule per plugin and style, plus the flash: the name is an identifier and the color passed `CSS.supports`, so neither can escape its rule. */
   private restyle(): void {
     if (typeof document === "undefined") return;
-    const rules = [`::highlight(${FLASH}) { background-color: rgba(255, 196, 0, 0.55); }`];
+    const rules = [`::highlight(${FLASH}) { background-color: var(--thread-soft); }`];
     for (const seat of this.seats.values()) for (const [style, color] of seat.styles) rules.push(`::highlight(${highlightName(seat.id, style)}) { background-color: ${color}; }`);
     if (!this.style) {
       this.style = document.createElement("style");
