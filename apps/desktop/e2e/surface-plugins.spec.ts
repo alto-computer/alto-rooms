@@ -32,7 +32,7 @@ async function turnOnTagger(page: Page) {
 
 /** The background frame once its script is up. */
 async function backgroundFrame(page: Page): Promise<Frame> {
-  await expect(page.locator('iframe[title="Tagger"]')).toHaveCount(1);
+  await expect.poll(() => page.frame({ url: /\/_plugins\/tagger\/background\.html/ }) !== null).toBe(true);
   const frame = page.frame({ url: /\/_plugins\/tagger\/background\.html/ })!;
   await expect.poll(() => frame.evaluate(() => typeof window.tagger)).toBe("object");
   return frame;
