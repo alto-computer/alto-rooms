@@ -72,6 +72,9 @@ impl RoomsCore {
         self.write_note(date, name, body, |tmp, path| {
             let key = slug_key(&path.file_name().unwrap_or_default().to_string_lossy());
             let dir = path.parent().ok_or(CoreError::NotFound)?;
+            // The scan is race-free only against in-process callers, which `notes_lock` serializes.
+            // A writer outside roomsd can land a file between the scan and the link; the hard link
+            // still refuses an exact-name clash then. The race test proves the lock, not the link.
             let clash = std::fs::read_dir(dir)?.flatten().any(|e| slug_key(&e.file_name().to_string_lossy()) == key);
             if clash { return Err(CoreError::NoteExists); }
             std::fs::hard_link(tmp, path).map_err(|e| match e.kind() {

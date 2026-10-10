@@ -596,6 +596,35 @@ async fn note_put_with_if_none_match_only_creates() {
 }
 
 #[tokio::test]
+async fn note_put_if_none_match_never_overwrites() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let put = |name: &str, tags: &[&str]| {
+        let mut b = Request::put(format!("/v1/journal/2026-10-05/notes/{name}"))
+            .header("host", API_HOST).header("authorization", "Bearer t0k").header("content-type", "text/markdown");
+        for t in tags { b = b.header("if-none-match", *t); }
+        b.body(Body::from("clobber")).unwrap()
+    };
+    assert_eq!(put_note(&app, "a", "kept").await, StatusCode::OK);
+    for tags in [&[" *"][..], &["*, \"abc\""], &["\"abc\"", "*"], &[" * , "]] {
+        let r = app.clone().oneshot(put("a", tags)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::CONFLICT, "{tags:?}");
+        assert_eq!(body_json(r).await["error"], "note_exists", "{tags:?}");
+    }
+    for tags in [&["\"abc\""][..], &["W/\"abc\""], &[""], &[","], &["**"]] {
+        let r = app.clone().oneshot(put("a", tags)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{tags:?}");
+        assert_eq!(body_json(r).await["error"], "invalid_input", "{tags:?}");
+    }
+    assert_eq!(st.core.read_note(&"2026-10-05".to_string(), "a").unwrap(), "kept");
+    let r = app.clone().oneshot(put("new", &["\"abc\""])).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert!(st.core.read_note(&"2026-10-05".to_string(), "new").is_err(), "a rejected create writes nothing");
+    let r = app.oneshot(put("new", &[" * "])).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(st.core.read_note(&"2026-10-05".to_string(), "new").unwrap(), "clobber");
+}
+
+#[tokio::test]
 async fn note_rename_is_behind_the_write_guard() {
     let (_d, app, st) = app(false, "127.0.0.1:5000");
     st.core.save_note(&"2026-10-05".to_string(), "a", "A").unwrap();

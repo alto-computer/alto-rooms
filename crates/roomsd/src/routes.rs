@@ -160,9 +160,14 @@ pub async fn move_room(State(st): State<AppState>, Path(room_id): Path<String>, 
 }
 
 /// Saves a note. With `If-None-Match: *` it only creates one: 409 `note_exists` if the name (or a
-/// case variant of it) is taken, and the note on disk is left as it was.
+/// case variant of it) is taken, and the note on disk is left as it was. Any other If-None-Match
+/// is 400, so a malformed create never falls through to an overwrite.
 pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>, headers: HeaderMap, body: String) -> Result<Json<Note>, ApiErr> {
-    let create_only = headers.get("if-none-match").is_some_and(|v| v == "*");
+    let values: Vec<&str> = headers.get_all("if-none-match").iter().map(|v| v.to_str().unwrap_or("")).collect();
+    let create_only = !values.is_empty();
+    if create_only && !none_match_items(values.into_iter()).any(|t| t == "*") {
+        return Err(CoreError::InvalidInput("If-None-Match on a note must be *".into()).into());
+    }
     Ok(Json(blocking(&st, move |c| if create_only { c.create_note(&date, &name, &body) } else { c.save_note(&date, &name, &body) }).await?))
 }
 
@@ -195,8 +200,13 @@ fn etag_of(meta: &std::fs::Metadata, suffix: &str) -> Option<HeaderValue> {
 /// Whether `If-None-Match` (all its header lines) matches `tag`: `*`, or any listed tag equal
 /// to it by weak comparison (opaque tags equal, `W/` ignored; RFC 9110 §13.1.2).
 fn none_match_hits<'a>(if_none_match: impl Iterator<Item = &'a str>, tag: &str) -> bool {
-    fn opaque(t: &str) -> &str { t.trim().trim_start_matches("W/") }
-    if_none_match.flat_map(|v| v.split(',')).any(|t| t.trim() == "*" || opaque(t) == opaque(tag))
+    fn opaque(t: &str) -> &str { t.trim_start_matches("W/") }
+    none_match_items(if_none_match).any(|t| t == "*" || opaque(t) == opaque(tag.trim()))
+}
+
+/// The list members of `If-None-Match` across all its header lines, trimmed, empty ones dropped.
+fn none_match_items<'a>(if_none_match: impl Iterator<Item = &'a str>) -> impl Iterator<Item = &'a str> {
+    if_none_match.flat_map(|v| v.split(',')).map(str::trim).filter(|t| !t.is_empty())
 }
 
 /// Spliced into every HTML document Rooms shows, so "ask about this" works inside docs. The app
