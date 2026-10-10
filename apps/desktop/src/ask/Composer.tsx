@@ -1,10 +1,10 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowUp, CornerDownRight, ImagePlus, Pencil, Quote, Send, Square, X } from "lucide-react";
+import { useLayoutEffect, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { ArrowUp, CornerDownRight, Pencil, Quote, Send, Square, X } from "lucide-react";
 import type { AskTurn } from "@alto-rooms/protocol-ts";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Queued } from "./asksStore";
-import { AttachmentStrip, IMAGE_TYPES } from "./attachments";
+import { AttachmentStrip } from "./attachments";
 import { matchCommands, type Command } from "./commands";
 import { splitQuotes } from "./quotes";
 import { ICON_BUTTON } from "./ui";
@@ -137,7 +137,6 @@ export function Composer({ composer: c, inputRef, placeholder, turns, running, d
   onFold: () => void;
   onFocus: () => void;
 }) {
-  const filePicker = useRef<HTMLInputElement>(null);
   const [multiline, setMultiline] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
   const commands = matchCommands(c.draft);
@@ -223,26 +222,6 @@ export function Composer({ composer: c, inputRef, placeholder, turns, running, d
           }}
           className="max-h-32 flex-1 resize-none overflow-y-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-body leading-5 outline-none placeholder:text-ink-3"
         />
-        <input
-          ref={filePicker}
-          type="file"
-          accept={IMAGE_TYPES.join(",")}
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files) c.attachments.add(e.target.files);
-            e.target.value = "";
-            inputRef.current?.focus();
-          }}
-        />
-        <button
-          type="button"
-          aria-label="Attach images"
-          onClick={() => filePicker.current?.click()}
-          className="flex size-7 shrink-0 items-center justify-center rounded-full text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
-        >
-          <ImagePlus className="size-4" />
-        </button>
         {model}
         <SendButton running={!!running} hasDraft={!!c.draft.trim()} busy={c.attachments.uploading} onSend={() => void c.submit()} onStop={onStop} />
       </div>

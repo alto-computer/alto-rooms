@@ -30,8 +30,6 @@ export type SubjectFraming = {
   header: (t: AskTurn) => TurnHeader;
   /** The agent chip until roomsd names the target. */
   agent: string;
-  /** Said beside the agent chip about what the agent may read; null says nothing. */
-  hint: (target: AskTarget | null) => string | null;
   /** A quiet line under the bar about where asks go; null or absent says nothing. */
   note?: (target: AskTarget | null) => string | null;
   /** Where an answer is saved as a note; null when this subject's answers can't be saved. */
@@ -53,7 +51,6 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
           return t.mode === "resume" ? { text } : { text, title: "Couldn't find the thread that made this artifact" };
         },
         agent: subject.artifact.source.agent ?? "Default agent",
-        hint: () => null,
         noteTarget: null,
       };
     case "conversation": {
@@ -67,7 +64,6 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
           return t.mode === "resume" ? { text } : { text, title: "Couldn't resume this session" };
         },
         agent: AGENT_NAMES[id.agent],
-        hint: () => null,
         // Aside asks append to the real session (roomsd resumes it); Claude Code and Codex fork it.
         note: (target) => (id.agent === "aside" && target?.mode !== "new" ? "Asks continue this Aside session; it can use the browser." : null),
         noteTarget: (now) => ({ date: localDate(now), source: `Session: ${conversationTitle(subject.conversation)}` }),
@@ -79,7 +75,6 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         placeholder: "Ask about this room…",
         header: agentHeader,
         agent: "Default agent",
-        hint: (target) => (target?.scoped ? "Reads only this room's artifacts" : null),
         noteTarget: (now, rooms) => ({
           date: localDate(now),
           source: `Room: ${rooms.find((r) => r.id === subject.roomId)?.name ?? subject.roomId}`,
@@ -91,7 +86,6 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         placeholder: "Ask about this day…",
         header: agentHeader,
         agent: "Default agent",
-        hint: (target) => (target?.scoped ? "Reads only this day's items" : null),
         noteTarget: () => ({ date: subject.date, source: null }),
       };
   }

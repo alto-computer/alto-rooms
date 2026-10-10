@@ -205,11 +205,12 @@ describe("AskBar", () => {
     }
   });
 
-  it("pasted, dropped or picked images upload at once, go out with the question, and show on it", async () => {
+  it("pasted or dropped images upload at once, go out with the question, and show on it; there is no attach button", async () => {
     const createObjectURL = vi.fn(() => "blob:preview");
     Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
     const { client } = await setup();
     const input = await screen.findByPlaceholderText("Ask about this artifact…");
+    expect(screen.queryByRole("button", { name: "Attach images" })).toBeNull();
     const shot = new File(["png"], "shot.png", { type: "image/png" });
     fireEvent.paste(input, { clipboardData: { files: [shot] } });
     await waitFor(() => expect(client.uploadAskImage).toHaveBeenCalledWith(shot));
@@ -636,18 +637,6 @@ describe("AskBar for a room", () => {
     });
     expect(await screen.findByText("room answer")).toBeTruthy();
     expect(screen.queryByText("doc answer")).toBeNull();
-  });
-
-  it("says the agent reads only the room's docs when roomsd scopes its reads, and nothing when it doesn't", async () => {
-    const first = await setupRoom({ target: { agent: "claude-code", mode: "new", models: ["haiku"], scoped: true } });
-    const hint = await screen.findByRole("button", { name: "Reads only this room's artifacts" });
-    expect(hint.tabIndex).toBe(0);
-    act(() => hint.focus());
-    expect((await screen.findByRole("tooltip")).textContent).toBe("Reads only this room's artifacts");
-    first.unmount();
-    await setupRoom({ target: { agent: "codex", mode: "new", models: [], scoped: false } });
-    expect(await screen.findByText("codex")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Reads only this room's artifacts" })).toBeNull();
   });
 
   it("a room's answer keeps running while another room is shown, and is there on coming back", async () => {

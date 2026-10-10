@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Artifact, AskTarget, AskTurn, Conversation, Room } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskTurn, Conversation, Room } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { frameSubject } from "./askSubjects";
 
@@ -14,7 +14,6 @@ const turn = (extra: Partial<AskTurn>): AskTurn => ({
 });
 const room: Room = { id: "r1", name: "Planning", kind: "owned", path: "/p", status: "ok", artifactCount: 1, updatedAt: null, color: null };
 const late = new Date(2026, 9, 9, 23, 30);
-const target = (scoped: boolean): AskTarget => ({ agent: "claude-code", mode: "new", models: [], scoped });
 
 describe("frameSubject", () => {
   it("frames a doc as the doc ask always has", () => {
@@ -24,7 +23,6 @@ describe("frameSubject", () => {
     expect(f.agent).toBe("codex");
     expect(f.header(turn({}))).toEqual({ text: "claude-code · Haiku · continuing the thread that made it" });
     expect(f.header(turn({ mode: "new", model: null }))).toEqual({ text: "claude-code · New conversation", title: "Couldn't find the thread that made this artifact" });
-    expect(f.hint(target(true))).toBeNull();
   });
 
   it("names the default agent for a doc whose agent is unknown", () => {
@@ -39,7 +37,6 @@ describe("frameSubject", () => {
     expect(f.agent).toBe("Codex");
     expect(f.header(turn({}))).toEqual({ text: "claude-code · Haiku · continuing this session" });
     expect(f.header(turn({ mode: "new", model: null }))).toEqual({ text: "claude-code · New session", title: "Couldn't resume this session" });
-    expect(f.hint(target(true))).toBeNull();
   });
 
   it("says an Aside session ask continues that session, and only for Aside", () => {
@@ -53,16 +50,13 @@ describe("frameSubject", () => {
     expect(codex.note?.(null) ?? null).toBeNull();
   });
 
-  it("frames a room by its id, with no thread-that-made-it wording and a read hint only when scoped", () => {
+  it("frames a room by its id, with no thread-that-made-it wording", () => {
     const f = frameSubject({ kind: "room", roomId: "r1" });
     expect(scopeKey(f.scope)).toBe("room:r1");
     expect(f.placeholder).toBe("Ask about this room…");
     expect(f.agent).toBe("Default agent");
     expect(f.header(turn({ mode: "new" }))).toEqual({ text: "claude-code · Haiku" });
     expect(f.header(turn({ mode: "new", model: null }))).toEqual({ text: "claude-code" });
-    expect(f.hint(target(true))).toBe("Reads only this room's artifacts");
-    expect(f.hint(target(false))).toBeNull();
-    expect(f.hint(null)).toBeNull();
   });
 
   it("frames a day by its date, like a room but reading only that day's items", () => {
@@ -71,8 +65,6 @@ describe("frameSubject", () => {
     expect(f.placeholder).toBe("Ask about this day…");
     expect(f.agent).toBe("Default agent");
     expect(f.header(turn({ mode: "new" }))).toEqual({ text: "claude-code · Haiku" });
-    expect(f.hint(target(true))).toBe("Reads only this day's items");
-    expect(f.hint(target(false))).toBeNull();
   });
 
   describe("noteTarget", () => {
