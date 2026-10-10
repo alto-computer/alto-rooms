@@ -17,6 +17,10 @@ granted: Array<string> | null,
  */
 needsApproval: boolean, 
 /**
- * Changes when the manifest, the entry file or a content script changes.
+ * Changes when the manifest, the entry file, a content script or the background page changes.
  */
-rev: string, };
+rev: string, 
+/**
+ * The HTML page the app runs hidden while the plugin is on (manifest `background`); needs `surfaces.text`.
+ */
+background: string | null, };

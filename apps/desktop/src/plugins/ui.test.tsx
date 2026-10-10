@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
 import { AppShell } from "@/shell/AppShell";
+import { surfaceHub, surfaceKey } from "@/surfaces/surfaceHub";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { plugin } from "@/test/plugins";
 import { DocView } from "@/views/DocView";
@@ -728,5 +729,64 @@ describe("Settings › Plugins", () => {
     });
     expect(within(section()).getByRole("alert")).toHaveTextContent("Couldn't turn it off");
     expect(within(section()).getByRole("switch", { name: "Echo" })).toBeChecked();
+  });
+});
+
+describe("background frames", () => {
+  const tagger = (extra: Partial<PluginInfo> = {}) =>
+    plugin({ id: "tagger", name: "Tagger", slots: { artifactSidePanel: null, tab: null }, permissions: ["surfaces.text"], granted: ["surfaces.text"], background: "background.html", ...extra });
+
+  it("asks with the surfaces.text line, then runs the background page hidden, in the plugin sandbox, until the plugin is off", async () => {
+    const h = await renderWithStores(<AppShell />, {
+      rooms: [room("r1", "Bench")],
+      plugins: [tagger({ enabled: false, granted: null, needsApproval: true })],
+    });
+    await act(async () => {});
+    const card = screen.getByRole("dialog", { name: "New plugin: Tagger" });
+    expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Can read and mark chat answers"]);
+    expect(screen.queryByTitle("Tagger"), "nothing runs before the user says so").toBeNull();
+    await act(async () => {
+      fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("tagger", true, ["surfaces.text"]);
+    const f = screen.getByTitle("Tagger") as HTMLIFrameElement;
+    expect(f.src).toBe("http://files.test/_plugins/tagger/background.html");
+    expect(f.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(f.closest("[data-background-frames]")).toHaveAttribute("hidden");
+    expect(screen.queryByRole("tab", { name: "Tagger" })).toBeNull();
+    Object.assign(h.state.plugins[0], { enabled: false });
+    await act(async () => {
+      h.emit({ type: "plugins.changed" });
+    });
+    await act(async () => {});
+    expect(screen.queryByTitle("Tagger")).toBeNull();
+  });
+
+  it("takes surface messages from the background frame's window only, never from the page or another frame", async () => {
+    vi.stubGlobal("Highlight", class { constructor(..._r: Range[]) {} });
+    vi.stubGlobal("CSS", { highlights: new Map(), supports: () => true });
+    await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [tagger()] });
+    await act(async () => {});
+    const f = frame("Tagger");
+    const answer = { kind: "answer", scope: { kind: "room", roomId: "r1" }, turnId: "t1" } as const;
+    const el = document.createElement("p");
+    el.textContent = "the quick brown fox";
+    document.body.appendChild(el);
+    surfaceHub.open(answer, el);
+    const paint = { rooms: "surface", v: 1, type: "paint", surface: answer, styles: { x: "#000000" }, ranges: [{ id: "a", start: 4, end: 9, style: "x" }] };
+    const other = document.createElement("iframe");
+    document.body.appendChild(other);
+    const before = surfaceHub.dropped;
+    for (const source of [window, other.contentWindow, null]) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", { data: paint, source: source as MessageEventSource | null }));
+      });
+    }
+    expect(CSS.highlights.has("rooms-tagger-x"), "a forged paint paints nothing").toBe(false);
+    expect(surfaceHub.dropped, "and is not the hub's to count").toBe(before);
+    fromFrame(f, paint);
+    expect(CSS.highlights.has("rooms-tagger-x"), "the same paint from the frame lands").toBe(true);
+    surfaceHub.close(surfaceKey(answer));
+    vi.unstubAllGlobals();
   });
 });

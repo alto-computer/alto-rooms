@@ -1,7 +1,7 @@
 /*
  * Live plugin frames, so the app can ask every open plugin to save before it
- * quits. At most one frame per plugin is mounted at a time (only the active
- * tab is), so the registry is keyed by nothing more than the frame itself.
+ * quits. A plugin has at most one slot frame mounted at a time (only the active
+ * tab is) and one background frame, so the registry is a set of the frames themselves.
  */
 export type LiveFrame = { pluginId: string; beforeClose(capMs: number): Promise<void> };
 

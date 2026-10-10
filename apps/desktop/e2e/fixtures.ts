@@ -7,9 +7,10 @@
  *   ROOMS_DEV_ORIGIN from the ports below; the daemon is killed and the home
  *   removed in teardown, even when the test fails.
  * - The ports come from ROOMS_E2E_API_PORT, ROOMS_E2E_FILES_PORT and
- *   ROOMS_E2E_APP_PORT (default 14317, 14318 and 4173), so several runs can
- *   share one machine.
+ *   ROOMS_E2E_APP_PORT (default 14317, 14318 and 4173, read in appCsp.ts), so
+ *   several runs can share one machine.
  * - The connection reaches the page through `page.addInitScript`, never the URL.
+ * - The preview serves every document under the desktop app's CSP (appCsp.ts).
  */
 import { test as base, expect } from "@playwright/test";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -17,12 +18,9 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { API_PORT, APP_ORIGIN, FILES_PORT } from "./appCsp";
 
-const envPort = (name: string, fallback: number) => Number(process.env[name] ?? fallback);
-export const API_PORT = envPort("ROOMS_E2E_API_PORT", 14317);
-export const FILES_PORT = envPort("ROOMS_E2E_FILES_PORT", 14318);
-export const APP_PORT = envPort("ROOMS_E2E_APP_PORT", 4173);
-export const APP_ORIGIN = `http://localhost:${APP_PORT}`;
+export { API_PORT, APP_ORIGIN, APP_PORT, FILES_PORT } from "./appCsp";
 const BASE = `http://127.0.0.1:${API_PORT}`;
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -58,8 +56,9 @@ const PLUGIN_FIXTURES = path.join(import.meta.dirname, "fixtures", "plugins");
 const builtPlugins = new Map<string, string>();
 
 /**
- * Builds e2e/fixtures/plugins/<id> once per run: main.ts (using the real plugin SDK) → main.js and
- * content.ts → content.js, whichever exist, beside the manifest and the HTML when there is one.
+ * Builds e2e/fixtures/plugins/<id> once per run: main.ts (using the real plugin SDK) → main.js,
+ * content.ts → content.js and background.ts → background.js, whichever exist, beside the manifest
+ * and the HTML pages there are.
  */
 export function buildFixturePlugin(id: string): string {
   const cached = builtPlugins.get(id);
@@ -67,14 +66,14 @@ export function buildFixturePlugin(id: string): string {
   const src = path.join(PLUGIN_FIXTURES, id);
   const out = path.join(os.tmpdir(), `rooms-e2e-plugin-${id}-${process.pid}`);
   const has = (f: string) => existsSync(path.join(src, f));
-  for (const entry of ["main.ts", "content.ts"].filter(has)) {
+  for (const entry of ["main.ts", "content.ts", "background.ts"].filter(has)) {
     execFileSync(
       "bun",
       ["build", path.join(src, entry), "--outfile", path.join(out, entry.replace(/\.ts$/, ".js")), "--target", "browser", "--format", "esm"],
       { stdio: "pipe" },
     );
   }
-  for (const f of ["manifest.json", "index.html"].filter(has)) execFileSync("cp", [path.join(src, f), path.join(out, f)]);
+  for (const f of ["manifest.json", "index.html", "background.html"].filter(has)) execFileSync("cp", [path.join(src, f), path.join(out, f)]);
   builtPlugins.set(id, out);
   return out;
 }

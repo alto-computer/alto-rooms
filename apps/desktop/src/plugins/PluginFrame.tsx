@@ -6,7 +6,8 @@
  */
 import type { Info } from "@alto-rooms/protocol-ts";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { useClient, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { useAsksStore, useClient, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { surfaceHub } from "@/surfaces/surfaceHub";
 import { BridgeError, handleBridgeCall } from "./bridge";
 import { registerFrame } from "./host";
 import { pluginDataBus } from "./pluginDataBus";
@@ -15,9 +16,14 @@ import type { HostPlugin } from "./pluginsStore";
 
 export type PluginContextValue =
   | { slot: "artifact.sidePanel"; artifact: { roomId: string; artifactId: string; fileKey: string; title: string; createdAt: string } }
-  | { slot: "tab" };
+  | { slot: "tab" }
+  | { slot: "background" };
 
-export type PluginFrameHandle = { beforeClose(capMs?: number): Promise<void> };
+export type PluginFrameHandle = {
+  beforeClose(capMs?: number): Promise<void>;
+  /** The frame's window while one is loaded: the only source to trust and target to post to. */
+  window(): Window | null;
+};
 
 const PING_EVERY_MS = 5000;
 const PONG_WITHIN_MS = 3000;
@@ -44,6 +50,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
   const client = useClient();
   const viewer = useViewerStore();
   const rooms = useRoomsStore();
+  const asks = useAsksStore();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [reload, setReload] = useState(0);
   // The rev the frame was loaded at: an update reloads only after beforeClose.
@@ -93,7 +100,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
     },
     [ask],
   );
-  useImperativeHandle(ref, () => ({ beforeClose }), [beforeClose]);
+  useImperativeHandle(ref, () => ({ beforeClose, window: () => frameRef.current?.contentWindow ?? null }), [beforeClose]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
@@ -122,6 +129,11 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
           slot: latest.current.context.slot,
           viewer,
           rooms: () => rooms.getState().rooms,
+          revealSurface: (surface, rangeId) => {
+            asks.setOpen(true);
+            surfaceHub.reveal(surface, rangeId);
+          },
+          lastSurfaceGesture: () => surfaceHub.lastGesture(latest.current.plugin.id),
         },
       ).then(
         (result) => post({ id, result: result ?? null }),
@@ -137,7 +149,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, viewer, rooms, post, sendContext]);
+  }, [client, viewer, rooms, asks, post, sendContext]);
 
   // Tell the frame when its plugin's data changed: a declared tool appended to it, or another
   // frame of the same plugin (a tab, a panel, a document's content script) wrote it.

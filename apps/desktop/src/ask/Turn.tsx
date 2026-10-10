@@ -1,7 +1,8 @@
 import { lazy, memo, Suspense, useState } from "react";
-import type { AskTurn } from "@alto-rooms/protocol-ts";
+import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { TextSurface } from "@/surfaces/TextSurface";
 import type { Live } from "./asksStore";
 import type { NoteTargetOf } from "./askSubjects";
 import { TurnImages } from "./attachments";
@@ -19,7 +20,7 @@ const AnswerMarkdown = lazy(() => preloadAnswer().then((m) => ({ default: m.Answ
 /** An answer as Markdown. Until the renderer loads, plain text in the same typography, so the swap doesn't jump. */
 function Answer({ text }: { text: string }) {
   return (
-    <Suspense fallback={<div className="text-body leading-[1.55] whitespace-pre-wrap">{text}</div>}>
+    <Suspense fallback={<div data-answer-pending className="text-body leading-[1.55] whitespace-pre-wrap">{text}</div>}>
       <AnswerMarkdown text={text} />
     </Suspense>
   );
@@ -64,15 +65,24 @@ function Divider({ children }: { children: string }) {
   );
 }
 
-/** A question and its answer: streaming in with what the agent is doing, then whole, stopped, or failed with Retry. */
-function QuestionTurn({ t, live, noteTarget, onRetry }: { t: AskTurn; live?: Live; noteTarget: NoteTargetOf | null; onRetry: (t: AskTurn) => void }) {
+/**
+ * A question and its answer: streaming in with what the agent is doing, then whole, stopped, or
+ * failed with Retry. A finished answer is a host text surface plugins can read and mark.
+ */
+function QuestionTurn({ t, scope, live, noteTarget, onRetry }: { t: AskTurn; scope: AskScope; live?: Live; noteTarget: NoteTargetOf | null; onRetry: (t: AskTurn) => void }) {
   const running = t.status === "running";
   const answer = running ? live?.answer : t.answer;
   return (
     <>
       <TurnImages ids={t.images ?? []} />
       <QuestionBubble text={t.question} />
-      {answer ? <Answer text={answer} /> : null}
+      {answer && t.status === "done" ? (
+        <TextSurface id={{ kind: "answer", scope, turnId: t.id }}>
+          <Answer text={answer} />
+        </TextSurface>
+      ) : answer ? (
+        <Answer text={answer} />
+      ) : null}
       {running ? <Waiting label={live?.activity ?? undefined} /> : null}
       {t.status === "cancelled" ? <div className="text-small text-ink-2">Stopped</div> : null}
       {t.status === "failed" ? <Failure t={t} onRetry={onRetry} /> : null}
@@ -113,8 +123,10 @@ function CompactTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: (
  * sent along anymore). Memoized: progress re-renders the thread ten times a second, and only the
  * running turn changes. An `old` turn skips layout and paint while off screen.
  */
-export const Turn = memo(function Turn({ t, live, old, noteTarget, onRetry }: {
+export const Turn = memo(function Turn({ t, scope, live, old, noteTarget, onRetry }: {
   t: AskTurn;
+  /** The thread's scope. Keep it stable: a new object re-renders every turn. */
+  scope: AskScope;
   live?: Live;
   old: boolean;
   noteTarget: NoteTargetOf | null;
@@ -125,7 +137,7 @@ export const Turn = memo(function Turn({ t, live, old, noteTarget, onRetry }: {
     <div data-turn-id={t.id} className={cn("space-y-2", old && "[contain-intrinsic-size:auto_160px] [content-visibility:auto]")}>
       {kind === "clear" ? <Divider>New conversation</Divider> : null}
       {kind === "compact" ? <CompactTurn t={t} live={live} onRetry={onRetry} /> : null}
-      {kind === "question" ? <QuestionTurn t={t} live={live} noteTarget={noteTarget} onRetry={onRetry} /> : null}
+      {kind === "question" ? <QuestionTurn t={t} scope={scope} live={live} noteTarget={noteTarget} onRetry={onRetry} /> : null}
     </div>
   );
 });

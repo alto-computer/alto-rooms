@@ -1,0 +1,9 @@
+{
+  "id": "tagger",
+  "name": "Tagger",
+  "version": "0.1.0",
+  "minAppVersion": "0.1.0",
+  "description": "Tags words in chat answers from a background page. Used by the end-to-end tests.",
+  "permissions": ["surfaces.text"],
+  "background": "background.html"
+}

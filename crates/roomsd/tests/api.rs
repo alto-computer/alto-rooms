@@ -862,6 +862,30 @@ async fn plugins_list_and_enable() {
 }
 
 #[tokio::test]
+async fn plugin_list_reports_background_manifests() {
+    let (d, app, _) = app(false, "127.0.0.1:5000");
+    let write = |id: &str, permissions: &str| {
+        let dir = d.path().join(".rooms/plugins").join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("manifest.json"), format!(
+            r#"{{"id":"{id}","name":"{id}","version":"0.1.0","minAppVersion":"0.3.0","permissions":{permissions},"background":"background.html"}}"#)).unwrap();
+        std::fs::write(dir.join("background.html"), "").unwrap();
+    };
+    write("sneaky", r#"["rooms.read"]"#);
+    write("tagger", r#"["surfaces.text"]"#);
+    let v = body_json(app.oneshot(get("/v1/plugins", API_HOST)).await.unwrap()).await;
+    assert_eq!(v[0]["id"], "sneaky");
+    assert_eq!(v[0]["status"], "invalid");
+    assert_eq!(v[0]["reason"], "background needs the surfaces.text permission");
+    assert_eq!(v[0]["background"], serde_json::Value::Null);
+    assert_eq!(v[1]["id"], "tagger");
+    assert_eq!((v[1]["status"].clone(), v[1]["needsApproval"].clone()), (serde_json::json!("ok"), serde_json::json!(true)));
+    assert_eq!(v[1]["permissions"], serde_json::json!(["surfaces.text"]));
+    assert_eq!(v[1]["background"], "background.html");
+    assert_eq!(v[1]["slots"], serde_json::json!({"artifactSidePanel": null, "tab": null}));
+}
+
+#[tokio::test]
 async fn plugin_list_reports_content_script_manifests() {
     let (d, app, _) = app(false, "127.0.0.1:5000");
     let write = |id: &str, permissions: &str| {

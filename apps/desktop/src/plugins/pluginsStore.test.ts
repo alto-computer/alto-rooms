@@ -1,6 +1,6 @@
 import type { PluginInfo, RoomsEvent } from "@alto-rooms/protocol-ts";
 import { describe, expect, it, vi } from "vitest";
-import { compatible, contentKey, PluginsStore, type HostPlugin } from "./pluginsStore";
+import { compatible, contentKey, PluginsStore, surfacePlugins, type HostPlugin } from "./pluginsStore";
 import { plugin } from "@/test/plugins";
 
 function setup(list: PluginInfo[], appVersion = "0.3.0") {
@@ -28,6 +28,16 @@ describe("compatible", () => {
     expect(compatible("1.0.0", "0.9.9")).toBe(true);
     expect(compatible("0.2.9", "0.3.0")).toBe(false);
     expect(compatible("0.3.0", "0.10.0")).toBe(false);
+  });
+});
+
+describe("surfacePlugins", () => {
+  const host = (extra: Partial<HostPlugin>): HostPlugin => ({ ...plugin({ permissions: ["surfaces.text"], background: "background.html" }), compatible: true, ...extra });
+
+  it("is the usable plugins with a background page and the permission for it", () => {
+    const ids = (list: HostPlugin[]) => surfacePlugins(list).map((p) => p.id);
+    expect(ids([host({ id: "tagger" }), host({ id: "off", enabled: false }), host({ id: "asks", needsApproval: true }), host({ id: "old", compatible: false })])).toEqual(["tagger"]);
+    expect(ids([host({ id: "nopage", background: null }), host({ id: "noperm", permissions: [] }), host({ id: "bad", status: "invalid" })])).toEqual([]);
   });
 });
 

@@ -1,4 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
+import type { SurfaceSpan } from "@/surfaces/surfaceHub";
 
 /** Where the selection is, in px from the top-left of the box the bar is placed in. */
 export type SelectionRect = { x: number; y: number; w: number; h: number };
@@ -13,23 +14,43 @@ export function readSelectionMessage(data: unknown): { text: string; rect: Selec
   return { text: text.slice(0, 4000), rect: ok ? (r as SelectionRect) : null };
 }
 
+export type PickedText = { text: string; rect: SelectionRect; span: SurfaceSpan | null };
+
+const nowhere = () => null;
+
 /**
- * Text selected inside `scope`, with where it is relative to `box`; null when nothing is. Read on
- * release, not while dragging, so a bar over it doesn't chase the pointer.
+ * Text selected inside `scope`, with where it is relative to `box`; null when nothing is. A
+ * selection with one end outside the scope counts for the part inside it. Read on release, not
+ * while dragging, so a bar over it doesn't chase the pointer. `locate` names the host text surface
+ * the selection lies in, when it lies in one, and then the text is that surface's slice: a
+ * triple-click on an answer runs into the row under it, and the quote must not.
  */
-export function useTextSelection(scope: RefObject<HTMLElement | null>, box: RefObject<HTMLElement | null>, enabled: boolean) {
-  const [picked, setPicked] = useState<{ text: string; rect: SelectionRect } | null>(null);
+export function useTextSelection(
+  scope: RefObject<HTMLElement | null>,
+  box: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  locate: (range: Range) => SurfaceSpan | null = nowhere,
+) {
+  const [picked, setPicked] = useState<PickedText | null>(null);
   useEffect(() => {
     if (!enabled) return;
     const read = () => {
       const s = document.getSelection();
       const el = scope.current;
       const b = box.current?.getBoundingClientRect();
-      const inside = !!s && !s.isCollapsed && !!el && !!s.anchorNode && el.contains(s.anchorNode) && el.contains(s.focusNode);
-      const text = inside ? s.toString().trim() : "";
-      if (!text || !b) return setPicked(null);
-      const r = s!.getRangeAt(0).getBoundingClientRect();
-      setPicked({ text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height } });
+      if (!s || s.isCollapsed || s.rangeCount === 0 || !el || !b) return setPicked(null);
+      // A triple-click or a drag can run past the scope (into a live region or the composer); what counts is the part inside it.
+      const range = s.getRangeAt(0).cloneRange();
+      const startIn = el.contains(range.startContainer);
+      const endIn = el.contains(range.endContainer);
+      if (!startIn && !endIn) return setPicked(null);
+      if (!startIn) range.setStart(el, 0);
+      if (!endIn) range.setEnd(el, el.childNodes.length);
+      const span = locate(range);
+      const text = (span ? span.text : range.toString()).trim();
+      if (!text) return setPicked(null);
+      const r = range.getBoundingClientRect();
+      setPicked({ text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height }, span });
     };
     const onUp = () => setTimeout(read, 0);
     const onChange = () => {
@@ -43,6 +64,6 @@ export function useTextSelection(scope: RefObject<HTMLElement | null>, box: RefO
       document.removeEventListener("keyup", onUp);
       document.removeEventListener("selectionchange", onChange);
     };
-  }, [scope, box, enabled]);
+  }, [scope, box, enabled, locate]);
   return { picked, dismiss: () => setPicked(null) };
 }

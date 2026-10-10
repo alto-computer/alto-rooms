@@ -1,0 +1,9 @@
+{
+  "id": "stamper",
+  "name": "Stamper",
+  "version": "0.1.0",
+  "minAppVersion": "0.1.0",
+  "description": "Paints the first three characters of every chat answer. A second surface plugin for the end-to-end tests.",
+  "permissions": ["surfaces.text"],
+  "background": "background.html"
+}

@@ -5,7 +5,8 @@
  */
 import type { Artifact, PluginInfo, Room } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
-import type { ViewerStore } from "@/data/viewerStore";
+import type { TabInput, ViewerStore } from "@/data/viewerStore";
+import { parseSurfaceId, type SurfaceId } from "@/surfaces/surfaceHub";
 
 export type BridgeErrorCode = "permission_denied" | "invalid_path" | "too_large" | "not_found" | "write_failed" | "unknown_method" | "rate_limited" | "bad_request";
 
@@ -30,12 +31,21 @@ export type BridgeDeps = {
   };
   /** A write or delete of `path` in the plugin's data went through. */
   changed(path: string): void;
-  /** The slot the calling frame fills: a tab opens docs in a tab of their own, a side panel in its doc's tab. */
-  slot: "tab" | "artifact.sidePanel";
+  /** The slot the calling frame fills: a tab opens docs in a tab of their own, a side panel or a background frame in the current tab. */
+  slot: "tab" | "artifact.sidePanel" | "background";
   viewer: Pick<ViewerStore, "navigate" | "open" | "reveal">;
   /** The rooms in sidebar order. */
   rooms(): Room[];
+  /** The tab that shows `surface` is open: unfold its thread and flash the range once the surface is on screen. */
+  revealSurface(surface: SurfaceId, rangeId: string): void;
+  /** `Date.now()` of the user's last click on one of this plugin's surface buttons or range-menu items, or null. */
+  lastSurfaceGesture(): number | null;
 };
+
+const RANGE_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/** How long after a click on a plugin's button or menu item its hidden background page may still `open` something. */
+export const OPEN_AFTER_GESTURE_MS = 2000;
 
 /** Largest text a plugin may store in one file (UTF-8 bytes); matches roomsd. */
 export const MAX_DATA_BYTES = 10 * 1024 * 1024;
@@ -94,6 +104,25 @@ export function relay<T>(promise: Promise<T>): Promise<T> {
   });
 }
 
+/** The tab whose ask bar holds the surface's thread. */
+async function surfaceTab(surface: SurfaceId, deps: BridgeDeps): Promise<TabInput> {
+  const { scope } = surface;
+  switch (scope.kind) {
+    case "doc": {
+      const a = await relay(deps.client.findArtifactByFileKey(scope.fileKey));
+      if (!a) throw new BridgeError("not_found");
+      return { kind: "doc", roomId: a.roomId, artifactId: a.id };
+    }
+    case "room":
+      if (!deps.rooms().some((r) => r.id === scope.roomId)) throw new BridgeError("not_found");
+      return { kind: "room", roomId: scope.roomId };
+    case "day":
+      return { kind: "journal", date: scope.date };
+    case "conversation":
+      return { kind: "conversation", agent: scope.agent, session: scope.session };
+  }
+}
+
 export async function handleBridgeCall(p: PluginInfo, call: BridgeCall, deps: BridgeDeps): Promise<unknown> {
   const { client } = deps;
   switch (call.method) {
@@ -132,10 +161,28 @@ export async function handleBridgeCall(p: PluginInfo, call: BridgeCall, deps: Br
         .map((a) => ({ roomId: a.roomId, artifactId: a.id, fileKey: a.fileKey, title: a.title, createdAt: a.createdAt }));
     }
     case "open": {
+      // A hidden page is never in front of the user, so it navigates only on the heels of a click they gave it.
+      if (deps.slot === "background") {
+        const at = deps.lastSurfaceGesture();
+        if (at === null || Date.now() - at > OPEN_AFTER_GESTURE_MS) {
+          throw new BridgeError("permission_denied", `a background page may open only within ${OPEN_AFTER_GESTURE_MS} ms of a click on one of its buttons or menu items`);
+        }
+      }
       const roomId = field(call.params, "roomId");
       const fileKey = field(call.params, "fileKey");
       const anchor = anchorOf(call.params);
       const { viewer } = deps;
+      if (field(call.params, "surface") !== undefined) {
+        needs(p, "surfaces.text");
+        const surface = parseSurfaceId(field(call.params, "surface"));
+        const rangeId = field(call.params, "rangeId");
+        if (!surface || typeof rangeId !== "string" || !RANGE_ID.test(rangeId)) throw new BridgeError("bad_request", "surface must name an answer and rangeId one of its ranges");
+        const tab = await surfaceTab(surface, deps);
+        if (deps.slot === "tab") viewer.open(tab, { nextToActive: true });
+        else viewer.navigate(tab);
+        deps.revealSurface(surface, rangeId);
+        return null;
+      }
       if (typeof roomId === "string") {
         if (!deps.rooms().some((r) => r.id === roomId)) throw new BridgeError("not_found");
         viewer.navigate({ kind: "room", roomId });

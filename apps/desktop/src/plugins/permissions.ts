@@ -6,6 +6,7 @@ export const PERMISSION_COPY: Record<Permission, string> = {
   clipboard: "Can copy and paste",
   downloads: "Can save files you export",
   "artifact.content": "Can read the text of artifacts and use the network inside them",
+  "surfaces.text": "Can read and mark chat answers",
 };
 
 /** The card line for a permission; one without copy still shows, so the card never grants it unseen. */
