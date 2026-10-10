@@ -4,4 +4,9 @@ import type { AskMode } from "./AskMode";
 /**
  * Which agent an ask in this scope would go to, and the models it can pick from (empty = no choice).
  */
-export type AskTarget = { agent: string, mode: AskMode, models: Array<string>, };
+export type AskTarget = { agent: string, mode: AskMode, models: Array<string>, 
+/**
+ * A room or day ask whose agent is made to read only the listed files (the claude-code
+ * `--settings` rules), not just asked to. Always false for a doc.
+ */
+scoped: boolean, };

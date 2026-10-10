@@ -9,6 +9,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { useClient, useRoomsStore, useViewerStore } from "@/data/hooks";
 import { BridgeError, handleBridgeCall } from "./bridge";
 import { registerFrame } from "./host";
+import { pluginDataBus } from "./pluginDataBus";
 import { frameAttrs } from "./permissions";
 import type { HostPlugin } from "./pluginsStore";
 
@@ -117,7 +118,9 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
         { id, method: d.method, params: d.params },
         {
           client,
-          navigate: (t) => viewer.navigate(t),
+          changed: (path) => pluginDataBus.publish({ pluginId: latest.current.plugin.id, path, from: win }),
+          slot: latest.current.context.slot,
+          viewer,
           rooms: () => rooms.getState().rooms,
         },
       ).then(
@@ -136,13 +139,21 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
     return () => window.removeEventListener("message", onMessage);
   }, [client, viewer, rooms, post, sendContext]);
 
-  // Tell the frame when a declared tool of its own plugin appended to its data.
+  // Tell the frame when its plugin's data changed: a declared tool appended to it, or another
+  // frame of the same plugin (a tab, a panel, a document's content script) wrote it.
   useEffect(
     () =>
       rooms.onSignal((_type, e) => {
         if (e.type === "plugin.data.changed" && e.pluginId === plugin.id) post({ type: "dataChanged", path: e.path });
       }),
     [rooms, plugin.id, post],
+  );
+  useEffect(
+    () =>
+      pluginDataBus.subscribe((c) => {
+        if (c.pluginId === plugin.id && c.from !== frameRef.current?.contentWindow) post({ type: "dataChanged", path: c.path });
+      }),
+    [plugin.id, post],
   );
 
   useEffect(() => {

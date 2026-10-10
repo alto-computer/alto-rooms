@@ -138,8 +138,8 @@ fn ask_model_is_optional_on_the_wire() {
     // turns recorded before models existed still read back
     let old = r#"{"id":"a1","scope":{"kind":"doc","fileKey":"k"},"question":"q","answer":"","agent":"codex","mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null}"#;
     assert_eq!(serde_json::from_str::<AskTurn>(old).unwrap().model, None);
-    let t = serde_json::to_value(AskTarget { agent: "codex".into(), mode: AskMode::New, models: vec!["m".into()] }).unwrap();
-    assert_eq!(t, serde_json::json!({"agent": "codex", "mode": "new", "models": ["m"]}));
+    let t = serde_json::to_value(AskTarget { agent: "codex".into(), mode: AskMode::New, models: vec!["m".into()], scoped: false }).unwrap();
+    assert_eq!(t, serde_json::json!({"agent": "codex", "mode": "new", "models": ["m"], "scoped": false}));
 }
 
 #[test]

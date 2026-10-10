@@ -117,20 +117,20 @@ function SendButton({ running, hasDraft, busy, onSend, onStop }: { running: bool
 }
 
 /**
- * The round input under a doc, with what goes out with the next question above the text: the
+ * The round input at the bottom of a tab, with what goes out with the next question above the text: the
  * slash menu, queued questions, quotes and images.
  *
  * Keys, as in Claude Code and Codex: Enter sends (queues while an answer runs), ⌘Enter stops the
  * answer and sends now, Tab queues, Esc stops the answer (or folds the thread), ↑ in an empty
  * input recalls the last queued or asked question.
  */
-export function Composer({ composer: c, inputRef, turns, running, dragging, placeholder, model, onStop, onFold, onFocus }: {
+export function Composer({ composer: c, inputRef, placeholder, turns, running, dragging, model, onStop, onFold, onFocus }: {
   composer: ComposerState;
   inputRef: RefObject<HTMLTextAreaElement | null>;
+  placeholder: string;
   turns: AskTurn[];
   running: AskTurn | undefined;
   dragging: boolean;
-  placeholder: string;
   /** The agent and model picker. */
   model: ReactNode;
   onStop: () => void;

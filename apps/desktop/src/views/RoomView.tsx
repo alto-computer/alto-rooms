@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from "react";
 import type { Artifact, Conversation, Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, FolderOpen } from "lucide-react";
+import { AskBar } from "@/ask/AskBar";
+import { useFrameAfter } from "@/ask/useFrameAfter";
 import { Dotted } from "@/components/Dotted";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { useCurrentTabId } from "@/shell/currentTab";
@@ -98,6 +100,8 @@ export function RoomView({ roomId }: { roomId: string }) {
   const [picked, setPicked] = useState<{ roomId: string; filter: Filter } | null>(null);
   const filter = picked?.roomId === roomId ? picked.filter : "all";
   const shows = (part: Exclude<Filter, "all">) => conversations.length === 0 || filter === "all" || filter === part;
+  // The ask bar mounts once the cards have painted, so it never delays them.
+  const barReady = useFrameAfter(artifacts !== undefined);
 
   if (!room) {
     // Before the first sync we can't tell; afterwards the room is gone.
@@ -138,52 +142,56 @@ export function RoomView({ roomId }: { roomId: string }) {
   }
 
   return (
-    <div ref={scrollRef} data-scroll-root className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:thin]">
-      <RoomBand
-        perch={info && artifacts ? perchFor(artifacts.length) : null}
-        title={
-          <EditableTitle
-            key={room.id}
-            value={room.name}
-            readOnly={readOnly}
-            ariaLabel="Room name"
-            onSave={async (next) => {
-              await client.renameRoom(room.id, next);
-            }}
-            className="font-display text-display font-medium tracking-[-0.015em] text-ink"
-            inputClassName="-ml-2 w-full max-w-[560px] rounded-lg px-2 py-0.5 outline-2 outline-solid outline-ink"
-          />
-        }
-        color={room.color}
-        meta={
-          <>
-            {roomMeta(room, artifacts?.at(-1), conversations.length)}
-            {room.status === "unavailable" ? (
-              <span className="ml-2 flex items-center gap-1.5 text-error">
-                <CircleAlert size={14} aria-hidden />
-                Folder not found
-              </span>
-            ) : null}
-          </>
-        }
-        actions={
-          isTauri() ? (
-            <button type="button" className={bandButton} onClick={() => void showInFinder(room.path)}>
-              <FolderOpen aria-hidden />
-              Show in Finder
-            </button>
-          ) : null
-        }
-      >
-        {roomId === INBOX_ID && !readOnly ? (
-          <div className="mt-3">
-            <SortBar />
-          </div>
-        ) : null}
-      </RoomBand>
-      {conversations.length ? <FilterRow value={filter} onChange={(f) => setPicked({ roomId, filter: f })} artifacts={artifacts?.length ?? room.artifactCount} conversations={conversations.length} /> : null}
-      {body}
-      {conversations.length && shows("conversations") ? <Conversations list={conversations} alone={!shows("artifacts")} /> : null}
+    // The ask bar floats over the bottom of the room; the page scrolls under it and its end clears it.
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} data-scroll-root className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:thin]", !readOnly && "pb-24")}>
+        <RoomBand
+          perch={info && artifacts ? perchFor(artifacts.length) : null}
+          title={
+            <EditableTitle
+              key={room.id}
+              value={room.name}
+              readOnly={readOnly}
+              ariaLabel="Room name"
+              onSave={async (next) => {
+                await client.renameRoom(room.id, next);
+              }}
+              className="font-display text-display font-medium tracking-[-0.015em] text-ink"
+              inputClassName="-ml-2 w-full max-w-[560px] rounded-lg px-2 py-0.5 outline-2 outline-solid outline-ink"
+            />
+          }
+          color={room.color}
+          meta={
+            <>
+              {roomMeta(room, artifacts?.at(-1), conversations.length)}
+              {room.status === "unavailable" ? (
+                <span className="ml-2 flex items-center gap-1.5 text-error">
+                  <CircleAlert size={14} aria-hidden />
+                  Folder not found
+                </span>
+              ) : null}
+            </>
+          }
+          actions={
+            isTauri() ? (
+              <button type="button" className={bandButton} onClick={() => void showInFinder(room.path)}>
+                <FolderOpen aria-hidden />
+                Show in Finder
+              </button>
+            ) : null
+          }
+        >
+          {roomId === INBOX_ID && !readOnly ? (
+            <div className="mt-3">
+              <SortBar />
+            </div>
+          ) : null}
+        </RoomBand>
+        {conversations.length ? <FilterRow value={filter} onChange={(f) => setPicked({ roomId, filter: f })} artifacts={artifacts?.length ?? room.artifactCount} conversations={conversations.length} /> : null}
+        {body}
+        {conversations.length && shows("conversations") ? <Conversations list={conversations} alone={!shows("artifacts")} /> : null}
+      </div>
+      {barReady && !readOnly ? <AskBar subject={{ kind: "room", roomId }} /> : null}
     </div>
   );
 }

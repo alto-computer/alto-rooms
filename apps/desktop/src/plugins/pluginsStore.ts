@@ -20,13 +20,17 @@ const core = (v: string) => v.split(/[-+]/)[0].split(".").map(Number);
 /** Valid, runnable here, turned on, and every declared permission granted. */
 export const usable = (p: HostPlugin): boolean => p.status === "ok" && p.compatible && p.enabled && !p.needsApproval;
 
+/** The usable plugins that run content scripts inside documents, in id order as roomsd injects them. */
+export const contentPlugins = (list: HostPlugin[]): HostPlugin[] =>
+  list.filter((p) => usable(p) && p.permissions.includes("artifact.content")).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
 /**
  * A short key for the usable plugins that run content scripts inside documents, with their revs.
  * Part of a doc frame's URL, so the frame reloads when a plugin is turned on or off or its script
  * changes. The hash (FNV-1a) keeps the URL short; roomsd decides the actual set itself.
  */
 export function contentKey(list: HostPlugin[]): string {
-  const parts = list.filter((p) => usable(p) && p.permissions.includes("artifact.content")).map((p) => `${p.id}@${p.rev}`);
+  const parts = contentPlugins(list).map((p) => `${p.id}@${p.rev}`);
   let h = 0x811c9dc5;
   for (const c of parts.join(",")) {
     h ^= c.charCodeAt(0);

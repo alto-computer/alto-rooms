@@ -18,6 +18,7 @@ $("save").onclick = async () => {
   show("out", `saved ${key}`);
 };
 $("load").onclick = async () => show("out", `loaded ${(await rooms.storage.read("echo.txt")) ?? "nothing"}`);
+$("open").onclick = () => void rooms.open({ fileKey: ($("fileKey") as HTMLInputElement).value });
 $("rooms").onclick = async () => {
   try {
     show("out", (await rooms.rooms.list()).map((r) => r.name).join(", "));

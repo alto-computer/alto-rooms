@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
+import { frameSubject, type AskSubject, type SubjectFraming } from "./askSubjects";
 import { Composer } from "./Composer";
-import { AgentChip, ModelPicker } from "./ModelPicker";
+import { AgentChip, ModelPicker, ReadScopeHint } from "./ModelPicker";
 import { ThreadSheet } from "./ThreadSheet";
 import { preloadAnswer } from "./Turn";
 import { ErrorText } from "./ui";
@@ -14,20 +15,21 @@ import { useComposer } from "./useComposer";
 const PART_OF_THE_BAR = "[data-slot=dropdown-menu-content], [data-slot=dialog-content], [data-slot=dialog-overlay], [data-selection-ask]";
 
 /**
- * The ask bar over the bottom of an artifact or a session (⌘J): the scope's thread on a sheet, and
- * the input that asks the agent behind it. The thread folds on Esc or a click elsewhere, and
- * unfolds when the input is focused.
+ * The ask bar at the bottom of a doc, room or Journal tab (⌘J): the subject's thread, and the input that
+ * asks about it. The thread folds on Esc or a click elsewhere, and unfolds when the input is focused.
  */
-export function AskBar({ scope, agentName, placeholder }: {
-  scope: AskScope;
-  /** The agent the chip names until roomsd says where asks go. */
-  agentName: string;
-  placeholder: string;
-}) {
+export function AskBar({ subject }: { subject: AskSubject }) {
+  const framing = frameSubject(subject);
+  // The pending question, images and error belong to one scope; a new subject in the same tab starts fresh.
+  return <ScopedAskBar key={scopeKey(framing.scope)} framing={framing} />;
+}
+
+function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const store = useAsksStore();
   const { open, threads, live } = useAsks();
   const readOnly = useReadOnly();
   const shown = open && !readOnly;
+  const { scope } = framing;
   const key = scopeKey(scope);
   const thread = threads[key];
   const turns = thread?.turns ?? [];
@@ -77,6 +79,7 @@ export function AskBar({ scope, agentName, placeholder }: {
       {showThread ? (
         <ThreadSheet
           turns={turns}
+          header={framing.header}
           live={live}
           loadError={!!thread?.error}
           pending={composer.pending}
@@ -92,11 +95,16 @@ export function AskBar({ scope, agentName, placeholder }: {
       <Composer
         composer={composer}
         inputRef={input}
+        placeholder={framing.placeholder}
         turns={turns}
         running={running}
         dragging={dragging}
-        placeholder={placeholder}
-        model={target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={agentName} />}
+        model={
+          <>
+            <ReadScopeHint text={framing.hint(target)} />
+            {target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={framing.agent} />}
+          </>
+        }
         onStop={() => running && store.cancel(running.id)}
         onFold={() => setUnfolded(false)}
         onFocus={() => setUnfolded(true)}

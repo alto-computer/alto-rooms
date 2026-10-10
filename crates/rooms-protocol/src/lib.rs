@@ -382,6 +382,9 @@ pub struct AskTarget {
     pub agent: String,
     pub mode: AskMode,
     pub models: Vec<String>,
+    /// A room or day ask whose agent is made to read only the listed files (the claude-code
+    /// `--settings` rules), not just asked to. Always false for a doc.
+    pub scoped: bool,
 });
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, JsonSchema)]

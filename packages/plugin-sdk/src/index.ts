@@ -6,6 +6,7 @@
  * source is `window.parent` (an artifact iframe beside it could post too).
  * Every message carries `rooms: 1`.
  */
+import { PluginError, type PluginErrorCode } from "./errors";
 
 export type PluginContext = { slot: "artifact.sidePanel"; artifact: PluginArtifact } | { slot: "tab" };
 
@@ -23,23 +24,7 @@ export interface PluginArtifact {
   createdAt: string;
 }
 
-export type PluginErrorCode =
-  | "permission_denied"
-  | "invalid_path"
-  | "too_large"
-  | "not_found"
-  | "write_failed"
-  | "unknown_method"
-  | "timeout";
-
-export class PluginError extends Error {
-  code: PluginErrorCode;
-  constructor(code: PluginErrorCode, message: string = code) {
-    super(message);
-    this.name = "PluginError";
-    this.code = code;
-  }
-}
+export { PluginError, type PluginErrorCode } from "./errors";
 
 export interface RoomsPlugin {
   readonly pluginId: string;
@@ -56,15 +41,19 @@ export interface RoomsPlugin {
     list(prefix?: string): Promise<string[]>;
     /** Removes a file; a missing file is fine. */
     delete(path: string): Promise<void>;
-    /** Called with the path when a tool of yours appended to your data (not for your own writes). Returns an unsubscribe. */
+    /** Called with the path when a tool of yours or another frame of your plugin changed your data (not for this frame's own writes). Returns an unsubscribe. */
     onChange(cb: (path: string) => void): () => void;
   };
   /** Needs the `rooms.read` permission. */
   rooms: { list(): Promise<PluginRoom[]> };
   /** Needs the `rooms.read` permission. Newest first. */
   artifacts: { list(roomId: string): Promise<PluginArtifact[]> };
-  /** Opens a room or a document in the current tab. */
-  open(target: { roomId: string } | { fileKey: string }): Promise<void>;
+  /**
+   * Opens a room or a document. From a tab, a document opens in a tab next to yours, or its open
+   * tab comes forward; a room, or anything opened from a side panel, replaces the current tab.
+   * `anchor`, any JSON value up to 4 KiB, goes to your content script's `onReveal` in that document.
+   */
+  open(target: { roomId: string } | { fileKey: string; anchor?: unknown }): Promise<void>;
 }
 
 type Inbound =
@@ -73,6 +62,8 @@ type Inbound =
   | { rooms: 1; type: "ping"; id: string }
   | { rooms: 1; type: "dataChanged"; path: string }
   | { rooms: 1; id: string; result?: unknown; error?: { code: PluginErrorCode; message?: string } };
+
+export { connectContent, type ContentAction, type ContentSelection, type RoomsContent } from "./content";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 

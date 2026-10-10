@@ -3,6 +3,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAsksStore, useReadOnly, useViewer, useViewerStore } from "@/data/hooks";
+import type { Tab } from "@/data/viewerStore";
 import { cn } from "@/lib/utils";
 import { EnableCard } from "@/plugins/EnableCard";
 import { CurrentTabContext, TabVisibleContext } from "./currentTab";
@@ -18,6 +19,9 @@ const QuickFind = lazy(() => import("@/views/QuickFind").then((m) => ({ default:
 
 const SIDEBAR_STYLE = { "--sidebar-width": "248px" } as CSSProperties;
 
+/** Tab kinds with an ask bar for ⌘J to toggle. */
+const ASKABLE = new Set<Tab["kind"]>(["doc", "conversation", "room", "journal"]);
+
 export function AppShell() {
   const { tabs, activeId, sidebarOpen } = useViewer();
   const viewer = useViewerStore();
@@ -32,7 +36,7 @@ export function AppShell() {
   const active = tabs.find((t) => t.id === activeId);
   const activeKind = active?.kind;
   const toggleAsk = useCallback(() => {
-    if (activeKind === "doc" && !readOnly) asks.toggle();
+    if (activeKind && ASKABLE.has(activeKind) && !readOnly) asks.toggle();
   }, [activeKind, readOnly, asks]);
   useShellKeys(viewer, openFind, toggleAsk);
   const mounted = useMountedTabs(tabs, active);

@@ -1,6 +1,8 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { RoomsApiError, type Note } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
+import { AskBar } from "@/ask/AskBar";
+import { useFrameAfter } from "@/ask/useFrameAfter";
 import { useClient, useJournalDay, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { AGENT_NAMES } from "@/lib/agents";
@@ -8,6 +10,7 @@ import { conversationTab, conversationTitle } from "@/lib/conversations";
 import { daybookTitle, isoWeek, localDate, monthDay } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { useScrollMemory } from "@/lib/scrollMemory";
+import { cn } from "@/lib/utils";
 import { useCurrentTabId } from "@/shell/currentTab";
 import { firstNewNoteNames, noteBase, noteFileName, requestNoteBodyFocus } from "@/lib/notes";
 import { Daybook, dayEntries, type DayEntry } from "./Daybook";
@@ -95,6 +98,16 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
   const readOnly = useReadOnly();
   const firstRun = useFirstRun();
+  // The ask bar never delays the day and never asks about a day other than the one shown. It first mounts
+  // a frame after the first day paints (useFrameAfter). On a day change it unmounts at once, since
+  // barDate no longer matches, and the barDate effect brings it back after the new day commits.
+  const settled = day !== undefined || !!loadError;
+  const barReady = useFrameAfter(settled);
+  const [barDate, setBarDate] = useState(date);
+  useEffect(() => {
+    if (settled) setBarDate(date);
+  }, [settled, date]);
+  const bar = useMemo(() => <AskBar subject={{ kind: "day", date: barDate }} />, [barDate]);
 
   const setDate = (next: string) => {
     const id = tabId ?? viewer.getState().tabs.find((t) => t.kind === "journal")?.id;
@@ -162,17 +175,21 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   }
 
   return (
-    <div ref={scrollRef} data-scroll-root className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:thin]">
-      <header className="flex flex-wrap items-end gap-6 px-14 pt-9">
-        <div className="flex flex-col">
-          <p className="text-small font-semibold tracking-[0.06em] text-ink-3 uppercase">Journal · Week {isoWeek(date)}</p>
-          <h1 className="mt-2.5 font-serif text-display font-medium tracking-[-0.01em] text-ink">{daybookTitle(date)}</h1>
-        </div>
-        <div className="ml-auto">
-          <WeekStrip date={date} onChange={setDate} />
-        </div>
-      </header>
-      {body}
+    // The ask bar floats over the bottom of the Journal; the page scrolls under it and its end clears it.
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} data-scroll-root className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:thin]", !readOnly && "pb-24")}>
+        <header className="flex flex-wrap items-end gap-6 px-14 pt-9">
+          <div className="flex flex-col">
+            <p className="text-small font-semibold tracking-[0.06em] text-ink-3 uppercase">Journal · Week {isoWeek(date)}</p>
+            <h1 className="mt-2.5 font-serif text-display font-medium tracking-[-0.01em] text-ink">{daybookTitle(date)}</h1>
+          </div>
+          <div className="ml-auto">
+            <WeekStrip date={date} onChange={setDate} />
+          </div>
+        </header>
+        {body}
+      </div>
+      {barReady && !readOnly && barDate === date ? bar : null}
     </div>
   );
 }

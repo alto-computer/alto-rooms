@@ -3,7 +3,10 @@
   "name": "Marker",
   "version": "0.1.0",
   "minAppVersion": "0.1.0",
-  "description": "Marks every document it runs in. Used by the end-to-end tests.",
+  "description": "Marks every document it runs in, and opens documents at an anchor from its tab. Used by the end-to-end tests.",
   "permissions": ["artifact.content"],
-  "contentScripts": ["content.js"]
+  "contentScripts": ["content.js"],
+  "slots": {
+    "tab": { "title": "Marker", "icon": "puzzle", "sidebar": true }
+  }
 }

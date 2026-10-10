@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Artifact, AskScope, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
@@ -22,10 +23,10 @@ function Grab() { store = useAsksStore(); return null; }
 
 async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false, target?: AskTarget) {
   const askTargets = target ? { k1: target } : undefined;
-  return renderWithStores(<><Grab /><AskBar scope={{ kind: "doc", fileKey: doc.fileKey }} agentName={doc.source.agent ?? "Default agent"} placeholder="Ask about this artifact…" /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
+  return renderWithStores(<><Grab /><AskBar subject={{ kind: "doc", artifact: doc }} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
 }
 
-const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"] };
+const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"], scoped: false };
 
 describe("AskBar", () => {
   afterEach(() => {
@@ -418,7 +419,7 @@ describe("AskBar", () => {
   });
 
   it("with no models shows just the agent the ask goes to, from roomsd, with no menu", async () => {
-    const { client } = await setup({}, false, { agent: "codex", mode: "new", models: [] });
+    const { client } = await setup({}, false, { agent: "codex", mode: "new", models: [], scoped: false });
     expect(await screen.findByText("codex")).toBeTruthy();
     expect(client.askTarget).toHaveBeenCalledWith(scope);
     expect(screen.queryByLabelText(/^Model/)).toBeNull();
@@ -428,7 +429,7 @@ describe("AskBar", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const noAgent = { ...doc, source: { ...doc.source, agent: null } };
-      await renderWithStores(<AskBar scope={{ kind: "doc", fileKey: noAgent.fileKey }} agentName={noAgent.source.agent ?? "Default agent"} placeholder="Ask about this artifact…" />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { k1: new Error("down") } });
+      await renderWithStores(<AskBar subject={{ kind: "doc", artifact: noAgent }} />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { k1: new Error("down") } });
       expect(await screen.findByText("Default agent")).toBeTruthy();
       await waitFor(() => expect(warn).toHaveBeenCalled());
       expect(screen.getByText("Default agent")).toBeTruthy();
@@ -597,5 +598,151 @@ describe("AskBar", () => {
     expect(await screen.findByText("Waiting for an answer")).toBeTruthy();
     expect(screen.queryByText("Thinking")).toBeNull();
     expect(input.value).toBe("바로 보여?");
+  });
+});
+
+describe("AskBar for a room", () => {
+  const roomScope: AskScope = { kind: "room", roomId: "r1" };
+  const roomTurn = (extra: Partial<AskTurn>) => turn({ id: "rt1", scope: roomScope, mode: "new", ...extra });
+  const setupRoom = (opts: { asks?: Record<string, AskTurn[]>; readOnly?: boolean; target?: AskTarget } = {}) =>
+    renderWithStores(<AskBar subject={{ kind: "room", roomId: "r1" }} />, {
+      rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks: opts.asks, readOnly: opts.readOnly,
+      askTargets: opts.target ? { "room:r1": opts.target } : undefined,
+    });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  it("asks about the room, and heads its answer with the agent and model only", async () => {
+    const { client, emit } = await setupRoom();
+    const input = await screen.findByPlaceholderText("Ask about this room…");
+    fireEvent.change(input, { target: { value: "뭐가 있어?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope: roomScope, question: "뭐가 있어?", model: null }));
+    act(() => emit({ type: "ask.done", turn: roomTurn({ id: "ask-뭐가 있어?", question: "뭐가 있어?", model: "haiku", status: "done", answer: "세 개", endedAt: "2026-10-06T10:00:09+09:00" }) }));
+    expect(await screen.findByText("세 개")).toBeTruthy();
+    const head = screen.getByText("claude-code · Haiku", { exact: true });
+    expect(head.getAttribute("title")).toBeNull();
+  });
+
+  it("shows only the room's thread, never the doc's", async () => {
+    await setupRoom({
+      asks: {
+        k1: [turn({ question: "doc question", status: "done", answer: "doc answer", endedAt: "2026-10-06T10:00:01+09:00" })],
+        "room:r1": [roomTurn({ question: "room question", status: "done", answer: "room answer", endedAt: "2026-10-06T10:00:02+09:00" })],
+      },
+    });
+    expect(await screen.findByText("room answer")).toBeTruthy();
+    expect(screen.queryByText("doc answer")).toBeNull();
+  });
+
+  it("says the agent reads only the room's docs when roomsd scopes its reads, and nothing when it doesn't", async () => {
+    const first = await setupRoom({ target: { agent: "claude-code", mode: "new", models: ["haiku"], scoped: true } });
+    const hint = await screen.findByRole("button", { name: "Reads only this room's artifacts" });
+    expect(hint.tabIndex).toBe(0);
+    act(() => hint.focus());
+    expect((await screen.findByRole("tooltip")).textContent).toBe("Reads only this room's artifacts");
+    first.unmount();
+    await setupRoom({ target: { agent: "codex", mode: "new", models: [], scoped: false } });
+    expect(await screen.findByText("codex")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reads only this room's artifacts" })).toBeNull();
+  });
+
+  it("a room's answer keeps running while another room is shown, and is there on coming back", async () => {
+    let show: (roomId: string) => void = () => {};
+    function Switch() {
+      const [roomId, setRoomId] = useState("r1");
+      show = setRoomId;
+      return <AskBar key={roomId} subject={{ kind: "room", roomId }} />;
+    }
+    const { client, emit } = await renderWithStores(<Switch />, { rooms: [room("r1", "A"), room("r2", "B")], artifacts: { r1: [doc], r2: [] } });
+    const input = await screen.findByPlaceholderText("Ask about this room…");
+    fireEvent.change(input, { target: { value: "길게?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope: roomScope, question: "길게?", model: null }));
+    act(() => show("r2"));
+    expect(screen.queryByText("길게?")).toBeNull();
+    act(() => emit({ type: "ask.progress", id: "ask-길게?", scope: roomScope, answer: "절반", activity: null }));
+    act(() => emit({ type: "ask.done", turn: roomTurn({ id: "ask-길게?", question: "길게?", status: "done", answer: "끝까지 답함", endedAt: "2026-10-06T10:00:09+09:00" }) }));
+    act(() => show("r1"));
+    expect(await screen.findByText("끝까지 답함")).toBeTruthy();
+    expect(client.cancelAsk).not.toHaveBeenCalled();
+  });
+
+  it("renders nothing in read-only", async () => {
+    await setupRoom({ readOnly: true });
+    expect(screen.queryByPlaceholderText("Ask about this room…")).toBeNull();
+  });
+});
+
+describe("AskBar for a day", () => {
+  const monday: AskScope = { kind: "day", date: "2026-10-05" };
+  const dayTurn = (extra: Partial<AskTurn>) => turn({ id: "dt1", scope: monday, mode: "new", ...extra });
+  let show: (date: string) => void = () => {};
+  /** The Journal tab keeps one bar mounted and hands it the viewed date. */
+  function Journal() {
+    const [date, setDate] = useState("2026-10-05");
+    show = setDate;
+    return <AskBar subject={{ kind: "day", date }} />;
+  }
+  const setupDays = (asks: Record<string, AskTurn[]> = {}) =>
+    renderWithStores(<Journal />, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks });
+  const input = () => screen.getByPlaceholderText("Ask about this day…") as HTMLTextAreaElement;
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  it("follows the viewed date to that day's own thread and draft", async () => {
+    await setupDays({
+      "day:2026-10-06": [turn({ id: "dt2", scope: { kind: "day", date: "2026-10-06" }, question: "화요일?", status: "done", answer: "화요일 답", endedAt: "2026-10-06T10:00:01+09:00" })],
+    });
+    fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일 초안" } });
+    act(() => show("2026-10-06"));
+    expect(await screen.findByText("화요일 답")).toBeTruthy();
+    expect(input().value).toBe("");
+    fireEvent.change(input(), { target: { value: "화요일 초안" } });
+    act(() => show("2026-10-05"));
+    expect(input().value).toBe("월요일 초안");
+    expect(screen.queryByText("화요일 답")).toBeNull();
+    expect(localStorage.getItem("alto-rooms.askDraft.day:2026-10-05")).toBe("월요일 초안");
+    expect(localStorage.getItem("alto-rooms.askDraft.day:2026-10-06")).toBe("화요일 초안");
+  });
+
+  it("a question on its way stays with its day, and its answer keeps running while another day is shown", async () => {
+    const { client, emit } = await setupDays();
+    let accept: () => void = () => {};
+    client.startAsk.mockImplementationOnce(() => new Promise((resolve) => (accept = () => resolve(dayTurn({ id: "ask-월요일?", question: "월요일?" })))));
+    fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일?" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(await screen.findByText("Thinking")).toBeTruthy();
+    act(() => show("2026-10-06"));
+    expect(screen.queryByText("월요일?")).toBeNull();
+    expect(screen.queryByText("Thinking")).toBeNull();
+    await act(async () => accept());
+    act(() => emit({ type: "ask.progress", id: "ask-월요일?", scope: monday, answer: "절반", activity: null }));
+    expect(screen.queryByText("절반")).toBeNull();
+    act(() => emit({ type: "ask.done", turn: dayTurn({ id: "ask-월요일?", question: "월요일?", status: "done", answer: "월요일 답", endedAt: "2026-10-06T10:00:09+09:00" }) }));
+    act(() => show("2026-10-05"));
+    expect(await screen.findByText("월요일 답")).toBeTruthy();
+    expect(client.startAsk).toHaveBeenCalledWith({ scope: monday, question: "월요일?", model: null });
+    expect(client.cancelAsk).not.toHaveBeenCalled();
+  });
+
+  it("a question roomsd refuses after the day changed comes back in its own day's input", async () => {
+    const { client } = await setupDays();
+    let refuse: (e: Error) => void = () => {};
+    client.startAsk.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
+    fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일?" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(input().value).toBe("");
+    act(() => show("2026-10-06"));
+    await act(async () => refuse(new RoomsApiError(409, "Waiting for an answer", "ask_busy")));
+    expect(input().value).toBe("");
+    act(() => show("2026-10-05"));
+    expect(input().value).toBe("월요일?");
   });
 });

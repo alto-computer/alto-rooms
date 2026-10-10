@@ -151,11 +151,7 @@ function Loaded({ conversation }: { conversation: Conversation }) {
             ) : null}
           </article>
         </div>
-        <AskBar
-          scope={{ kind: "conversation", agent: conversation.id.agent, session: conversation.id.session }}
-          agentName={agent}
-          placeholder="Ask about this session…"
-        />
+        <AskBar subject={{ kind: "conversation", conversation }} />
       </div>
     </div>
   );

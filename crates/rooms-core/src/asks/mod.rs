@@ -1,5 +1,5 @@
 //! v2 ask: send a question about a doc to the agent CLI that made it (spec 2026-10-06 v2 ask).
-//! Every thread belongs to an `AskScope`; a doc's and a conversation's run so far.
+//! Every thread belongs to an `AskScope`: a doc, a room, a Journal day or a conversation.
 //! `Asks` is the only entry point; templates, prompt, log and process stay inside this module.
 pub(crate) mod agents;
 pub mod images;
@@ -11,17 +11,18 @@ pub(crate) mod stream;
 
 pub use run::Limits;
 
+use crate::error::CoreError;
 use crate::lock::lock;
 use crate::rules::{slug_key, valid_room_id, validate_iso_date};
 use crate::RoomsCore;
-use agents::{AgentProfiles, Plan, Vars, CONVERSATION_PREAMBLE};
+use agents::{claude_read_scope, AgentProfiles, Plan, Vars};
 use log::AskLog;
-use prompt::{build_prompt, context, conversation_about, doc_about, valid_file_key, valid_ident, with_image_paths, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
-use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, ConversationId, EventKind, JOURNAL_ROOM_ID};
+use prompt::{build_conversation_prompt, build_prompt, build_scope_prompt, context, listed, valid_file_key, valid_ident, with_image_paths, ContextEntry, Listing, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
+use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, Conversation, ConversationId, EventKind, JOURNAL_ROOM_ID};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -29,7 +30,6 @@ use std::time::Duration;
 pub const MAX_RUNNING: usize = 4;
 const MAX_QUESTION_CHARS: usize = 8_000;
 const RESTARTED: &str = "Stopped because Rooms restarted";
-const NOT_YET: &str = "Room and day asks are not available yet";
 /// JSON-lines output carries every streamed chunk and tool result around the answer, so a profile
 /// with event rules may print this many times `Limits::max_stdout` (16 MB by default).
 const JSON_STDOUT_FACTOR: usize = 16;
@@ -99,32 +99,34 @@ impl ScopeKey for AskScope {
 pub enum AskError {
     #[error("{0}")] BadRequest(String),
     #[error("Can't find this artifact")] NotFound,
+    #[error("Can't find this room")] RoomNotFound,
     #[error("Can't find this session")] ConversationNotFound,
     #[error("Waiting for an answer")] Busy,
     #[error("Too many questions running — try again when one finishes")] Capacity,
     #[error("Couldn't read agent settings: {0}")] AgentConfig(String),
     #[error("Couldn't save the conversation: {0}")] Io(String),
+    #[error("Couldn't list the documents: {0}")] Listing(String),
 }
 
 impl AskError {
     pub fn code(&self) -> &'static str {
         match self {
             AskError::BadRequest(_) => "bad_request",
-            AskError::NotFound | AskError::ConversationNotFound => "not_found",
+            AskError::NotFound | AskError::RoomNotFound | AskError::ConversationNotFound => "not_found",
             AskError::Busy => "ask_busy",
             AskError::Capacity => "ask_capacity",
             AskError::AgentConfig(_) => "agent_config",
-            AskError::Io(_) => "io",
+            AskError::Io(_) | AskError::Listing(_) => "io",
         }
     }
 
     pub fn status(&self) -> u16 {
         match self {
             AskError::BadRequest(_) => 400,
-            AskError::NotFound | AskError::ConversationNotFound => 404,
+            AskError::NotFound | AskError::RoomNotFound | AskError::ConversationNotFound => 404,
             AskError::Busy | AskError::Capacity => 409,
             AskError::AgentConfig(_) => 422,
-            AskError::Io(_) => 500,
+            AskError::Io(_) | AskError::Listing(_) => 500,
         }
     }
 }
@@ -166,16 +168,20 @@ impl<'a> Request<'a> {
 
 struct Entry { scope: AskScope, killer: Killer }
 
+/// What a question is about: one doc, one conversation, or the documents of a room or a Journal day.
+enum Subject {
+    Doc { file_key: String, file_abs: PathBuf },
+    Conversation(Conversation),
+    Listing { listing: Listing, entries: Vec<ContextEntry> },
+}
+
 /// Where an ask in a scope goes: the one answer both `target` and `start` use.
 struct Resolved {
+    subject: Subject,
+    profiles: AgentProfiles,
     plan: Plan,
     session: Option<String>,
     cwd: PathBuf,
-    preamble: String,
-    /// What the prompt says the ask is about (`prompt::doc_about`, `prompt::conversation_about`).
-    about: String,
-    /// The doc's file for a template's `{file}`; "" for a conversation.
-    file: String,
 }
 
 struct Inner {
@@ -265,19 +271,29 @@ impl Asks {
 
     fn config_path(&self) -> PathBuf { self.0.core.home().join(".rooms/agents.toml") }
 
-    /// Which agent, template, session and cwd an ask in `scope` would use, and what its prompt
-    /// says it is about.
+    /// Which subject, agent, template, session and cwd an ask in `scope` would use. A room or a day
+    /// has no source session: the default agent starts a new conversation in an empty folder, so a
+    /// search without a path finds nothing. `start` creates that folder; `target` writes nothing.
     fn resolve(&self, scope: &AskScope) -> Result<Resolved, AskError> {
         scope.validate()?;
-        match scope {
-            AskScope::Doc { file_key } => self.resolve_doc(file_key),
-            AskScope::Conversation { agent, session } => self.resolve_conversation(ConversationId { agent: *agent, session: session.clone() }),
-            AskScope::Room { .. } | AskScope::Day { .. } => Err(AskError::BadRequest(NOT_YET.into())),
-        }
+        let core = &self.0.core;
+        let (listing, entries) = match scope {
+            AskScope::Doc { file_key } => return self.resolve_doc(file_key),
+            AskScope::Conversation { agent, session } => return self.resolve_conversation(ConversationId { agent: *agent, session: session.clone() }),
+            AskScope::Room { room_id } => {
+                let (name, entries) = core.room_context(room_id).map_err(listing_error)?;
+                (Listing::Room(name), entries)
+            }
+            AskScope::Day { date } => (Listing::Day(date.clone()), core.day_context(date).map_err(listing_error)?),
+        };
+        let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
+        let plan = profiles.plan_listing();
+        let cwd = self.0.core.home().join(".rooms/asks/cwd");
+        Ok(Resolved { subject: Subject::Listing { listing, entries }, profiles, plan, session: None, cwd })
     }
 
-    /// A doc ask goes through the first artifact holding its file whose link still resolves (rooms
-    /// linking one original share the file key, the realpath and the source meta).
+    /// A doc scope goes through the first artifact holding its file whose link still resolves
+    /// (rooms linking one original share the file key, the realpath and the source meta).
     fn resolve_doc(&self, file_key: &str) -> Result<Resolved, AskError> {
         let core = &self.0.core;
         let (artifact, file_abs) = core.artifacts_by_file_key(file_key).into_iter()
@@ -295,8 +311,7 @@ impl Asks {
         let plan = profiles.plan(agent, session.as_deref());
         let cwd = src.cwd.as_deref().map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir())
             .unwrap_or_else(|| file_abs.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| core.home().to_path_buf()));
-        let file = file_abs.to_string_lossy().into_owned();
-        Ok(Resolved { about: doc_about(plan.mode, &file, &artifact.file_key), preamble: profiles.preamble().to_string(), plan, session, cwd, file })
+        Ok(Resolved { subject: Subject::Doc { file_key: artifact.file_key, file_abs }, profiles, plan, session, cwd })
     }
 
     /// A conversation ask resumes the conversation's own session the way a doc ask resumes the one
@@ -308,13 +323,13 @@ impl Asks {
         let session = Some(id.session.to_string()).filter(|s| valid_ident(s));
         let plan = profiles.plan(Some(id.agent.as_str()), session.as_deref());
         let cwd = c.cwd.as_deref().map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir()).unwrap_or_else(|| core.home().to_path_buf());
-        Ok(Resolved { about: conversation_about(&c), preamble: CONVERSATION_PREAMBLE.to_string(), plan, session, cwd, file: String::new() })
+        Ok(Resolved { subject: Subject::Conversation(c), profiles, plan, session, cwd })
     }
 
     /// Blocking, like `start`: what the ask bar shows before the first question.
     pub fn target(&self, scope: &AskScope) -> Result<AskTarget, AskError> {
         let r = self.resolve(scope)?;
-        Ok(AskTarget { agent: r.plan.agent, mode: r.plan.mode, models: r.plan.models })
+        Ok(AskTarget { agent: r.plan.agent, mode: r.plan.mode, models: r.plan.models, scoped: r.plan.scoped })
     }
 
     /// Blocking (SQLite, files, std Mutex): async callers run it on the blocking pool.
@@ -337,7 +352,7 @@ impl Asks {
         let _rt = self.0.rt.as_ref().map(|h| h.enter());
         let question = req.text()?;
         let image_paths = self.image_paths(req.images())?;
-        let Resolved { plan, session, cwd, preamble, about, file } = self.resolve(scope)?;
+        let Resolved { subject, profiles, plan, session, cwd } = self.resolve(scope)?;
         let model = req.model.filter(|m| !m.is_empty());
         if let Some(m) = model.filter(|m| !plan.models.iter().any(|x| x == m)) {
             return Err(AskError::BadRequest(format!("{} can't use the model \"{m}\" here", plan.agent)));
@@ -356,17 +371,29 @@ impl Asks {
         };
         if req.kind == AskKind::Clear { return self.record_clear(running, turn); }
 
-        let cwd_s = cwd.to_string_lossy().into_owned();
         let asked = if req.kind == AskKind::Compact { COMPACT_ASK.to_string() } else { with_image_paths(question, &image_paths) };
-        let prompt = build_prompt(&preamble, &about, &ctx, &asked);
+        let (file_s, prompt, scope_settings) = match &subject {
+            Subject::Doc { file_key, file_abs } => {
+                let file_s = file_abs.to_string_lossy().into_owned();
+                let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, file_key, &ctx, &asked);
+                (file_s, prompt, String::new())
+            }
+            Subject::Conversation(c) => (String::new(), build_conversation_prompt(c, &ctx, &asked), String::new()),
+            Subject::Listing { listing, entries } => {
+                private_dir(&cwd).map_err(|e| AskError::Io(e.to_string()))?;
+                let settings = claude_read_scope(listed(entries).iter().map(|e| e.path.as_path()));
+                (String::new(), build_scope_prompt(listing, entries, &ctx, &asked), settings)
+            }
+        };
+        let cwd_s = cwd.to_string_lossy().into_owned();
         let image_dir = if image_paths.is_empty() { String::new() } else { self.0.images.dir().to_string_lossy().into_owned() };
         // roomsd writes mcp.json only when it can find rooms-mcp; without it the flag is dropped.
         let mcp = self.0.core.home().join(".rooms/mcp.json");
         let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
         let stdin = plan.prompt_on_stdin();
         let argv = plan.render(&Vars {
-            prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file, cwd: &cwd_s, mcp_config: &mcp_s,
-            model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir,
+            prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
+            model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir, scope_settings: &scope_settings,
         });
         self.launch(running, turn, argv, stdin.then_some(prompt), cwd, plan.events)
     }
@@ -532,6 +559,26 @@ impl Asks {
     }
 }
 
+/// A room or day listing that failed: a missing room is the user's to see, a bad scope theirs to
+/// fix, and anything else (the index, the disk) is reported as what it is.
+fn listing_error(e: CoreError) -> AskError {
+    match e {
+        CoreError::RoomNotFound => AskError::RoomNotFound,
+        CoreError::InvalidInput(m) | CoreError::BadRequest(m) => AskError::BadRequest(m),
+        // Their own text says "write failed", which a listing never does.
+        CoreError::Io(e) => AskError::Listing(e.to_string()),
+        CoreError::Db(e) => AskError::Listing(e.to_string()),
+        e => AskError::Listing(e.to_string()),
+    }
+}
+
+/// Creates `dir` if needed and makes it private to the user, an existing one included.
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,11 +588,13 @@ mod tests {
         let wire = |e: AskError| (e.status(), e.code(), e.to_string());
         assert_eq!(wire(AskError::BadRequest("why".into())), (400, "bad_request", "why".into()));
         assert_eq!(wire(AskError::NotFound), (404, "not_found", "Can't find this artifact".into()));
+        assert_eq!(wire(AskError::RoomNotFound), (404, "not_found", "Can't find this room".into()));
         assert_eq!(wire(AskError::ConversationNotFound), (404, "not_found", "Can't find this session".into()));
         assert_eq!(wire(AskError::Busy), (409, "ask_busy", "Waiting for an answer".into()));
         assert_eq!(wire(AskError::Capacity), (409, "ask_capacity", "Too many questions running — try again when one finishes".into()));
         assert_eq!(wire(AskError::AgentConfig("x".into())), (422, "agent_config", "Couldn't read agent settings: x".into()));
         assert_eq!(wire(AskError::Io("x".into())), (500, "io", "Couldn't save the conversation: x".into()));
+        assert_eq!(wire(AskError::Listing("x".into())), (500, "io", "Couldn't list the documents: x".into()));
     }
 
     fn exited(code: i32, stdout: &str, stderr_tail: &str) -> Outcome {
@@ -612,7 +661,7 @@ mod tests {
         std::fs::write(core.room_root(&room.id).unwrap().0.join("doc.html"), "<title>d</title>").unwrap();
         core.backfill_all().unwrap();
         std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-        std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{fake}\", \"{{prompt}}\"]\n")).unwrap();
+        std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{fake}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
         let asks = Asks::new(core.clone(), None);
         let file_key = core.list_artifacts(&room.id).unwrap().remove(0).file_key;
         let doc = AskScope::Doc { file_key: file_key.clone() };
@@ -623,9 +672,124 @@ mod tests {
         assert!(asks.reserve(&AskScope::Day { date: "2026-10-09".into() }).is_ok());
         assert_eq!(asks.thread(&room_like).unwrap().len(), 0);
         assert_eq!(asks.thread(&doc).unwrap()[0].id, t.id);
-        assert!(matches!(asks.start(&room_like, "q", None), Err(AskError::BadRequest(m)) if m == NOT_YET));
-        assert!(matches!(asks.target(&room_like), Err(AskError::BadRequest(m)) if m == NOT_YET));
+        assert!(matches!(asks.start(&room_like, "q", None), Err(AskError::RoomNotFound)));
+        assert!(matches!(asks.target(&room_like), Err(AskError::RoomNotFound)));
         asks.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn room_ask_uses_default_agent_new_mode_and_empty_cwd() {
+        use rooms_protocol::AskMode;
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-agent.sh");
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let room = core.create_room("Research").unwrap();
+        let meta = r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="s1">"#;
+        std::fs::write(core.room_root(&room.id).unwrap().0.join("doc.html"), format!("<title>d</title>{meta}")).unwrap();
+        core.backfill_all().unwrap();
+        std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+        std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
+            "default = \"mine\"\npreamble = \"DOC ONLY\"\n",
+            "[agents.mine]\nresume = [\"{f}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{f}\", \"new\", \"{{file}}\", \"{{cwd}}\", \"{{prompt}}\"]\n",
+            "[agents.claude-code]\nresume = [\"{f}\", \"cc-resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{f}\", \"cc\", \"--settings\", \"{{scope_settings}}\", \"{{prompt}}\"]\n",
+        ), f = fake)).unwrap();
+        let asks = Asks::new(core.clone(), None);
+        let scope = AskScope::Room { room_id: room.id.clone() };
+        assert_eq!(asks.target(&scope).unwrap(), AskTarget { agent: "mine".into(), mode: AskMode::New, models: vec![], scoped: false });
+        assert_eq!(asks.target(&AskScope::Day { date: "2026-10-09".into() }).unwrap().agent, "mine");
+        assert!(!d.path().join(".rooms/asks").exists(), "target writes nothing");
+        let mut rx = core.subscribe();
+        let t = asks.start(&scope, "q", None).unwrap();
+        assert_eq!((t.agent.as_str(), t.mode), ("mine", AskMode::New));
+        let answer = loop {
+            let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().unwrap();
+            if let EventKind::AskDone { turn } = ev.kind { break turn.answer; }
+        };
+        let cwd = std::fs::canonicalize(d.path().join(".rooms/asks/cwd")).unwrap();
+        assert!(answer.starts_with(&format!("ARGV: [new] [] [{}] [[Rooms] The user is looking at the room", core.home().join(".rooms/asks/cwd").display())), "{answer}");
+        assert!(answer.ends_with(&format!("CWD: {}", cwd.display())), "{answer}");
+        assert!(!answer.contains("resume") && !answer.contains("DOC ONLY"), "{answer}");
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&cwd).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::read_dir(&cwd).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn private_dir_creates_and_tightens() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let fresh = d.path().join("a/b/cwd");
+        private_dir(&fresh).unwrap();
+        assert_eq!(mode(&fresh), 0o700);
+        let open = d.path().join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+        private_dir(&open).unwrap();
+        assert_eq!(mode(&open), 0o700, "a folder left open by an earlier run is made private");
+    }
+
+    #[test]
+    fn listing_errors_say_what_failed() {
+        assert!(matches!(listing_error(CoreError::RoomNotFound), AskError::RoomNotFound));
+        assert!(matches!(listing_error(CoreError::InvalidInput("journal".into())), AskError::BadRequest(m) if m == "journal"));
+        let db = listing_error(CoreError::Db(rusqlite::Error::InvalidQuery));
+        assert!(matches!(db, AskError::Listing(_)), "{db:?}");
+        assert!(db.to_string().starts_with("Couldn't list the documents: "), "{db}");
+        let io = listing_error(CoreError::Io(std::io::Error::other("disk")));
+        assert_eq!(io.to_string(), "Couldn't list the documents: disk");
+    }
+
+    /// `cargo test -p rooms-core --release context_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn context_timing() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let originals = tempfile::tempdir().unwrap();
+        let today = crate::rules::local_day(&chrono::Local::now().to_rfc3339()).unwrap();
+        let pct = |mut v: Vec<f64>, p: f64| { v.sort_by(f64::total_cmp); v[((v.len() - 1) as f64 * p).round() as usize] };
+        let ctx = prompt::Context::default();
+        for n in [10, 100, 450] {
+            let room = core.create_room(&format!("r{n}")).unwrap();
+            let root = core.room_root(&room.id).unwrap().0;
+            for i in 0..n {
+                let o = originals.path().join(format!("r{n}-{i}.html"));
+                std::fs::write(&o, format!("<title>Doc {i} of room {n}</title>")).unwrap();
+                std::os::unix::fs::symlink(&o, root.join(format!("{i}.html"))).unwrap();
+            }
+            core.backfill_all().unwrap();
+            let mut ms = Vec::new();
+            let mut bytes = 0;
+            for _ in 0..30 {
+                let t = std::time::Instant::now();
+                let (name, entries) = core.room_context(&room.id).unwrap();
+                bytes = build_scope_prompt(&Listing::Room(name), &entries, &ctx, "q").len();
+                ms.push(t.elapsed().as_secs_f64() * 1e3);
+            }
+            println!("room {n:>3} docs: p50 {:.2} ms  p95 {:.2} ms  prompt {bytes} bytes", pct(ms.clone(), 0.5), pct(ms, 0.95));
+        }
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let room = core.create_room("day").unwrap();
+        let root = core.room_root(&room.id).unwrap().0;
+        for i in 0..40 {
+            let o = originals.path().join(format!("day-{i}.html"));
+            std::fs::write(&o, format!("<title>Day doc {i}</title>")).unwrap();
+            std::os::unix::fs::symlink(&o, root.join(format!("{i}.html"))).unwrap();
+        }
+        core.backfill_all().unwrap();
+        for i in 0..20 { core.save_note(&today, &format!("n{i}.md"), "x").unwrap(); }
+        let mut ms = Vec::new();
+        let mut count = 0;
+        for _ in 0..30 {
+            let t = std::time::Instant::now();
+            let entries = core.day_context(&today).unwrap();
+            count = entries.len();
+            build_scope_prompt(&Listing::Day(today.clone()), &entries, &ctx, "q");
+            ms.push(t.elapsed().as_secs_f64() * 1e3);
+        }
+        println!("day of {count} items: p50 {:.2} ms  p95 {:.2} ms", pct(ms.clone(), 0.5), pct(ms, 0.95));
     }
 
     #[test]
