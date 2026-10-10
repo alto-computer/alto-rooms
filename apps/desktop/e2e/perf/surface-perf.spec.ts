@@ -3,22 +3,29 @@
  *   ROOMS_PERF=1 bun run e2e -- perf/surface-perf.spec.ts --project chromium
  * and ROOMS_PERF_TAGGER=1 to add the tagger fixture. It writes a 30-turn room thread straight into
  * the ask log, then measures, in ms:
+ *   - commit: React's render work (the HostRoot's actualDuration, summed over the commits) and the
+ *     wall clock from the room click to the 30th turn on screen. Needs a ROOMS_PROFILE=1 build
+ *     (react-dom/profiling), where the DevTools hook this probe installs makes React time each commit;
  *   - selection-to-bar: triple-click release to the selection bar on screen;
  *   - paint: for one `paint` of 200 ranges, the wall-clock latency from the frame's post to the
  *     CSS.highlights.set that lands it, and the frames until the paint is on screen;
- *   - idle: CPU seconds and RSS of this worker's Chromium process tree over 10 s.
- * One JSON line per metric goes to stdout, prefixed PERF.
+ *   - idle: CPU seconds and RSS of this worker's Chromium process tree, five windows of 10 s.
+ * One JSON line per metric goes to stdout, prefixed PERF. ROOMS_PERF_MODE=commit runs only the first,
+ * which is what e2e/perf/gate.sh alternates between a trunk build and a head build.
  */
 import { execFileSync } from "node:child_process";
 import type { Frame, Page } from "@playwright/test";
 import { expect, test, type Daemon } from "../fixtures";
 
 test.skip(!process.env.ROOMS_PERF, "set ROOMS_PERF=1 to run the perf probe");
-test.setTimeout(240_000);
+test.setTimeout(400_000);
 
 const TURNS = 30;
 const RANGES = 200;
 const RUNS = 20;
+const IDLE_WINDOWS = 5;
+const IDLE_WINDOW_MS = 10_000;
+const COMMIT_ONLY = process.env.ROOMS_PERF_MODE === "commit";
 const FRAME_URL = /\/_plugins\/tagger\/background\.html/;
 
 const SENTENCE = "The quick brown fox jumps over the lazy dog while the committee reviews the quarterly report. ";
@@ -26,21 +33,18 @@ const ANSWER = Array.from({ length: 12 }, (_, i) => `Paragraph ${i + 1}. ${SENTE
 
 type TaggerApi = { surfaces(): unknown[]; paintMany(n: number): void };
 type PaintProbe = { setAt?: number; setSize?: number; frames?: number };
+/** One React commit as the DevTools hook saw it: when, and how long its render work took. */
+type Commit = { at: number; render: number };
+type CommitProbe = { commits: Commit[]; profiling: boolean };
 
 function quantile(xs: number[], q: number): number {
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.floor(q * s.length))];
 }
 const round = (x: number) => Math.round(x * 100) / 100;
+const spread = (samples: number[]) => ({ n: samples.length, p50: round(quantile(samples, 0.5)), p95: round(quantile(samples, 0.95)), min: round(Math.min(...samples)), max: round(Math.max(...samples)) });
 const report = (metric: string, extra: Record<string, unknown>, samples?: number[]) =>
-  console.log(
-    "PERF",
-    JSON.stringify({
-      metric,
-      ...extra,
-      ...(samples ? { n: samples.length, p50: round(quantile(samples, 0.5)), p95: round(quantile(samples, 0.95)), min: round(Math.min(...samples)), max: round(Math.max(...samples)) } : {}),
-    }),
-  );
+  console.log("PERF", JSON.stringify({ metric, ...extra, ...(samples ? spread(samples) : {}) }));
 
 /** A done thread of `n` long answers, written the way roomsd writes it. */
 async function writeThread(daemon: Daemon, roomId: string, n: number) {
@@ -69,10 +73,51 @@ async function writeThread(daemon: Daemon, roomId: string, n: number) {
   await daemon.write(`.rooms/asks/room-${roomId}.jsonl`, lines.join("\n") + "\n");
 }
 
+/**
+ * A DevTools hook installed before React loads. React tells it about every commit; with the
+ * profiling bundle the root fiber carries `actualDuration`, the render work of that commit.
+ */
+function installCommitHook(page: Page) {
+  return page.addInitScript(() => {
+    const probe: CommitProbe = { commits: [], profiling: false };
+    (window as unknown as { __commits: CommitProbe }).__commits = probe;
+    (window as unknown as { __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown }).__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      supportsFiber: true,
+      isDisabled: false,
+      renderers: new Map(),
+      inject: () => 1,
+      onScheduleFiberRoot() {},
+      onCommitFiberUnmount() {},
+      onPostCommitFiberRoot() {},
+      onCommitFiberRoot(_id: number, root: { current: { actualDuration?: number } }) {
+        const render = root.current.actualDuration;
+        if (typeof render === "number") probe.profiling = true;
+        probe.commits.push({ at: performance.now(), render: render ?? NaN });
+      },
+    };
+  });
+}
+
 async function openRoom(page: Page, room: string) {
   await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: room, exact: true }).click();
   await expect(page.getByRole("tab", { name: room, exact: true, selected: true })).toBeVisible();
   await expect(page.locator("[data-turn-id]")).toHaveCount(TURNS);
+}
+
+/** Opens the 30-turn room: React render work over the commits it took, and the wall clock to the 30th turn. */
+async function openCost(page: Page, room: string): Promise<{ render: number; commits: number; wall: number }> {
+  const from = await page.evaluate(() => {
+    const p = (window as unknown as { __commits: CommitProbe }).__commits;
+    return { count: p.commits.length, now: performance.now() };
+  });
+  await openRoom(page, room);
+  const to = await page.evaluate(() => {
+    const p = (window as unknown as { __commits: CommitProbe }).__commits;
+    return { commits: p.commits, now: performance.now(), profiling: p.profiling };
+  });
+  expect(to.profiling, "a ROOMS_PROFILE=1 build: React timed its commits").toBe(true);
+  const commits = to.commits.slice(from.count);
+  return { render: commits.reduce((sum, c) => sum + c.render, 0), commits: commits.length, wall: to.now - from.now };
 }
 
 /** Triple-click release to the bar's first paint, read with a MutationObserver inside the page. */
@@ -179,21 +224,31 @@ function chromium(): { cpu: number; rssMb: number; pids: number } {
   return { cpu, rssMb: rss, pids };
 }
 
+/** Five 10 s windows: CPU seconds spent in each, and RSS at the end of each, with their spread. */
 async function idle(page: Page, label: string) {
   await page.waitForTimeout(2000);
-  const a = chromium();
-  await page.waitForTimeout(10_000);
-  const b = chromium();
-  report("idle", { label, cpuSeconds: round(b.cpu - a.cpu), rssMb: round(b.rssMb), pids: b.pids });
+  const cpu: number[] = [];
+  const rss: number[] = [];
+  let last = chromium();
+  for (let i = 0; i < IDLE_WINDOWS; i++) {
+    await page.waitForTimeout(IDLE_WINDOW_MS);
+    const now = chromium();
+    cpu.push(now.cpu - last.cpu);
+    rss.push(now.rssMb);
+    last = now;
+  }
+  report("idle-cpu-seconds-per-10s", { label, pids: last.pids }, cpu);
+  report("idle-rss-mb", { label, pids: last.pids }, rss);
 }
 
-test("surface perf: selection-to-bar, 200-range paint, idle cost", async ({ page, daemon }) => {
+test("surface perf: thread open commit time, selection-to-bar, 200-range paint, idle cost", async ({ page, daemon }) => {
   const room = await daemon.createRoom("perf");
   await daemon.write("perf/alpha.html", "<html><head><title>Alpha</title></head><body>a</body></html>");
   await writeThread(daemon, room.id, TURNS);
   const hasTagger = !!process.env.ROOMS_PERF_TAGGER;
   const label = hasTagger ? "tagger on" : "no plugin";
   if (hasTagger) await daemon.installPlugin("tagger");
+  await installCommitHook(page);
   await page.goto("/");
   let frame: Frame | null = null;
   if (hasTagger) {
@@ -202,11 +257,11 @@ test("surface perf: selection-to-bar, 200-range paint, idle cost", async ({ page
     frame = page.frame({ url: FRAME_URL })!;
     await expect.poll(() => frame!.evaluate(() => typeof (window as unknown as { tagger?: unknown }).tagger)).toBe("object");
   }
-  await idle(page, `${label}, thread closed`);
+  if (!COMMIT_ONLY) await idle(page, `${label}, thread closed`);
 
-  const t0 = performance.now();
-  await openRoom(page, "perf");
-  report("open-30-turns", { label, ms: Math.round(performance.now() - t0) });
+  const opened = await openCost(page, "perf");
+  report("open-30-turns", { label, renderMs: round(opened.render), commits: opened.commits, wallMs: Math.round(opened.wall) });
+  if (COMMIT_ONLY) return;
   if (frame) {
     const t1 = performance.now();
     await expect.poll(() => frame!.evaluate(() => (window as unknown as { tagger: TaggerApi }).tagger.surfaces().length), { intervals: [10] }).toBe(TURNS);

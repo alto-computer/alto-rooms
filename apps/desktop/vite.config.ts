@@ -4,10 +4,14 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 import pkg from "./package.json" with { type: "json" };
 
+// The perf gate (e2e/perf/gate.sh) builds with ROOMS_PROFILE=1: React's profiling bundle, which
+// times each commit for a DevTools hook the probe installs. Never set for a shipped build.
+const profiling: Record<string, string> = process.env.ROOMS_PROFILE === "1" ? { "react-dom/client": "react-dom/profiling" } : {};
+
 // Tauri expects a fixed dev port (tauri.conf.json build.devUrl = http://localhost:1420).
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  resolve: { alias: { "@": path.resolve(import.meta.dirname, "./src") } },
+  resolve: { alias: { "@": path.resolve(import.meta.dirname, "./src"), ...profiling } },
   clearScreen: false,
   server: { port: 1420, strictPort: true, watch: { ignored: ["**/src-tauri/**"] } },
   preview: { port: 4173, strictPort: true },
