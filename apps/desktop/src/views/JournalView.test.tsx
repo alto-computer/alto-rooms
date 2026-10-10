@@ -8,7 +8,7 @@ import { ViewerStore } from "@/data/viewerStore";
 import { addDays, clockTime, isoWeek, localDate } from "@/lib/dates";
 import { takeNoteBodyFocus } from "@/lib/notes";
 import { AppShell } from "@/shell/AppShell";
-import { fakeClient, memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { conversation, fakeClient, memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { JournalView } from "./JournalView";
 
 vi.mock("@/lib/native", () => ({
@@ -174,6 +174,17 @@ describe("JournalView: an empty day", () => {
     expect(after).toHaveTextContent("1 note");
     fireEvent.click(after);
     expect(viewer.getState().tabs.find((t) => t.kind === "journal")).toMatchObject({ date: addDays(day, 1) });
+  });
+
+  it("counts a nearby day's sessions, and finds a day that has only sessions", async () => {
+    const day = addDays(today, -3);
+    const at = `${addDays(day, -1)}T03:00:00Z`;
+    await renderJournal({
+      viewer: journalViewer(day),
+      days: { [addDays(day, -1)]: { conversations: [{ at, conversation: conversation("s1") }, { at, conversation: conversation("s2") }] } },
+    });
+    const nearest = await screen.findByRole("region", { name: "Nearest days" });
+    expect(within(nearest).getByRole("button")).toHaveTextContent("2 sessions");
   });
 
   it("goes to today from another quiet day", async () => {

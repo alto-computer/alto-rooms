@@ -8,7 +8,7 @@ import { addDays, count, dayOfMonth, localDate, longMonthDay, weekdayName } from
 /** How far either way the nearest written days are looked for. */
 const NEARBY_SPAN = 7;
 
-const isEmpty = (d: JournalDay) => d.artifacts.length === 0 && d.notes.length === 0;
+const isEmpty = (d: JournalDay) => d.artifacts.length === 0 && d.notes.length === 0 && d.conversations.length === 0;
 
 /** The written days closest to `date`: the last one before it and the first one after it (never past today), each within a week. */
 function useNearbyDays(date: string): JournalDay[] {
@@ -33,7 +33,11 @@ function useNearbyDays(date: string): JournalDay[] {
 }
 
 function NearbyDay({ day, rooms, onPick }: { day: JournalDay; rooms: readonly Room[]; onPick: () => void }) {
-  const what = [day.artifacts.length && count(day.artifacts.length, "artifact"), day.notes.length && count(day.notes.length, "note")].filter(Boolean).join(", ");
+  const what = [
+    day.conversations.length && count(day.conversations.length, "session"),
+    day.artifacts.length && count(day.artifacts.length, "artifact"),
+    day.notes.length && count(day.notes.length, "note"),
+  ].filter(Boolean).join(", ");
   const where = [...new Set(day.artifacts.map((a) => rooms.find((r) => r.id === a.roomId)?.name).filter(Boolean))].join(", ");
   return (
     <button
