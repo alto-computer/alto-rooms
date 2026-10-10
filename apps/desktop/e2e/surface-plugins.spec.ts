@@ -162,7 +162,7 @@ test("a click on a painted range shows the plugin's menu; Untag removes the pain
   expect(JSON.parse(await daemon.read(path.join(".rooms", "plugins", "tagger", "data", file)))).toEqual({ version: 1, tags: [] });
 });
 
-test("open({ surface, rangeId }) from the background opens the thread's tab, unfolds it, and flashes the range once painted", async ({ page, daemon }) => {
+test("open({ surface, rangeId }) from the background is refused unless the user just clicked the plugin; then it opens the thread's tab, unfolds it, and flashes the range", async ({ page, daemon }) => {
   installStreamingAgent(daemon, "Room");
   await daemon.createRoom("harness");
   await daemon.write("harness/alpha.html", "<html><head><title>Alpha</title></head><body>a</body></html>");
@@ -178,10 +178,26 @@ test("open({ surface, rangeId }) from the background opens the thread's tab, unf
   const [surface] = await frame.evaluate(() => window.tagger.surfaces());
   const [file] = await tagFiles(daemon);
   const { tags } = JSON.parse(await daemon.read(path.join(".rooms", "plugins", "tagger", "data", file))) as { tags: { id: string }[] };
+  const open = () =>
+    frame.evaluate(
+      ({ surface, rangeId }) => window.tagger.open(surface, rangeId).then(() => "ok", (e: { code?: string }) => e.code ?? "error"),
+      { surface, rangeId: tags[0].id },
+    );
 
   await openDocTab(page, "Alpha");
   await expect.poll(() => painted(page)).toEqual([]);
-  await frame.evaluate(({ surface, rangeId }) => window.tagger.open(surface, rangeId), { surface, rangeId: tags[0].id });
+  await page.waitForTimeout(2100);
+  expect(await open(), "no click on the plugin in the last 2 s").toBe("permission_denied");
+  await expect(page.getByRole("tab", { name: "Alpha", selected: true })).toBeVisible();
+
+  await page.getByRole("tab", { name: "harness", exact: true }).click();
+  await expect.poll(() => painted(page)).toEqual([text]);
+  await clickPainted(page);
+  await expect(bar(page).getByRole("button")).toHaveText(["Untag", "Open"]);
+  await page.keyboard.press("Escape");
+  await page.getByRole("tab", { name: "Alpha", exact: true }).click();
+  await expect.poll(() => painted(page)).toEqual([]);
+  expect(await open(), "right after the click on its range").toBe("ok");
   await expect(page.getByRole("tab", { name: "harness", exact: true, selected: true })).toBeVisible();
   await expect.poll(() => painted(page, "rooms-flash"), { timeout: 5000, intervals: [25] }).toEqual([text]);
   await expect.poll(() => painted(page)).toEqual([text]);
