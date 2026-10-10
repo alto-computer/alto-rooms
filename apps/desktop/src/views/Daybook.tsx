@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Artifact, Conversation, Info, JournalDay, Note, Room, RoomColor } from "@alto-rooms/protocol-ts";
 import { RoomDot } from "@/components/RoomDot";
 import { useClient, useOpenDoc, useViewerStore } from "@/data/hooks";
@@ -62,13 +62,16 @@ function useNoteText(note: Note): string | null {
   return text;
 }
 
-/** Lines of a note the day shows; past them, an ellipsis says there is more and the note's tab has it. */
-const NOTE_LINES = 4;
+/** Source lines a note's preview renders; the preview shows the first four wrapped lines of them. */
+const NOTE_SOURCE_LINES = 12;
 
-/** The first few lines of a note as they read: bullets as a list, the rest as paragraphs, then "…" if it goes on. */
+/**
+ * The start of a note as it reads: bullets as a list, the rest as paragraphs, clamped to four
+ * rendered lines (a long line wraps into several), then "…" when the note goes on.
+ */
 function NoteText({ text }: { text: string }) {
   const all = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  const lines = all.slice(0, NOTE_LINES);
+  const lines = all.slice(0, NOTE_SOURCE_LINES);
   const blocks: ({ list: string[] } | { para: string })[] = [];
   for (const l of lines) {
     const item = /^[-*+]\s+(.*)$/.exec(l)?.[1];
@@ -77,26 +80,42 @@ function NoteText({ text }: { text: string }) {
     else if (last && "list" in last) last.list.push(item);
     else blocks.push({ list: [item] });
   }
-  return blocks.map((b, i) =>
-    "list" in b ? (
-      <ul key={i} className="mt-1.5 list-disc pl-[18px] marker:text-ink-3">
-        {b.list.map((t, j) => (
-          <li key={j} className="my-0.5">
-            {t}
-          </li>
-        ))}
-      </ul>
-    ) : (
-      <p key={i} className="mt-1">
-        {b.para}
-      </p>
-    ),
-  ).concat(
-    all.length > lines.length ? (
-      <p key="more" aria-label={`${all.length - lines.length} more lines`} className="mt-1 text-ink-3">
-        …
-      </p>
-    ) : [],
+  const body = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const el = body.current!;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    const resized = new ResizeObserver(measure);
+    resized.observe(el);
+    return () => resized.disconnect();
+  }, [text]);
+  return (
+    <>
+      <div ref={body} data-note-preview className="line-clamp-4 break-keep">
+        {blocks.map((b, i) =>
+          "list" in b ? (
+            <ul key={i} className="mt-1.5 list-disc pl-[18px] marker:text-ink-3">
+              {b.list.map((t, j) => (
+                <li key={j} className="my-0.5">
+                  {t}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p key={i} className="mt-1">
+              {b.para}
+            </p>
+          ),
+        )}
+      </div>
+      {overflows || all.length > lines.length ? (
+        <p className="mt-1 text-ink-3">
+          <span aria-hidden>…</span>
+          <span className="sr-only">The note goes on</span>
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -121,7 +140,7 @@ function NoteEntry({ note }: { note: Note }) {
     >
       <h3 className="font-serif text-heading leading-6 font-semibold text-ink">{name}</h3>
       {text ? (
-        <div className="max-w-[60ch] font-serif text-lead leading-[1.6] break-keep text-ink-2">
+        <div className="max-w-[60ch] font-serif text-lead leading-[1.6] text-ink-2">
           <NoteText text={text} />
         </div>
       ) : null}

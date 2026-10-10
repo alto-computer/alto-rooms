@@ -102,19 +102,28 @@ describe("JournalView: the daybook", () => {
     expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "note", date: today, name: "계획.md" });
   });
 
-  it("cuts a long note at four lines and ends it with an ellipsis; a short one has none", async () => {
-    const long = Array.from({ length: 9 }, (_, i) => `줄 ${i + 1}`).join("\n");
+  it("clamps a note to four rendered lines and ends it with an ellipsis when it goes on; a short one has none", async () => {
+    // jsdom lays nothing out: a preview over 40 characters reads as taller than its four lines.
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+      return this.hasAttribute("data-note-preview") && (this.textContent ?? "").length > 40 ? 200 : 0;
+    });
+    const many = Array.from({ length: 15 }, (_, i) => `줄 ${i + 1}`).join("\n");
+    const wide = "아주 긴 한 줄이 창의 폭을 넘어서 네 줄 넘게 감기는 경우에도 미리보기는 네 줄에서 끝나야 한다";
     await renderJournal({
       viewer: journalViewer(),
-      days: { [today]: { notes: [note(today, "긴.md", `${today}T01:00:00Z`), note(today, "짧은.md", `${today}T02:00:00Z`)] } },
-      notes: { [`${today}/긴.md`]: long, [`${today}/짧은.md`]: "한 줄" },
+      days: { [today]: { notes: [note(today, "긴.md", `${today}T01:00:00Z`), note(today, "넓은.md", `${today}T02:00:00Z`), note(today, "짧은.md", `${today}T03:00:00Z`)] } },
+      notes: { [`${today}/긴.md`]: many, [`${today}/넓은.md`]: wide, [`${today}/짧은.md`]: "한 줄" },
     });
-    const [longItem, shortItem] = within(daybook()).getAllByRole("listitem");
-    expect(await within(longItem).findByText("줄 4")).toBeInTheDocument();
-    expect(within(longItem).queryByText("줄 5")).toBeNull();
-    expect(within(longItem).getByLabelText("5 more lines")).toHaveTextContent("…");
+    const [manyItem, wideItem, shortItem] = within(daybook()).getAllByRole("listitem");
+    for (const [item, first] of [[manyItem, "줄 1"], [wideItem, wide]] as const) {
+      const body = (await within(item).findByText(first)).closest("[data-note-preview]");
+      expect(body).toHaveClass("line-clamp-4", "break-keep");
+      expect(within(item).getByText("…")).toBeInTheDocument();
+      expect(within(item).getByText("The note goes on")).toHaveClass("sr-only");
+    }
     expect(await within(shortItem).findByText("한 줄")).toBeInTheDocument();
     expect(within(shortItem).queryByText("…")).toBeNull();
+    expect(within(daybook()).queryAllByLabelText(/more lines/)).toEqual([]);
   });
 
   it("opens another room's artifact as a doc tab, from a sandboxed preview of it", async () => {
