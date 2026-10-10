@@ -907,6 +907,102 @@ fn move_room_refuses_the_inbox_and_unknown_rooms() {
     assert!(matches!(core.move_room(&"nope".to_string(), 0), Err(CoreError::RoomNotFound)));
 }
 
+// ---- colour pins ----
+
+fn id_of(core: &RoomsCore, name: &str) -> String {
+    core.list_rooms().into_iter().find(|r| r.name == name).unwrap().id
+}
+
+/// The listed order, pinned rooms as `name:colour`.
+fn pins(core: &RoomsCore) -> Vec<String> {
+    core.list_rooms().into_iter().map(|r| match r.color {
+        Some(c) => format!("{}:{}", r.name, serde_json::to_value(c).unwrap().as_str().unwrap()),
+        None => r.name,
+    }).collect()
+}
+
+#[test]
+fn set_room_color_pins_unpins_and_recolours_keeping_pinned_rooms_first() {
+    let (d, core) = home();
+    for n in ["a", "b", "c", "d"] { core.create_room(n).unwrap(); }
+    let mut rx = core.subscribe();
+
+    let c = core.set_room_color(&id_of(&core, "c"), Some(RoomColor::Sage)).unwrap();
+    assert_eq!(c.color, Some(RoomColor::Sage));
+    assert_eq!(pins(&core), ["inbox", "c:sage", "a", "b", "d"]);
+    let evs = drain(&mut rx);
+    assert!(matches!(&evs[0].kind, EventKind::RoomUpdated { room } if *room == c));
+    let ids: Vec<String> = core.list_rooms().into_iter().map(|r| r.id).collect();
+    assert!(matches!(&evs[1].kind, EventKind::RoomsReordered { room_ids } if *room_ids == ids));
+    assert_eq!(evs.len(), 2);
+
+    core.set_room_color(&id_of(&core, "d"), Some(RoomColor::Rose)).unwrap();
+    assert_eq!(pins(&core), ["inbox", "c:sage", "d:rose", "a", "b"]);
+
+    // Another colour on a pinned room: updated in place, no reorder.
+    drain(&mut rx);
+    core.set_room_color(&id_of(&core, "c"), Some(RoomColor::Dusk)).unwrap();
+    assert_eq!(pins(&core), ["inbox", "c:dusk", "d:rose", "a", "b"]);
+    let evs = drain(&mut rx);
+    assert_eq!(evs.len(), 1);
+    assert!(matches!(&evs[0].kind, EventKind::RoomUpdated { room } if room.color == Some(RoomColor::Dusk)));
+
+    // The same colour again: nothing to save or announce.
+    core.set_room_color(&id_of(&core, "c"), Some(RoomColor::Dusk)).unwrap();
+    assert!(drain(&mut rx).is_empty());
+
+    // Unpinned: the top of the unpinned rooms.
+    let c = core.set_room_color(&id_of(&core, "c"), None).unwrap();
+    assert_eq!(c.color, None);
+    assert_eq!(pins(&core), ["inbox", "d:rose", "c", "a", "b"]);
+
+    assert_eq!(pins(&RoomsCore::open(d.path()).unwrap()), ["inbox", "d:rose", "c", "a", "b"]);
+}
+
+#[test]
+fn move_room_cannot_cross_the_pinned_boundary() {
+    let (_d, core) = home();
+    for n in ["a", "b", "c", "d"] { core.create_room(n).unwrap(); }
+    for n in ["a", "b"] { core.set_room_color(&id_of(&core, n), Some(RoomColor::Oat)).unwrap(); }
+    assert_eq!(order(&core), ["inbox", "a", "b", "c", "d"]);
+
+    core.move_room(&id_of(&core, "b"), 0).unwrap();
+    assert_eq!(order(&core), ["inbox", "b", "a", "c", "d"]);
+    core.move_room(&id_of(&core, "b"), 3).unwrap(); // into the unpinned rooms: clamped
+    assert_eq!(order(&core), ["inbox", "a", "b", "c", "d"]);
+    core.move_room(&id_of(&core, "d"), 0).unwrap(); // into the pinned run: clamped
+    assert_eq!(order(&core), ["inbox", "a", "b", "d", "c"]);
+    core.move_room(&id_of(&core, "d"), 99).unwrap();
+    assert_eq!(order(&core), ["inbox", "a", "b", "c", "d"]);
+}
+
+#[test]
+fn set_room_color_refuses_the_inbox_and_unknown_rooms() {
+    let (_d, core) = home();
+    core.create_room("a").unwrap();
+    let mut rx = core.subscribe();
+    assert!(matches!(core.set_room_color(&"inbox".to_string(), Some(RoomColor::Sea)).unwrap_err(), CoreError::InvalidInput(_)));
+    assert!(matches!(core.set_room_color(&"nope".to_string(), Some(RoomColor::Sea)), Err(CoreError::RoomNotFound)));
+    assert!(core.list_rooms().iter().all(|r| r.color.is_none()));
+    assert!(drain(&mut rx).is_empty());
+}
+
+#[test]
+fn colour_survives_a_rename_and_a_state_file_out_of_order_is_repaired() {
+    let (d, core) = home();
+    for n in ["a", "b", "c"] { core.create_room(n).unwrap(); }
+    core.set_room_color(&id_of(&core, "c"), Some(RoomColor::Lilac)).unwrap();
+    core.rename_room(&id_of(&core, "c"), "cc").unwrap();
+    assert_eq!(pins(&core), ["inbox", "cc:lilac", "a", "b"]);
+    drop(core);
+    // A state file that breaks the invariant (edited by hand): pinned rooms come first on load.
+    let state = d.path().join(".rooms/state.json");
+    let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+    v["rooms"].as_array_mut().unwrap()[3]["color"] = "sea".into();
+    fs::write(&state, serde_json::to_vec(&v).unwrap()).unwrap();
+    assert_eq!(pins(&RoomsCore::open(d.path()).unwrap()), ["inbox", "cc:lilac", "b:sea", "a"]);
+}
+
 // ---- fileKey ----
 
 fn key_of(core: &RoomsCore, room: &str, title_file: &str) -> String {

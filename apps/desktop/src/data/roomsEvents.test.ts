@@ -4,7 +4,7 @@ import { applyArtifactEvent, applyEvent, type ScopeView } from "./roomsEvents";
 import type { RoomsState } from "./roomsState";
 
 function room(id: string, artifactCount = 0): Room {
-  return { id, name: id, kind: "owned", path: `/h/${id}`, status: "ok", artifactCount, updatedAt: null };
+  return { id, name: id, kind: "owned", path: `/h/${id}`, status: "ok", artifactCount, updatedAt: null, color: null };
 }
 
 function art(id: string, roomId = "r1", createdAt = `2026-10-05T00:00:0${id.slice(-1)}Z`): Artifact {

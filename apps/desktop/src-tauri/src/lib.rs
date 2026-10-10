@@ -1,4 +1,5 @@
 mod collector;
+mod conversation;
 mod daemon;
 mod drafts;
 mod flush;
@@ -11,6 +12,7 @@ use flush::Intent;
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
+const MENU_SETTINGS: &str = "settings";
 const MENU_NEW_TAB: &str = "new-tab";
 const MENU_CLOSE_TAB: &str = "close-tab";
 const MENU_CLOSE_WINDOW: &str = "close-window";
@@ -24,14 +26,17 @@ const MENU_REOPEN_TAB: &str = "reopen-tab";
 const MENU_NEXT_TAB: &str = "next-tab";
 const MENU_PREV_TAB: &str = "prev-tab";
 
-/// App menu (About, Hide, Quit ⌘Q), Edit (predefined, so text editing keys keep
+/// App menu (About, Settings… ⌘,, Hide, Quit ⌘Q), Edit (predefined, so text editing keys keep
 /// working), File (New Tab ⌘T, Close Tab ⌘W, Close Window ⇧⌘W) and View (Find ⌘K, Toggle Sidebar ⌘B, Back ⌘[, Forward ⌘]).
 /// Quit is our own item, not the predefined one, so it can flush notes before
 /// exiting. The webview applies its focus rule to every `menu://…` event.
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let quit = MenuItemBuilder::with_id(MENU_QUIT, "Quit Alto Rooms").accelerator("CmdOrCtrl+Q").build(app)?;
+    let settings = MenuItemBuilder::with_id(MENU_SETTINGS, "Settings…").accelerator("CmdOrCtrl+,").build(app)?;
     let app_menu = SubmenuBuilder::new(app, "Alto Rooms")
         .about(None)
+        .separator()
+        .item(&settings)
         .separator()
         .hide()
         .separator()
@@ -100,6 +105,7 @@ fn invoke_handler() -> InvokeHandler {
         share::doc_original,
         share::reveal_doc,
         share::open_doc,
+        conversation::continue_conversation,
         sorter::sort_state,
         sorter::sort_set_key,
         sorter::sort_clear_key,
@@ -120,6 +126,7 @@ fn invoke_handler() -> InvokeHandler {
         share::doc_original,
         share::reveal_doc,
         share::open_doc,
+        conversation::continue_conversation,
         sorter::sort_state,
         sorter::sort_set_key,
         sorter::sort_clear_key,
@@ -146,6 +153,7 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
+            MENU_SETTINGS => emit(app, "menu://settings"),
             MENU_NEW_TAB => emit(app, "menu://new-tab"),
             MENU_CLOSE_TAB => emit(app, "menu://close-tab"),
             MENU_FIND => emit(app, "menu://find"),

@@ -23,7 +23,7 @@ type Step =
   | { kind: "saved"; date: string; fileName: string };
 
 const ICON_BUTTON =
-  "inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink";
+  "inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink";
 
 /** "Save as note" beside Copy: asks for a name (the question's, editable), saves into the Journal, then links to the note. */
 export function SaveAsNote({ question, answer, target }: { question: string; answer: string; target: NoteTargetOf }) {
@@ -109,13 +109,13 @@ function NameForm({ name, error, saving, onChange, onSave, onCancel }: {
           if (e.key === "Enter" && e.nativeEvent.isComposing) e.preventDefault();
           if (e.key === "Escape") onCancel();
         }}
-        className="h-7 min-w-0 flex-1 rounded-md border border-[#d9d9d9] px-2 text-[12.5px] text-ink outline-none focus:border-ink"
+        className="h-7 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-small text-ink outline-none focus:border-ink"
       />
       <button
         type="submit"
         disabled={!canSave}
         aria-busy={saving || undefined}
-        className="inline-flex h-7 items-center rounded-md bg-ink px-2.5 text-[12.5px] font-medium text-white disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+        className="inline-flex h-7 items-center rounded-md bg-ink px-2.5 text-small font-medium text-pane disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
         Save
       </button>

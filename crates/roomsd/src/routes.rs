@@ -134,6 +134,26 @@ pub async fn list_artifacts(State(st): State<AppState>, Path(room_id): Path<Stri
     snapshot(&st, move |c| c.list_artifacts(&room_id)).await
 }
 
+pub async fn list_room_conversations(State(st): State<AppState>, Path(room_id): Path<String>) -> Result<Response, ApiErr> {
+    snapshot(&st, move |c| c.room_conversations(&room_id)).await
+}
+
+fn conversation_id(agent: &str, session: &str) -> Result<ConversationId, CoreError> {
+    ConversationId::parse_key(&format!("{agent}:{session}")).ok_or_else(|| CoreError::InvalidInput("unknown agent or bad session id".into()))
+}
+
+pub async fn get_conversation(State(st): State<AppState>, Path((agent, session)): Path<(String, String)>) -> Result<Response, ApiErr> {
+    let id = conversation_id(&agent, &session)?;
+    snapshot(&st, move |c| c.conversation(&id)).await
+}
+
+/// Body: the room id, or `null` to take the conversation out of its room.
+pub async fn set_conversation_room(State(st): State<AppState>, Path((agent, session)): Path<(String, String)>, b: Result<Json<Option<RoomId>>, JsonRejection>) -> Result<Json<Conversation>, ApiErr> {
+    let Json(room) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
+    let id = conversation_id(&agent, &session)?;
+    Ok(Json(blocking(&st, move |c| c.set_conversation_room(&id, room)).await?))
+}
+
 pub async fn journal_day(State(st): State<AppState>, Path(date): Path<String>) -> Result<Response, ApiErr> {
     snapshot(&st, move |c| c.journal_day(&date)).await
 }
@@ -157,6 +177,14 @@ pub async fn rename_room(State(st): State<AppState>, Path(room_id): Path<String>
 /// Moves a room to position `to` among the rooms other than the inbox; returns the full new order.
 pub async fn move_room(State(st): State<AppState>, Path(room_id): Path<String>, Json(b): Json<MoveRoomBody>) -> Result<Json<Vec<String>>, ApiErr> {
     Ok(Json(blocking(&st, move |c| c.move_room(&room_id, b.to)).await?))
+}
+
+// `deserialize_with` makes `color` required: `{}` is refused instead of read as an unpin.
+#[derive(Deserialize)] pub struct RoomColorBody { #[serde(deserialize_with = "Option::deserialize")] color: Option<RoomColor> }
+/// Pins a room with a colour, or unpins it (`null`); returns the room. The new order, if it
+/// changed, arrives as `rooms.reordered`.
+pub async fn set_room_color(State(st): State<AppState>, Path(room_id): Path<String>, Json(b): Json<RoomColorBody>) -> Result<Json<Room>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.set_room_color(&room_id, b.color)).await?))
 }
 
 /// Saves a note. With `If-None-Match: *` it only creates one: 409 `note_exists` if the name (or a
@@ -209,14 +237,15 @@ fn none_match_items<'a>(if_none_match: impl Iterator<Item = &'a str>) -> impl It
     if_none_match.flat_map(|v| v.split(',')).map(str::trim).filter(|t| !t.is_empty())
 }
 
-/// Spliced into every HTML document Rooms shows, so "ask about this" works inside docs. The app
-/// frames a doc sandboxed with no origin of its own (agent-written HTML must not reach the app), so
-/// it can't read the doc's selection; this script, running inside, posts it out instead. It goes
+/// Spliced into every HTML document Rooms shows, so "ask about this" works inside docs and a light
+/// doc can be dimmed in dark mode. The app frames a doc sandboxed with no origin of its own
+/// (agent-written HTML must not reach the app), so it can't read the doc's selection or background;
+/// this script, running inside, posts them out instead. It goes
 /// right after `<head>`, before any `<meta>` policy the document declares, which would block a
 /// script after it (`inject`). The file on disk is untouched.
 const SELECTION_BRIDGE: &[u8] = include_bytes!("selection-bridge.html");
 /// Bumped when the bridge or its placement changes, so cached documents pick up the new one.
-const BRIDGE_VERSION: &str = "b3";
+const BRIDGE_VERSION: &str = "b4";
 
 /// `doc=1` asks for the doc-tab variant: the bridge plus the content scripts of enabled plugins.
 /// Card previews send nothing and get the bridge alone.

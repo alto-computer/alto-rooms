@@ -22,7 +22,7 @@ test("AC-5: 새 방 creates the folder and opens an empty room tab", async ({ pa
   await openApp(page);
   await createRoomInUi(page, "연구 도구");
   expect(await daemon.exists("연구-도구")).toBe(true);
-  await expect(page.getByText("No docs yet")).toBeVisible();
+  await expect(page.getByText("No artifacts yet")).toBeVisible();
 });
 
 test("AC-1: an HTML file written to the folder shows up as a new card within 2s", async ({ page, daemon }) => {
@@ -31,8 +31,8 @@ test("AC-1: an HTML file written to the folder shows up as a new card within 2s"
   await daemon.write("연구-도구/a.html", "<title>첫 문서</title>");
   const c = card(page, "첫 문서");
   await expect(c).toBeVisible({ timeout: 2000 });
-  await expect(c.getByRole("img", { name: "New doc" })).toBeVisible();
-  await expect(page.getByText("1 doc")).toBeVisible();
+  await expect(c.getByRole("img", { name: "New artifact" })).toBeVisible();
+  await expect(page.getByText("1 artifact")).toBeVisible();
 });
 
 test("AC-6: renaming the room from its title renames the folder, tab and sidebar", async ({ page, daemon }) => {
@@ -78,7 +78,23 @@ test("the doc tab's Share menu copies the doc's path; the app-only actions stay 
   await page.getByRole("menuitem", { name: "Copy file path" }).click();
   await expect(page.getByText("Copied file path")).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(path.join(daemon.home, "연구-도구", "a.html"));
+  await expectOneLinePill(page, "Copied file path");
 });
+
+/** The toast is one line of text with room on either side, not a word or a letter per line. */
+async function expectOneLinePill(page: Page, text: string) {
+  const toast = page.locator("[data-sonner-toast]").filter({ hasText: text });
+  const shape = await toast.evaluate((el, text) => {
+    const box = el.getBoundingClientRect();
+    const title = el.querySelector("[data-title]")!;
+    const style = getComputedStyle(title);
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    return { width: box.width, height: box.height, textWidth: ctx.measureText(text).width, lineHeight: parseFloat(style.lineHeight) };
+  }, text);
+  expect(shape.height, `toast ${JSON.stringify(shape)} should be one line tall`).toBeLessThan(shape.lineHeight * 2);
+  expect(shape.width, `toast ${JSON.stringify(shape)} should be wider than its text`).toBeGreaterThan(shape.textWidth);
+}
 
 test("an open doc reloads when its file is rewritten", async ({ page, daemon }) => {
   await openApp(page);
@@ -115,5 +131,5 @@ test("Review Focus 2: renaming the folder on disk updates the open tab in place"
   await expect(page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "연구 노트" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 1, name: "연구 노트" })).toBeVisible();
   await expect(card(page, "첫 문서")).toBeVisible();
-  await expect(page.getByRole("tab")).toHaveCount(1); // the same room tab (it replaced New tab in place), not a second one
+  await expect(page.getByRole("tab")).toHaveCount(1); // the same room tab (it replaced home in place), not a second one
 });

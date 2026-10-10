@@ -225,6 +225,12 @@ const tabs = (page: Page) => page.getByRole("tablist", { name: "Tabs" }).getByRo
 const tabNamed = (page: Page, name: string) => page.getByRole("tablist", { name: "Tabs" }).getByRole("tab", { name, exact: true });
 const pluginFrame = (page: Page, title: string) => page.frameLocator(`iframe[title="${title}"]`);
 
+/** Opens a plugin's tab from the sidebar's Plugins flyout. */
+async function openPluginTab(page: Page, name: string) {
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page.getByRole("menu", { name: "Plugins" }).getByRole("menuitem", { name }).click();
+}
+
 async function writeDocs(daemon: Daemon) {
   await daemon.createRoom("Bench");
   for (const [file, title] of [["report.html", "Report"], ["second.html", "Second"]]) {
@@ -247,7 +253,7 @@ test("a plugin tab opens a doc next to it at an anchor; an open doc comes forwar
   await turnOnMarker(page);
   const key = await fileKeyOf(daemon, "Bench", "Report");
 
-  await page.getByRole("list", { name: "Plugins" }).getByRole("button", { name: "Marker" }).click();
+  await openPluginTab(page, "Marker");
   await expect(tabNamed(page, "Marker")).toHaveAttribute("aria-selected", "true");
   await openFromMarker(page, key, '{"mark":"x"}');
   await expect(tabNamed(page, "Report"), "the doc opens in its own tab").toHaveAttribute("aria-selected", "true");
@@ -293,7 +299,7 @@ test("open from a side panel replaces its doc tab; from a plugin tab it opens a 
   await expect(tabNamed(page, "Second")).toHaveAttribute("aria-selected", "true");
   await expect(tabs(page), "the side panel navigated its own tab").toHaveText(["Second"]);
 
-  await page.getByRole("list", { name: "Plugins" }).getByRole("button", { name: "Echo" }).click();
+  await openPluginTab(page, "Echo");
   await expect(tabNamed(page, "Echo")).toHaveAttribute("aria-selected", "true");
   await echo.locator("#fileKey").fill(await fileKeyOf(daemon, "Bench", "Report"));
   await echo.getByRole("button", { name: "Open doc" }).click();
@@ -311,7 +317,7 @@ test("a doc rewritten while in the background keeps its plugin buttons and still
     daemon.write("Bench/report.html", `<!doctype html><html><head><meta charset="utf-8"><title>Report</title></head><body><p id="text">${body}</p></body></html>`);
   const benchInNewTab = () => page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "Bench" }).click({ modifiers: [MOD] });
 
-  await page.getByRole("list", { name: "Plugins" }).getByRole("button", { name: "Marker" }).click();
+  await openPluginTab(page, "Marker");
   await openFromMarker(page, key, '{"mark":"first"}');
   const doc = docFrame(page, "Report");
   await expect(doc.locator("html")).toHaveAttribute("data-marker-reveal", '{"mark":"first"}');

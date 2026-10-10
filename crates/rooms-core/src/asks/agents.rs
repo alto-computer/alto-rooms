@@ -19,7 +19,11 @@ pub(crate) const DEFAULT_PREAMBLE: &str =
 /// The claude-code profile also enforces the list (`claude_read_scope`; `load` refuses one without
 /// `{scope_settings}`); other agents get only these words.
 pub(crate) const SCOPE_PREAMBLE: &str =
-    "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder, not even the folder a listed file is in, and never search without a path. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
+    "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder, not even the folder a listed file is in, and never search without a path. A Journal day also lists its agent sessions, each by its quoted title with the start of its last reply; a session has no file here, so don't look for one. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
+
+/// A conversation ask's preamble; agents.toml's `preamble` is about docs.
+pub(crate) const CONVERSATION_PREAMBLE: &str =
+    "[Rooms] The user is looking back at this agent conversation in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +82,8 @@ pub(crate) struct Vars<'a> {
     pub image_dir: &'a str,
     /// `claude_read_scope` of a room's or day's listed files, or "" for a doc ask.
     pub scope_settings: &'a str,
+    /// The Aside account a resumed session is under (`u<n>`), or "" when unknown or not Aside.
+    pub account: &'a str,
 }
 
 fn argv(parts: &[&str]) -> Vec<String> { parts.iter().map(|s| s.to_string()).collect() }
@@ -154,9 +160,10 @@ fn builtin() -> BTreeMap<String, Profile> {
             models: argv(&["gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol"]),
             events: rules(CODEX_EVENTS),
         }),
-        // `aside session resume` takes no model flag: resumed asks keep the session's model.
+        // `aside session resume` takes no model flag: resumed asks keep the session's model. It
+        // appends to the real session, on purpose; the account goes before the id, as for Continue.
         ("aside".to_string(), Profile {
-            resume: Some(argv(&["aside", "session", "resume", "{session}", "{prompt}"])),
+            resume: Some(argv(&["aside", "session", "resume", "--account", "{account}", "{session}", "{prompt}"])),
             new: argv(&["aside", "exec", "-m", "{model}", "{prompt}"]),
             models: argv(&["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]),
             events: Vec::new(),
@@ -259,7 +266,7 @@ impl AgentProfiles {
     pub fn preamble(&self) -> &str { self.preamble.as_deref().unwrap_or(DEFAULT_PREAMBLE) }
 }
 
-const PLACEHOLDERS: [&str; 8] = ["{prompt}", "{session}", "{file}", "{cwd}", "{mcp_config}", "{model}", "{image_dir}", "{scope_settings}"];
+const PLACEHOLDERS: [&str; 9] = ["{prompt}", "{session}", "{file}", "{cwd}", "{mcp_config}", "{model}", "{image_dir}", "{scope_settings}", "{account}"];
 
 /// One left-to-right pass: substituted text is never scanned again.
 fn subst(arg: &str, v: &Vars) -> String {
@@ -270,7 +277,7 @@ fn subst(arg: &str, v: &Vars) -> String {
         let tail = &rest[i..];
         match PLACEHOLDERS.iter().find(|p| tail.starts_with(**p)) {
             Some(p) => {
-                out.push_str(match *p { "{prompt}" => v.prompt, "{session}" => v.session, "{file}" => v.file, "{cwd}" => v.cwd, "{model}" => v.model, "{image_dir}" => v.image_dir, "{scope_settings}" => v.scope_settings, _ => v.mcp_config });
+                out.push_str(match *p { "{prompt}" => v.prompt, "{session}" => v.session, "{file}" => v.file, "{cwd}" => v.cwd, "{model}" => v.model, "{image_dir}" => v.image_dir, "{scope_settings}" => v.scope_settings, "{account}" => v.account, _ => v.mcp_config });
                 rest = &tail[p.len()..];
             }
             None => { out.push('{'); rest = &tail[1..]; }
@@ -285,7 +292,7 @@ impl Plan {
     /// the prompt is that argv element, as for a CLI that reads no stdin.
     pub fn prompt_on_stdin(&self) -> bool { !self.template.iter().any(|a| a.contains("{prompt}")) }
 
-    /// An element that is exactly `{mcp_config}`, `{model}`, `{image_dir}` or `{scope_settings}` with an empty value is
+    /// An element that is exactly `{mcp_config}`, `{model}`, `{image_dir}`, `{scope_settings}` or `{account}` with an empty value is
     /// dropped together with the element before it (its flag, e.g. `--mcp-config` or `--model`).
     /// `{image}` repeats with its flag once per image (`-i a -i b`).
     pub fn render(&self, v: &Vars) -> Vec<String> {
@@ -297,7 +304,7 @@ impl Plan {
                 continue;
             }
             let empty = (a == "{mcp_config}" && v.mcp_config.is_empty()) || (a == "{model}" && v.model.is_empty()) || (a == "{image_dir}" && v.image_dir.is_empty())
-                || (a == "{scope_settings}" && v.scope_settings.is_empty());
+                || (a == "{scope_settings}" && v.scope_settings.is_empty()) || (a == "{account}" && v.account.is_empty());
             if empty { out.pop(); continue; }
             out.push(subst(a, v));
         }
@@ -315,7 +322,7 @@ mod tests {
         if let Some(t) = text { std::fs::write(&p, t).unwrap(); }
         (d, p)
     }
-    fn vars<'a>(prompt: &'a str) -> Vars<'a> { Vars { prompt, session: "S1", file: "/f.html", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "", scope_settings: "" } }
+    fn vars<'a>(prompt: &'a str) -> Vars<'a> { Vars { prompt, session: "S1", file: "/f.html", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "", scope_settings: "", account: "" } }
 
     #[test]
     fn missing_file_gives_builtin_defaults() {
@@ -348,6 +355,7 @@ mod tests {
         assert_eq!(a.plan(Some("codex"), None).render(&vars("Q")),
             vec!["codex", "exec", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("aside"), Some("S1")).render(&vars("Q")), vec!["aside", "session", "resume", "S1", "Q"]);
+        assert_eq!(a.plan(Some("aside"), Some("S1")).render(&Vars { account: "u2", ..vars("Q") }), vec!["aside", "session", "resume", "--account", "u2", "S1", "Q"]);
         assert_eq!(a.plan(Some("aside"), None).render(&vars("Q")), vec!["aside", "exec", "Q"]);
     }
 
@@ -391,7 +399,7 @@ new = ["codex2", "{prompt}"]
     fn substitution_is_single_pass() {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("aside"), None);
-        let out = plan.render(&Vars { prompt: "say {session} and {cwd} and {other}", session: "S1", file: "/f", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "", scope_settings: "" });
+        let out = plan.render(&Vars { prompt: "say {session} and {cwd} and {other}", session: "S1", file: "/f", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "", scope_settings: "", account: "" });
         assert_eq!(out, vec!["aside", "exec", "say {session} and {cwd} and {other}"]);
     }
 
@@ -413,7 +421,7 @@ new = ["codex2", "{prompt}"]
     fn mcp_config_is_substituted_into_claude_templates() {
         let (_d, p) = tmp(None);
         let a = AgentProfiles::load(&p).unwrap();
-        let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json", model: "", images: &[], image_dir: "", scope_settings: "" };
+        let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json", model: "", images: &[], image_dir: "", scope_settings: "", account: "" };
         assert_eq!(a.plan(Some("claude-code"), None).render(&v),
             vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
         let resumed = a.plan(Some("claude-code"), Some("S1")).render(&v);

@@ -199,7 +199,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 bg-white px-12 py-10">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 bg-pane px-12 py-10">
       <header className="flex items-center gap-4">
         <div className="min-w-0 flex-1">
           <EditableTitle
@@ -208,7 +208,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             copyError={noteNameErrorCopy}
             ariaLabel="Note name"
             readOnly={readOnly}
-            className="w-full truncate text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink"
+            className="w-full truncate font-serif text-display leading-[1.25] font-medium tracking-[-0.01em] text-ink"
           />
         </div>
         {readOnly ? null : (
@@ -218,7 +218,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             onClick={() => {
               if (info) openElsewhere(`${info.home}/journal/${date}/${fileName}`);
             }}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[14px] text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-body text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
           >
             <ExternalLink size={15} aria-hidden />
             Open in another editor
@@ -226,7 +226,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
         )}
       </header>
       {load === "error" ? (
-        <p role="alert" className="flex items-center gap-2 text-[14px] text-[#c13515]">
+        <p role="alert" className="flex items-center gap-2 text-body text-error">
           <CircleAlert size={16} aria-hidden />
           {GENERIC_ERROR}
           <button
@@ -239,13 +239,13 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
         </p>
       ) : null}
       {openFailed.shown ? (
-        <p role="status" className="flex items-center gap-2 text-[14px] text-[#c13515]">
+        <p role="status" className="flex items-center gap-2 text-body text-error">
           <CircleAlert size={16} aria-hidden />
           {GENERIC_ERROR}
         </p>
       ) : null}
       {offer ? (
-        <p role="status" className="flex items-center gap-3 text-[14px] text-ink-2">
+        <p role="status" className="flex items-center gap-3 text-body text-ink-2">
           You have unsaved text
           <button
             type="button"
@@ -270,7 +270,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
         </p>
       ) : null}
       {st.status === "error" ? (
-        <p role="status" className="flex items-center gap-2 text-[14px] text-[#c13515]">
+        <p role="status" className="flex items-center gap-2 text-body text-error">
           <CircleAlert size={16} aria-hidden />
           {SAVE_FAILED}
         </p>
@@ -294,7 +294,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
           setFocused(false);
           if (editable) saver?.blur();
         }}
-        className="min-h-0 flex-1 resize-none border-0 bg-transparent font-sans text-[16px] leading-[1.7] text-ink outline-none disabled:bg-transparent"
+        className="min-h-0 flex-1 resize-none border-0 bg-transparent font-serif text-lead leading-[1.7] text-ink outline-none disabled:bg-transparent"
       />
     </div>
   );

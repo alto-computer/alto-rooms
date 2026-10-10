@@ -5,7 +5,11 @@ import { fakeClient, memoryStorage, renderWithStores, room } from "@/test/fakes"
 import { StoresProvider } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
 import { ViewerStore } from "@/data/viewerStore";
+import { localDate, monthDay } from "@/lib/dates";
 import { AppShell } from "./AppShell";
+
+/** The home tab's label: today's Journal. */
+const HOME = `Journal · ${monthDay(localDate())}`;
 
 vi.mock("@/lib/native", () => ({
   pickFolder: vi.fn(async () => "/Users/me/code/bench"),
@@ -126,15 +130,34 @@ describe("AppShell: sidebar", () => {
     expect(screen.queryByRole("textbox", { name: "Room name" })).toBeNull();
   });
 
-  it("Journal opens a single journal tab for today", async () => {
+  it("Journal activates the tab already on today, else turns a journal tab to today", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
+    const home = h.viewer.getState().activeId!;
+    let other = "";
+    act(() => {
+      other = h.viewer.open({ kind: "journal", date: "2026-01-02" });
+      h.viewer.move(other, 0); // the other day's tab comes first
+    });
     fireEvent.click(screen.getByRole("button", { name: "Journal" }));
-    fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+    expect(h.viewer.getState().activeId).toBe(home);
+    expect(activeTab()).toHaveTextContent(HOME);
+    expect(h.viewer.getState().tabs.find((t) => t.id === other)).toMatchObject({ date: "2026-01-02" });
+
+    act(() => h.viewer.close(home));
     fireEvent.click(screen.getByRole("button", { name: "Journal" }));
-    const journals = h.viewer.getState().tabs.filter((t) => t.kind === "journal");
-    expect(journals).toHaveLength(1);
-    const now = new Date();
-    expect(activeTab()).toHaveTextContent(`Journal · ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][now.getMonth()]} ${now.getDate()}`);
+    expect(h.viewer.getState().tabs.filter((t) => t.kind === "journal").map((t) => t.id)).toEqual([other]);
+    expect(activeTab()).toHaveTextContent(HOME);
+  });
+
+  it("⌘-click or middle-click on Journal opens today's Journal in a new tab", async () => {
+    for (const click of [(el: HTMLElement) => fireEvent.click(el, { metaKey: true }), (el: HTMLElement) => fireEvent(el, new MouseEvent("auxclick", { bubbles: true, button: 1 }))]) {
+      const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
+      act(() => void h.viewer.navigate({ kind: "room", roomId: "r1" }));
+      click(screen.getByRole("button", { name: "Journal" }));
+      expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["room", "journal"]);
+      expect(activeTab()).toHaveTextContent(HOME);
+      cleanup();
+    }
   });
 
   it("a note tab's label strips one .md (any case) from the file name", async () => {
@@ -152,11 +175,11 @@ describe("AppShell: sidebar", () => {
   it("찾기 and ⌘K open the quick find dialog", async () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "Find" }));
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
-    fireEvent.keyDown(screen.getByPlaceholderText("Find a room or doc"), { key: "Escape" });
-    await waitFor(() => expect(screen.queryByPlaceholderText("Find a room or doc")).toBeNull());
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByPlaceholderText("Find a room or artifact"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByPlaceholderText("Find a room or artifact")).toBeNull());
     key("k");
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
   });
 
   it("read-only hides every write affordance", async () => {
@@ -183,30 +206,16 @@ describe("AppShell: tabs", () => {
     const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
     fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["New tab", "벤치마크", "디자인"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([HOME, "벤치마크", "디자인"]);
 
     const benchTab = screen.getByRole("tab", { name: "벤치마크" });
     fireEvent.mouseEnter(benchTab);
     fireEvent.click(within(benchTab.parentElement!).getByRole("button", { name: "Close tab" }));
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["New tab", "디자인"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([HOME, "디자인"]);
 
     key("w");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["New tab"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([HOME]);
     expect(h.viewer.getState().tabs).toHaveLength(1);
-  });
-
-  it("the logo takes the current tab home; ⌘-click opens home in a new tab", async () => {
-    await renderWithStores(<AppShell />, { rooms: twoRooms });
-    const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
-    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
-    expect(tabNames()).toEqual(["벤치마크"]);
-    fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    expect(tabNames()).toEqual(["New tab"]);
-    expect(screen.getByRole("button", { name: "Back (⌘[)" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
-    fireEvent.click(screen.getByRole("button", { name: "Home" }), { metaKey: true });
-    expect(tabNames()).toEqual(["벤치마크", "New tab"]);
-    expect(activeTab()).toHaveTextContent("New tab");
   });
 
   it("Space picks a tab up, arrows move it, Space drops it", async () => {
@@ -214,7 +223,7 @@ describe("AppShell: tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
     fireEvent.click(screen.getByRole("button", { name: "디자인" }), { metaKey: true });
     const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(tabNames()).toEqual(["New tab", "벤치마크", "디자인"]);
+    expect(tabNames()).toEqual([HOME, "벤치마크", "디자인"]);
     const tab = screen.getByRole("tab", { name: "디자인" });
     tab.focus();
     // jsdom has no layout; give each tab a box so the keyboard sensor can find neighbours.
@@ -224,7 +233,7 @@ describe("AppShell: tabs", () => {
     await act(async () => void fireEvent.keyDown(tab, { code: "Space" }));
     await act(async () => void fireEvent.keyDown(tab, { code: "ArrowLeft" }));
     await act(async () => void fireEvent.keyDown(tab, { code: "Space" }));
-    await waitFor(() => expect(tabNames()).toEqual(["New tab", "디자인", "벤치마크"]));
+    await waitFor(() => expect(tabNames()).toEqual([HOME, "디자인", "벤치마크"]));
   });
 
   it("tabs are one Tab stop: arrows, Home and End switch tabs, Delete closes the focused one", async () => {
@@ -241,11 +250,11 @@ describe("AppShell: tabs", () => {
     expect(activeTab()).toHaveTextContent("벤치마크");
     expect(document.activeElement).toBe(activeTab());
     press("Home");
-    expect(activeTab()).toHaveTextContent("New tab");
+    expect(activeTab()).toHaveTextContent(HOME);
     press("ArrowLeft"); // wraps
     expect(activeTab()).toHaveTextContent("디자인");
     press("Delete");
-    expect(tabNames()).toEqual(["New tab", "벤치마크"]);
+    expect(tabNames()).toEqual([HOME, "벤치마크"]);
     expect(h.viewer.getState().tabs).toHaveLength(2);
   });
 
@@ -285,11 +294,11 @@ describe("AppShell: tabs", () => {
     fireEvent.click(back);
     expect(tabNames()).toEqual(["벤치마크"]);
     fireEvent.keyDown(window, { key: "[", code: "BracketLeft", metaKey: true });
-    expect(tabNames()).toEqual(["New tab"]);
+    expect(tabNames()).toEqual([HOME]);
     fireEvent.keyDown(window, { key: "]", code: "BracketRight", metaKey: true });
     expect(tabNames()).toEqual(["벤치마크"]);
     fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft", metaKey: true });
-    expect(tabNames()).toEqual(["New tab"]);
+    expect(tabNames()).toEqual([HOME]);
     fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight", metaKey: true });
     expect(tabNames()).toEqual(["벤치마크"]);
     fireEvent(window, new MouseEvent("mouseup", { button: 4 }));
@@ -312,15 +321,15 @@ describe("AppShell: tabs", () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }), { metaKey: true });
     fireEvent(screen.getByRole("button", { name: "디자인" }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["New tab", "벤치마크", "디자인"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([HOME, "벤치마크", "디자인"]);
   });
 
-  it("⌘T opens (or activates) the new tab", async () => {
+  it("⌘T opens (or activates) home, today's Journal", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
     key("t");
-    expect(activeTab()).toHaveTextContent("New tab");
-    expect(h.viewer.getState().tabs.filter((t) => t.kind === "new")).toHaveLength(1);
+    expect(activeTab()).toHaveTextContent(HOME);
+    expect(h.viewer.getState().tabs.filter((t) => t.kind === "journal")).toHaveLength(1);
   });
 
   it("shortcuts call preventDefault", async () => {
@@ -345,6 +354,19 @@ describe("AppShell: tabs", () => {
     act(() => h.emit({ type: "room.removed", roomId: "r1" }));
     expect(screen.getByText("This room is gone")).toBeInTheDocument();
     expect(screen.getAllByRole("tab")).toHaveLength(2); // the tab stays until closed
+  });
+
+  it("a pinned room's tab shows its colour dot instead of the folder, and loses it when unpinned", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "room", roomId: "r1" });
+    const h = await renderWithStores(<AppShell />, { rooms: twoRooms, viewer });
+    expect(activeTab()!.querySelector("[data-tint]")).toBeNull();
+    act(() => h.emit({ type: "room.updated", room: room("r1", "벤치마크", { color: "clay" }) }));
+    expect(activeTab()!.querySelector("[data-tint]")).toHaveAttribute("data-tint", "clay");
+    expect(activeTab()!.querySelector("svg")).toBeNull();
+    act(() => h.emit({ type: "room.updated", room: room("r1", "벤치마크", { color: null }) }));
+    expect(activeTab()!.querySelector("[data-tint]")).toBeNull();
+    expect(activeTab()!.querySelector("svg")).not.toBeNull();
   });
 
   it("the room title is editable in place", async () => {
@@ -400,7 +422,7 @@ describe("AppShell: shortcuts while typing", () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms });
     fireEvent.click(screen.getByRole("button", { name: "New room" }));
     expect(keyOn(screen.getByLabelText("New room name"), "k").defaultPrevented).toBe(true);
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
   });
 
   it("⌘W in the note body still closes the note tab", async () => {
@@ -486,7 +508,7 @@ describe("AppShell: gone rooms and docs, and before the first sync", () => {
     await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [] }, viewer });
     await act(async () => {});
     const labels = screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(labels).toEqual(["New tab", "Missing room", "Missing doc", "Missing doc"]);
+    expect(labels).toEqual([HOME, "Missing room", "Missing artifact", "Missing artifact"]);
   });
 
   it("before the first sync (no info): tabs show …, and nothing is writable", async () => {
@@ -505,13 +527,13 @@ describe("AppShell: gone rooms and docs, and before the first sync", () => {
 });
 
 describe("AppShell: a new note, then its name", () => {
-  it("New note opens New Note in a new tab with the cursor in the body; renaming it updates the tab and the Journal card", async () => {
+  it("Write a note opens New Note in a new tab with the cursor in the body; renaming it updates the tab and the Journal", async () => {
     const date = "2026-10-05";
     const viewer = new ViewerStore(memoryStorage());
     const journalId = viewer.open({ kind: "journal", date });
-    const h = await renderWithStores(<AppShell />, { viewer, days: { [date]: { notes: [] } } });
+    const h = await renderWithStores(<AppShell />, { viewer, rooms: twoRooms, days: { [date]: { notes: [] } } });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New note" }));
+      fireEvent.click(screen.getByRole("button", { name: "Write a note" }));
     });
     expect(activeTab()).toHaveTextContent("New Note");
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Note" })).toHaveFocus());
@@ -536,8 +558,8 @@ describe("AppShell: a new note, then its name", () => {
     });
 
     act(() => viewer.activate(journalId));
-    const me = screen.getByRole("region", { name: "From me" });
-    await waitFor(() => expect(within(me).getByRole("button", { name: "회고" })).toBeInTheDocument());
-    expect(within(me).queryByRole("button", { name: "New Note" })).not.toBeInTheDocument();
+    const day = () => screen.getByRole("list", { name: "Your day" });
+    await waitFor(() => expect(within(day()).getByRole("button", { name: "회고" })).toBeInTheDocument());
+    expect(within(day()).queryByRole("button", { name: "New Note" })).not.toBeInTheDocument();
   });
 });

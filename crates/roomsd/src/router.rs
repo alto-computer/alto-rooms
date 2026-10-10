@@ -1,7 +1,7 @@
 //! The two listeners' routers: the JSON API and the sandboxed files origin.
 use crate::{guard, routes, sse, AppState};
 use axum::http::{header, HeaderName, HeaderValue, Method};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use axum::Router;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -21,7 +21,11 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/rooms/link", post(routes::link_room))
         .route("/v1/rooms/{room_id}", patch(routes::rename_room))
         .route("/v1/rooms/{room_id}/move", post(routes::move_room))
+        .route("/v1/rooms/{room_id}/color", put(routes::set_room_color))
         .route("/v1/rooms/{room_id}/artifacts", get(routes::list_artifacts))
+        .route("/v1/rooms/{room_id}/conversations", get(routes::list_room_conversations))
+        .route("/v1/conversations/{agent}/{session}", get(routes::get_conversation))
+        .route("/v1/conversations/{agent}/{session}/room", put(routes::set_conversation_room))
         .route("/v1/journal/{date}", get(routes::journal_day))
         .route("/v1/journal/{date}/notes/{name}", get(routes::get_note).put(routes::put_note))
         .route("/v1/journal/{date}/notes/{name}/rename", post(routes::rename_note))

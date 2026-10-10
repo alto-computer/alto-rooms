@@ -1,9 +1,18 @@
-import type { Artifact, AskScope, AskTarget, AskTurn, Room } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTarget, AskTurn, Conversation, Room } from "@alto-rooms/protocol-ts";
+import { AGENT_NAMES } from "@/lib/agents";
+import { conversationTitle } from "@/lib/conversations";
 import { localDate } from "@/lib/dates";
 import { modelLabel } from "./askModel";
 
-/** What an ask bar asks about: the doc in a doc tab, the room in a room tab, the viewed day in the Journal tab. */
-export type AskSubject = { kind: "doc"; artifact: Artifact } | { kind: "room"; roomId: string } | { kind: "day"; date: string };
+/**
+ * What an ask bar asks about: the doc in a doc tab, the session in a conversation tab, the room in a
+ * room tab, the viewed day in the Journal tab.
+ */
+export type AskSubject =
+  | { kind: "doc"; artifact: Artifact }
+  | { kind: "conversation"; conversation: Conversation }
+  | { kind: "room"; roomId: string }
+  | { kind: "day"; date: string };
 
 export type TurnHeader = { text: string; title?: string };
 
@@ -23,6 +32,8 @@ export type SubjectFraming = {
   agent: string;
   /** Said beside the agent chip about what the agent may read; null says nothing. */
   hint: (target: AskTarget | null) => string | null;
+  /** A quiet line under the bar about where asks go; null or absent says nothing. */
+  note?: (target: AskTarget | null) => string | null;
   /** Where an answer is saved as a note; null when this subject's answers can't be saved. */
   noteTarget: NoteTargetOf | null;
 };
@@ -35,23 +46,40 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
     case "doc":
       return {
         scope: { kind: "doc", fileKey: subject.artifact.fileKey },
-        placeholder: "Ask about this doc…",
+        placeholder: "Ask about this artifact…",
         header: (t) => {
           const how = t.mode === "resume" ? "continuing the thread that made it" : "New conversation";
           const text = [...agentAndModel(t), how].filter(Boolean).join(" · ");
-          return t.mode === "resume" ? { text } : { text, title: "Couldn't find the thread that made this doc" };
+          return t.mode === "resume" ? { text } : { text, title: "Couldn't find the thread that made this artifact" };
         },
         agent: subject.artifact.source.agent ?? "Default agent",
         hint: () => null,
         noteTarget: null,
       };
+    case "conversation": {
+      const { id } = subject.conversation;
+      return {
+        scope: { kind: "conversation", agent: id.agent, session: id.session },
+        placeholder: "Ask about this session…",
+        header: (t) => {
+          const how = t.mode === "resume" ? "continuing this session" : "New session";
+          const text = [...agentAndModel(t), how].filter(Boolean).join(" · ");
+          return t.mode === "resume" ? { text } : { text, title: "Couldn't resume this session" };
+        },
+        agent: AGENT_NAMES[id.agent],
+        hint: () => null,
+        // Aside asks append to the real session (roomsd resumes it); Claude Code and Codex fork it.
+        note: (target) => (id.agent === "aside" && target?.mode !== "new" ? "Asks continue this Aside session; it can use the browser." : null),
+        noteTarget: (now) => ({ date: localDate(now), source: `Session: ${conversationTitle(subject.conversation)}` }),
+      };
+    }
     case "room":
       return {
         scope: { kind: "room", roomId: subject.roomId },
         placeholder: "Ask about this room…",
         header: agentHeader,
         agent: "Default agent",
-        hint: (target) => (target?.scoped ? "Reads only this room's docs" : null),
+        hint: (target) => (target?.scoped ? "Reads only this room's artifacts" : null),
         noteTarget: (now, rooms) => ({
           date: localDate(now),
           source: `Room: ${rooms.find((r) => r.id === subject.roomId)?.name ?? subject.roomId}`,

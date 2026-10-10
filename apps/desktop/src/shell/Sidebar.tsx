@@ -1,38 +1,30 @@
 import { useEffect, useState } from "react";
-import {
-  closestCenter,
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type Modifier,
-} from "@dnd-kit/core";
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type { Room } from "@alto-rooms/protocol-ts";
-import { Calendar, CircleAlert, PanelLeft, Plus, Search } from "lucide-react";
+import { BookOpen, CircleAlert, Inbox, PanelLeft, Plus, Search, Settings } from "lucide-react";
 import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
 import { useClient, useReadOnly, useRoomList, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
-import { localDate } from "@/lib/dates";
-import { INBOX_ID, type ArtifactDragPayload } from "@/lib/drag";
-import { moveErrorCopy } from "@/lib/errors";
+import { isNewSince, localDate } from "@/lib/dates";
+import { INBOX_ID, type ArtifactDragPayload, type ConversationDragPayload } from "@/lib/drag";
+import { errorCopy, moveErrorCopy } from "@/lib/errors";
+import { moveWithinSection } from "@/lib/roomOrder";
+import { openSettings } from "@/lib/settings";
 import { wantsNewTab } from "@/lib/nav";
 import { IconTip } from "@/components/IconTip";
 import { cn } from "@/lib/utils";
 import { useBriefError } from "@/views/briefError";
-import logo from "@/assets/logo.svg";
-import { DRAG_KEYBOARD_CODES } from "./dragKeys";
+import { BrandRow } from "./BrandRow";
 import { NewRoomRow } from "./NewRoomRow";
-import { PluginItems } from "./PluginItems";
+import { PluginsRow } from "./PluginsRow";
+import { RoomList } from "./RoomList";
 import { RoomRow } from "./RoomRow";
-import { ICON, ITEM, ITEM_INTERACTIVE } from "./sidebarItem";
+import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE, SECTION } from "./sidebarItem";
 
-/** Opens (or activates) the single journal tab, pointed at today's local date. */
+/** Activates a journal tab pointed at today's local date: one already on today, else the first journal tab, else a new one. */
 export function openJournal(viewer: ViewerStore) {
   const today = localDate();
-  const existing = viewer.getState().tabs.find((t) => t.kind === "journal");
+  const { tabs } = viewer.getState();
+  const existing = tabs.find((t) => t.kind === "journal" && t.date === today) ?? tabs.find((t) => t.kind === "journal");
   if (!existing) {
     viewer.open({ kind: "journal", date: today });
     return;
@@ -43,7 +35,7 @@ export function openJournal(viewer: ViewerStore) {
 
 export function Sidebar({ onFind }: { onFind: () => void }) {
   const rooms = useRoomList();
-  const { tabs, activeId, sidebarOpen } = useViewer();
+  const { tabs, activeId, sidebarOpen, lastVisit, firstRunAt } = useViewer();
   const viewer = useViewerStore();
   const readOnly = useReadOnly();
   const client = useClient();
@@ -51,7 +43,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
   const moveFailed = useBriefError();
   const [moveError, setMoveError] = useState("");
 
-  // Success needs no word: the SSE events move the doc in both lists.
+  // Success needs no word: the SSE events move the artifact in both lists.
   const move = (p: ArtifactDragPayload, toRoomId: string) => {
     client.moveArtifact(p.roomId, p.artifactId, toRoomId).then(
       () => moveFailed.clear(),
@@ -63,27 +55,28 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
     );
   };
 
-  // Reordering: rooms below the pinned inbox are sortable. After a drop the new order shows at
-  // once (`pending`) and stays until the core's `rooms.reordered` brings the same order.
+  // Likewise for a conversation dropped on a room: conversation.moved updates the Journal and the room.
+  const addConversation = (p: ConversationDragPayload, toRoomId: string) => {
+    client.setConversationRoom(p.id, toRoomId).then(
+      () => moveFailed.clear(),
+      (e: unknown) => {
+        console.warn("could not add the conversation to the room", e);
+        setMoveError(errorCopy(e));
+        moveFailed.flash();
+      },
+    );
+  };
+
+  // Reordering: rooms below the inbox are sortable, each within its section. After a drop the new
+  // order shows at once (`pending`) and stays until the core's `rooms.reordered` brings the same order.
   const [pending, setPending] = useState<string[] | null>(null);
   const shown = inOrder(rooms, pending);
   useEffect(() => {
     if (pending && rooms.map((r) => r.id).join("\n") === pending.join("\n")) setPending(null);
   }, [rooms, pending]);
-  const sortableIds = shown.filter((r) => r.id !== INBOX_ID).map((r) => r.id);
-  const sensors = useSensors(
-    // A few pixels of movement before a drag starts, so a click still opens the room.
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    // Space picks a room up, ↑/↓ move it, Space drops; Enter keeps opening the room.
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: DRAG_KEYBOARD_CODES }),
-  );
-  const onDragEnd = ({ active, over }: DragEndEvent) => {
-    const id = String(active.id);
-    const from = sortableIds.indexOf(id);
-    const to = over ? sortableIds.indexOf(String(over.id)) : -1;
-    if (from < 0 || to < 0 || from === to) return;
-    const pinned = shown.some((r) => r.id === INBOX_ID) ? [INBOX_ID] : [];
-    setPending([...pinned, ...arrayMove(sortableIds, from, to)]);
+  /** `to` counts the rooms other than the inbox, as `moveRoom` does. */
+  const reorder = (id: string, to: number) => {
+    setPending(moveWithinSection(shown, id, to));
     client.moveRoom(id, to).then(
       () => moveFailed.clear(),
       (e: unknown) => {
@@ -98,7 +91,24 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
   const active = tabs.find((t) => t.id === activeId);
   const activeRoomId = active?.kind === "room" ? active.roomId : null;
   // The empty inbox stays out of the sidebar, unless it is the room being viewed.
-  const listed = shown.filter((r) => r.id !== INBOX_ID || r.artifactCount > 0 || r.id === activeRoomId);
+  const inbox = shown.find((r) => r.id === INBOX_ID && (r.artifactCount > 0 || r.id === activeRoomId));
+  const listed = shown.filter((r) => r.id !== INBOX_ID);
+  const pinned = listed.filter((r) => r.color !== null);
+  const others = listed.filter((r) => r.color === null);
+  // Something arrived since you last left the room; the room you are in never counts.
+  const unread = (r: Room) => r.id !== activeRoomId && r.updatedAt !== null && isNewSince(r.updatedAt, lastVisit[r.id] ?? firstRunAt);
+
+  const row = (room: Room) => (
+    <RoomRow
+      key={room.id}
+      room={room}
+      active={room.id === activeRoomId}
+      unread={unread(room)}
+      readOnly={readOnly}
+      sortable={!readOnly}
+      drops={readOnly ? {} : { artifact: isArtifactDropTarget(room) ? move : undefined, conversation: addConversation }}
+    />
+  );
 
   return (
     <ShadcnSidebar
@@ -110,97 +120,106 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
       aria-hidden={sidebarOpen ? undefined : true}
     >
       {/* App chrome: labels don't select on drag or double click (the rename field still does). */}
-      <div className="flex h-full min-h-0 flex-col px-[10px] py-4 select-none [&_input]:select-text">
-        <div className="flex items-center gap-2.5 pl-2.5">
-          <button
-            type="button"
-            aria-label="Home"
-            // Browser style: the home page replaces this tab; ⌘/middle click opens it in a new one.
-            onClick={(e) => viewer.go({ kind: "new" }, wantsNewTab(e))}
-            onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "new" }, true)}
-            className="-my-1 -ml-1.5 flex items-center gap-2.5 rounded-lg py-1 pr-2 pl-1.5 hover:bg-[#f2f2f2] focus-visible:outline-2 focus-visible:outline-ink"
-          >
-            <img src={logo} alt="" width={26} height={26} className="size-[26px] shrink-0" />
-            <span className="text-[17px] font-medium text-ink">Rooms</span>
-          </button>
+      <div className="flex h-full min-h-0 flex-col bg-linear-to-b from-(--sidebar-sheen-top) to-(--sidebar-sheen-bottom) px-2.5 pt-3 pb-2.5 select-none [&_input]:select-text">
+        <div className="mb-2.5 flex items-center">
+          <BrandRow />
           <IconTip label="Hide sidebar" shortcut="⌘B">
             <button
               type="button"
               aria-label="Hide sidebar (⌘B)"
               onClick={() => viewer.setSidebarOpen(false)}
-              className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+              className="ml-auto grid size-7 shrink-0 place-items-center rounded-lg text-ink-3 hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
             >
               <PanelLeft {...ICON} />
             </button>
           </IconTip>
         </div>
 
-        <nav className="mt-4 flex flex-col gap-0.5">
+        <nav className="flex flex-col gap-px">
           <button type="button" onClick={onFind} className={cn(ITEM, ITEM_INTERACTIVE)}>
             <Search {...ICON} className="shrink-0 text-ink-2" />
             <span className="truncate">Find</span>
+            <kbd aria-hidden className="ml-auto pl-2 font-sans text-caption text-ink-3">⌘K</kbd>
           </button>
           <button
             type="button"
-            onClick={() => openJournal(viewer)}
+            onClick={(e) => (wantsNewTab(e) ? viewer.open({ kind: "journal", date: localDate() }, { nextToActive: true }) : openJournal(viewer))}
+            onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "journal", date: localDate() }, { nextToActive: true })}
             aria-current={active?.kind === "journal" ? "page" : undefined}
-            className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "journal" && "bg-[#ebebeb] hover:bg-[#ebebeb]")}
+            className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "journal" && ITEM_CURRENT)}
           >
-            <Calendar {...ICON} className="shrink-0 text-ink" />
+            <BookOpen {...ICON} className={cn("shrink-0", active?.kind === "journal" ? "text-ink" : "text-ink-2")} />
             <span className="truncate">Journal</span>
           </button>
+          {inbox ? (
+            <button
+              type="button"
+              onClick={(e) => viewer.go({ kind: "room", roomId: inbox.id }, wantsNewTab(e))}
+              onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "room", roomId: inbox.id }, true)}
+              aria-current={inbox.id === activeRoomId ? "page" : undefined}
+              className={cn(ITEM, ITEM_INTERACTIVE, inbox.id === activeRoomId && ITEM_CURRENT)}
+            >
+              <Inbox {...ICON} className={cn("shrink-0", inbox.id === activeRoomId ? "text-ink" : "text-ink-2")} />
+              <span className="truncate">Inbox</span>
+              {inbox.artifactCount > 0 ? (
+                <span className="ml-auto pl-2 text-caption font-normal text-ink-3 tabular-nums">{inbox.artifactCount}</span>
+              ) : null}
+            </button>
+          ) : null}
         </nav>
 
-        <div className="mt-5 flex min-h-7 items-center justify-between pl-2.5">
-          <span className="text-[12px] text-ink-3">Your rooms</span>
-          {readOnly ? null : (
-            <IconTip label="New room">
-              <button
-                type="button"
-                aria-label="New room"
-                onClick={() => setCreating(true)}
-                className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
-              >
-                <Plus size={16} strokeWidth={1.75} aria-hidden />
-              </button>
-            </IconTip>
-          )}
+        <div className="no-scrollbar mt-3 flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {pinned.length > 0 ? (
+            <>
+              <div className={SECTION}>Pinned</div>
+              <RoomList label="Pinned" rooms={pinned} onReorder={reorder} renderRow={row} />
+            </>
+          ) : null}
+          <div className={cn(SECTION, pinned.length > 0 && "mt-3")}>
+            <span>Rooms</span>
+            {readOnly ? null : (
+              <IconTip label="New room">
+                <button
+                  type="button"
+                  aria-label="New room"
+                  onClick={() => setCreating(true)}
+                  className="grid size-6 place-items-center rounded-md text-ink-3 hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+                >
+                  <Plus size={14} strokeWidth={1.5} aria-hidden />
+                </button>
+              </IconTip>
+            )}
+          </div>
+          <RoomList label="Rooms" rooms={others} onReorder={(id, to) => reorder(id, pinned.length + to)} renderRow={row}>
+            {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
+          </RoomList>
         </div>
-
-        <ul aria-label="Rooms" className="no-scrollbar mt-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
-          {creating && !readOnly ? <NewRoomRow onDone={() => setCreating(false)} /> : null}
-          <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[verticalOnly]} onDragEnd={onDragEnd}>
-            <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-              {listed.map((room) => (
-                <RoomRow
-                  key={room.id}
-                  room={room}
-                  active={room.id === activeRoomId}
-                  readOnly={readOnly}
-                  sortable={!readOnly && room.id !== INBOX_ID}
-                  onMove={readOnly || !isDropTarget(room) ? undefined : move}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
-        </ul>
-        <PluginItems />
         {moveFailed.shown ? (
-          <p role="status" className="mt-2 flex items-center gap-1.5 px-2.5 text-[13px] text-[#c13515]">
-            <CircleAlert size={16} aria-hidden className="shrink-0" />
+          <p role="status" className="mt-2 flex items-center gap-1.5 px-2 text-small text-error">
+            <CircleAlert size={14} aria-hidden className="shrink-0" />
             {moveError}
           </p>
         ) : null}
+        <div className="mt-2 flex flex-col gap-px">
+          <PluginsRow />
+          <button
+            type="button"
+            onClick={() => openSettings(viewer)}
+            aria-current={active?.kind === "settings" ? "page" : undefined}
+            className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "settings" && ITEM_CURRENT)}
+          >
+            <Settings {...ICON} className={cn("shrink-0", active?.kind === "settings" ? "text-ink" : "text-ink-2")} />
+            <span className="truncate">Settings</span>
+            <kbd aria-hidden className="ml-auto pl-2 font-sans text-caption text-ink-3">⌘,</kbd>
+          </button>
+        </div>
       </div>
     </ShadcnSidebar>
   );
 }
 
-/** Docs can be dropped on owned, available rooms other than the inbox. */
-const isDropTarget = (room: Room) => room.kind === "owned" && room.id !== INBOX_ID && room.status === "ok";
-
-/** Rooms only move up and down. */
-const verticalOnly: Modifier = ({ transform }) => ({ ...transform, x: 0 });
+/** Artifacts can be dropped on owned, available rooms other than the inbox. (Conversations on any listed room.) */
+const isArtifactDropTarget = (room: Room) => room.kind === "owned" && room.id !== INBOX_ID && room.status === "ok";
 
 /** `rooms` in the `order` of ids (rooms it doesn't list keep their place at the end); `rooms` when there is none. */
 function inOrder(rooms: Room[], order: string[] | null): Room[] {

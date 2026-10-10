@@ -5,7 +5,7 @@
  */
 import { useState } from "react";
 import { usePlugins, usePluginsStore } from "@/data/hooks";
-import { permissionLine } from "./permissions";
+import { addsLines, permissionLine } from "./permissions";
 import type { HostPlugin } from "./pluginsStore";
 
 export function EnableCard() {
@@ -23,12 +23,7 @@ function Card({ plugin: p }: { plugin: HostPlugin }) {
   const [failed, setFailed] = useState(false);
   const updated = p.granted !== null;
   // A re-ask shows only what is new; a first ask shows everything the plugin adds and can do.
-  const adds = updated
-    ? []
-    : [
-        p.slots.tab?.sidebar ? "Adds a sidebar item and a tab" : p.slots.tab ? "Adds a tab" : null,
-        p.slots.artifactSidePanel ? "Adds a panel beside documents" : null,
-      ].filter((x): x is string => x !== null);
+  const adds = updated ? [] : addsLines(p);
   const asked = updated ? p.permissions.filter((x) => !p.granted!.includes(x)) : p.permissions;
   const can = asked.map(permissionLine);
   const title = `${updated ? "Updated plugin" : "New plugin"}: ${p.name}`;
@@ -51,29 +46,29 @@ function Card({ plugin: p }: { plugin: HostPlugin }) {
     <div
       role="dialog"
       aria-label={title}
-      className="fixed right-5 bottom-5 z-50 flex w-[300px] flex-col gap-2 rounded-[14px] border border-[#ddd] bg-white px-4 py-3.5 text-[14px] shadow-float"
+      className="fixed right-5 bottom-5 z-50 flex w-[300px] flex-col gap-2 rounded-xl border border-hairline bg-sheet px-4 py-3.5 text-body shadow-float"
     >
       <p className="font-medium text-ink">{title}</p>
       {p.description && !updated ? <p className="text-ink-2">{p.description}</p> : null}
-      <ul className="flex flex-col gap-0.5 text-[13px] text-ink-2">
+      <ul className="flex flex-col gap-0.5 text-body text-ink-2">
         {[...adds, ...can].map((line) => (
           <li key={line}>{line}</li>
         ))}
       </ul>
-      {failed ? <p className="text-[13px] text-[#c13515]">Couldn't turn it on</p> : null}
+      {failed ? <p className="text-body text-error">Couldn't turn it on</p> : null}
       <div className="mt-1 flex gap-2">
         <button
           type="button"
           disabled={busy}
           onClick={() => void turnOn()}
-          className="h-8 rounded-lg bg-thread-deep px-3 text-[13px] font-medium text-white hover:bg-[var(--thread-deeper)] disabled:opacity-60"
+          className="h-8 rounded-lg bg-thread-deep px-3 text-body font-medium text-on-thread hover:bg-thread-deeper disabled:opacity-60"
         >
           Turn on
         </button>
         <button
           type="button"
           onClick={() => store.dismiss(p.id)}
-          className="h-8 rounded-lg border border-[#ddd] px-3 text-[13px] text-ink hover:bg-[#f7f7f7]"
+          className="h-8 rounded-lg border border-hairline px-3 text-body text-ink hover:bg-surface"
         >
           Not now
         </button>

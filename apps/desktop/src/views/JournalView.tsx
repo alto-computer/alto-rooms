@@ -1,80 +1,34 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { type Artifact, type Info, type Note, type Room } from "@alto-rooms/protocol-ts";
+import { type Note } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
 import { AskBar } from "@/ask/AskBar";
 import { useFrameAfter } from "@/ask/useFrameAfter";
 import { useClient, useJournalDay, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
-import { dateLabel, isNewSince, journalTitle, localDate } from "@/lib/dates";
+import { AGENT_NAMES } from "@/lib/agents";
+import { conversationTab, conversationTitle } from "@/lib/conversations";
+import { daybookTitle, isoWeek, localDate, monthDay } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
-import { viewerInitial } from "@/lib/native";
-import { wantsNewTab } from "@/lib/nav";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { cn } from "@/lib/utils";
 import { useCurrentTabId } from "@/shell/currentTab";
 import { createUnderFreeName, firstNewNoteNames, noteBase, requestNoteBodyFocus } from "@/lib/notes";
-import otterAvatar from "@/assets/otter-avatar.svg";
-import { ArtifactCard } from "./ArtifactCard";
-import { useVisitsAtArrival } from "./useVisitsAtArrival";
+import { Daybook, dayEntries, type DayEntry } from "./Daybook";
+import { DayTally, type TallyCell, type TallyItem } from "./DayTally";
+import { EmptyDay } from "./EmptyDay";
+import { OnboardingCard, useFirstRun } from "./OnboardingCard";
 import { WeekStrip } from "./WeekStrip";
-
-/** The viewer's initial comes from the OS account name; it never changes during a run, so it is fetched once. */
-let initialPromise: Promise<string> | null = null;
-function useViewerInitial(): string {
-  const [initial, setInitial] = useState("");
-  useEffect(() => {
-    let live = true;
-    initialPromise ??= viewerInitial().catch(() => "");
-    void initialPromise.then((v) => {
-      if (live) setInitial(v);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
-  return initial;
-}
-
-const byCreated = (a: Artifact, b: Artifact) => {
-  const d = Date.parse(a.createdAt) - Date.parse(b.createdAt);
-  if (d) return d;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-};
-
-type AgentCard = { artifact: Artifact; label: string };
-
-/** Dream first ("Review"), then the rest by createdAt (then id), each labelled with its source room. */
-export function agentCards(artifacts: readonly Artifact[], date: string, info: Info, rooms: readonly Room[]): AgentCard[] {
-  const isDream = (a: Artifact) => a.roomId === info.journalRoomId && a.relPath === `${date}/dream.html`;
-  const label = (a: Artifact) => {
-    if (a.roomId === info.journalRoomId) return "Journal";
-    return rooms.find((r) => r.id === a.roomId)?.name ?? "Room";
-  };
-  const dream = artifacts.filter(isDream);
-  const rest = artifacts.filter((a) => !isDream(a)).sort(byCreated);
-  return [...dream.map((artifact) => ({ artifact, label: "Review" })), ...rest.map((artifact) => ({ artifact, label: label(artifact) }))];
-}
-
-function RowLabel({ avatar, name, count }: { avatar: ReactNode; name: string; count: number }) {
-  return (
-    <div className="flex items-center gap-2">
-      {avatar}
-      <span className="text-[15px] font-medium text-ink">{name}</span>
-      <span className="text-[15px] text-[#929292]">{count}</span>
-    </div>
-  );
-}
 
 /** Most default names tried before giving up. */
 const MAX_NEW_NOTE_TRIES = 50;
 
 /**
- * New note: no name asked. Creates the first free default name ("New Note",
+ * Write a note: no name asked. Creates the first free default name ("New Note",
  * "New Note 2", …) and opens it in a new tab with the cursor in the body.
  * Never saves over a note: a name in the day list is skipped, and roomsd
  * refuses one the list missed (the list may lag behind the disk).
  */
-function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly Note[]; viewer: ViewerStore }) {
+function WriteNoteButton({ date, notes, viewer }: { date: string; notes: readonly Note[]; viewer: ViewerStore }) {
   const client = useClient();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -102,19 +56,18 @@ function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly No
   };
 
   return (
-    <div className="flex w-[160px] shrink-0 flex-col gap-2">
+    <div className="flex flex-col items-end gap-1">
       <button
         type="button"
-        aria-label="New note"
         aria-busy={busy || undefined}
         onClick={() => void create()}
-        className="flex h-[150px] w-[160px] shrink-0 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#ddd] bg-white text-ink-2 hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+        className="inline-flex h-7 items-center gap-1.5 rounded-lg bg-sheet px-2.5 text-small font-medium text-ink shadow-sheet outline-none hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
       >
-        <Plus size={22} aria-hidden />
-        <span className="text-[15px]">New note</span>
+        <Plus size={14} className="text-ink-2" aria-hidden />
+        Write a note
       </button>
       {error ? (
-        <p role="alert" className="flex items-center gap-1.5 text-[14px] text-[#c13515]">
+        <p role="alert" className="flex items-center gap-1.5 text-body text-error">
           <CircleAlert size={16} aria-hidden />
           {error}
         </p>
@@ -123,25 +76,9 @@ function NewNoteCard({ date, notes, viewer }: { date: string; notes: readonly No
   );
 }
 
-function NoteCard({ note, onOpen, now }: { note: Note; onOpen: (newTab: boolean) => void; now: Date }) {
-  const name = noteBase(note.name);
-  return (
-    <button
-      type="button"
-      aria-label={name}
-      onClick={(e) => onOpen(wantsNewTab(e))}
-      onAuxClick={(e) => e.button === 1 && onOpen(true)}
-      className="flex h-[150px] w-[220px] shrink-0 flex-col justify-between rounded-xl border border-[#ddd] bg-white p-4 text-left hover:shadow-float focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-    >
-      <span className="line-clamp-3 text-[15px] font-medium text-ink">{name}</span>
-      <span className="font-mono text-[12px] text-[#929292]">{dateLabel(note.updatedAt, now)}</span>
-    </button>
-  );
-}
-
 /**
- * The journal tab: a day's header with a week strip, what agents wrote that
- * day, and the viewer's own notes. Changing the date rewrites this same tab.
+ * The journal tab, a daybook: the date in serif over a week strip, then the day in time order
+ * (your notes and what agents wrote) beside a tally of it. Changing the date rewrites this same tab.
  */
 export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const rooms = useRoomList();
@@ -151,11 +88,11 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const day = useJournalDay(date);
   const loadError = useScopeError(`day:${date}`);
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
-  const initial = useViewerInitial();
   const readOnly = useReadOnly();
-  // The ask bar never delays the cards and never asks about a day other than the one shown. It first mounts
-  // a frame after the first day's cards paint (useFrameAfter). On a day change it unmounts at once, since
-  // barDate no longer matches, and the barDate effect brings it back after the new day's cards commit.
+  const firstRun = useFirstRun();
+  // The ask bar never delays the day and never asks about a day other than the one shown. It first mounts
+  // a frame after the first day paints (useFrameAfter). On a day change it unmounts at once, since
+  // barDate no longer matches, and the barDate effect brings it back after the new day commits.
   const settled = day !== undefined || !!loadError;
   const barReady = useFrameAfter(settled);
   const [barDate, setBarDate] = useState(date);
@@ -164,94 +101,86 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   }, [settled, date]);
   const bar = useMemo(() => <AskBar subject={{ kind: "day", date: barDate }} />, [barDate]);
 
-  // New-doc dots: per artifact, against its own room's last visit — as in RoomView.
-  const visits = useVisitsAtArrival();
-
   const setDate = (next: string) => {
     const id = tabId ?? viewer.getState().tabs.find((t) => t.kind === "journal")?.id;
     if (id) viewer.replace(id, { kind: "journal", date: next });
   };
 
-  const now = new Date();
-  const isToday = date === localDate(now);
-  const cards = day && info ? agentCards(day.artifacts, date, info, rooms) : [];
-  const notes = day ? [...day.notes].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) : [];
+  const isToday = date === localDate();
+  const entries = day && info ? dayEntries(day, info, rooms) : [];
+  const writeNote = readOnly || !day ? null : <WriteNoteButton date={date} notes={day.notes} viewer={viewer} />;
+
+  // One cell per kind of entry; a kind joins the tally with one more line here.
+  const tallyItem = (e: DayEntry): TallyItem => {
+    switch (e.kind) {
+      case "note":
+        return { key: e.key, title: noteBase(e.note.name), at: e.at, meta: "", open: (newTab) => viewer.go({ kind: "note", date, name: e.note.name }, newTab) };
+      case "artifact":
+        return { key: e.key, title: e.artifact.title, at: e.at, meta: e.label, open: (newTab) => openDoc(e.artifact, newTab) };
+      case "conversation":
+        return {
+          key: e.key,
+          title: conversationTitle(e.conversation),
+          at: e.at,
+          meta: [AGENT_NAMES[e.conversation.id.agent], e.room?.name].filter(Boolean).join(" · "),
+          open: (newTab) => viewer.go(conversationTab(e.conversation.id), newTab),
+        };
+    }
+  };
+  const cells: TallyCell[] = [
+    { noun: "session", items: entries.filter((e) => e.kind === "conversation").map(tallyItem) },
+    { noun: "artifact", items: entries.filter((e) => e.kind === "artifact").map(tallyItem) },
+    { noun: "note", items: entries.filter((e) => e.kind === "note").map(tallyItem) },
+  ];
 
   let body: ReactNode;
-  if (day === undefined) {
-    body = loadError ? (
-      <div className="flex flex-1 items-center justify-center text-[17px] text-ink-2">{GENERIC_ERROR}</div>
-    ) : (
-      <div className="flex-1" />
+  if (day === undefined || !info) {
+    body = loadError ? <div className="flex flex-1 items-center justify-center text-heading text-ink-2">{GENERIC_ERROR}</div> : null;
+  } else if (firstRun && !entries.length) {
+    // First run: the welcome takes the empty day's place, tally and all.
+    body = (
+      <section aria-label="Your day" className="flex max-w-[calc(760px+7rem)] flex-col px-14 pt-9 pb-10">
+        <div className="mb-4 flex h-7 items-center justify-between">
+          <h2 className="text-small font-semibold tracking-[0.02em] text-ink-3">Your day</h2>
+          {writeNote}
+        </div>
+        <OnboardingCard />
+      </section>
     );
   } else {
+    // Below 960px of room the tally goes above the day in one column, so neither crowds the other.
     body = (
-      <>
-        <section aria-label="From agents" className="flex flex-col gap-4">
-          <RowLabel
-            avatar={
-              <span className="grid size-6 place-items-center overflow-hidden rounded-full bg-[#f2f2f2]">
-                <img src={otterAvatar} alt="" className="size-5" />
-              </span>
-            }
-            name="Agents"
-            count={cards.length}
-          />
-          <div
-            data-scroll-root
-            // The fade sits in the side padding, so it only touches cards cut off at the edge.
-            className="-mx-12 -mt-2.5 flex items-start gap-5 overflow-x-auto overflow-y-hidden px-12 pt-2.5 pb-1 [mask-image:linear-gradient(to_right,transparent,#000_40px,#000_calc(100%-40px),transparent)]"
-          >
-            {info
-              ? cards.map(({ artifact, label }) => (
-                  <ArtifactCard
-                    key={artifact.id}
-                    artifact={artifact}
-                    info={info}
-                    label={label}
-                    isNew={isNewSince(artifact.createdAt, visits.since(artifact.roomId))}
-                    size="journal"
-                    onOpen={openDoc}
-                  />
-                ))
-              : null}
-          </div>
-        </section>
-        <section aria-label="From me" className="flex flex-col gap-4">
-          <RowLabel
-            avatar={
-              <span aria-hidden={!initial} className="grid size-6 place-items-center rounded-full bg-[#222] text-[12px] text-white">
-                {initial}
-              </span>
-            }
-            name="Me"
-            count={notes.length}
-          />
-          {/* pb-6/-mb-5: room below the cards for the hover shadow, which the scroller would clip. */}
-          <div className="-mx-12 -mt-2.5 -mb-5 flex items-start gap-5 overflow-x-auto px-12 pt-2.5 pb-6">
-            {readOnly ? null : <NewNoteCard date={date} notes={notes} viewer={viewer} />}
-            {notes.map((n) => (
-              <NoteCard key={n.name} note={n} now={now} onOpen={(newTab) => viewer.go({ kind: "note", date, name: n.name }, newTab)} />
-            ))}
-          </div>
-        </section>
-      </>
+      <div className="@container">
+        <div className="grid grid-cols-1 gap-8 px-14 pt-9 pb-10 @[960px]:grid-cols-[minmax(0,1fr)_300px] @[960px]:gap-14">
+          <section aria-label="Your day" className="flex min-w-0 flex-col">
+            <div className="mb-4 flex h-7 items-center justify-between">
+              <h2 className="text-small font-semibold tracking-[0.02em] text-ink-3">Your day</h2>
+              {entries.length ? writeNote : null}
+            </div>
+            {entries.length ? (
+              <Daybook entries={entries} info={info} />
+            ) : (
+              <EmptyDay date={date} rooms={rooms} writeNote={writeNote} onPick={setDate} />
+            )}
+          </section>
+          <DayTally label={isToday ? "Today" : monthDay(date)} cells={cells} className="order-first @[960px]:order-none" />
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
-      <div
-        ref={scrollRef}
-        // The ask bar floats over the bottom of the tab: the notes row scrolls clear of it.
-        className={cn("flex min-h-0 flex-1 flex-col gap-[26px] overflow-y-auto px-12 pt-9", readOnly ? "pb-6" : "pb-28")}
-      >
-        <header className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-[30px] leading-[1.25] font-medium tracking-[-0.01em] text-ink">{journalTitle(date)}</h1>
-            {isToday ? <span className="text-[17px] text-ink-2">Today</span> : null}
+    // The ask bar floats over the bottom of the Journal; the page scrolls under it and its end clears it.
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} data-scroll-root className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:thin]", !readOnly && "pb-24")}>
+        <header className="flex flex-wrap items-end gap-6 px-14 pt-9">
+          <div className="flex flex-col">
+            <p className="text-small font-semibold tracking-[0.06em] text-ink-3 uppercase">Journal · Week {isoWeek(date)}</p>
+            <h1 className="mt-2.5 font-serif text-display font-medium tracking-[-0.01em] text-ink">{daybookTitle(date)}</h1>
           </div>
-          <WeekStrip date={date} onChange={setDate} />
+          <div className="ml-auto">
+            <WeekStrip date={date} onChange={setDate} />
+          </div>
         </header>
         {body}
       </div>

@@ -210,7 +210,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
 
   const attrs = frameAttrs({ ...plugin, permissions: loadedAs.permissions });
   return (
-    <div className="relative min-h-0 flex-1 bg-white">
+    <div className="relative min-h-0 flex-1 bg-pane">
       <iframe
         key={`${shownRev}:${reload}`}
         ref={frameRef}
@@ -221,7 +221,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
         className="absolute inset-0 size-full border-0 bg-white"
       />
       {stalled ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/95 text-[15px] text-ink-2">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-pane/95 text-lead text-ink-2">
           <p>This plugin stopped responding</p>
           <button
             type="button"
@@ -230,7 +230,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
               setStalled(false);
               setReload((n) => n + 1);
             }}
-            className="rounded-lg border border-[#ddd] bg-white px-3 py-1.5 text-[14px] text-ink hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink"
+            className="rounded-lg border border-hairline bg-sheet px-3 py-1.5 text-body text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-ink"
           >
             Reload
           </button>

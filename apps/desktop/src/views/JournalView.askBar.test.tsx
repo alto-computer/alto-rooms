@@ -29,7 +29,7 @@ function Host() {
 
 function journalViewer(date: string) {
   const viewer = new ViewerStore(memoryStorage());
-  viewer.open({ kind: "journal", date });
+  viewer.replace(viewer.getState().activeId!, { kind: "journal", date });
   return viewer;
 }
 
@@ -45,9 +45,9 @@ it("asks about the viewed day, shows no bar while another day loads, and asks ab
   const { client } = await renderWithStores(<Host />, { viewer: journalViewer("2026-10-05") });
   await screen.findByTestId("ask-bar");
   expect(subject()).toEqual({ kind: "day", date: "2026-10-05" });
-  const load = client.journalDay;
   let arrive: () => void = () => {};
-  vi.spyOn(client, "journalDay").mockImplementation((date: string) => new Promise((resolve) => (arrive = () => resolve(load(date)))));
+  // Holds the next load only; by the time it arrives the fake's own loader answers again.
+  vi.mocked(client.journalDay).mockImplementationOnce((date: string) => new Promise((resolve) => (arrive = () => resolve(client.journalDay(date)))));
   fireEvent.click(screen.getByRole("button", { name: "Oct 6" }));
   await act(() => new Promise((r) => setTimeout(r, 50)));
   expect(screen.queryByTestId("ask-bar")).toBeNull();
@@ -64,7 +64,7 @@ it("moves to a day that fails to load, too", async () => {
 
 it("never mounts the day's ask bar in read-only", async () => {
   await renderWithStores(<Host />, { viewer: journalViewer("2026-10-05"), readOnly: true });
-  await screen.findByRole("region", { name: "From me" });
+  await screen.findByRole("region", { name: "Your day" });
   await act(() => new Promise((r) => setTimeout(r, 150)));
   expect(mounts.count).toBe(0);
 });

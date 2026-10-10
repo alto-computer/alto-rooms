@@ -1,5 +1,5 @@
 //! v2 ask: send a question about a doc to the agent CLI that made it (spec 2026-10-06 v2 ask).
-//! Every thread belongs to an `AskScope`: a doc, a room or a Journal day.
+//! Every thread belongs to an `AskScope`: a doc, a room, a Journal day or a conversation.
 //! `Asks` is the only entry point; templates, prompt, log and process stay inside this module.
 pub(crate) mod agents;
 pub mod images;
@@ -17,8 +17,8 @@ use crate::rules::{slug_key, valid_room_id, validate_iso_date};
 use crate::RoomsCore;
 use agents::{claude_read_scope, AgentProfiles, Plan, Vars};
 use log::AskLog;
-use prompt::{build_prompt, build_scope_prompt, context, listed, valid_file_key, valid_ident, with_image_paths, ContextEntry, Listing, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
-use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, EventKind, JOURNAL_ROOM_ID};
+use prompt::{build_conversation_prompt, build_prompt, build_scope_prompt, context, listed, valid_file_key, valid_ident, with_image_paths, ContextEntry, Listing, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
+use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, Conversation, ConversationId, EventKind, SessionId, JOURNAL_ROOM_ID};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
 use std::collections::HashMap;
@@ -46,7 +46,8 @@ fn read_answer(rules: &[EventRule], stdout: &[u8]) -> String {
     if r.saw_json() { run::clean_output(r.text().as_bytes()) } else { run::clean_output(stdout) }
 }
 
-/// A scope as one string, `doc:<fileKey>`, `room:<roomId>` or `day:<YYYY-MM-DD>`: what
+/// A scope as one string, `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>` or
+/// `conversation:<agent>:<session>`: what
 /// `GET /v1/asks?scope=` takes and what the app keys its threads by.
 pub trait ScopeKey: Sized {
     fn key(&self) -> String;
@@ -61,6 +62,7 @@ impl ScopeKey for AskScope {
             AskScope::Doc { file_key } => format!("doc:{file_key}"),
             AskScope::Room { room_id } => format!("room:{room_id}"),
             AskScope::Day { date } => format!("day:{date}"),
+            AskScope::Conversation { agent, session } => format!("conversation:{}:{session}", agent.as_str()),
         }
     }
 
@@ -69,6 +71,10 @@ impl ScopeKey for AskScope {
             Some(("doc", k)) => AskScope::Doc { file_key: k.into() },
             Some(("room", r)) => AskScope::Room { room_id: r.into() },
             Some(("day", d)) => AskScope::Day { date: d.into() },
+            Some(("conversation", c)) => match ConversationId::parse_key(c) {
+                Some(ConversationId { agent, session }) => AskScope::Conversation { agent, session },
+                None => return Err(AskError::BadRequest("bad scope key".into())),
+            },
             _ => return Err(AskError::BadRequest("bad scope key".into())),
         };
         scope.validate()?;
@@ -80,6 +86,8 @@ impl ScopeKey for AskScope {
             AskScope::Doc { file_key } => valid_file_key(file_key),
             AskScope::Room { room_id } => valid_room_id(room_id) && slug_key(room_id) != JOURNAL_ROOM_ID,
             AskScope::Day { date } => validate_iso_date(date).is_ok(),
+            // Its agent and session id were checked when it was parsed.
+            AskScope::Conversation { .. } => true,
         };
         if ok { Ok(()) } else { Err(AskError::BadRequest("bad scope key".into())) }
     }
@@ -90,8 +98,9 @@ impl ScopeKey for AskScope {
 #[derive(Debug, thiserror::Error)]
 pub enum AskError {
     #[error("{0}")] BadRequest(String),
-    #[error("Can't find this doc")] NotFound,
+    #[error("Can't find this artifact")] NotFound,
     #[error("Can't find this room")] RoomNotFound,
+    #[error("Can't find this session")] ConversationNotFound,
     #[error("Waiting for an answer")] Busy,
     #[error("Too many questions running — try again when one finishes")] Capacity,
     #[error("Couldn't read agent settings: {0}")] AgentConfig(String),
@@ -103,7 +112,7 @@ impl AskError {
     pub fn code(&self) -> &'static str {
         match self {
             AskError::BadRequest(_) => "bad_request",
-            AskError::NotFound | AskError::RoomNotFound => "not_found",
+            AskError::NotFound | AskError::RoomNotFound | AskError::ConversationNotFound => "not_found",
             AskError::Busy => "ask_busy",
             AskError::Capacity => "ask_capacity",
             AskError::AgentConfig(_) => "agent_config",
@@ -114,7 +123,7 @@ impl AskError {
     pub fn status(&self) -> u16 {
         match self {
             AskError::BadRequest(_) => 400,
-            AskError::NotFound | AskError::RoomNotFound => 404,
+            AskError::NotFound | AskError::RoomNotFound | AskError::ConversationNotFound => 404,
             AskError::Busy | AskError::Capacity => 409,
             AskError::AgentConfig(_) => 422,
             AskError::Io(_) | AskError::Listing(_) => 500,
@@ -159,9 +168,10 @@ impl<'a> Request<'a> {
 
 struct Entry { scope: AskScope, killer: Killer }
 
-/// What a question is about: one doc, or the documents of a room or a Journal day.
+/// What a question is about: one doc, one conversation, or the documents of a room or a Journal day.
 enum Subject {
     Doc { file_key: String, file_abs: PathBuf },
+    Conversation(Conversation),
     Listing { listing: Listing, entries: Vec<ContextEntry> },
 }
 
@@ -269,11 +279,15 @@ impl Asks {
         let core = &self.0.core;
         let (listing, entries) = match scope {
             AskScope::Doc { file_key } => return self.resolve_doc(file_key),
+            AskScope::Conversation { agent, session } => return self.resolve_conversation(ConversationId { agent: *agent, session: session.clone() }),
             AskScope::Room { room_id } => {
                 let (name, entries) = core.room_context(room_id).map_err(listing_error)?;
                 (Listing::Room(name), entries)
             }
-            AskScope::Day { date } => (Listing::Day(date.clone()), core.day_context(date).map_err(listing_error)?),
+            AskScope::Day { date } => {
+                let (entries, sessions) = core.day_context(date).map_err(listing_error)?;
+                (Listing::Day { date: date.clone(), sessions }, entries)
+            }
         };
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
         let plan = profiles.plan_listing();
@@ -301,6 +315,18 @@ impl Asks {
         let cwd = src.cwd.as_deref().map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir())
             .unwrap_or_else(|| file_abs.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| core.home().to_path_buf()));
         Ok(Resolved { subject: Subject::Doc { file_key: artifact.file_key, file_abs }, profiles, plan, session, cwd })
+    }
+
+    /// A conversation ask resumes the conversation's own session the way a doc ask resumes the one
+    /// that wrote it: through the agent's `resume` template, which forks it where the agent can.
+    fn resolve_conversation(&self, id: ConversationId) -> Result<Resolved, AskError> {
+        let core = &self.0.core;
+        let c = core.conversation(&id).map_err(|_| AskError::ConversationNotFound)?;
+        let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
+        let session = Some(id.session.to_string()).filter(|s| valid_ident(s));
+        let plan = profiles.plan(Some(id.agent.as_str()), session.as_deref());
+        let cwd = c.cwd.as_deref().map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir()).unwrap_or_else(|| core.home().to_path_buf());
+        Ok(Resolved { subject: Subject::Conversation(c), profiles, plan, session, cwd })
     }
 
     /// Blocking, like `start`: what the ask bar shows before the first question.
@@ -355,6 +381,7 @@ impl Asks {
                 let prompt = build_prompt(profiles.preamble(), plan.mode, &file_s, file_key, &ctx, &asked);
                 (file_s, prompt, String::new())
             }
+            Subject::Conversation(c) => (String::new(), build_conversation_prompt(c, &ctx, &asked), String::new()),
             Subject::Listing { listing, entries } => {
                 private_dir(&cwd).map_err(|e| AskError::Io(e.to_string()))?;
                 let settings = claude_read_scope(listed(entries).iter().map(|e| e.path.as_path()));
@@ -367,9 +394,14 @@ impl Asks {
         let mcp = self.0.core.home().join(".rooms/mcp.json");
         let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
         let stdin = plan.prompt_on_stdin();
+        let account = match (plan.agent.as_str(), session.as_deref().and_then(SessionId::parse)) {
+            ("aside", Some(s)) => self.0.core.aside_account(&s).unwrap_or_default(),
+            _ => String::new(),
+        };
         let argv = plan.render(&Vars {
             prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
             model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir, scope_settings: &scope_settings,
+            account: &account,
         });
         self.launch(running, turn, argv, stdin.then_some(prompt), cwd, plan.events)
     }
@@ -563,8 +595,9 @@ mod tests {
     fn ask_errors_wire_codes_and_statuses() {
         let wire = |e: AskError| (e.status(), e.code(), e.to_string());
         assert_eq!(wire(AskError::BadRequest("why".into())), (400, "bad_request", "why".into()));
-        assert_eq!(wire(AskError::NotFound), (404, "not_found", "Can't find this doc".into()));
+        assert_eq!(wire(AskError::NotFound), (404, "not_found", "Can't find this artifact".into()));
         assert_eq!(wire(AskError::RoomNotFound), (404, "not_found", "Can't find this room".into()));
+        assert_eq!(wire(AskError::ConversationNotFound), (404, "not_found", "Can't find this session".into()));
         assert_eq!(wire(AskError::Busy), (409, "ask_busy", "Waiting for an answer".into()));
         assert_eq!(wire(AskError::Capacity), (409, "ask_capacity", "Too many questions running — try again when one finishes".into()));
         assert_eq!(wire(AskError::AgentConfig("x".into())), (422, "agent_config", "Couldn't read agent settings: x".into()));
@@ -612,6 +645,7 @@ mod tests {
             (AskScope::Room { room_id: "-abc".into() }, "room:-abc"),
             (AskScope::Room { room_id: "_abc".into() }, "room:_abc"),
             (AskScope::Day { date: "2026-10-09".into() }, "day:2026-10-09"),
+            (AskScope::Conversation { agent: rooms_protocol::Agent::ClaudeCode, session: rooms_protocol::SessionId::parse("7f3a-b_2").unwrap() }, "conversation:claude-code:7f3a-b_2"),
         ];
         for (scope, key) in good {
             assert_eq!(scope.key(), key);
@@ -619,7 +653,7 @@ mod tests {
         }
         let long_doc = format!("doc:{}", "a".repeat(65));
         let long_room = format!("room:{}", "a".repeat(65));
-        for bad in ["../x", "doc:../x", "room:journal", "room:Journal", "room:JOURNAL", "room:a b", "room:a.b", "room:a/b", "day:2026-13-01", "day:2026-1-1", long_doc.as_str(), long_room.as_str(), "doc:", "room:", "0123456789abcdef", "week:2026-10-09", ""] {
+        for bad in ["../x", "doc:../x", "room:journal", "room:Journal", "room:JOURNAL", "room:a b", "room:a.b", "room:a/b", "day:2026-13-01", "day:2026-1-1", long_doc.as_str(), long_room.as_str(), "doc:", "room:", "0123456789abcdef", "week:2026-10-09", "conversation:claude-code", "conversation:cursor:s1", "conversation:codex:s;1", "conversation:codex:", ""] {
             assert!(matches!(AskScope::parse_key(bad), Err(AskError::BadRequest(_))), "{bad}");
         }
         assert!(AskScope::Room { room_id: JOURNAL_ROOM_ID.into() }.validate().is_err());
@@ -758,9 +792,9 @@ mod tests {
         let mut count = 0;
         for _ in 0..30 {
             let t = std::time::Instant::now();
-            let entries = core.day_context(&today).unwrap();
-            count = entries.len();
-            build_scope_prompt(&Listing::Day(today.clone()), &entries, &ctx, "q");
+            let (entries, sessions) = core.day_context(&today).unwrap();
+            count = entries.len() + sessions.len();
+            build_scope_prompt(&Listing::Day { date: today.clone(), sessions }, &entries, &ctx, "q");
             ms.push(t.elapsed().as_secs_f64() * 1e3);
         }
         println!("day of {count} items: p50 {:.2} ms  p95 {:.2} ms", pct(ms.clone(), 0.5), pct(ms, 0.95));

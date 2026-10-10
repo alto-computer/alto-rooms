@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { modelLabel } from "./askModel";
 
-const CHIP = "rounded-full bg-[#f2f2f2] px-2 py-0.5 text-[11.5px] whitespace-nowrap text-ink-2";
+const CHIP = "rounded-full bg-surface px-2 py-0.5 text-small whitespace-nowrap text-ink-2";
 
 /** A plain agent name: no models to pick, or roomsd hasn't said yet. */
 export function AgentChip({ name }: { name: string }) {
@@ -46,7 +46,7 @@ export function ModelPicker({ target, model, onChange }: { target: AskTarget; mo
     <DropdownMenu>
       {/* The trigger is a 28px hit area; the chip inside keeps its small look. */}
       <DropdownMenuTrigger aria-label={`Model: ${label}`} className="group flex min-h-7 shrink-0 items-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-ink">
-        <span className={`${CHIP} flex items-center gap-1 group-hover:bg-[#e9e9e9] group-data-[state=open]:bg-[#e9e9e9]`}>
+        <span className={`${CHIP} flex items-center gap-1 group-hover:bg-surface-strong group-data-[state=open]:bg-surface-strong`}>
           {label}
           <ChevronDown className="size-3" />
         </span>
@@ -54,7 +54,7 @@ export function ModelPicker({ target, model, onChange }: { target: AskTarget; mo
       <DropdownMenuContent side="top" align="end" className="w-auto min-w-36">
         <DropdownMenuRadioGroup value={model ?? ""} onValueChange={(v) => onChange(v || null)}>
           {["", ...target.models].map((m) => (
-            <DropdownMenuRadioItem key={m} value={m} className="text-[12.5px]">
+            <DropdownMenuRadioItem key={m} value={m} className="text-small">
               {modelLabel(m || null)}
             </DropdownMenuRadioItem>
           ))}

@@ -4,17 +4,20 @@ import type { AskImage } from "./generated/AskImage";
 import type { AskScope } from "./generated/AskScope";
 import type { AskTarget } from "./generated/AskTarget";
 import type { AskTurn } from "./generated/AskTurn";
+import type { Conversation } from "./generated/Conversation";
+import type { ConversationId } from "./generated/ConversationId";
 import type { Info } from "./generated/Info";
 import type { JournalDay } from "./generated/JournalDay";
 import type { Note } from "./generated/Note";
 import type { PluginInfo } from "./generated/PluginInfo";
 import type { Room } from "./generated/Room";
+import type { RoomColor } from "./generated/RoomColor";
 import type { RoomsEvent } from "./generated/RoomsEvent";
 import type { StartAsk } from "./generated/StartAsk";
 
 export type Snapshot<T> = { data: T; seq: number };
 
-/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`. */
+/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `conversation:<agent>:<session>`. */
 export function scopeKey(scope: AskScope): string {
   switch (scope.kind) {
     case "doc":
@@ -23,6 +26,8 @@ export function scopeKey(scope: AskScope): string {
       return `room:${scope.roomId}`;
     case "day":
       return `day:${scope.date}`;
+    case "conversation":
+      return `conversation:${scope.agent}:${scope.session}`;
   }
 }
 
@@ -70,6 +75,15 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     listRooms: () => get<Room[]>("/v1/rooms"),
     listArtifacts: (roomId: string) => get<Artifact[]>(`/v1/rooms/${encodeURIComponent(roomId)}/artifacts`),
     journalDay: (date: string) => get<JournalDay>(`/v1/journal/${date}`),
+    /** The conversations added to a room, last active first; empty for the Journal. 404 `room_not_found`. */
+    listRoomConversations: (roomId: string) => get<Conversation[]>(`/v1/rooms/${encodeURIComponent(roomId)}/conversations`),
+    /** One conversation with its room, fresh from the agents' logs or as its room kept it. 404 `not_found`. */
+    getConversation: (id: ConversationId) =>
+      get<Conversation>(`/v1/conversations/${encodeURIComponent(id.agent)}/${encodeURIComponent(id.session)}`),
+    /** Puts a conversation in a room (out of any other), or out of every room with `null`. 400 `invalid_input` for an
+     *  unknown agent or a bad session id, 404 `not_found` / `room_not_found`. Emits `conversation.moved` when it moves. */
+    setConversationRoom: (id: ConversationId, roomId: string | null) =>
+      write<Conversation>("PUT", `/v1/conversations/${encodeURIComponent(id.agent)}/${encodeURIComponent(id.session)}/room`, JSON.stringify(roomId)),
     getNote: async (date: string, name: string): Promise<string> => {
       const r = await fetch(`${baseUrl}/v1/journal/${date}/notes/${encodeURIComponent(name)}`);
       if (!r.ok) throw await failure(r);
@@ -78,9 +92,15 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     createRoom: (name: string) => write<Room>("POST", "/v1/rooms", JSON.stringify({ name })),
     linkFolder: (path: string, name?: string) => write<Room>("POST", "/v1/rooms/link", JSON.stringify({ path, name })),
     renameRoom: (id: string, name: string) => write<Room>("PATCH", `/v1/rooms/${encodeURIComponent(id)}`, JSON.stringify({ name })),
-    /** Moves a room to position `to` among the rooms other than the inbox (past the end = last); returns the new order
-     *  of all room ids. 400 `invalid_input` for the inbox, 404 `room_not_found`. Also emits `rooms.reordered`. */
+    /** Moves a room to position `to` among the rooms other than the inbox (past the end = last), kept within its
+     *  section: pinned rooms stay first, unpinned ones after them. Returns the new order of all room ids.
+     *  400 `invalid_input` for the inbox, 404 `room_not_found`. Also emits `rooms.reordered`. */
     moveRoom: (id: string, to: number) => write<string[]>("POST", `/v1/rooms/${encodeURIComponent(id)}/move`, JSON.stringify({ to })),
+    /** Pins a room with a colour, or unpins it (`null`), and returns it. Pinning moves it to the end of the pinned
+     *  rooms, unpinning to the top of the others, recolouring keeps its place. 400 `invalid_input` for the inbox,
+     *  404 `room_not_found`. Emits `room.updated`, then `rooms.reordered` if it moved. */
+    setRoomColor: (id: string, color: RoomColor | null) =>
+      write<Room>("PUT", `/v1/rooms/${encodeURIComponent(id)}/color`, JSON.stringify({ color })),
     saveNote: (date: string, name: string, body: string) =>
       write<Note>("PUT", `/v1/journal/${date}/notes/${encodeURIComponent(name)}`, body, "text/markdown"),
     /** Creates a note and never replaces one: 409 `note_exists` if the name (or a case variant of it) is taken. */

@@ -31,7 +31,7 @@ test("ask about the viewed day, and keep each day's thread and draft across day 
   await page.goto("/");
   await page.getByRole("button", { name: "Journal", exact: true }).click();
   await expect(page.getByRole("tab", { name: /^Journal · /, selected: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "From agents" }).getByTestId("artifact-card")).toHaveCount(2);
+  await expect(page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact")).toHaveCount(2);
   const input = page.getByPlaceholder(DAY_PLACEHOLDER);
   await expect(input).toBeVisible();
   await expect(page.getByRole("button", { name: "Reads only this day's items" })).toBeVisible();

@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use rooms_protocol::{RoomId, RoomKind, INBOX_ROOM_ID};
+use rooms_protocol::{RoomColor, RoomId, RoomKind, INBOX_ROOM_ID};
 use serde::{Deserialize, Serialize};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -12,6 +12,16 @@ pub struct RoomRecord {
     pub path: PathBuf,
     pub dev: Option<u64>,
     pub ino: Option<u64>,
+    /// Kept out of the file while unset, so a neutral room's record reads as it did before pins.
+    #[serde(default, deserialize_with = "color_or_unpinned", skip_serializing_if = "Option::is_none")]
+    pub color: Option<RoomColor>,
+}
+
+/// A colour this build does not know (a newer build's, or a hand edit) reads as unpinned, so it
+/// never turns the whole state file corrupt.
+fn color_or_unpinned<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<RoomColor>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// Which plugins the user turned on, and the permissions they saw when they did.
@@ -76,9 +86,11 @@ impl StateStore {
                 }
             }
         };
+        let mut rooms = disk.rooms;
+        crate::order::put_pinned_first(&mut rooms);
         Ok(StateStore {
             path,
-            rooms: disk.rooms,
+            rooms,
             plugins: disk.plugins,
         })
     }
@@ -126,14 +138,54 @@ mod tests {
         let dir = d.path().join(".rooms");
         let mut s = StateStore::load(&dir).unwrap();
         assert!(s.rooms.is_empty());
-        s.rooms.push(RoomRecord { id: "b".into(), name: "B".into(), kind: RoomKind::Owned, path: "/x/b".into(), dev: Some(1), ino: Some(2) });
-        s.rooms.push(RoomRecord { id: "a".into(), name: "연구 도구".into(), kind: RoomKind::Linked, path: "/t".into(), dev: None, ino: None });
+        s.rooms.push(RoomRecord { id: "b".into(), name: "B".into(), kind: RoomKind::Owned, path: "/x/b".into(), dev: Some(1), ino: Some(2), color: None });
+        s.rooms.push(RoomRecord { id: "a".into(), name: "연구 도구".into(), kind: RoomKind::Linked, path: "/t".into(), dev: None, ino: None, color: None });
         s.save().unwrap();
         let s2 = StateStore::load(&dir).unwrap();
         assert_eq!(s2.rooms.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["b", "a"]);
         assert_eq!(s2.find("a").unwrap().name, "연구 도구");
         let mut s2 = s2;
         assert_eq!(s2.find_by_inode_mut(1, 2).unwrap().id, "b");
+    }
+
+    #[test]
+    fn colour_roundtrips_and_files_without_it_still_load() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join(".rooms");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A state file from before pins.
+        std::fs::write(dir.join("state.json"), r#"{"rooms":[{"id":"a","name":"A","kind":"owned","path":"/x/a","dev":null,"ino":null}]}"#).unwrap();
+        let mut s = StateStore::load(&dir).unwrap();
+        assert_eq!(s.find("a").unwrap().color, None);
+        s.save().unwrap();
+        assert!(!std::fs::read_to_string(dir.join("state.json")).unwrap().contains("color"));
+
+        s.find_mut("a").unwrap().color = Some(RoomColor::Clay);
+        s.save().unwrap();
+        assert!(std::fs::read_to_string(dir.join("state.json")).unwrap().contains(r#""color": "clay""#));
+        assert_eq!(StateStore::load(&dir).unwrap().find("a").unwrap().color, Some(RoomColor::Clay));
+    }
+
+    #[test]
+    fn unknown_colour_reads_as_unpinned_and_keeps_the_rest() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join(".rooms");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A colour from a newer build (or a hand edit) this build does not know.
+        std::fs::write(
+            dir.join("state.json"),
+            r#"{"rooms":[
+                {"id":"a","name":"A","kind":"owned","path":"/x/a","dev":null,"ino":null,"color":"teal"},
+                {"id":"b","name":"B","kind":"owned","path":"/x/b","dev":null,"ino":null,"color":"sage"}
+            ],"plugins":{"enabled":["p"],"grants":{"p":["net"]}}}"#,
+        )
+        .unwrap();
+        let s = StateStore::load(&dir).unwrap();
+        assert_eq!(s.rooms.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["b", "a"]);
+        assert_eq!(s.find("a").unwrap().color, None);
+        assert_eq!(s.find("b").unwrap().color, Some(RoomColor::Sage));
+        assert_eq!(s.plugins.grants.get("p"), Some(&vec!["net".to_string()]));
+        assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().contains("corrupt")));
     }
 
     #[test]

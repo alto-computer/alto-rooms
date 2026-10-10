@@ -17,13 +17,13 @@ export const askAction = (run: () => void): SelectionAction => ({
   run,
 });
 
-const PILL = "pointer-events-auto absolute z-20 flex h-8 -translate-x-1/2 items-center rounded-full border border-[#dcdcdc] bg-white text-[12.5px] font-medium text-ink shadow-[0_4px_14px_rgba(0,0,0,0.12)] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95";
-const ITEM = "flex items-center gap-1.5 hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink";
+const PILL = "pointer-events-auto absolute z-20 flex h-8 -translate-x-1/2 items-center rounded-full border border-hairline bg-sheet text-small font-medium text-ink shadow-float motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95";
+const ITEM = "flex items-center gap-1.5 hover:bg-surface focus-visible:outline-2 focus-visible:outline-ink";
 
 function Label({ action }: { action: SelectionAction }) {
   return (
     <>
-      {action.icon ?? (action.color ? <span aria-hidden className="size-3 shrink-0 rounded-full border border-black/10" style={{ background: action.color }} /> : null)}
+      {action.icon ?? (action.color ? <span aria-hidden className="size-3 shrink-0 rounded-full border border-hairline" style={{ background: action.color }} /> : null)}
       {action.title}
     </>
   );
@@ -78,7 +78,7 @@ export function SelectionBar({ rect, actions }: { rect: SelectionRect; actions: 
       className={`${PILL} overflow-hidden whitespace-nowrap ${place}`}
     >
       {actions.map((a, i) => (
-        <button key={a.key} type="button" onClick={a.run} className={`${ITEM} h-full px-3 ${i > 0 ? "border-l border-[#ececec]" : ""}`}>
+        <button key={a.key} type="button" onClick={a.run} className={`${ITEM} h-full px-3 ${i > 0 ? "border-l border-hairline" : ""}`}>
           <Label action={a} />
         </button>
       ))}

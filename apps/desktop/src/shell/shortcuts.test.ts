@@ -15,6 +15,13 @@ describe("shortcuts", () => {
     expect(keyAction(kd("x"))).toBeNull();
   });
 
+  it("maps ⌘, to Settings by physical key, and keeps it out of text fields", () => {
+    expect(keyAction(new KeyboardEvent("keydown", { key: ",", code: "Comma", metaKey: true }))).toBe("settings");
+    expect(keyAction(new KeyboardEvent("keydown", { key: ",", code: "Comma" }))).toBeNull();
+    expect(keyAction(new KeyboardEvent("keydown", { key: "<", code: "Comma", metaKey: true, shiftKey: true }))).toBeNull();
+    expect(allowedWithFocus("settings", document.createElement("input"))).toBe(false);
+  });
+
   it("maps tab switching keys by physical key", () => {
     const code = (c: string, init: KeyboardEventInit = {}) => new KeyboardEvent("keydown", { key: "x", code: c, metaKey: true, ...init });
     expect(tabKey(code("Digit1"))).toEqual({ kind: "at", index: 0 });

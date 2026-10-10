@@ -65,7 +65,7 @@ describe("AppShell in Tauri", () => {
     expect(keyOn(window, "b").defaultPrevented).toBe(false);
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     expect(keyOn(window, "k").defaultPrevented).toBe(false);
-    expect(screen.queryByPlaceholderText("Find a room or doc")).toBeNull();
+    expect(screen.queryByPlaceholderText("Find a room or artifact")).toBeNull();
   });
 
   it("menu://find and menu://toggle-sidebar open quick find and toggle the sidebar", async () => {
@@ -76,7 +76,7 @@ describe("AppShell in Tauri", () => {
     menu("menu://toggle-sidebar");
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     menu("menu://find");
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
   });
 
   it("from a text field the menu's ⌘K still finds, but its ⌘B does nothing", async () => {
@@ -88,7 +88,7 @@ describe("AppShell in Tauri", () => {
     expect(h.viewer.getState().sidebarOpen).toBe(true);
     expect(screen.getByLabelText("New room name")).toBeInTheDocument();
     menu("menu://find");
-    expect(await screen.findByPlaceholderText("Find a room or doc")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Find a room or artifact")).toBeInTheDocument();
   });
 
   it("menu://back and menu://forward walk the active tab's history; the page leaves ⌘[ to the menu", async () => {
@@ -119,17 +119,33 @@ describe("AppShell in Tauri", () => {
     fireEvent.click(screen.getByRole("button", { name: "벤치마크" }));
     await act(async () => {}); // listeners register asynchronously
     menu("menu://close-tab");
-    // Closing the last tab leaves a New tab.
-    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["new"]);
+    // Closing the last tab goes home, and New Tab finds home already open.
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["journal"]);
     menu("menu://new-tab");
-    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["new"]);
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["journal"]);
     menu("menu://reopen-tab");
-    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["room", "new"]);
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["room", "journal"]);
     expect(activeKind(h)).toBe("room");
     menu("menu://next-tab");
-    expect(activeKind(h)).toBe("new");
+    expect(activeKind(h)).toBe("journal");
     menu("menu://prev-tab");
     expect(activeKind(h)).toBe("room");
+  });
+
+  it("menu://settings opens Settings once, and the page leaves ⌘, to the menu", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms });
+    await act(async () => {}); // listeners register asynchronously
+    const comma = new KeyboardEvent("keydown", { key: ",", code: "Comma", metaKey: true, cancelable: true, bubbles: true });
+    act(() => {
+      window.dispatchEvent(comma);
+    });
+    expect(comma.defaultPrevented).toBe(false);
+    expect(activeKind(h)).toBe("journal");
+    menu("menu://settings");
+    expect(activeKind(h)).toBe("settings");
+    expect(screen.getByRole("heading", { level: 1, name: "Settings" })).toBeInTheDocument();
+    menu("menu://settings");
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["journal", "settings"]);
   });
 
   it("the menu's ⌘W follows the text-field rule", async () => {
@@ -159,11 +175,11 @@ describe("AppShell in Tauri", () => {
     });
     await act(async () => {}); // listeners register asynchronously
     // open by default
-    expect(await screen.findByPlaceholderText("Ask about this doc…")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Ask about this artifact…")).toBeInTheDocument();
     menu("menu://toggle-ask");
-    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Ask about this artifact…")).toBeNull();
     menu("menu://toggle-ask");
-    expect(await screen.findByPlaceholderText("Ask about this doc…")).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Ask about this artifact…")).toBeInTheDocument();
     act(() => {
       h.viewer.open({ kind: "room", roomId: "r1" });
     });
@@ -173,7 +189,7 @@ describe("AppShell in Tauri", () => {
     menu("menu://toggle-ask");
     expect(await screen.findByPlaceholderText("Ask about this room…")).toBeInTheDocument();
     act(() => {
-      h.viewer.open({ kind: "new" });
+      h.viewer.open({ kind: "settings" });
     });
     menu("menu://toggle-ask");
     expect(asksStore.getState().open).toBe(true);

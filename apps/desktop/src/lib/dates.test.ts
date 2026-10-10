@@ -1,52 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { addDays, dateLabel, isNewSince, journalTitle, localDate, weekdayIndex, weekOf, WEEKDAY_LETTERS } from "./dates";
-
-const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
-
-/** The same instant as `d`, written as an ISO string with an explicit UTC offset (minutes east of UTC). */
-function withOffset(d: Date, offsetMin: number): string {
-  const shifted = new Date(d.getTime() + offsetMin * 60_000);
-  const sign = offsetMin >= 0 ? "+" : "-";
-  const off = `${sign}${pad(Math.trunc(offsetMin / 60))}:${pad(offsetMin % 60)}`;
-  return shifted.toISOString().replace("Z", off).replace(/\.\d{3}/, "");
-}
-
-describe("dateLabel", () => {
-  const now = new Date(2026, 9, 5, 15, 0, 0); // local 2026-10-05 15:00
-
-  it("says 오늘 for a local time earlier today", () => {
-    expect(dateLabel(new Date(2026, 9, 5, 9, 30).toISOString(), now)).toBe("Today");
-  });
-
-  it("is MM·DD (zero-padded, U+00B7) for other days", () => {
-    expect(dateLabel(new Date(2026, 8, 3, 12).toISOString(), now)).toBe("09·03");
-    expect(dateLabel(new Date(2025, 9, 5, 12).toISOString(), now)).toBe("10·05"); // same day, last year
-    expect(dateLabel(new Date(2026, 0, 1, 12).toISOString(), now)).toBe("01·01");
-    expect(dateLabel(new Date(2026, 8, 3, 12).toISOString(), now)).toContain("·");
-  });
-
-  it("uses the local date at the midnight boundaries", () => {
-    const justAfterMidnight = new Date(2026, 9, 5, 0, 0, 30);
-    expect(dateLabel(new Date(2026, 9, 4, 23, 59, 59).toISOString(), justAfterMidnight)).toBe("10·04");
-    expect(dateLabel(new Date(2026, 9, 5, 0, 0, 0).toISOString(), justAfterMidnight)).toBe("Today");
-    const justBeforeMidnight = new Date(2026, 9, 5, 23, 59, 59);
-    expect(dateLabel(new Date(2026, 9, 5, 0, 0, 0).toISOString(), justBeforeMidnight)).toBe("Today");
-    expect(dateLabel(new Date(2026, 9, 6, 0, 0, 0).toISOString(), justBeforeMidnight)).toBe("10·06");
-  });
-
-  it("converts any UTC offset to local time before comparing", () => {
-    const earlyToday = new Date(2026, 9, 5, 0, 30); // local 00:30 today
-    const lateYesterday = new Date(2026, 9, 4, 23, 30); // local 23:30 yesterday
-    for (const off of [-12 * 60, -5 * 60, -150, 0, 330, 9 * 60, 14 * 60]) {
-      expect(dateLabel(withOffset(earlyToday, off), now)).toBe("Today");
-      expect(dateLabel(withOffset(lateYesterday, off), now)).toBe("10·04");
-    }
-  });
-
-  it("is empty for an unparseable time", () => {
-    expect(dateLabel("nope", now)).toBe("");
-  });
-});
+import { addDays, agoPhrase, clockTime, daybookTitle, isNewSince, isoWeek, localDate, shortAge, weekdayIndex, weekOf, WEEKDAY_LETTERS } from "./dates";
 
 describe("isNewSince", () => {
   it("is true only when createdAt is strictly after the baseline", () => {
@@ -116,10 +69,35 @@ describe("calendar-date math (YYYY-MM-DD, local calendar)", () => {
     expect(weekOf("2026-12-31")).toEqual(["2026-12-27", "2026-12-28", "2026-12-29", "2026-12-30", "2026-12-31", "2027-01-01", "2027-01-02"]);
     expect(weekOf("2026-07-01")[0]).toBe("2026-06-28");
   });
+});
 
-  it("titles a day as {M}월 {D}일 {요일}요일", () => {
-    expect(journalTitle("2026-10-05")).toBe("Monday, Oct 5");
-    expect(journalTitle("2026-10-04")).toBe("Sunday, Oct 4");
-    expect(journalTitle("2027-01-02")).toBe("Saturday, Jan 2");
+describe("ages and day headings", () => {
+  const now = new Date(2026, 9, 9, 15, 0, 0); // local Fri 2026-10-09 15:00
+  const at = (...a: [number, number, number, number?, number?]) => new Date(a[0], a[1], a[2], a[3] ?? 12, a[4] ?? 0).toISOString();
+
+  it("steps from minutes to hours to calendar days", () => {
+    expect(shortAge(at(2026, 9, 9, 14, 59), now)).toBe("1 min");
+    expect(shortAge(new Date(now.getTime() - 20_000).toISOString(), now)).toBe("now");
+    expect(shortAge(at(2026, 9, 9, 14, 48), now)).toBe("12 min");
+    expect(shortAge(at(2026, 9, 9, 1, 0), now)).toBe("14 h");
+    expect(shortAge(at(2026, 9, 8, 23, 0), now)).toBe("Yesterday");
+    expect(shortAge(at(2026, 9, 6), now)).toBe("Tue");
+    expect(shortAge(at(2026, 9, 2), now)).toBe("Oct 2");
+    expect(shortAge("nope", now)).toBe("");
+  });
+
+  it("reads as a phrase after 'last added'", () => {
+    expect(agoPhrase(at(2026, 9, 9, 14, 48), now)).toBe("12 min ago");
+    expect(agoPhrase(at(2026, 9, 8), now)).toBe("yesterday");
+    expect(agoPhrase(at(2026, 9, 6), now)).toBe("Tuesday");
+    expect(agoPhrase(at(2026, 8, 30), now)).toBe("Sep 30");
+  });
+
+  it("titles the day, numbers the ISO week and keeps wall-clock times", () => {
+    expect(daybookTitle("2026-10-09")).toBe("Friday, 9 October");
+    expect(isoWeek("2026-10-09")).toBe(41);
+    expect(isoWeek("2027-01-01")).toBe(53);
+    expect(isoWeek("2026-01-01")).toBe(1);
+    expect(clockTime(at(2026, 9, 9, 9, 5))).toBe("09:05");
   });
 });

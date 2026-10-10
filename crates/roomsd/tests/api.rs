@@ -133,6 +133,73 @@ async fn note_put_and_journal_get() {
     assert_eq!(body_json(r).await["notes"][0]["name"], "회고.md");
 }
 
+fn put_json(uri: &str, json: &str, token: Option<&str>) -> Request<Body> {
+    let mut b = Request::put(uri).header("content-type", "application/json").header("host", API_HOST);
+    if let Some(t) = token { b = b.header("authorization", format!("Bearer {t}")); }
+    b.body(Body::from(json.to_string())).unwrap()
+}
+
+#[tokio::test]
+async fn without_collect_data_there_are_no_conversations() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert!(r.headers().get("x-rooms-seq").is_some());
+    assert_eq!(body_json(r).await, serde_json::json!([]));
+    let r = app.clone().oneshot(get("/v1/journal/2026-10-05", API_HOST)).await.unwrap();
+    assert_eq!(body_json(r).await["conversations"], serde_json::json!([]));
+    let r = app.clone().oneshot(put_json("/v1/conversations/claude-code/s1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let r = app.oneshot(get("/v1/conversations/claude-code/s1", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_unreadable_collect_db_is_500_not_404() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let data = d.path().join("collect");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(rooms_collect::store::path_in(&data), b"this is not a database at all, not even close............................................").unwrap();
+    st.core.set_collect_data(&data);
+    let r = app.clone().oneshot(get("/v1/conversations/codex/s-1", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let r = app.oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn conversations_join_and_leave_a_room() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let data = d.path().join("collect");
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
+                VALUES('e1', 'message', 'codex', 's-1', '2026-10-05T01:00:00Z', 'user', '/log', 'k', 0, 0, 'tidy the report')", []).unwrap();
+    st.core.set_collect_data(&data);
+    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "writes need the token");
+    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!((&v["roomId"], &v["title"], &v["id"]), (&serde_json::json!("inbox"), &serde_json::json!("tidy the report"), &serde_json::json!({"agent": "codex", "session": "s-1"})));
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    assert_eq!(body_json(r).await.as_array().map(Vec::len), Some(1));
+    let r = app.clone().oneshot(get("/v1/conversations/codex/s-1", API_HOST)).await.unwrap();
+    assert!(r.headers().get("x-rooms-seq").is_some());
+    assert_eq!(body_json(r).await["roomId"], serde_json::json!("inbox"));
+    let r = app.clone().oneshot(get("/v1/conversations/codex/s%3B1", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", "null", Some("t0k"))).await.unwrap();
+    assert_eq!(body_json(r).await["roomId"], serde_json::Value::Null);
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    assert_eq!(body_json(r).await, serde_json::json!([]));
+    for (uri, body) in [("/v1/conversations/cursor/s-1/room", r#""inbox""#), ("/v1/conversations/codex/s%3B1/room", r#""inbox""#), ("/v1/conversations/codex/s-1/room", "{}")] {
+        let r = app.clone().oneshot(put_json(uri, body, Some("t0k"))).await.unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{uri} {body}");
+    }
+    let r = app.oneshot(put_json("/v1/conversations/codex/s-1/room", r#""nope""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn unknown_room_is_404_and_bad_date_400() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
@@ -191,7 +258,7 @@ async fn files_stream_a_big_document_whole() {
     // No <head> anywhere, so the bridge Rooms splices into every HTML document goes first, then the whole file.
     let body = r.into_body().collect().await.unwrap().to_bytes();
     let head = std::str::from_utf8(&body[..body.len() - big.len()]).unwrap();
-    assert!(head.starts_with("<script data-rooms-bridge>") && head.contains("roomsSelection"), "{head}");
+    assert!(head.starts_with("<script data-rooms-bridge>") && head.contains("roomsSelection") && head.contains("roomsTone"), "{head}");
     assert_eq!(&body[body.len() - big.len()..], big.as_slice());
     assert_eq!(std::fs::read(d.path().join("a/big.html")).unwrap(), big, "the file on disk is unchanged");
 }
@@ -547,6 +614,45 @@ fn put_note(app: &axum::Router, name: &str, body: &str) -> impl std::future::Fut
         .header("content-type", "text/markdown").body(Body::from(body.to_string())).unwrap();
     let app = app.clone();
     async move { app.oneshot(req).await.unwrap().status() }
+}
+
+fn put_color(room_id: &str, json: &str, token: Option<&str>) -> Request<Body> {
+    let mut b = Request::put(format!("/v1/rooms/{room_id}/color")).header("content-type", "application/json").header("host", API_HOST);
+    if let Some(t) = token { b = b.header("authorization", format!("Bearer {t}")); }
+    b.body(Body::from(json.to_string())).unwrap()
+}
+
+#[tokio::test]
+async fn room_color_pins_and_unpins_and_the_list_follows() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    for n in ["a", "b"] { st.core.create_room(n).unwrap(); }
+    let b = st.core.list_rooms().into_iter().find(|r| r.name == "b").unwrap().id;
+    let names = || async {
+        let v = body_json(app.clone().oneshot(get("/v1/rooms", API_HOST)).await.unwrap()).await;
+        v.as_array().unwrap().iter().map(|r| format!("{}:{}", r["name"].as_str().unwrap(), r["color"])).collect::<Vec<_>>()
+    };
+    assert_eq!(names().await, ["inbox:null", "a:null", "b:null"]);
+
+    let r = app.clone().oneshot(put_color(&b, r#"{"color":"sage"}"#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!((v["id"].as_str().unwrap(), v["color"].as_str().unwrap()), (b.as_str(), "sage"));
+    assert_eq!(names().await, ["inbox:null", "b:\"sage\"", "a:null"]);
+
+    let r = app.clone().oneshot(put_color(&b, r#"{"color":null}"#, Some("t0k"))).await.unwrap();
+    assert!(body_json(r).await["color"].is_null());
+    assert_eq!(names().await, ["inbox:null", "b:null", "a:null"]);
+
+    let r = app.clone().oneshot(put_color(&b, r#"{"color":"sage"}"#, None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert_eq!(names().await, ["inbox:null", "b:null", "a:null"]);
+
+    st.core.set_room_color(&b, Some(rooms_protocol::RoomColor::Sea)).unwrap();
+    for bad in ["{}", r#"{"color":"teal"}"#] {
+        let r = app.clone().oneshot(put_color(&b, bad, Some("t0k"))).await.unwrap();
+        assert!(r.status().is_client_error(), "{bad}: {}", r.status());
+    }
+    assert_eq!(names().await, ["inbox:null", "b:\"sea\"", "a:null"]);
 }
 
 #[tokio::test]

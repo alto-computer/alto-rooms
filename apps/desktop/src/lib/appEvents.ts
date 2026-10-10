@@ -1,7 +1,7 @@
 /*
  * Native (Tauri) app events.
  *
- * - The macOS menu's "New Tab" (⌘T), "Close Tab" (⌘W), "Find" (⌘K) and "Toggle Sidebar"
+ * - The macOS menu's "Settings…" (⌘,) arrives as `menu://settings`, its "New Tab" (⌘T), "Close Tab" (⌘W), "Find" (⌘K) and "Toggle Sidebar"
  *   (⌘B) and "Ask Bar" (⌘J) arrive as `menu://new-tab`, `menu://close-tab`,
  *   `menu://find`, `menu://toggle-sidebar` and `menu://toggle-ask`; "Back" (⌘[) and "Forward" (⌘]) as `menu://back`
  *   and `menu://forward`; "Reopen Closed Tab" (⌘⇧T), "Show Next Tab" (⌘⇧]) and "Show Previous
@@ -17,6 +17,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { flushAllNoteSaversAndWait, keepUnsavedNoteDrafts } from "./noteSaverRegistry";
 
+export const MENU_SETTINGS = "menu://settings";
 export const MENU_NEW_TAB = "menu://new-tab";
 export const MENU_CLOSE_TAB = "menu://close-tab";
 export const MENU_FIND = "menu://find";

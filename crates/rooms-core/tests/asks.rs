@@ -504,6 +504,88 @@ async fn doc_scope_skips_a_dangling_link_and_uses_the_next_room() {
 }
 
 #[tokio::test]
+async fn a_conversation_ask_resumes_that_conversation_in_its_folder() {
+    let (d, core, _doc, _room) = setup("");
+    let data = d.path().join("collect");
+    let work = tempfile::tempdir().unwrap();
+    let work_dir = std::fs::canonicalize(work.path()).unwrap();
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    db.execute("INSERT INTO events(id, kind, agent, session, ts, cwd, role, src_path, file_key, src_offset, src_len, preview)
+                VALUES('e1', 'message', 'claude-code', 'C-7', '2026-10-05T01:00:00Z', ?1, 'user', '/log', 'k', 0, 0, 'why is cold start slow')",
+        [work_dir.to_string_lossy()]).unwrap();
+    core.set_collect_data(&data);
+    let asks = Asks::new(core.clone(), None);
+    let scope = AskScope::Conversation { agent: rooms_protocol::Agent::ClaudeCode, session: rooms_protocol::SessionId::parse("C-7").unwrap() };
+    assert_eq!(asks.target(&scope).unwrap().mode, AskMode::Resume);
+    let mut rx = core.subscribe();
+    let t = asks.start(&scope, "three lines?", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [resume] [C-7] ["), "{}", done.answer);
+    assert!(done.answer.contains("Conversation: why is cold start slow\nAgent: claude-code, session C-7\n"), "{}", done.answer);
+    assert!(done.answer.contains(&format!("CWD: {}", work_dir.display())), "{}", done.answer);
+    assert_eq!(asks.thread(&scope).unwrap()[0].id, t.id);
+
+    let gone = AskScope::Conversation { agent: rooms_protocol::Agent::Codex, session: rooms_protocol::SessionId::parse("nope").unwrap() };
+    assert!(matches!(asks.start(&gone, "q", None), Err(AskError::ConversationNotFound)));
+    let flag_shaped = AskScope::Conversation { agent: rooms_protocol::Agent::ClaudeCode, session: rooms_protocol::SessionId::parse("-x").unwrap() };
+    db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
+                VALUES('e2', 'message', 'claude-code', '-x', '2026-10-05T01:00:00Z', 'user', '/log', 'k', 0, 0, 'hi')", []).unwrap();
+    assert_eq!(asks.target(&flag_shaped).unwrap().mode, AskMode::New, "a session id that reads as a flag is never resumed");
+    asks.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_aside_ask_resumes_that_session_under_its_account() {
+    let (d, core, _doc, _room) = setup("");
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n\
+         [agents.aside]\nresume = [\"{FAKE}\", \"resume\", \"--account\", \"{{account}}\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\"]\n"
+    )).unwrap();
+    let data = d.path().join("collect");
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    for (session, log) in [("A-1", "/Users/me/.aside/u/2/sessions/2026-10-05_A-1/messages.jsonl"), ("A-2", "/elsewhere/A-2.jsonl")] {
+        db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
+                    VALUES(?1, 'message', 'aside', ?1, '2026-10-05T01:00:00Z', 'user', ?2, 'k', 0, 0, 'find the invoice')",
+            [session, log]).unwrap();
+    }
+    core.set_collect_data(&data);
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let scope = |s: &str| AskScope::Conversation { agent: rooms_protocol::Agent::Aside, session: rooms_protocol::SessionId::parse(s).unwrap() };
+    let t = asks.start(&scope("A-1"), "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [resume] [--account] [u2] [A-1] ["), "{}", done.answer);
+    let t = asks.start(&scope("A-2"), "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [resume] [A-2] ["), "no account, no flag: {}", done.answer);
+    asks.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_day_ask_lists_the_days_sessions_but_never_their_logs() {
+    let (d, core, _doc, _room) = setup("");
+    let data = d.path().join("collect");
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    let at = |h: u32| chrono::Local::now().date_naive().and_hms_opt(h, 0, 0).unwrap().and_local_timezone(chrono::Local).unwrap()
+        .with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let log = "/Users/me/.claude/projects/-work/D-1.jsonl";
+    for (id, role, ts, text) in [("e1", "user", at(9), "plan the \"launch\"\nnow"), ("e2", "assistant", at(10), "Planned: three steps")] {
+        db.execute("INSERT INTO events(id, kind, agent, session, ts, cwd, role, src_path, file_key, src_offset, src_len, preview)
+                    VALUES(?1, 'message', 'claude-code', 'D-1', ?2, '/work/secret', ?3, ?4, 'k', 0, 0, ?5)",
+            [id, ts.as_str(), role, log, text]).unwrap();
+    }
+    core.set_collect_data(&data);
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let t = asks.start(&AskScope::Day { date }, "what happened?", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.contains("Sessions (1):\n- \"plan the \\\"launch\\\" now\" (claude-code, 09:00–10:00) last reply: \"Planned: three steps\"\n"), "{}", done.answer);
+    assert!(!done.answer.contains(log) && !done.answer.contains(".jsonl") && !done.answer.contains("/work/secret"), "{}", done.answer);
+    asks.shutdown().await;
+}
+
+#[tokio::test]
 async fn room_ask_streams_progress_under_its_scope() {
     let (d, core, _doc, room_id) = setup("");
     let script = d.path().join("stream-agent.sh");

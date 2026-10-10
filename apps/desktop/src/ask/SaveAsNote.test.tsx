@@ -1,4 +1,4 @@
-import type { Artifact, AskScope, AskTurn } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTurn, Conversation } from "@alto-rooms/protocol-ts";
 import { RoomsApiError, scopeKey } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -53,6 +53,15 @@ describe("SaveAsNote", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open note" }));
     const { tabs, activeId } = viewer.getState();
     expect(tabs.find((t) => t.id === activeId)).toMatchObject({ kind: "note", date: today, name: `${NAME}.md` });
+  });
+
+  it("saves a session answer into today's Journal under the session's title", async () => {
+    const conversation: Conversation = { id: { agent: "codex", session: "S1" }, title: "Sync bug", cwd: null, startedAt: "", endedAt: "", messages: 2, lastReply: null, artifactsWritten: [], roomId: null };
+    const { state } = await setup({ kind: "conversation", conversation }, turn({ kind: "conversation", agent: "codex", session: "S1" }));
+    await openNameInput();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved to Journal")).toBeTruthy();
+    expect(state.notes[`${localDate()}/${NAME}.md`]).toBe(`Session: Sync bug\n\n## ${NAME}\n\n- 금요일 배포\n- 리뷰는 둘`);
   });
 
   it("saves under a name the user typed", async () => {

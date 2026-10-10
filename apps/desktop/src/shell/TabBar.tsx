@@ -11,7 +11,7 @@ import { TabItem } from "./TabItem";
 import { useTabOverflow } from "./useTabOverflow";
 
 const ICON_BUTTON =
-  "grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink disabled:pointer-events-none disabled:text-ink-3 disabled:opacity-50";
+  "mb-px grid size-8 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink disabled:pointer-events-none disabled:text-ink-3 disabled:opacity-50";
 
 export function TabBar() {
   const { tabs, activeId, sidebarOpen } = useViewer();
@@ -54,8 +54,9 @@ export function TabBar() {
   };
 
   return (
-    // App chrome: tab labels don't select on drag or double click.
-    <div className="flex min-w-0 items-center gap-1 px-1 pb-2 select-none">
+    // App chrome: tab labels don't select on drag or double click. The bar sits on the pane, so
+    // the active tab meets it with no gap; the buttons centre on the tabs.
+    <div className="flex min-w-0 items-end gap-1 px-1 pt-0.5 select-none">
       {sidebarOpen ? null : (
         <IconTip label="Show sidebar" shortcut="⌘B">
           <button type="button" aria-label="Show sidebar (⌘B)" onClick={() => viewer.setSidebarOpen(true)} className={ICON_BUTTON}>
@@ -74,7 +75,7 @@ export function TabBar() {
           aria-label="Forward (⌘])"
           disabled={!viewer.canGoForward()}
           onClick={() => viewer.forward()}
-          className={cn(ICON_BUTTON, "mr-1")}
+          className={ICON_BUTTON}
         >
           <ArrowRight size={17} strokeWidth={1.75} aria-hidden />
         </button>
@@ -85,7 +86,9 @@ export function TabBar() {
         aria-label="Tabs"
         onKeyDown={onListKeyDown}
         onMouseLeave={() => setFrozenWidth(null)}
-        className={cn("flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", fade)}
+        // The side padding holds the active tab's inverted corners, which this scroll box would clip;
+        // the negative margin takes the bar's gap back so the corners reach the buttons beside it.
+        className={cn("-mx-1 flex min-w-0 items-end gap-1 overflow-x-auto px-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", fade)}
       >
         <DndContext
           sensors={sensors}
@@ -117,7 +120,7 @@ export function TabBar() {
         </DndContext>
       </div>
       <IconTip label="New tab" shortcut="⌘T">
-        <button type="button" aria-label="New tab" onClick={() => viewer.open({ kind: "new" })} className={ICON_BUTTON}>
+        <button type="button" aria-label="New tab" onClick={() => viewer.open(viewer.home())} className={ICON_BUTTON}>
           <Plus size={17} strokeWidth={1.75} aria-hidden />
         </button>
       </IconTip>

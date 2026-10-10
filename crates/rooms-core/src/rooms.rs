@@ -1,8 +1,9 @@
-//! The room list: lookups, and creating, linking, renaming and reordering rooms.
+//! The room list: lookups, and creating, linking, renaming, reordering and pinning rooms.
 
 use crate::core::{Inner, RoomsCore};
 use crate::error::CoreError;
 use crate::lock::lock;
+use crate::order::{self, ColorChange};
 use crate::rules::{room_slug, slug_key, validate_room_name};
 use crate::state::{inode_of, RoomRecord};
 use rooms_protocol::*;
@@ -62,7 +63,7 @@ impl RoomsCore {
         if std::fs::symlink_metadata(&path).is_ok() { return Err(CoreError::RoomExists); }
         std::fs::create_dir(&path).map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { CoreError::RoomExists } else { e.into() })?;
         let (dev, ino) = inode_of(&path).unzip();
-        let rec = RoomRecord { id: nanoid::nanoid!(12), name, kind: RoomKind::Owned, path, dev, ino };
+        let rec = RoomRecord { id: nanoid::nanoid!(12), name, kind: RoomKind::Owned, path, dev, ino, color: None };
         inner.state.rooms.push(rec.clone());
         inner.state.save()?;
         let room = Self::to_room(&inner, &rec);
@@ -82,7 +83,7 @@ impl RoomsCore {
         }
         let display = match name { Some(n) => validate_room_name(n)?, None => validate_room_name(&real.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())? };
         if Self::slug_taken(&inner, &room_slug(&display)) { return Err(CoreError::RoomExists); }
-        let rec = RoomRecord { id: nanoid::nanoid!(12), name: display, kind: RoomKind::Linked, path: real, dev: None, ino: None };
+        let rec = RoomRecord { id: nanoid::nanoid!(12), name: display, kind: RoomKind::Linked, path: real, dev: None, ino: None, color: None };
         inner.state.rooms.push(rec.clone());
         inner.state.save()?;
         let room = Self::to_room(&inner, &rec);
@@ -121,19 +122,37 @@ impl RoomsCore {
         Ok(room_v)
     }
 
-    /// Moves `room` to position `to` among the rooms other than the inbox, which keeps its place
-    /// (`to` past the end = last). Saves state.json and emits `rooms.reordered` with the full order.
+    /// Moves `room` to position `to` among the rooms other than the inbox, which keeps its place,
+    /// clamped to the room's section: pinned rooms stay first, unpinned ones after them (`to` past
+    /// the end = last). Saves state.json and emits `rooms.reordered` with the full order.
     pub fn move_room(&self, room: &RoomId, to: usize) -> Result<Vec<RoomId>, CoreError> {
         if room == INBOX_ROOM_ID { return Err(CoreError::InvalidInput("the inbox can't be moved".into())); }
         let mut inner = lock(&self.inner);
-        let from = inner.state.rooms.iter().position(|r| &r.id == room).ok_or(CoreError::RoomNotFound)?;
-        let rec = inner.state.rooms.remove(from);
-        let rooms = &inner.state.rooms;
-        let at = rooms.iter().enumerate().filter(|(_, r)| r.id != INBOX_ROOM_ID).nth(to).map(|(i, _)| i).unwrap_or(rooms.len());
-        inner.state.rooms.insert(at, rec);
+        if !order::move_within_section(&mut inner.state.rooms, room, to) { return Err(CoreError::RoomNotFound); }
         inner.state.save()?;
-        let room_ids: Vec<RoomId> = inner.state.rooms.iter().map(|r| r.id.clone()).collect();
+        let room_ids = Self::room_ids(&inner);
         self.emit(&mut inner, EventKind::RoomsReordered { room_ids: room_ids.clone() });
         Ok(room_ids)
+    }
+
+    /// Pins `room` with `color` (to the end of the pinned rooms), unpins it with `None` (to the top
+    /// of the others), or recolours it in place. Saves state.json and emits `room.updated`, then
+    /// `rooms.reordered` if it moved. Setting the colour it already has saves and emits nothing.
+    pub fn set_room_color(&self, room: &RoomId, color: Option<RoomColor>) -> Result<Room, CoreError> {
+        if room == INBOX_ROOM_ID { return Err(CoreError::InvalidInput("the inbox can't be pinned".into())); }
+        let mut inner = lock(&self.inner);
+        let change = order::set_color(&mut inner.state.rooms, room, color).ok_or(CoreError::RoomNotFound)?;
+        if change != ColorChange::Unchanged { inner.state.save()?; }
+        let room_v = Self::to_room(&inner, inner.state.find(room).ok_or(CoreError::RoomNotFound)?); // set above, same lock
+        if change != ColorChange::Unchanged { self.emit(&mut inner, EventKind::RoomUpdated { room: room_v.clone() }); }
+        if change == ColorChange::Moved {
+            let room_ids = Self::room_ids(&inner);
+            self.emit(&mut inner, EventKind::RoomsReordered { room_ids });
+        }
+        Ok(room_v)
+    }
+
+    fn room_ids(inner: &Inner) -> Vec<RoomId> {
+        inner.state.rooms.iter().map(|r| r.id.clone()).collect()
     }
 }

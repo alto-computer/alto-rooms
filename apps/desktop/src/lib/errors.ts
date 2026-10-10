@@ -36,7 +36,7 @@ export function noteNameErrorCopy(e: unknown): string {
 }
 
 /** Spec copy for a refused move (linked/journal room, bad id): roomsd says `invalid_input`. */
-export const MOVE_REFUSED = "This doc can't be moved";
+export const MOVE_REFUSED = "This artifact can't be moved";
 
 /**
  * Copy for a failed artifact move. `invalid_input` is scoped to moves here

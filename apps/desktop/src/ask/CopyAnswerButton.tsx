@@ -18,7 +18,7 @@ export function CopyAnswerButton({ text }: { text: string }) {
       aria-label="Copy answer"
       data-copied={copied ? "true" : undefined}
       // A 28px hit area around the 14px icon, pulled left so the icon stays flush with the answer text.
-      className="-ml-[7px] inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+      className="-ml-[7px] inline-flex size-7 items-center justify-center rounded-md text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
       onClick={() => void onClick()}
     >
       <Icon size={14} />

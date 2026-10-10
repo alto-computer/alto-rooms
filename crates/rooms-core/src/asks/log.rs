@@ -37,7 +37,7 @@ struct Stored {
 impl Stored {
     fn of(turn: &AskTurn) -> Self {
         let AskTurn { id, scope, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out } = turn.clone();
-        let file_key = match scope { AskScope::Doc { file_key } => Some(file_key), AskScope::Room { .. } | AskScope::Day { .. } => None };
+        let file_key = match scope { AskScope::Doc { file_key } => Some(file_key), AskScope::Room { .. } | AskScope::Day { .. } | AskScope::Conversation { .. } => None };
         Self { id, file_key, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out }
     }
 
@@ -50,12 +50,13 @@ impl Stored {
 impl AskLog {
     pub fn new(dir: PathBuf) -> Self { Self { dir } }
 
-    /// File keys are 16 alphanumerics, so a `room-` or `day-` name never names a doc file.
+    /// File keys are 16 alphanumerics, so a `room-`, `day-` or `conversation-` name never names a doc file.
     fn path(&self, scope: &AskScope) -> PathBuf {
         let name = match scope {
             AskScope::Doc { file_key } => format!("{file_key}.jsonl"),
             AskScope::Room { room_id } => format!("room-{room_id}.jsonl"),
             AskScope::Day { date } => format!("day-{date}.jsonl"),
+            AskScope::Conversation { agent, session } => format!("conversation-{}-{session}.jsonl", agent.as_str()),
         };
         self.dir.join(name)
     }
@@ -179,14 +180,17 @@ mod tests {
         let day = AskScope::Day { date: "2026-10-09".into() };
         log.append(&AskTurn { scope: room.clone(), ..t("r", AskStatus::Done, "R") }).unwrap();
         log.append(&AskTurn { scope: day.clone(), ..t("d", AskStatus::Done, "D") }).unwrap();
+        let talk = AskScope::Conversation { agent: rooms_protocol::Agent::Codex, session: rooms_protocol::SessionId::parse("s-1").unwrap() };
+        log.append(&AskTurn { scope: talk.clone(), ..t("c", AskStatus::Done, "C") }).unwrap();
         log.append(&t("a", AskStatus::Done, "A")).unwrap();
         let mut names: Vec<_> = std::fs::read_dir(d.path().join("asks")).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         names.sort();
-        assert_eq!(names, [format!("{K1}.jsonl"), "day-2026-10-09.jsonl".to_string(), format!("room-{K1}.jsonl")]);
+        assert_eq!(names, [format!("{K1}.jsonl"), "conversation-codex-s-1.jsonl".to_string(), "day-2026-10-09.jsonl".to_string(), format!("room-{K1}.jsonl")]);
         assert_eq!(log.read(&doc()).unwrap().iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a"]);
         let r = log.read(&room).unwrap();
         assert_eq!((r.len(), r[0].id.as_str(), &r[0].scope), (1, "r", &room));
         assert_eq!(log.read(&day).unwrap()[0].scope, day);
+        assert_eq!(log.read(&talk).unwrap()[0].scope, talk);
         let line = std::fs::read_to_string(d.path().join(format!("asks/room-{K1}.jsonl"))).unwrap();
         assert!(!line.contains("fileKey") && !line.contains("scope"), "{line}");
     }

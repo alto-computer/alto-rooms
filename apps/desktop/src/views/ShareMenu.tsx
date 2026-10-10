@@ -6,6 +6,7 @@ import { IconTip } from "@/components/IconTip";
 import { toolbarButton } from "@/components/ToolbarGroup";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useInfo, useRoomList } from "@/data/hooks";
+import { copyText } from "@/lib/clipboard";
 import { docOriginal, openDoc, revealDoc } from "@/lib/native";
 import { isTauri } from "@/lib/tauri";
 
@@ -41,7 +42,7 @@ export function ShareMenu({ artifact }: { artifact: Artifact }) {
   };
   const copyPath = () =>
     run("Couldn't copy the path", async () => {
-      await navigator.clipboard.writeText(await docOriginal(link));
+      await copyText(docOriginal(link));
       toast("Copied file path", { id: TOAST_ID });
     });
 
@@ -52,7 +53,7 @@ export function ShareMenu({ artifact }: { artifact: Artifact }) {
           <Share size={15} aria-hidden />
         </DropdownMenuTrigger>
       </IconTip>
-      <DropdownMenuContent align="end" alignOffset={-toGroupEnd} sideOffset={6} className="w-auto min-w-44 text-[13px]">
+      <DropdownMenuContent align="end" alignOffset={-toGroupEnd} sideOffset={6} className="w-auto min-w-44 text-body">
         <DropdownMenuItem onSelect={copyPath}>
           <Copy aria-hidden />
           Copy file path

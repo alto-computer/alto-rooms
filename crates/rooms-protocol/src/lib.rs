@@ -40,6 +40,12 @@ pub enum RoomStatus { Ok, Unavailable }
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
 pub enum Author { Agent, Me }
 
+/// The tint a room is pinned with. A room without one is neutral and unpinned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum RoomColor { Stone, Dusk, Sage, Clay, Oat, Lilac, Sea, Rose }
+
 wire!(pub struct Room {
     pub id: RoomId,
     pub name: String,
@@ -48,6 +54,8 @@ wire!(pub struct Room {
     pub status: RoomStatus,
     pub artifact_count: u32,
     pub updated_at: Option<String>,
+    /// Set = pinned. `GET /v1/rooms` lists pinned rooms before the others; the inbox keeps its place.
+    pub color: Option<RoomColor>,
 });
 
 wire!(#[derive(Default)] pub struct Source {
@@ -83,6 +91,117 @@ wire!(pub struct JournalDay {
     pub date: IsoDate,
     pub artifacts: Vec<Artifact>,
     pub notes: Vec<Note>,
+    pub conversations: Vec<JournalConversation>,
+});
+
+/// A coding agent whose conversations Rooms reads from its own logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS, JsonSchema)]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum Agent {
+    #[serde(rename = "claude-code")] ClaudeCode,
+    #[serde(rename = "codex")] Codex,
+    #[serde(rename = "aside")] Aside,
+}
+
+impl Agent {
+    pub const ALL: [Agent; 3] = [Agent::ClaudeCode, Agent::Codex, Agent::Aside];
+
+    /// The name on the wire and in the agents' log records (`claude-code`, `codex`, `aside`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Agent::ClaudeCode => "claude-code",
+            Agent::Codex => "codex",
+            Agent::Aside => "aside",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Agent> { Agent::ALL.into_iter().find(|a| a.as_str() == s) }
+
+    /// The command line that continues `session` in a terminal.
+    pub fn resume_argv(self, session: &SessionId) -> Vec<String> {
+        let s = session.as_str().to_string();
+        match self {
+            Agent::ClaudeCode => vec!["claude".into(), "--resume".into(), s],
+            Agent::Codex => vec!["codex".into(), "resume".into(), s],
+            Agent::Aside => vec!["aside".into(), "session".into(), "resume".into(), s],
+        }
+    }
+}
+
+/// An agent's session id: `^[A-Za-z0-9_-]{1,128}$`. It ends up in a resume command line, so
+/// nothing else gets through.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct SessionId(String);
+
+impl SessionId {
+    pub fn parse(s: &str) -> Option<SessionId> {
+        let ok = (1..=128).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+        ok.then(|| SessionId(s.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str { &self.0 }
+}
+
+impl TryFrom<String> for SessionId {
+    type Error = String;
+    fn try_from(s: String) -> Result<Self, String> { SessionId::parse(&s).ok_or_else(|| format!("invalid session id {s:?}")) }
+}
+
+impl From<SessionId> for String {
+    fn from(s: SessionId) -> String { s.0 }
+}
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(&self.0) }
+}
+
+/// One conversation: an agent's session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS, JsonSchema)]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub struct ConversationId {
+    pub agent: Agent,
+    #[ts(type = "string")]
+    #[schemars(with = "String")]
+    pub session: SessionId,
+}
+
+impl ConversationId {
+    /// `<agent>:<session>`, the key it is stored under.
+    pub fn key(&self) -> String { format!("{}:{}", self.agent.as_str(), self.session) }
+
+    pub fn parse_key(key: &str) -> Option<ConversationId> {
+        let (agent, session) = key.split_once(':')?;
+        Some(ConversationId { agent: Agent::parse(agent)?, session: SessionId::parse(session)? })
+    }
+
+    pub fn resume_argv(&self) -> Vec<String> { self.agent.resume_argv(&self.session) }
+}
+
+wire!(
+/// A conversation as the Journal and a room show it. Times are UTC (`YYYY-MM-DDTHH:MM:SSZ`).
+pub struct Conversation {
+    pub id: ConversationId,
+    /// The title the user gave it, else the agent's, else its first prompt; `None` when it has none.
+    pub title: Option<String>,
+    /// The folder it started in.
+    pub cwd: Option<String>,
+    pub started_at: String,
+    pub ended_at: String,
+    pub messages: u32,
+    /// The start of the agent's last message.
+    pub last_reply: Option<String>,
+    /// Absolute paths of the artifacts it wrote, first written first.
+    pub artifacts_written: Vec<String>,
+    /// The room the user added it to, if any (at most one).
+    pub room_id: Option<RoomId>,
+});
+
+wire!(
+/// A conversation on one Journal day, placed at its first message that day (UTC).
+pub struct JournalConversation {
+    pub at: String,
+    pub conversation: Conversation,
 });
 
 wire!(pub struct Info {
@@ -168,8 +287,8 @@ pub enum AskKind {
     Compact,
 }
 
-/// What a conversation is about, and the one thread it keeps: a doc (by the file key its rooms
-/// share), a room, or a Journal day.
+/// What an ask thread is about, and the one thread it keeps: a doc (by the file key its rooms
+/// share), a room, a Journal day, or an agent conversation (asked in a fork of its own session).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
@@ -177,6 +296,12 @@ pub enum AskScope {
     #[serde(rename_all = "camelCase")] Doc { file_key: String },
     #[serde(rename_all = "camelCase")] Room { room_id: RoomId },
     Day { date: IsoDate },
+    Conversation {
+        agent: Agent,
+        #[ts(type = "string")]
+        #[schemars(with = "String")]
+        session: SessionId,
+    },
 }
 
 wire!(
@@ -281,6 +406,9 @@ pub enum EventKind {
     #[serde(rename = "note.saved")] NoteSaved { note: Note },
     #[serde(rename = "note.removed")] NoteRemoved { date: IsoDate, name: String },
     #[serde(rename = "journal.changed")] JournalChanged { date: IsoDate },
+    /// A conversation was added to, moved to, or removed from a room; `conversation.room_id` is
+    /// where it is now.
+    #[serde(rename = "conversation.moved", rename_all = "camelCase")] ConversationMoved { conversation: Conversation, from_room_id: Option<RoomId> },
     #[serde(rename = "ask.started")] AskStarted { turn: AskTurn },
     /// The answer so far and what the agent is doing, while a turn runs (at most ~10 a second, only
     /// on change). Not recorded: a client that missed one just shows the next, or `ask.done`.

@@ -35,6 +35,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const turns = thread?.turns ?? [];
   const running = turns.find((t) => t.status === "running");
   const { target, model, pick, modelFor } = useAskTarget(scope, shown);
+  const note = framing.note?.(target);
   const composer = useComposer(scope, model);
   const [unfolded, setUnfolded] = useState(true);
   const [dragging, setDragging] = useState(false);
@@ -62,7 +63,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   return (
     <div
       ref={container}
-      className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-4 pb-4"
+      className="pointer-events-none absolute inset-x-4 bottom-4 flex flex-col items-center gap-3 px-4 pb-4"
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
@@ -112,6 +113,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
         onFold={() => setUnfolded(false)}
         onFocus={() => setUnfolded(true)}
       />
+      {note ? <p className="pointer-events-auto -mt-1.5 rounded-full bg-sheet/90 px-2 text-caption text-ink-3">{note}</p> : null}
     </div>
   );
 }

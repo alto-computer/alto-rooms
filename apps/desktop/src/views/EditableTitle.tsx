@@ -162,10 +162,10 @@ export function EditableTitle({
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={onKeyDown}
         onBlur={() => void save(true)}
-        className={cn(className, "min-w-0 bg-white outline-none disabled:opacity-60", inputClassName)}
+        className={cn(className, "min-w-0 bg-sheet outline-none disabled:opacity-60", inputClassName)}
       />
       {error ? (
-        <p id={errorId} role="alert" className="mt-1.5 flex items-center gap-1.5 text-[14px] text-[#c13515]">
+        <p id={errorId} role="alert" className="mt-1.5 flex items-center gap-1.5 text-body text-error">
           <CircleAlert size={16} aria-hidden />
           {error}
         </p>

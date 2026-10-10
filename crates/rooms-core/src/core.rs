@@ -24,6 +24,8 @@ pub(crate) struct Inner {
     /// Rooms whose root was missing/unreadable at the last rescan (drives one room.updated per transition).
     pub(crate) unavailable: HashSet<RoomId>,
     pub(crate) dangling: DanglingLinks,
+    /// rooms-collect's store, read for conversations; `None` unless roomsd was given its folder.
+    pub(crate) collect_db: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -89,7 +91,7 @@ impl RoomsCore {
         // ensure inbox record; journal is implicit (constant id)
         if !state.rooms.iter().any(|r| r.kind == RoomKind::Owned && r.path == inbox) {
             let (dev, ino) = inode_of(&inbox).unzip();
-            state.rooms.insert(0, RoomRecord { id: INBOX_ROOM_ID.into(), name: "inbox".into(), kind: RoomKind::Owned, path: inbox, dev, ino });
+            state.rooms.insert(0, RoomRecord { id: INBOX_ROOM_ID.into(), name: "inbox".into(), kind: RoomKind::Owned, path: inbox, dev, ino, color: None });
             state.save()?;
         }
         // adopt / follow / drop owned folders changed in Finder while we were not running
@@ -103,7 +105,7 @@ impl RoomsCore {
         if let Err(e) = crate::onboarding::ensure(&home) { eprintln!("rooms-core: onboarding files not written: {e}"); }
         let (tx, _) = broadcast::channel(EVENT_BUFFER);
         Ok(RoomsCore {
-            inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new(), dangling: DanglingLinks::default() })),
+            inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new(), dangling: DanglingLinks::default(), collect_db: None })),
             seq: Arc::new(AtomicU64::new(0)),
             scan_locks: Arc::new(Mutex::new(HashMap::new())),
             notes_lock: Arc::new(Mutex::new(())),
@@ -196,6 +198,7 @@ impl RoomsCore {
             status: if inner.unavailable.contains(&r.id) { RoomStatus::Unavailable } else { RoomStatus::Ok },
             artifact_count: count,
             updated_at,
+            color: r.color,
         }
     }
 }

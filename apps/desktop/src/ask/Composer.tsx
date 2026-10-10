@@ -28,7 +28,7 @@ function SlashMenu({ items, active, onPick, onHover }: { items: Command[]; activ
           onMouseDown={(e) => e.preventDefault()}
           onMouseEnter={() => onHover(i)}
           onClick={() => onPick(c)}
-          className={cn("-ml-2 flex cursor-default items-baseline gap-3 rounded-md px-2 py-1 text-[12.5px]", i === active && "bg-[#f2f2f2]")}
+          className={cn("-ml-2 flex cursor-default items-baseline gap-3 rounded-md px-2 py-1 text-small", i === active && "bg-surface")}
         >
           <span className="w-[72px] shrink-0 font-mono text-ink">/{c.name}</span>
           <span className="truncate text-ink-2">{c.hint}</span>
@@ -52,15 +52,15 @@ function QueueList({ items, running, onEdit, onSendNow, onRemove }: {
   if (items.length === 0) return null;
   return (
     <div className="pt-1 pb-1.5">
-      <div className="mb-1 text-[11.5px] text-ink-2">{running ? "Sends after this answer" : "Queued"}</div>
+      <div className="mb-1 text-small text-ink-2">{running ? "Sends after this answer" : "Queued"}</div>
       <ul aria-label="Queued questions" className="space-y-1">
         {items.map((q) => (
-          <li key={q.id} className="flex items-start gap-1.5 text-[12.5px]">
+          <li key={q.id} className="flex items-start gap-1.5 text-small">
             <CornerDownRight className="mt-[3px] size-3.5 shrink-0 text-ink-3" aria-hidden />
             <div className="min-w-0 flex-1">
               <div className="line-clamp-2 whitespace-pre-wrap">{splitQuotes(q.text).text}</div>
-              {q.images.length ? <div className="text-[11.5px] text-ink-2">{q.images.length === 1 ? "1 image" : `${q.images.length} images`}</div> : null}
-              {q.error ? <div className="text-[11.5px] text-[#c13515]">{q.error}</div> : null}
+              {q.images.length ? <div className="text-small text-ink-2">{q.images.length === 1 ? "1 image" : `${q.images.length} images`}</div> : null}
+              {q.error ? <div className="text-small text-error">{q.error}</div> : null}
             </div>
             <button type="button" aria-label="Edit queued question" onClick={() => onEdit(q)} className={ICON_BUTTON}><Pencil className="size-3" /></button>
             <button type="button" aria-label="Send now" onClick={() => onSendNow(q)} className={ICON_BUTTON}><Send className="size-3" /></button>
@@ -78,7 +78,7 @@ function QuoteChips({ quotes, onRemove }: { quotes: string[]; onRemove: (i: numb
   return (
     <ul aria-label="Quoted text" className="flex flex-wrap gap-2 pt-1">
       {quotes.map((q, i) => (
-        <li key={i} title={q} className="flex h-9 max-w-[260px] items-center gap-2 rounded-lg border border-[#e3e3e3] bg-[#fafafa] pr-1 pl-2.5 text-[12.5px]">
+        <li key={i} title={q} className="flex h-9 max-w-[260px] items-center gap-2 rounded-lg border border-hairline bg-surface pr-1 pl-2.5 text-small">
           <Quote className="size-3.5 shrink-0 fill-current text-ink-2" aria-hidden />
           <span className="min-w-0 truncate">{q.replace(/\s+/g, " ")}</span>
           <button type="button" aria-label="Remove quote" onClick={() => onRemove(i)} className={ICON_BUTTON}>
@@ -190,7 +190,7 @@ export function Composer({ composer: c, inputRef, placeholder, turns, running, d
   return (
     <div
       className={cn(
-        "pointer-events-auto flex w-full max-w-[720px] flex-col border border-[#dcdcdc] bg-white py-2 pr-2 pl-4 shadow-[0_4px_18px_rgba(0,0,0,0.08)] transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
+        "pointer-events-auto flex w-full max-w-[720px] flex-col border border-hairline bg-sheet py-2 pr-2 pl-4 shadow-sheet transition-[border-color,box-shadow] duration-150 focus-within:border-ink/60 focus-within:ring-4 focus-within:ring-ink/5",
         // A full pill only suits one line; taller, round the corners less and keep the buttons at the bottom.
         tall ? "rounded-[20px]" : "rounded-full",
         dragging && "border-ink/60 ring-4 ring-ink/10",
@@ -221,7 +221,7 @@ export function Composer({ composer: c, inputRef, placeholder, turns, running, d
           onPaste={(e) => {
             if (c.attachments.add(e.clipboardData.files)) e.preventDefault();
           }}
-          className="max-h-32 flex-1 resize-none overflow-y-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-[13.5px] leading-5 outline-none placeholder:text-[#9a9a9a]"
+          className="max-h-32 flex-1 resize-none overflow-y-auto bg-transparent [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-body leading-5 outline-none placeholder:text-ink-3"
         />
         <input
           ref={filePicker}
@@ -239,7 +239,7 @@ export function Composer({ composer: c, inputRef, placeholder, turns, running, d
           type="button"
           aria-label="Attach images"
           onClick={() => filePicker.current?.click()}
-          className="flex size-7 shrink-0 items-center justify-center rounded-full text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
         >
           <ImagePlus className="size-4" />
         </button>

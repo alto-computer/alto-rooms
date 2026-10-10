@@ -20,13 +20,13 @@ function Host() {
 
 it("a question typed while the next day loads can never be asked about, or drafted for, the previous day", async () => {
   const viewer = new ViewerStore(memoryStorage());
-  viewer.open({ kind: "journal", date: "2026-10-05" });
+  viewer.replace(viewer.getState().activeId!, { kind: "journal", date: "2026-10-05" });
   const { client } = await renderWithStores(<Host />, { viewer });
   const input = () => screen.queryByPlaceholderText("Ask about this day…") as HTMLTextAreaElement | null;
   await waitFor(() => expect(input()).not.toBeNull());
-  const load = client.journalDay;
   let arrive: () => void = () => {};
-  vi.spyOn(client, "journalDay").mockImplementation((date: string) => new Promise((resolve) => (arrive = () => resolve(load(date)))));
+  // Holds the next load only; by the time it arrives the fake's own loader answers again.
+  vi.mocked(client.journalDay).mockImplementationOnce((date: string) => new Promise((resolve) => (arrive = () => resolve(client.journalDay(date)))));
 
   fireEvent.click(screen.getByRole("button", { name: "Oct 6" }));
   await act(() => new Promise((r) => setTimeout(r, 50)));

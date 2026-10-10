@@ -29,11 +29,11 @@ describe("QuickFind", () => {
   it("typing finds a doc under 문서, and Enter opens its doc tab and closes", async () => {
     const onClose = vi.fn();
     const h = await setup(onClose);
-    const input = screen.getByPlaceholderText("Find a room or doc");
+    const input = screen.getByPlaceholderText("Find a room or artifact");
     await act(async () => {
       fireEvent.change(input, { target: { value: "현황" } });
     });
-    const group = await screen.findByRole("group", { name: "Docs" });
+    const group = await screen.findByRole("group", { name: "Artifacts" });
     expect(within(group).getByText("벤치마크 현황")).toBeInTheDocument();
     expect(within(group).getByText("벤치마크")).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Rooms" })).toBeNull();
@@ -48,7 +48,7 @@ describe("QuickFind", () => {
   it("matches rooms (NFC, case-insensitive) and opens the room tab", async () => {
     const onClose = vi.fn();
     const h = await setup(onClose);
-    const input = screen.getByPlaceholderText("Find a room or doc");
+    const input = screen.getByPlaceholderText("Find a room or artifact");
     await act(async () => {
       fireEvent.change(input, { target: { value: "벤치".normalize("NFD") } });
     });
@@ -100,7 +100,7 @@ describe("QuickFind watching", () => {
   it("normalizes titles once per list, not on every keystroke", async () => {
     const h = await setup();
     await waitFor(() => expect(h.rooms.getState().artifacts.r2).toBeDefined());
-    const input = screen.getByPlaceholderText("Find a room or doc");
+    const input = screen.getByPlaceholderText("Find a room or artifact");
     await act(async () => {
       fireEvent.change(input, { target: { value: "현" } });
     });

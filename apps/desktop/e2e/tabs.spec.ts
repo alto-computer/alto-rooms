@@ -4,8 +4,10 @@ import { expect, MOD, test, type Daemon } from "./fixtures";
 const tabs = (page: Page) => page.getByRole("tablist", { name: "Tabs" }).getByRole("tab");
 const tabNames = (page: Page) => tabs(page).allTextContents();
 const tab = (page: Page, name: string) => page.getByRole("tablist", { name: "Tabs" }).getByRole("tab", { name, exact: true });
+/** Home's tab label: today's Journal. */
+const HOME = `Journal · ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 
-/** Rooms Alpha, Beta, Gamma, each open in its own tab (Alpha replaces the first New tab). */
+/** Rooms Alpha, Beta, Gamma, each open in its own tab (Alpha replaces home in the first tab). */
 async function openRoomTabs(page: Page, daemon: Daemon) {
   for (const n of ["Alpha", "Beta", "Gamma"]) await daemon.createRoom(n);
   await page.goto("/");
@@ -47,18 +49,6 @@ test("dragging a tab reorders the tab bar and activates the dragged tab", async 
   await expect.poll(() => tabNames(page)).toEqual(["Alpha", "Beta", "Gamma"]);
 });
 
-test("the logo is a Home button: it turns this tab into the New tab page", async ({ page, daemon }) => {
-  await daemon.createRoom("Alpha");
-  await page.goto("/");
-  await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "Alpha" }).click();
-  await expect(tab(page, "Alpha")).toHaveAttribute("aria-selected", "true");
-
-  await page.getByRole("button", { name: "Home" }).click();
-  await expect(tab(page, "New tab")).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("heading", { name: "Since your last visit" })).toBeVisible();
-  await expect(tabs(page)).toHaveCount(1); // replaced in place, not a second tab
-});
-
 test("⌘⇧T reopens the last closed tab where it was", async ({ page, daemon }) => {
   await openRoomTabs(page, daemon);
   await tab(page, "Beta").click();
@@ -70,12 +60,21 @@ test("⌘⇧T reopens the last closed tab where it was", async ({ page, daemon }
   await expect(tab(page, "Beta")).toHaveAttribute("aria-selected", "true");
 });
 
-test("closing the last tab leaves a New tab", async ({ page, daemon }) => {
+test("closing the last tab goes home; ⌘T and + find home already open", async ({ page, daemon }) => {
   await daemon.createRoom("Alpha");
   await page.goto("/");
   await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "Alpha" }).click();
   await expect(tabs(page)).toHaveCount(1);
   await page.getByRole("tablist", { name: "Tabs" }).getByRole("button", { name: "Close tab" }).click();
   await expect(tabs(page)).toHaveCount(1);
-  await expect(tab(page, "New tab")).toHaveAttribute("aria-selected", "true");
+  await expect(tab(page, HOME)).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "Alpha" }).click({ modifiers: [MOD] });
+  await expect.poll(() => tabNames(page)).toEqual([HOME, "Alpha"]);
+  await tab(page, "Alpha").click();
+  await page.keyboard.press(`${MOD}+t`);
+  await expect(tab(page, HOME)).toHaveAttribute("aria-selected", "true");
+  await tab(page, "Alpha").click();
+  await page.getByRole("button", { name: "New tab", exact: true }).click();
+  await expect(tab(page, HOME)).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => tabNames(page)).toEqual([HOME, "Alpha"]);
 });

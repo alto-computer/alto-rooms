@@ -1,5 +1,5 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { Activity, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
@@ -75,6 +75,46 @@ describe("DocView", () => {
     expect(frame).toHaveClass("opacity-100");
   });
 
+  it("takes the dark-mode dim unless its own page reports a dark background", async () => {
+    const { container } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+    });
+    const frame = container.querySelector("iframe")!;
+    const dimmed = () => frame.classList.contains("[filter:var(--artifact-filter)]");
+    const tone = (t: string, source: MessageEventSource | null = frame.contentWindow) =>
+      act(() => void window.dispatchEvent(new MessageEvent("message", { data: { roomsTone: 1, tone: t }, source })));
+    expect(dimmed()).toBe(true);
+    tone("dark", window);
+    expect(dimmed()).toBe(true);
+    tone("dark");
+    expect(dimmed()).toBe(false);
+    tone("light");
+    expect(dimmed()).toBe(true);
+  });
+
+  it("names where the artifact lives in a breadcrumb, and the room opens from it", async () => {
+    const { viewer } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+    });
+    const crumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(crumb).toHaveTextContent("방보고서");
+    fireEvent.click(within(crumb).getByRole("button", { name: "방" }));
+    expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "room", roomId: "r1" });
+  });
+
+  it("middle-click on the breadcrumb's room opens it in a new tab", async () => {
+    const { viewer } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+    });
+    const before = viewer.getState().tabs.length;
+    fireEvent(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("button", { name: "방" }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    expect(viewer.getState().tabs).toHaveLength(before + 1);
+    expect(viewer.getState().tabs.at(-1)).toMatchObject({ kind: "room", roomId: "r1" });
+  });
+
   it("says the document is gone once the room's artifacts no longer include it", async () => {
     const fake = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
@@ -83,7 +123,7 @@ describe("DocView", () => {
     await act(async () => {
       fake.emit({ type: "artifact.removed", roomId: "r1", artifactId: "a1" });
     });
-    expect(screen.getByText("This doc is gone")).toBeInTheDocument();
+    expect(screen.getByText("This artifact is gone")).toBeInTheDocument();
     expect(document.querySelector("iframe")).toBeNull();
   });
 
@@ -105,7 +145,7 @@ describe("DocView: removed room", () => {
     await act(async () => {
       fake.emit({ type: "room.removed", roomId: "r1" });
     });
-    expect(screen.getByText("This doc is gone")).toBeInTheDocument();
+    expect(screen.getByText("This artifact is gone")).toBeInTheDocument();
   });
 
   it("offers Ask over text selected in its own frame and quotes it in the ask bar", async () => {
@@ -127,7 +167,7 @@ describe("DocView: removed room", () => {
     expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
     const quotes = await screen.findByRole("list", { name: "Quoted text" });
     expect(quotes.textContent).toContain("한도 초과 판정은 공통");
-    const input = screen.getByPlaceholderText("Ask about this doc…");
+    const input = screen.getByPlaceholderText("Ask about this artifact…");
     await waitFor(() => expect(input).toHaveFocus());
     fireEvent.change(input, { target: { value: "왜 공통이야?" } });
     fireEvent.keyDown(input, { key: "Enter" });

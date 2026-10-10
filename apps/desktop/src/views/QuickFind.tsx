@@ -31,7 +31,7 @@ export function QuickFind({ open, onClose }: { open: boolean; onClose: () => voi
     if (open) setOpened((n) => n + 1);
   }
   return (
-    <CommandDialog open={open} onOpenChange={(o) => !o && onClose()} title="Find" description="Find a room or doc">
+    <CommandDialog open={open} onOpenChange={(o) => !o && onClose()} title="Find" description="Find a room or artifact">
       {/* Mounted only while open (and through the close animation): a closed Find neither watches rooms nor re-renders on their changes, and opens with an empty query. */}
       {mounted ? <FindBody key={opened} onClose={onClose} /> : null}
     </CommandDialog>
@@ -86,7 +86,7 @@ function FindBody({ onClose }: { onClose: () => void }) {
 
   return (
     <Command shouldFilter={false}>
-      <CommandInput placeholder="Find a room or doc" value={query} onValueChange={setQuery} />
+      <CommandInput placeholder="Find a room or artifact" value={query} onValueChange={setQuery} />
       <CommandList>
         <CommandEmpty>No results</CommandEmpty>
         {roomHits.length > 0 ? (
@@ -107,7 +107,7 @@ function FindBody({ onClose }: { onClose: () => void }) {
           </CommandGroup>
         ) : null}
         {docHits.length > 0 ? (
-          <CommandGroup heading="Docs">
+          <CommandGroup heading="Artifacts">
             {docHits.map((d) => (
               <CommandItem
                 key={`${d.roomId}/${d.id}`}
@@ -119,7 +119,7 @@ function FindBody({ onClose }: { onClose: () => void }) {
               >
                 <FileText size={16} strokeWidth={1.75} aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{d.title}</span>
-                <span className="ml-auto shrink-0 font-mono text-[12px] text-[#929292]">{d.roomName}</span>
+                <span className="ml-auto shrink-0 font-mono text-small text-ink-3">{d.roomName}</span>
               </CommandItem>
             ))}
           </CommandGroup>

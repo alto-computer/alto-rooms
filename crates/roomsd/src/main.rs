@@ -67,6 +67,10 @@ async fn run() -> Result<i32, StartupError> {
             eprintln!("roomsd: bundled plugins: {e}");
         }
     }
+    // Conversations come from rooms-collect's store; the desktop app passes its folder.
+    if let Ok(dir) = std::env::var("ROOMS_COLLECT_DATA") {
+        core.set_collect_data(std::path::Path::new(&dir));
+    }
     // Lets asks give agents the rooms tools; no rooms-mcp next to us = no file = no MCP.
     let mcp_bin = resolve_mcp_bin(std::env::var("ROOMS_MCP_BIN").ok().as_deref(), std::env::current_exe().ok().as_deref());
     if let Err(e) = write_mcp_config(core.home(), mcp_bin.as_deref(), ap) { eprintln!("roomsd: mcp.json: {e}"); }

@@ -26,7 +26,7 @@ function deps() {
     listArtifacts: vi.fn(async () => ({ data: [art("old", "2026-01-01T00:00:00Z"), art("new", "2026-02-01T00:00:00Z")], seq: 1 })),
     findArtifactByFileKey: vi.fn(async (k: string) => (k === "key-new" ? art("new", "2026-02-01T00:00:00Z") : null)),
   };
-  const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null }];
+  const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null, color: null }];
   const viewer = { navigate: vi.fn(() => "current"), open: vi.fn(() => "opened"), reveal: vi.fn() };
   return { client, changed: vi.fn(), slot: "artifact.sidePanel" as BridgeDeps["slot"], viewer, rooms: () => rooms };
 }
@@ -53,10 +53,10 @@ describe("frameAttrs", () => {
   });
   it("has plain words for every permission", () => {
     expect(PERMISSION_COPY).toEqual({
-      "rooms.read": "Can see your rooms and documents",
+      "rooms.read": "Can see your rooms and artifacts",
       clipboard: "Can copy and paste",
       downloads: "Can save files you export",
-      "artifact.content": "Can read the text of documents and use the network inside them",
+      "artifact.content": "Can read the text of artifacts and use the network inside them",
     });
   });
   it("has copy for exactly the permissions the core accepts", () => {

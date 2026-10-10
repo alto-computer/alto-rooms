@@ -4,7 +4,7 @@
  * native menu (Tauri), so both follow the same text-field rule.
  */
 
-export type ShortcutAction = "toggle-sidebar" | "close-tab" | "new-tab" | "find" | "toggle-ask";
+export type ShortcutAction = "toggle-sidebar" | "close-tab" | "new-tab" | "find" | "toggle-ask" | "settings";
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -16,10 +16,11 @@ function shortcutLetter(e: KeyboardEvent): string {
 
 const LETTERS: Record<string, ShortcutAction> = { b: "toggle-sidebar", w: "close-tab", t: "new-tab", k: "find", j: "toggle-ask" };
 
-/** ⌘B / ⌘W / ⌘T / ⌘K / ⌘J (Ctrl off macOS), with no Shift/Alt and not mid-composition. */
+/** ⌘B / ⌘W / ⌘T / ⌘K / ⌘J / ⌘, (Ctrl off macOS), with no Shift/Alt and not mid-composition. */
 export function keyAction(e: KeyboardEvent): ShortcutAction | null {
   const mod = e.metaKey || (!IS_MAC && e.ctrlKey);
   if (!mod || e.shiftKey || e.altKey || e.isComposing) return null;
+  if (e.code === "Comma") return "settings";
   return LETTERS[shortcutLetter(e)] ?? null;
 }
 
@@ -85,7 +86,7 @@ export function isNoteEditor(el: Element | null | undefined): boolean {
 }
 
 /**
- * While focus is in a text field, ⌘B/⌘T/⌘W do nothing (they would drop a
+ * While focus is in a text field, ⌘B/⌘T/⌘W/⌘, do nothing (they would drop a
  * rename or new-room draft), except ⌘W from the note body. ⌘K and ⌘J always work.
  */
 export function allowedWithFocus(action: ShortcutAction, focused: Element | null | undefined): boolean {
