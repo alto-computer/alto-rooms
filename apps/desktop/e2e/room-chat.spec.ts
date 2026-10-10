@@ -20,7 +20,6 @@ test("ask a room, keep its thread across a reload, and keep it out of the doc's 
   await expect(page.getByTestId("artifact-card")).toHaveCount(2);
   const input = page.getByPlaceholder(ROOM_PLACEHOLDER);
   await expect(input).toBeVisible();
-  await expect(page.getByRole("button", { name: "Reads only this room's artifacts" })).toBeVisible();
 
   await page.keyboard.press(`${MOD}+j`);
   await expect(input).toHaveCount(0);

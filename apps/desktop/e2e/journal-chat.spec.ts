@@ -34,7 +34,6 @@ test("ask about the viewed day, and keep each day's thread and draft across day 
   await expect(page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact")).toHaveCount(2);
   const input = page.getByPlaceholder(DAY_PLACEHOLDER);
   await expect(input).toBeVisible();
-  await expect(page.getByRole("button", { name: "Reads only this day's items" })).toBeVisible();
 
   await page.keyboard.press(`${MOD}+j`);
   await expect(input).toHaveCount(0);

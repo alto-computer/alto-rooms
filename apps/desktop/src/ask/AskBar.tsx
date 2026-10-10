@@ -4,7 +4,7 @@ import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
 import { frameSubject, type AskSubject, type SubjectFraming } from "./askSubjects";
 import { Composer } from "./Composer";
-import { AgentChip, ModelPicker, ReadScopeHint } from "./ModelPicker";
+import { AgentChip, ModelPicker } from "./ModelPicker";
 import { ThreadSheet } from "./ThreadSheet";
 import { preloadAnswer } from "./Turn";
 import { ErrorText } from "./ui";
@@ -103,12 +103,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
         turns={turns}
         running={running}
         dragging={dragging}
-        model={
-          <>
-            <ReadScopeHint text={framing.hint(target)} />
-            {target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={framing.agent} />}
-          </>
-        }
+        model={target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={framing.agent} />}
         onStop={() => running && store.cancel(running.id)}
         onFold={() => setUnfolded(false)}
         onFocus={() => setUnfolded(true)}
