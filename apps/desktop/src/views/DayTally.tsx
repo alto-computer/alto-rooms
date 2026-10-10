@@ -23,6 +23,8 @@ const plural = (n: number, noun: string) => (n === 1 ? noun : `${noun}s`);
 function Cell({ cell }: { cell: TallyCell }) {
   const [open, setOpen] = useState(false);
   const byClick = useRef(false);
+  /** Escape in a list Enter opened hands focus back to the cell, which must not reopen it. */
+  const returning = useRef(false);
   const list = useRef<HTMLUListElement>(null);
   const closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(closing.current), []);
@@ -45,7 +47,10 @@ function Cell({ cell }: { cell: TallyCell }) {
         aria-label={label}
         onPointerEnter={(e) => e.pointerType === "mouse" && show(false)}
         onPointerLeave={(e) => e.pointerType === "mouse" && leave()}
-        onFocus={() => show(false)}
+        onFocus={() => {
+          if (returning.current) returning.current = false;
+          else show(false);
+        }}
         // Radix toggles on click; a click on a list hover opened keeps it open and moves into it.
         onClick={(e) => {
           if (!open) return;
@@ -71,6 +76,9 @@ function Cell({ cell }: { cell: TallyCell }) {
         }}
         onCloseAutoFocus={(e) => {
           if (!byClick.current) e.preventDefault();
+        }}
+        onEscapeKeyDown={() => {
+          returning.current = byClick.current;
         }}
         onPointerEnter={stay}
         onPointerLeave={(e) => e.pointerType === "mouse" && leave()}

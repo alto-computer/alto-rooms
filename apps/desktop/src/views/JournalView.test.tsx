@@ -1,6 +1,6 @@
 import type { Artifact, Note } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StoresProvider, useViewer } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
@@ -239,6 +239,18 @@ describe("JournalView: the day's tally", () => {
     expect(within(list).getByRole("button", { name: /계획/ })).toHaveFocus();
     fireEvent.click(within(list).getByRole("button", { name: /계획/ }));
     expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "note", date: today, name: "계획.md" });
+  });
+
+  it("Escape from a list Enter opened closes it and leaves the caret on the cell", async () => {
+    await renderJournal(busyDay());
+    const cell = within(tally()).getByRole("button", { name: "3 artifacts" });
+    act(() => cell.focus());
+    const list = await screen.findByRole("dialog", { name: "3 artifacts" });
+    fireEvent.click(cell);
+    fireEvent.keyDown(within(list).getAllByRole("button")[0], { key: "Escape" });
+    await waitFor(() => expect(cell).toHaveFocus());
+    await act(async () => {});
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("names the day it counts when it isn't today", async () => {
