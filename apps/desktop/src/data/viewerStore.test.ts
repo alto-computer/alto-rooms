@@ -550,6 +550,19 @@ describe("ViewerStore: settings", () => {
     st.flush();
     expect(new ViewerStore(storage, clock().now).getState().tabs).toContainEqual({ id, kind: "settings" });
   });
+
+  it("back or forward to Settings while another tab shows it switches to that tab", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const a = st.getState().activeId!;
+    st.navigate({ kind: "settings" });
+    st.navigate({ kind: "room", roomId: "r1" });
+    const b = st.open({ kind: "settings" });
+    st.activate(a);
+    st.back();
+    expect(st.getState().activeId).toBe(b);
+    expect(st.getState().tabs.filter((t) => t.kind === "settings")).toHaveLength(1);
+    expect(st.getState().tabs.find((t) => t.id === a)).toMatchObject({ kind: "room", roomId: "r1" });
+  });
 });
 
 describe("ViewerStore: reveals", () => {

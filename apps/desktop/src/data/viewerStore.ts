@@ -481,6 +481,9 @@ export class ViewerStore {
 
   /** Points tab `id` (the active one) at `to` with history `h`, recording leaving a room. */
   private moveTo(id: string, to: TabInput, h: TabHistory) {
+    // Settings is one per window: going to it where another tab shows it switches to that tab.
+    const shown = to.kind === "settings" && this.state.tabs.find((t) => t.id !== id && sameTab(t, to));
+    if (shown) return this.activate(shown.id);
     const tabs = this.state.tabs.map((t) => (t.id === id ? makeTab(id, to) : t));
     this.navCounts.set(id, (this.navCounts.get(id) ?? 0) + 1);
     this.reveals.delete(id);
