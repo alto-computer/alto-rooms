@@ -241,6 +241,16 @@ describe("JournalView: the day's tally", () => {
     expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "note", date: today, name: "계획.md" });
   });
 
+  it("middle-click on a list item opens it in a new tab", async () => {
+    const { viewer } = await renderJournal(busyDay());
+    fireEvent.pointerEnter(within(tally()).getByRole("button", { name: "3 artifacts" }), { pointerType: "mouse" });
+    const list = await screen.findByRole("dialog", { name: "3 artifacts" });
+    const journal = viewer.getState().activeId;
+    fireEvent(within(list).getAllByRole("button")[0], new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    expect(viewer.getState().tabs.find((t) => t.kind === "doc")).toMatchObject({ roomId: "r2", artifactId: "a3" });
+    expect(viewer.getState().tabs.find((t) => t.id === journal)).toMatchObject({ kind: "journal" });
+  });
+
   it("Escape from a list Enter opened closes it and leaves the caret on the cell", async () => {
     await renderJournal(busyDay());
     const cell = within(tally()).getByRole("button", { name: "3 artifacts" });

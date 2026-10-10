@@ -89,6 +89,23 @@ describe("Session view", () => {
     expect(activeTab(h.viewer)).toMatchObject({ kind: "room", roomId: "p" });
   });
 
+  it("middle-click on a breadcrumb step opens it in a new tab", async () => {
+    const yesterday = addDays(today, -1);
+    const steps = [
+      [{ roomId: "p" }, "벤치마크", { kind: "room", roomId: "p" }],
+      [{ startedAt: `${yesterday}T09:00:00`, endedAt: `${yesterday}T10:00:00` }, monthDay(yesterday), { kind: "journal", date: yesterday }],
+    ] as const;
+    for (const [extra, name, opened] of steps) {
+      const h = await setup(extra).render();
+      const crumb = within(await screen.findByRole("navigation", { name: "Breadcrumb" }));
+      const before = h.viewer.getState().tabs.length;
+      fireEvent(crumb.getByRole("button", { name }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+      expect(h.viewer.getState().tabs).toHaveLength(before + 1);
+      expect(activeTab(h.viewer)).toMatchObject(opened);
+      cleanup();
+    }
+  });
+
   it("continues the session in Terminal from the ink button", async () => {
     const s = setup();
     await s.render();

@@ -45,6 +45,7 @@ function Breadcrumb({ artifact, room, info }: { artifact: Artifact; room: Room |
         <button
           type="button"
           onClick={(e) => viewer.go({ kind: "room", roomId: artifact.roomId }, wantsNewTab(e))}
+          onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "room", roomId: artifact.roomId }, true)}
           className="-mx-1.5 flex min-w-0 items-center gap-[7px] rounded-md px-1.5 py-0.5 outline-none hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
         >
           {place}

@@ -38,6 +38,12 @@ function Cell({ cell }: { cell: TallyCell }) {
     stay();
     closing.current = setTimeout(() => setOpen(false), HOVER_CLOSE_MS);
   };
+  const pick = (it: TallyItem, newTab: boolean) => {
+    // The item takes focus where it goes; closing must not hand it back to the cell.
+    byClick.current = false;
+    setOpen(false);
+    it.open(newTab);
+  };
   const items = [...cell.items].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const label = `${items.length} ${plural(items.length, cell.noun)}`;
 
@@ -93,12 +99,8 @@ function Cell({ cell }: { cell: TallyCell }) {
               <li key={it.key}>
                 <button
                   type="button"
-                  onClick={(e) => {
-                    // The item takes focus where it goes; closing must not hand it back to the cell.
-                    byClick.current = false;
-                    setOpen(false);
-                    it.open(wantsNewTab(e));
-                  }}
+                  onClick={(e) => pick(it, wantsNewTab(e))}
+                  onAuxClick={(e) => e.button === 1 && pick(it, true)}
                   className="flex w-full min-w-0 items-baseline gap-3 rounded-md px-2 py-1.5 text-left outline-none hover:bg-surface-strong focus-visible:bg-surface-strong"
                 >
                   <span className="w-10 shrink-0 text-small text-ink-3 tabular-nums">{clockTime(it.at)}</span>

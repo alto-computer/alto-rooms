@@ -149,6 +149,17 @@ describe("AppShell: sidebar", () => {
     expect(activeTab()).toHaveTextContent(HOME);
   });
 
+  it("⌘-click or middle-click on Journal opens today's Journal in a new tab", async () => {
+    for (const click of [(el: HTMLElement) => fireEvent.click(el, { metaKey: true }), (el: HTMLElement) => fireEvent(el, new MouseEvent("auxclick", { bubbles: true, button: 1 }))]) {
+      const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
+      act(() => void h.viewer.navigate({ kind: "room", roomId: "r1" }));
+      click(screen.getByRole("button", { name: "Journal" }));
+      expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["room", "journal"]);
+      expect(activeTab()).toHaveTextContent(HOME);
+      cleanup();
+    }
+  });
+
   it("a note tab's label strips one .md (any case) from the file name", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: twoRooms });
     act(() => {

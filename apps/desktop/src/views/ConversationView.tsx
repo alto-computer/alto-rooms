@@ -35,7 +35,12 @@ function Breadcrumb({ conversation, room }: { conversation: Conversation; room: 
   return (
     <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-[7px] text-body whitespace-nowrap text-ink-2">
       {room ? (
-        <button type="button" onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))} className={crumbButton}>
+        <button
+          type="button"
+          onClick={(e) => viewer.go({ kind: "room", roomId: room.id }, wantsNewTab(e))}
+          onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "room", roomId: room.id }, true)}
+          className={crumbButton}
+        >
           {room.color ? <RoomDot color={room.color} className="size-3.5" /> : <Folder size={14} className="shrink-0 text-ink-3" aria-hidden />}
           <span className="truncate">{room.name}</span>
         </button>
@@ -46,7 +51,12 @@ function Breadcrumb({ conversation, room }: { conversation: Conversation; room: 
             Journal
           </span>
           {chevron}
-          <button type="button" onClick={(e) => viewer.go({ kind: "journal", date: day }, wantsNewTab(e))} className={crumbButton}>
+          <button
+            type="button"
+            onClick={(e) => viewer.go({ kind: "journal", date: day }, wantsNewTab(e))}
+            onAuxClick={(e) => e.button === 1 && viewer.go({ kind: "journal", date: day }, true)}
+            className={crumbButton}
+          >
             {monthDay(day)}
           </button>
         </>

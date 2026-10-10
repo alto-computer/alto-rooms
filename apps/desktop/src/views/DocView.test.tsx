@@ -104,6 +104,17 @@ describe("DocView", () => {
     expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "room", roomId: "r1" });
   });
 
+  it("middle-click on the breadcrumb's room opens it in a new tab", async () => {
+    const { viewer } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+      rooms: [room("r1", "방")],
+      artifacts: { r1: [artifact("a1", "보고서")] },
+    });
+    const before = viewer.getState().tabs.length;
+    fireEvent(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("button", { name: "방" }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    expect(viewer.getState().tabs).toHaveLength(before + 1);
+    expect(viewer.getState().tabs.at(-1)).toMatchObject({ kind: "room", roomId: "r1" });
+  });
+
   it("says the document is gone once the room's artifacts no longer include it", async () => {
     const fake = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],

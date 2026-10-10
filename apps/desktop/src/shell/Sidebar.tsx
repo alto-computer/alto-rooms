@@ -143,7 +143,8 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
           </button>
           <button
             type="button"
-            onClick={() => openJournal(viewer)}
+            onClick={(e) => (wantsNewTab(e) ? viewer.open({ kind: "journal", date: localDate() }, { nextToActive: true }) : openJournal(viewer))}
+            onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "journal", date: localDate() }, { nextToActive: true })}
             aria-current={active?.kind === "journal" ? "page" : undefined}
             className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "journal" && ITEM_CURRENT)}
           >
