@@ -2,7 +2,7 @@ import type { Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
-import { localDate, monthDay } from "@/lib/dates";
+import { addDays, localDate, monthDay } from "@/lib/dates";
 import { continueConversation } from "@/lib/native";
 import { TabLabel } from "@/shell/TabLabel";
 import { conversation, memoryStorage, renderWithStores, room } from "@/test/fakes";
@@ -160,6 +160,16 @@ describe("Session view", () => {
     expect(written.getAllByTestId("card-title").map((t) => t.textContent)).toEqual(["Artifact a1"]);
     fireEvent.click(written.getByRole("button", { name: "Artifact a1" }));
     expect(activeTab(h.viewer)).toMatchObject({ kind: "doc", roomId: "p", artifactId: "a1" });
+  });
+
+  it("lists what it wrote on a day between the one it started and the one it ended", async () => {
+    const twoDaysAgo = addDays(today, -2);
+    const yesterday = addDays(today, -1);
+    const { c } = setup({ startedAt: `${twoDaysAgo}T12:00:00`, endedAt: `${today}T12:00:00` });
+    const mid = { ...artifact("m1", "s7"), createdAt: `${yesterday}T12:00:00`, updatedAt: `${yesterday}T12:00:00` };
+    await renderWithStores(<ConversationView id={ID} />, { rooms: ROOMS, conversations: [c], days: { [yesterday]: { artifacts: [mid] } } });
+    const written = within(await screen.findByRole("region", { name: "Artifacts it wrote" }));
+    expect(written.getAllByTestId("card-title").map((t) => t.textContent)).toEqual(["Artifact m1"]);
   });
 
   it("says when roomsd no longer knows the session", async () => {

@@ -3,11 +3,11 @@ import type { Artifact, Conversation, ConversationId, Info, Room } from "@alto-r
 import { BookOpen, ChevronRight, Folder } from "lucide-react";
 import { AgentMark } from "@/components/AgentMark";
 import { RoomDot } from "@/components/RoomDot";
-import { useInfo, useJournalDay, useRoomList, useViewerStore } from "@/data/hooks";
+import { useInfo, useJournalDays, useRoomList, useViewerStore } from "@/data/hooks";
 import { useConversation } from "@/data/useConversation";
 import { AGENT_NAMES } from "@/lib/agents";
 import { conversationSpan, conversationTitle } from "@/lib/conversations";
-import { count, localDate, monthDay } from "@/lib/dates";
+import { addDays, count, localDate, monthDay } from "@/lib/dates";
 import { INBOX_ID } from "@/lib/drag";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { wantsNewTab } from "@/lib/nav";
@@ -59,16 +59,25 @@ function Breadcrumb({ conversation, room }: { conversation: Conversation; room: 
   );
 }
 
+/** A session open longer than this is searched for its artifacts over its last this-many days. */
+const MAX_SPAN_DAYS = 31;
+
+/** The local days from `start` to `end`, both included, at most the last `MAX_SPAN_DAYS`. */
+function daysOf(start: string, end: string): string[] {
+  const days: string[] = [];
+  for (let d = end; d >= start && days.length < MAX_SPAN_DAYS; d = addDays(d, -1)) days.unshift(d);
+  return days;
+}
+
 /**
  * The artifacts this session wrote that a room holds: those whose source names this session, among
- * the artifacts of the days it started and ended on (the Journal lists every room's artifacts by day).
+ * the artifacts of every day it was open (the Journal lists every room's artifacts by day).
  */
 function useArtifactsWritten(c: Conversation): Artifact[] {
-  const first = useJournalDay(localDate(new Date(c.startedAt)));
-  const last = useJournalDay(localDate(new Date(c.endedAt)));
+  const days = useJournalDays(daysOf(localDate(new Date(c.startedAt)), localDate(new Date(c.endedAt))));
   const mine = (a: Artifact) => a.source.agent === c.id.agent && a.source.session === c.id.session;
   const seen = new Set<string>();
-  return [...(first?.artifacts ?? []), ...(last?.artifacts ?? [])].filter((a) => mine(a) && !seen.has(a.id) && !!seen.add(a.id));
+  return days.flatMap((d) => d?.artifacts ?? []).filter((a) => mine(a) && !seen.has(a.id) && !!seen.add(a.id));
 }
 
 function placeOf(a: Artifact, info: Info, rooms: readonly Room[]): { label: string; room: Room | undefined } {
