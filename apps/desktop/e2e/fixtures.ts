@@ -58,8 +58,9 @@ const PLUGIN_FIXTURES = path.join(import.meta.dirname, "fixtures", "plugins");
 const builtPlugins = new Map<string, string>();
 
 /**
- * Builds e2e/fixtures/plugins/<id> once per run: main.ts (using the real plugin SDK) → main.js and
- * content.ts → content.js, whichever exist, beside the manifest and the HTML when there is one.
+ * Builds e2e/fixtures/plugins/<id> once per run: main.ts (using the real plugin SDK) → main.js,
+ * content.ts → content.js and background.ts → background.js, whichever exist, beside the manifest
+ * and the HTML pages there are.
  */
 export function buildFixturePlugin(id: string): string {
   const cached = builtPlugins.get(id);
@@ -67,14 +68,14 @@ export function buildFixturePlugin(id: string): string {
   const src = path.join(PLUGIN_FIXTURES, id);
   const out = path.join(os.tmpdir(), `rooms-e2e-plugin-${id}-${process.pid}`);
   const has = (f: string) => existsSync(path.join(src, f));
-  for (const entry of ["main.ts", "content.ts"].filter(has)) {
+  for (const entry of ["main.ts", "content.ts", "background.ts"].filter(has)) {
     execFileSync(
       "bun",
       ["build", path.join(src, entry), "--outfile", path.join(out, entry.replace(/\.ts$/, ".js")), "--target", "browser", "--format", "esm"],
       { stdio: "pipe" },
     );
   }
-  for (const f of ["manifest.json", "index.html"].filter(has)) execFileSync("cp", [path.join(src, f), path.join(out, f)]);
+  for (const f of ["manifest.json", "index.html", "background.html"].filter(has)) execFileSync("cp", [path.join(src, f), path.join(out, f)]);
   builtPlugins.set(id, out);
   return out;
 }

@@ -8,7 +8,7 @@ const rooms = await connect();
 let ctx: PluginContext | null = null;
 rooms.onContext((c) => {
   ctx = c;
-  show("ctx", c.slot === "tab" ? "tab" : `doc ${c.artifact.fileKey}`);
+  show("ctx", c.slot === "artifact.sidePanel" ? `doc ${c.artifact.fileKey}` : c.slot);
 });
 rooms.onBeforeClose(() => rooms.storage.write("closed.txt", "yes"));
 
