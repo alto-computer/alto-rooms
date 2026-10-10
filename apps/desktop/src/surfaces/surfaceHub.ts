@@ -5,6 +5,11 @@
  * and buttons for the selection bar. Core paints with the CSS Custom Highlight API and never
  * touches the surface's DOM. Everything from a frame is untrusted: shapes, sizes, offsets, style
  * names and colors are checked here, and a surface's ranges die with the surface.
+ *
+ * Each plugin's `::highlight` rules live in a constructed stylesheet of its own, written one rule
+ * at a time, so nothing a plugin declares can reach another plugin's rules. A constructed sheet
+ * is CSSOM, not an inline style: the desktop app's CSP carries Tauri's nonce in `style-src`,
+ * which makes the browser ignore `'unsafe-inline'` and drop any `<style>` element made at runtime.
  */
 import type { AskScope } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
@@ -71,9 +76,49 @@ type Seat = {
   actions: ContentAction[];
   styles: Styles;
   paints: Map<string, SurfaceRange[]>;
-  /** `Date.now()` of the last click the user gave this plugin: a button, a painted range, or a menu item. */
+  /** This plugin's `::highlight` rules, one per style; null without a DOM. */
+  sheet: CSSStyleSheet | null;
+  /**
+   * `Date.now()` of the last click the user gave this plugin: a selection-bar button or a menu
+   * item. A click on a painted range is not one: a plugin could paint transparent ranges over a
+   * whole answer and call any click its own.
+   */
   gestureAt: number | null;
 };
+
+/** The functions a paint color may use: the color ones, never a substitution such as `var()`, `env()` or `attr()`. */
+const COLOR_FUNCTIONS = new Set(["rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix", "light-dark"]);
+/** Hex, names, numbers, percentages and the color functions' punctuation: no braces, semicolons, quotes, comments or escapes. */
+const COLOR_CHARS = /^[A-Za-z0-9#(),.%/+\- ]+$/;
+
+/**
+ * A color the browser accepts that is safe to write into a rule as is. `CSS.supports("color", v)`
+ * admits `var(--x, {`, `env(--x, (` and escaped spellings of them, since substitution is checked
+ * at computed-value time: such a value would carry a `{` into the stylesheet or read a host token.
+ */
+export function isPaintColor(v: string): boolean {
+  if (v.length > MAX_COLOR_LENGTH || !COLOR_CHARS.test(v)) return false;
+  let depth = 0;
+  for (const ch of v) {
+    if (ch === "(") depth++;
+    else if (ch === ")" && --depth < 0) return false;
+  }
+  if (depth !== 0) return false;
+  for (const [, fn] of v.matchAll(/([A-Za-z-]+)\(/g)) if (!COLOR_FUNCTIONS.has(fn.toLowerCase())) return false;
+  return isColor(v);
+}
+
+/** A constructed sheet the document adopts, or null without a DOM. */
+function adoptSheet(): CSSStyleSheet | null {
+  if (typeof document === "undefined" || typeof CSSStyleSheet === "undefined") return null;
+  const sheet = new CSSStyleSheet();
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+  return sheet;
+}
+
+function dropSheet(sheet: CSSStyleSheet | null): void {
+  if (sheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== sheet);
+}
 
 /** The surface a plugin named, as JSON from its frame, or null. */
 export function parseSurfaceId(v: unknown): SurfaceId | null {
@@ -95,15 +140,15 @@ const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInt
 
 /**
  * `known` plus the styles a paint declares, or null when a name is not an identifier, a color is
- * not one the browser accepts, or the plugin would hold more than MAX_STYLES. A declared name
- * replaces its earlier color.
+ * not a paint color, or the plugin would hold more than MAX_STYLES. A declared name replaces its
+ * earlier color.
  */
 function parseStyles(v: unknown, known: Styles): Styles | null {
   if (v === undefined) return known;
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const styles = new Map(known);
   for (const [name, color] of Object.entries(v as Record<string, unknown>)) {
-    if (!STYLE.test(name) || typeof color !== "string" || color.length > MAX_COLOR_LENGTH || !isColor(color)) return null;
+    if (!STYLE.test(name) || typeof color !== "string" || !isPaintColor(color)) return null;
     styles.set(name, color);
   }
   return styles.size <= MAX_STYLES ? styles : null;
@@ -168,7 +213,8 @@ export class SurfaceHub {
   private seats = new Map<string, Seat>();
   private listeners = new Set<() => void>();
   private snapshot: SurfaceSnapshot = { actions: [], menu: null, reveal: null };
-  private style: HTMLStyleElement | null = null;
+  /** The flash rule, in a sheet of its own like each plugin's; made on the first flash. */
+  private flashSheet: CSSStyleSheet | null = null;
   private flashTimer: ReturnType<typeof setTimeout> | null = null;
   private revealTimer: ReturnType<typeof setTimeout> | null = null;
   /** Messages from a frame that were malformed, named a closed surface, or carried ranges outside the text. */
@@ -232,9 +278,8 @@ export class SurfaceHub {
   /** One plugin's background frame: `receive` takes its messages, `dispose` forgets its paint and buttons. */
   register(plugin: string, post: (m: Record<string, unknown>) => void): { receive(data: unknown): void; dispose(): void } {
     if (!/^[a-z0-9-]{2,40}$/.test(plugin)) throw new Error(`not a plugin id: ${plugin}`);
-    const seat: Seat = { id: plugin, post: (m) => post({ rooms: "surface", v: 1, ...m }), actions: [], styles: new Map(), paints: new Map(), gestureAt: null };
+    const seat: Seat = { id: plugin, post: (m) => post({ rooms: "surface", v: 1, ...m }), actions: [], styles: new Map(), paints: new Map(), sheet: adoptSheet(), gestureAt: null };
     this.seats.set(plugin, seat);
-    this.restyle();
     return {
       receive: (data) => {
         if (!data || typeof data !== "object" || (data as { rooms?: unknown }).rooms !== "surface") return;
@@ -255,7 +300,7 @@ export class SurfaceHub {
             this.dropped += m.dropped;
             if (m.styles !== seat.styles) {
               seat.styles = m.styles;
-              this.restyle();
+              this.restyle(seat);
             }
             seat.paints.set(m.key, m.ranges);
             this.repaint(seat);
@@ -281,7 +326,7 @@ export class SurfaceHub {
         this.seats.delete(plugin);
         const reg = registry();
         for (const style of seat.styles.keys()) reg?.delete(highlightName(plugin, style));
-        this.restyle();
+        dropSheet(seat.sheet);
         this.set({ actions: this.allActions(), menu: this.snapshot.menu?.plugin === plugin ? null : this.snapshot.menu });
       },
     };
@@ -296,12 +341,16 @@ export class SurfaceHub {
     seat.post({ type: "selection.action", surface: s.id, actionId, start: span.start, end: span.end, text: s.index.text.slice(span.start, span.end) });
   }
 
-  /** When the user last clicked one of `plugin`'s buttons, ranges or menu items, or null. */
+  /** When the user last clicked one of `plugin`'s buttons or menu items, or null. A range click does not count. */
   lastGesture(plugin: string): number | null {
     return this.seats.get(plugin)?.gestureAt ?? null;
   }
 
-  /** A click at a point in surface `key`: the plugin whose painted range is under it hears `range.click`. True when one was. */
+  /**
+   * A click at a point in surface `key`: the plugin whose painted range is under it hears
+   * `range.click`. True when one was. It grants nothing; the plugin answers with a menu, and a
+   * pick from that is the gesture.
+   */
   click(key: string, x: number, y: number): boolean {
     const s = this.surfaces.get(key);
     if (!s) return false;
@@ -313,7 +362,6 @@ export class SurfaceHub {
       for (const range of seat.paints.get(key) ?? []) if (range.start <= at && at < range.end) hit = { seat, range };
     }
     if (!hit) return false;
-    hit.seat.gestureAt = Date.now();
     hit.seat.post({ type: "range.click", surface: s.id, rangeId: hit.range.id });
     return true;
   }
@@ -363,6 +411,10 @@ export class SurfaceHub {
     (range?.startContainer.parentElement ?? s.root).scrollIntoView({ block: "center" });
     const reg = registry();
     if (!reg || !range) return;
+    if (!this.flashSheet) {
+      this.flashSheet = adoptSheet();
+      this.flashSheet?.insertRule(`::highlight(${FLASH}) { background-color: var(--thread-soft); }`);
+    }
     reg.set(FLASH, new Highlight(range));
     if (this.flashTimer) clearTimeout(this.flashTimer);
     this.flashTimer = setTimeout(() => reg.delete(FLASH), 1200);
@@ -397,17 +449,21 @@ export class SurfaceHub {
     for (const [style, ranges] of byStyle) reg.set(highlightName(seat.id, style), new Highlight(...ranges));
   }
 
-  /** One rule per plugin and style, plus the flash: the name is an identifier and the color passed `CSS.supports`, so neither can escape its rule. */
-  private restyle(): void {
-    if (typeof document === "undefined") return;
-    const rules = [`::highlight(${FLASH}) { background-color: var(--thread-soft); }`];
-    for (const seat of this.seats.values()) for (const [style, color] of seat.styles) rules.push(`::highlight(${highlightName(seat.id, style)}) { background-color: ${color}; }`);
-    if (!this.style) {
-      this.style = document.createElement("style");
-      this.style.dataset.surfaceHighlights = "";
-      document.head.appendChild(this.style);
+  /**
+   * Rewrites `seat`'s sheet: one rule per style, each inserted on its own, so a rule the engine
+   * rejects is the only one lost. The name is an identifier and the color passed `isPaintColor`.
+   */
+  private restyle(seat: Seat): void {
+    const sheet = seat.sheet;
+    if (!sheet) return;
+    sheet.replaceSync("");
+    for (const [style, color] of seat.styles) {
+      try {
+        sheet.insertRule(`::highlight(${highlightName(seat.id, style)}) { background-color: ${color}; }`, sheet.cssRules.length);
+      } catch {
+        this.dropped++;
+      }
     }
-    this.style.textContent = rules.join("\n");
   }
 
   private set(patch: Partial<SurfaceSnapshot>): void {

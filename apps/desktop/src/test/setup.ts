@@ -41,4 +41,6 @@ if (typeof window !== "undefined") {
   }
   if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
   if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {};
+  // jsdom constructs CSSStyleSheet but has no adoptedStyleSheets; the surface hub paints through them.
+  if (!("adoptedStyleSheets" in document)) Object.defineProperty(document, "adoptedStyleSheets", { value: [], writable: true });
 }

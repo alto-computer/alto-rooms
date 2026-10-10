@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { surfaceKey as sdkSurfaceKey } from "@alto-rooms/plugin-sdk";
-import { parseSurfaceId, SurfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
+import { isPaintColor, parseSurfaceId, SurfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
 
 /** A stand-in for the CSS Custom Highlight API: what the hub registered under which name. */
 class FakeHighlight {
@@ -16,12 +16,31 @@ beforeEach(() => {
   vi.stubGlobal("Highlight", FakeHighlight);
   vi.stubGlobal("CSS", { highlights, supports: (_: string, v: string) => /^#[0-9a-f]{6}$/i.test(v) });
   document.body.innerHTML = "";
-  document.head.innerHTML = "";
+  document.adoptedStyleSheets = [];
 });
 afterEach(() => vi.unstubAllGlobals());
 
 const answer = (turnId: string): SurfaceId => ({ kind: "answer", scope: { kind: "room", roomId: "r1" }, turnId });
 const painted = (name: string) => (highlights.get(name)?.ranges ?? []).map((r) => r.toString());
+
+/** Every `::highlight` rule the document adopted: highlight name to its background color, as the CSSOM serializes it. */
+function rules(): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const sheet of document.adoptedStyleSheets) {
+    for (const r of sheet.cssRules) {
+      const m = /^::highlight\(([^)]+)\)$/.exec((r as CSSStyleRule).selectorText);
+      if (m) out.set(m[1], (r as CSSStyleRule).style.getPropertyValue("background-color"));
+    }
+  }
+  return out;
+}
+
+/** `v` as the CSSOM serializes a color (jsdom turns `#c79a3e` into `rgb(199, 154, 62)`), to compare with `rules()`. */
+function cssColor(v: string): string {
+  const d = document.createElement("div");
+  d.style.backgroundColor = v;
+  return d.style.backgroundColor;
+}
 
 /** The styles the test plugin paints with; a paint that names none declares these. */
 const STYLES = { amber: "#c79a3e", blue: "#608cc8", green: "#7a9971" };
@@ -62,7 +81,7 @@ describe("SurfaceHub", () => {
     tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "a", start: 4, end: 9, style: "amber" }, { id: "b", start: 10, end: 15, style: "blue" }] });
     expect(painted("rooms-tagger-amber")).toEqual(["quick"]);
     expect(painted("rooms-tagger-blue")).toEqual(["brown"]);
-    expect(document.querySelector("style[data-surface-highlights]")!.textContent).toContain(`::highlight(rooms-tagger-amber) { background-color: ${STYLES.amber}; }`);
+    expect(rules().get("rooms-tagger-amber")).toBe(cssColor(STYLES.amber));
     expect(document.body.innerHTML, "no DOM mutation").toBe("<div><p>the <b>quick</b> brown fox</p></div>");
     hub.close(surfaceKey(answer("t1")));
     expect(painted("rooms-tagger-amber")).toEqual([]);
@@ -118,10 +137,7 @@ describe("SurfaceHub", () => {
     }
     expect(hub.dropped).toBe(before + 10);
     expect(painted("rooms-tagger-green"), "a refused paint keeps the last good one").toEqual(["01"]);
-    const sheet = document.querySelector("style[data-surface-highlights]")!.textContent!;
-    expect(sheet).not.toContain("display:none");
-    expect(sheet).not.toContain("url(");
-    expect(sheet).not.toContain("Green");
+    expect([...rules().keys()].sort(), "the declared rules are the only ones in any sheet").toEqual(["rooms-tagger-amber", "rooms-tagger-blue", "rooms-tagger-green"]);
     tagger.say({ type: "paint", surface: answer("t1"), styles: Object.fromEntries(Array.from({ length: 14 }, (_, i) => [`s${i}`, "#111111"])), ranges: [] });
     expect(hub.dropped, "17 styles in all is one too many").toBe(before + 11);
     tagger.say({ type: "paint", surface: answer("t1"), styles: Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`s${i}`, "#111111"])), ranges: [] });
@@ -138,10 +154,44 @@ describe("SurfaceHub", () => {
     tagger.say({ type: "paint", surface: answer("t1"), styles: { mustard: "rgba(199,154,62,0.28)" }, ranges: [{ id: "a", start: 0, end: 2, style: "mustard" }] });
     expect(hub.dropped).toBe(1);
     expect(painted("rooms-tagger-mustard")).toEqual(["01"]);
-    expect(document.querySelector("style[data-surface-highlights]")!.textContent).toContain("::highlight(rooms-tagger-mustard) { background-color: rgba(199,154,62,0.28); }");
+    expect(rules().get("rooms-tagger-mustard")).toBe(cssColor("rgba(199,154,62,0.28)"));
     tagger.say({ type: "paint", surface: answer("t1"), styles: { mustard: "rgba(1,2,3,0.5)" }, ranges: [{ id: "a", start: 2, end: 4, style: "mustard" }] });
-    expect(document.querySelector("style[data-surface-highlights]")!.textContent, "a declared name replaces its color").toContain("rgba(1,2,3,0.5)");
+    expect(rules().get("rooms-tagger-mustard"), "a declared name replaces its color").toBe(cssColor("rgba(1,2,3,0.5)"));
     expect(painted("rooms-tagger-mustard")).toEqual(["23"]);
+  });
+
+  it("refuses a color the browser's parser admits but that could substitute or carry a brace into a rule, and keeps every plugin's rules in a sheet of its own", () => {
+    // Chromium and WebKit answer true to CSS.supports("color", v) for every value below: substitution is checked later.
+    vi.stubGlobal("CSS", { highlights, supports: () => true });
+    const hub = new SurfaceHub();
+    surface(hub, answer("t1"), "<p>0123456789</p>");
+    const stamper = seat(hub, "stamper");
+    const tagger = seat(hub);
+    stamper.say({ type: "paint", surface: answer("t1"), styles: { mark: "#0000ff" }, ranges: [{ id: "s", start: 0, end: 3, style: "mark" }] });
+    expect(document.adoptedStyleSheets, "one sheet per plugin").toHaveLength(2);
+    const before = hub.dropped;
+    const hostile = ["var(--x, {", "var(--x, (", "var(--thread-soft)", "env(--x, {", "v\\61 r(--x)", "attr(data-x)", "if(style(--x): red; else: blue)", "red/*", "rgb(1,2,3", "rgb(1,2,3))", "red;}", "red }", "'red'", "red !important"];
+    for (const css of hostile) tagger.say({ type: "paint", surface: answer("t1"), styles: { css }, ranges: [{ id: "a", start: 0, end: 1, style: "css" }] });
+    expect(hub.dropped).toBe(before + hostile.length);
+    expect([...rules()], "the other plugin's rule is intact and nothing hostile was written").toEqual([["rooms-stamper-mark", cssColor("#0000ff")]]);
+    expect(painted("rooms-stamper-mark")).toEqual(["012"]);
+    const sheetOf = (i: number) => [...document.adoptedStyleSheets[i].cssRules].map((r) => (r as CSSStyleRule).selectorText);
+    expect(sheetOf(0)).toEqual(["::highlight(rooms-stamper-mark)"]);
+    expect(sheetOf(1), "the tagger's sheet, empty").toEqual([]);
+    tagger.say({ type: "paint", surface: answer("t1"), styles: { ok: "rgb(1 2 3 / 50%)" }, ranges: [{ id: "a", start: 0, end: 1, style: "ok" }] });
+    expect(sheetOf(1)).toEqual(["::highlight(rooms-tagger-ok)"]);
+    expect(sheetOf(0), "a paint touches only its plugin's sheet").toEqual(["::highlight(rooms-stamper-mark)"]);
+  });
+
+  it("takes hex, names and the color functions as paint colors, within 64 characters", () => {
+    vi.stubGlobal("CSS", { highlights, supports: () => true });
+    for (const ok of ["#c79a3e", "#FFF", "transparent", "CurrentColor", "rgba(199,154,62,0.28)", "rgb(1 2 3 / 50%)", "hsl(120deg 50% 50%)", "oklch(70% 0.1 200)", "color(display-p3 1 0 0)", "color-mix(in srgb, red 50%, blue)", "light-dark(#fff, #000)"]) {
+      expect(isPaintColor(ok), ok).toBe(true);
+    }
+    expect(isPaintColor("#" + "f".repeat(64))).toBe(false);
+    expect(isPaintColor("url(x)")).toBe(false);
+    vi.stubGlobal("CSS", { highlights, supports: () => false });
+    expect(isPaintColor("#c79a3e"), "the browser still has the last word").toBe(false);
   });
 
   it("lists plugin actions in id order and posts a click with the selection's offsets and text", () => {
@@ -197,7 +247,7 @@ describe("SurfaceHub", () => {
     delete (document as unknown as { caretPositionFromPoint?: unknown }).caretPositionFromPoint;
   });
 
-  it("remembers when the user last clicked a plugin's button, range or menu item, and not a click it refused", () => {
+  it("remembers when the user last clicked a plugin's button or menu item, and not a range click or a click it refused", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     const hub = new SurfaceHub();
@@ -217,12 +267,13 @@ describe("SurfaceHub", () => {
     (document as unknown as { caretPositionFromPoint: unknown }).caretPositionFromPoint = (x: number) => ({ offsetNode: textNode, offset: x });
     hub.click(key, 1, 0);
     expect(hub.lastGesture("tagger"), "a click beside any range").toBe(1_000);
-    hub.click(key, 6, 0);
-    expect(hub.lastGesture("tagger")).toBe(2_000);
+    expect(hub.click(key, 6, 0)).toBe(true);
+    expect(tagger.sent.at(-1)).toMatchObject({ type: "range.click", rangeId: "q" });
+    expect(hub.lastGesture("tagger"), "a range click is delivered but grants nothing: a plugin could paint transparent ranges over the whole answer").toBe(1_000);
     vi.setSystemTime(3_000);
     tagger.say({ type: "menu", surface: answer("t1"), rangeId: "q", items: [{ id: "untag", title: "Untag" }] });
     hub.runMenu("other");
-    expect(hub.lastGesture("tagger"), "an item the menu never had").toBe(2_000);
+    expect(hub.lastGesture("tagger"), "an item the menu never had").toBe(1_000);
     tagger.say({ type: "menu", surface: answer("t1"), rangeId: "q", items: [{ id: "untag", title: "Untag" }] });
     hub.runMenu("untag");
     expect(hub.lastGesture("tagger")).toBe(3_000);
@@ -240,7 +291,8 @@ describe("SurfaceHub", () => {
     tagger.dispose();
     expect(highlights.has("rooms-tagger-amber")).toBe(false);
     expect(hub.getSnapshot().actions).toEqual([]);
-    expect(document.querySelector("style[data-surface-highlights]")!.textContent).not.toContain("tagger");
+    expect(rules().has("rooms-tagger-amber")).toBe(false);
+    expect(document.adoptedStyleSheets, "its sheet went with it").toHaveLength(0);
     const again = seat(hub);
     again.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
     expect(painted("rooms-tagger-amber")).toEqual(["quick"]);
@@ -348,7 +400,7 @@ describe("surfaceKey", () => {
 });
 
 describe("parseSurfaceId", () => {
-  it("accepts an answer in a doc, room or day thread and nothing else", () => {
+  it("accepts an answer in a doc, room, day or conversation thread and nothing else", () => {
     expect(parseSurfaceId({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" })).toEqual({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" });
     expect(parseSurfaceId({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" })!.scope).toEqual({ kind: "day", date: "2026-10-10" });
     expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })!.scope).toEqual({ kind: "conversation", agent: "codex", session: "s_1-2" });
