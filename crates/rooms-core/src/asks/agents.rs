@@ -7,10 +7,11 @@
 //! `session`; see `stream.rs`). The built-in claude-code and codex profiles carry theirs; a file's
 //! profile replaces the built-in one whole, rules included.
 //!
-//! A profile with a `continue` template and a `session` rule keeps one agent session per thread:
-//! the first question forks the doc's conversation (`resume`) or starts one (`new`), and the ones
-//! after it go to that same session (`continue`), so the agent remembers the thread itself and
-//! Rooms sends only the question. `/new`, a finished `/compact`, or another agent start over.
+//! A profile with a `continue` template and a `session` rule keeps one agent session per doc or
+//! conversation thread: the first question forks the source session (`resume`, which keeps the
+//! fork), and the ones after it go to that fork (`continue`), so the agent remembers the thread
+//! itself and Rooms sends only the question. `/new`, a finished `/compact`, or another agent start
+//! a new fork. A `new` run is not continued: its session isn't kept.
 use super::stream::EventRule;
 use rooms_protocol::AskMode;
 use serde::Deserialize;
@@ -20,13 +21,22 @@ use std::path::Path;
 pub(crate) const DEFAULT_AGENT: &str = "claude-code";
 pub(crate) const DEFAULT_PREAMBLE: &str =
     "[Rooms] The user is reading the HTML document below in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
+/// For a room or a Journal day. The `preamble` key in agents.toml replaces only the doc preamble.
+/// The claude-code profile also enforces the list (`claude_read_scope`; `load` refuses one without
+/// `{scope_settings}`); other agents get only these words.
+pub(crate) const SCOPE_PREAMBLE: &str =
+    "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder, not even the folder a listed file is in, and never search without a path. A Journal day also lists its agent sessions, each by its quoted title with the start of its last reply; a session has no file here, so don't look for one. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
+
+/// A conversation ask's preamble; agents.toml's `preamble` is about docs.
+pub(crate) const CONVERSATION_PREAMBLE: &str =
+    "[Rooms] The user is looking back at this agent conversation in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Profile {
     pub resume: Option<Vec<String>>,
     pub new: Vec<String>,
-    /// Asks again in the session an earlier question started; `{session}` is its id.
+    /// Asks again in the fork an earlier question made; `{session}` is its id.
     #[serde(rename = "continue")]
     pub cont: Option<Vec<String>>,
     /// Models the user can pick; offered only for a template with an element that is exactly `{model}`.
@@ -59,6 +69,9 @@ pub(crate) struct Plan {
     /// The profile's models, or none when this template takes no `{model}`.
     pub models: Vec<String>,
     pub events: Vec<EventRule>,
+    /// A room or day ask whose argv carries `{scope_settings}`, so the agent itself denies reads
+    /// outside the listed files. False for a doc ask and for an agent told the list only in words.
+    pub scoped: bool,
     template: Vec<String>,
 }
 
@@ -76,6 +89,10 @@ pub(crate) struct Vars<'a> {
     pub images: &'a [String],
     /// The folder the images are in, or "" when there are none.
     pub image_dir: &'a str,
+    /// `claude_read_scope` of a room's or day's listed files, or "" for a doc ask.
+    pub scope_settings: &'a str,
+    /// The Aside account a resumed session is under (`u<n>`), or "" when unknown or not Aside.
+    pub account: &'a str,
 }
 
 fn argv(parts: &[&str]) -> Vec<String> { parts.iter().map(|s| s.to_string()).collect() }
@@ -146,36 +163,53 @@ match = { "/type" = "thread.started" }
 session = "/thread_id"
 "#;
 
+/// A fork is kept (no `--no-session-persistence` / `--ephemeral`) for `continue`; `new` keeps nothing.
 fn builtin() -> BTreeMap<String, Profile> {
-    // Sessions are kept (no --no-session-persistence / --ephemeral): the next question continues them.
-    const CLAUDE_FLAGS: &[&str] = &["--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"];
-    const CODEX_FLAGS: &[&str] = &["--skip-git-repo-check", "-i", "{image}", "--json", "-"];
-    let claude = |head: &[&str]| argv(&[head, CLAUDE_FLAGS].concat());
-    let codex = |head: &[&str]| argv(&[head, CODEX_FLAGS].concat());
     BTreeMap::from([
         ("claude-code".to_string(), Profile {
-            resume: Some(claude(&["claude", "-p", "--model", "{model}", "--resume", "{session}", "--fork-session"])),
-            new: claude(&["claude", "-p", "--model", "{model}"]),
-            cont: Some(claude(&["claude", "-p", "--model", "{model}", "--resume", "{session}"])),
+            resume: Some(argv(&["claude", "-p", "--model", "{model}", "--resume", "{session}", "--fork-session", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])),
+            new: argv(&["claude", "-p", "--model", "{model}", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--settings", "{scope_settings}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]),
+            cont: Some(argv(&["claude", "-p", "--model", "{model}", "--resume", "{session}", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "{mcp_config}", "--allowedTools=mcp__rooms", "--add-dir", "{image_dir}", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])),
             models: argv(&["opus", "sonnet", "haiku"]),
             events: rules(CLAUDE_EVENTS),
         }),
         ("codex".to_string(), Profile {
-            resume: Some(codex(&["codex", "exec", "fork", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\""])),
-            new: codex(&["codex", "exec", "-m", "{model}", "-s", "read-only"]),
-            cont: Some(codex(&["codex", "exec", "resume", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\""])),
+            resume: Some(argv(&["codex", "exec", "fork", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\"", "--skip-git-repo-check", "-i", "{image}", "--json", "-"])),
+            new: argv(&["codex", "exec", "-m", "{model}", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "-i", "{image}", "--json", "-"]),
+            cont: Some(argv(&["codex", "exec", "resume", "{session}", "-m", "{model}", "-c", "sandbox_mode=\"read-only\"", "--skip-git-repo-check", "-i", "{image}", "--json", "-"])),
             models: argv(&["gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol"]),
             events: rules(CODEX_EVENTS),
         }),
-        // `aside session resume` takes no model flag: resumed asks keep the session's model.
+        // `aside session resume` takes no model flag: resumed asks keep the session's model. It
+        // appends to the real session, on purpose; the account goes before the id, as for Continue.
         ("aside".to_string(), Profile {
-            resume: Some(argv(&["aside", "session", "resume", "{session}", "{prompt}"])),
+            resume: Some(argv(&["aside", "session", "resume", "--account", "{account}", "{session}", "{prompt}"])),
             new: argv(&["aside", "exec", "-m", "{model}", "{prompt}"]),
             cont: None,
             models: argv(&["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]),
             events: Vec::new(),
         }),
     ])
+}
+
+/// Claude Code `--settings` for a room or day ask: `dontAsk` denies every tool call that no rule
+/// allows, and one `Read(//<path>)` rule per listed file allows that file. Claude applies Read rules
+/// to Grep and Glob too, so a search of the folder a listed file is in is denied (measured on
+/// claude 2.1.295). Its own spill files under `~/.claude/projects/` and the `--add-dir` image folder
+/// stay readable. A rule path is a gitignore pattern: `\`, `*`, `?`, `[` and `]` are escaped, and a
+/// name holding `?` or `\` then matches nothing, so that file is denied, never a wider set. An allow
+/// rule in the user's own settings (`--setting-sources=user`) still adds to this.
+pub(crate) fn claude_read_scope<'a>(paths: impl IntoIterator<Item = &'a Path>) -> String {
+    let allow: Vec<String> = paths.into_iter().map(|p| {
+        let mut rule = String::from("Read(/");
+        for c in p.to_string_lossy().chars() {
+            if matches!(c, '\\' | '*' | '?' | '[' | ']') { rule.push('\\'); }
+            rule.push(c);
+        }
+        rule.push(')');
+        rule
+    }).collect();
+    serde_json::json!({ "permissions": { "defaultMode": "dontAsk", "allow": allow } }).to_string()
 }
 
 /// `[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}`: never flag-shaped, so it is safe as an argv element.
@@ -185,6 +219,8 @@ pub(crate) fn valid_model(s: &str) -> bool {
         && s.len() <= 128
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '/' | '-'))
 }
+
+fn carries_scope(t: &[String]) -> bool { t.iter().any(|a| a.contains("{scope_settings}")) }
 
 fn check(name: &str, which: &str, t: &[String]) -> Result<(), String> {
     match t.first() {
@@ -219,6 +255,9 @@ impl AgentProfiles {
             if !p.models.is_empty() && partial {
                 return Err(format!("agents.{name}: with models, {{model}} must be a whole element (e.g. \"--model\", \"{{model}}\")"));
             }
+            if name == "claude-code" && !carries_scope(&p.new) {
+                return Err(format!("agents.{name}.new: add \"--settings\", \"{{scope_settings}}\" so room and Journal-day asks can read only their listed files"));
+            }
         }
         let default = cfg.default.unwrap_or_else(|| DEFAULT_AGENT.to_string());
         if !agents.contains_key(&default) {
@@ -239,18 +278,24 @@ impl AgentProfiles {
         Plan::of(name, mode, template, p)
     }
 
-    /// `first`'s agent asking again in the session an earlier question started, when its profile
-    /// can: it has a `continue` template and a rule that reads the session id.
+    /// `first`'s agent asking again in the fork an earlier question made, when its profile can: it
+    /// has a `continue` template and a rule that reads the session id.
     pub fn continuing(&self, first: &Plan) -> Option<Plan> {
         let p = &self.agents[&first.agent];
         let t = p.cont.as_ref().filter(|_| p.events.iter().any(|r| r.session.is_some()))?;
         Some(Plan::of(first.agent.clone(), AskMode::Continue, t.clone(), p))
     }
 
+    /// A room or day ask: always the default agent, always new.
+    pub fn plan_listing(&self) -> Plan {
+        let plan = self.plan(None, None);
+        Plan { scoped: carries_scope(&plan.template), ..plan }
+    }
+
     pub fn preamble(&self) -> &str { self.preamble.as_deref().unwrap_or(DEFAULT_PREAMBLE) }
 }
 
-const PLACEHOLDERS: [&str; 7] = ["{prompt}", "{session}", "{file}", "{cwd}", "{mcp_config}", "{model}", "{image_dir}"];
+const PLACEHOLDERS: [&str; 9] = ["{prompt}", "{session}", "{file}", "{cwd}", "{mcp_config}", "{model}", "{image_dir}", "{scope_settings}", "{account}"];
 
 /// One left-to-right pass: substituted text is never scanned again.
 fn subst(arg: &str, v: &Vars) -> String {
@@ -261,7 +306,7 @@ fn subst(arg: &str, v: &Vars) -> String {
         let tail = &rest[i..];
         match PLACEHOLDERS.iter().find(|p| tail.starts_with(**p)) {
             Some(p) => {
-                out.push_str(match *p { "{prompt}" => v.prompt, "{session}" => v.session, "{file}" => v.file, "{cwd}" => v.cwd, "{model}" => v.model, "{image_dir}" => v.image_dir, _ => v.mcp_config });
+                out.push_str(match *p { "{prompt}" => v.prompt, "{session}" => v.session, "{file}" => v.file, "{cwd}" => v.cwd, "{model}" => v.model, "{image_dir}" => v.image_dir, "{scope_settings}" => v.scope_settings, "{account}" => v.account, _ => v.mcp_config });
                 rest = &tail[p.len()..];
             }
             None => { out.push('{'); rest = &tail[1..]; }
@@ -274,14 +319,14 @@ fn subst(arg: &str, v: &Vars) -> String {
 impl Plan {
     fn of(agent: String, mode: AskMode, template: Vec<String>, p: &Profile) -> Self {
         let models = if template.iter().any(|a| a == "{model}") { p.models.clone() } else { Vec::new() };
-        Plan { agent, mode, models, events: p.events.clone(), template }
+        Plan { agent, mode, models, events: p.events.clone(), scoped: false, template }
     }
 
     /// A template without `{prompt}` gets the prompt on stdin, which has no size limit; with it,
     /// the prompt is that argv element, as for a CLI that reads no stdin.
     pub fn prompt_on_stdin(&self) -> bool { !self.template.iter().any(|a| a.contains("{prompt}")) }
 
-    /// An element that is exactly `{mcp_config}`, `{model}` or `{image_dir}` with an empty value is
+    /// An element that is exactly `{mcp_config}`, `{model}`, `{image_dir}`, `{scope_settings}` or `{account}` with an empty value is
     /// dropped together with the element before it (its flag, e.g. `--mcp-config` or `--model`).
     /// `{image}` repeats with its flag once per image (`-i a -i b`).
     pub fn render(&self, v: &Vars) -> Vec<String> {
@@ -292,7 +337,8 @@ impl Plan {
                 for img in v.images { out.extend(flag.iter().cloned()); out.push(img.clone()); }
                 continue;
             }
-            let empty = (a == "{mcp_config}" && v.mcp_config.is_empty()) || (a == "{model}" && v.model.is_empty()) || (a == "{image_dir}" && v.image_dir.is_empty());
+            let empty = (a == "{mcp_config}" && v.mcp_config.is_empty()) || (a == "{model}" && v.model.is_empty()) || (a == "{image_dir}" && v.image_dir.is_empty())
+                || (a == "{scope_settings}" && v.scope_settings.is_empty()) || (a == "{account}" && v.account.is_empty());
             if empty { out.pop(); continue; }
             out.push(subst(a, v));
         }
@@ -310,7 +356,7 @@ mod tests {
         if let Some(t) = text { std::fs::write(&p, t).unwrap(); }
         (d, p)
     }
-    fn vars<'a>(prompt: &'a str) -> Vars<'a> { Vars { prompt, session: "S1", file: "/f.html", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "" } }
+    fn vars<'a>(prompt: &'a str) -> Vars<'a> { Vars { prompt, session: "S1", file: "/f.html", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "", scope_settings: "", account: "" } }
 
     #[test]
     fn missing_file_gives_builtin_defaults() {
@@ -341,8 +387,9 @@ mod tests {
         assert_eq!(a.plan(Some("codex"), Some("S1")).render(&vars("Q")),
             vec!["codex", "exec", "fork", "S1", "-c", "sandbox_mode=\"read-only\"", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("codex"), None).render(&vars("Q")),
-            vec!["codex", "exec", "-s", "read-only", "--skip-git-repo-check", "--json", "-"]);
+            vec!["codex", "exec", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("aside"), Some("S1")).render(&vars("Q")), vec!["aside", "session", "resume", "S1", "Q"]);
+        assert_eq!(a.plan(Some("aside"), Some("S1")).render(&Vars { account: "u2", ..vars("Q") }), vec!["aside", "session", "resume", "--account", "u2", "S1", "Q"]);
         assert_eq!(a.plan(Some("aside"), None).render(&vars("Q")), vec!["aside", "exec", "Q"]);
     }
 
@@ -351,7 +398,7 @@ mod tests {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("my-agent"), Some("S1"));
         assert_eq!((plan.agent.as_str(), plan.mode), ("claude-code", AskMode::New));
-        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
+        assert_eq!(plan.render(&vars("Q")), vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
     }
 
     #[test]
@@ -386,17 +433,31 @@ new = ["codex2", "{prompt}"]
     fn substitution_is_single_pass() {
         let (_d, p) = tmp(None);
         let plan = AgentProfiles::load(&p).unwrap().plan(Some("aside"), None);
-        let out = plan.render(&Vars { prompt: "say {session} and {cwd} and {other}", session: "S1", file: "/f", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "" });
+        let out = plan.render(&Vars { prompt: "say {session} and {cwd} and {other}", session: "S1", file: "/f", cwd: "/c", mcp_config: "", model: "", images: &[], image_dir: "", scope_settings: "", account: "" });
         assert_eq!(out, vec!["aside", "exec", "say {session} and {cwd} and {other}"]);
+    }
+
+    /// A room or day ask: the built-in claude template carries the read scope; a doc ask drops the flag.
+    #[test]
+    fn claude_new_takes_the_read_scope_as_settings() {
+        let (_d, p) = tmp(None);
+        let a = AgentProfiles::load(&p).unwrap();
+        let settings = claude_read_scope([Path::new("/d/a.html"), Path::new("/d/x?y [1] *.html"), Path::new("/d/b\\c.html")]);
+        assert_eq!(settings, r#"{"permissions":{"allow":["Read(//d/a.html)","Read(//d/x\\?y \\[1\\] \\*.html)","Read(//d/b\\\\c.html)"],"defaultMode":"dontAsk"}}"#);
+        let v = Vars { scope_settings: &settings, ..vars("Q") };
+        let out = a.plan(Some("claude-code"), None).render(&v);
+        assert!(out.windows(2).any(|w| w == ["--settings", settings.as_str()]), "{out:?}");
+        assert!(!a.plan(Some("claude-code"), None).render(&vars("Q")).contains(&"--settings".to_string()));
+        assert_eq!(a.plan(Some("codex"), None).render(&v), a.plan(Some("codex"), None).render(&vars("Q")), "codex has no such flag");
     }
 
     #[test]
     fn mcp_config_is_substituted_into_claude_templates() {
         let (_d, p) = tmp(None);
         let a = AgentProfiles::load(&p).unwrap();
-        let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json", model: "", images: &[], image_dir: "" };
+        let v = Vars { prompt: "Q", session: "S1", file: "/f", cwd: "/c", mcp_config: "/h/.rooms/mcp.json", model: "", images: &[], image_dir: "", scope_settings: "", account: "" };
         assert_eq!(a.plan(Some("claude-code"), None).render(&v),
-            vec!["claude", "-p", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
+            vec!["claude", "-p", "--no-session-persistence", "--setting-sources=user", "--tools=Read,Grep,Glob", "--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
         let resumed = a.plan(Some("claude-code"), Some("S1")).render(&v);
         assert!(resumed.windows(4).any(|w| w == ["--strict-mcp-config", "--mcp-config", "/h/.rooms/mcp.json", "--allowedTools=mcp__rooms"]));
         // without a config the pair is dropped but strict stays: the ask gets no MCP at all
@@ -448,15 +509,16 @@ new = ["codex2", "{prompt}"]
         let (_d, p) = tmp(None);
         let a = AgentProfiles::load(&p).unwrap();
         let claude = a.continuing(&a.plan(Some("claude-code"), Some("S1"))).unwrap();
-        assert_eq!((claude.mode, claude.models.len()), (AskMode::Continue, 3));
+        assert_eq!((claude.mode, claude.models.len(), claude.scoped), (AskMode::Continue, 3, false));
         assert_eq!(claude.render(&with_model("opus"))[..6], ["claude", "-p", "--model", "opus", "--resume", "S1"]);
         assert!(!claude.render(&vars("Q")).contains(&"--fork-session".to_string()));
         assert!(claude.prompt_on_stdin());
-        // from a new conversation too
-        assert_eq!(a.continuing(&a.plan(Some("claude-code"), None)).unwrap().mode, AskMode::Continue);
-        assert_eq!(a.continuing(&a.plan(Some("codex"), None)).unwrap().render(&vars("Q")),
+        assert_eq!(a.continuing(&a.plan(Some("codex"), Some("S1"))).unwrap().render(&vars("Q")),
             vec!["codex", "exec", "resume", "S1", "-c", "sandbox_mode=\"read-only\"", "--skip-git-repo-check", "--json", "-"]);
         assert!(a.continuing(&a.plan(Some("aside"), Some("S1"))).is_none());
+        // a fork is kept for `continue`; a new run is not
+        assert!(a.plan(Some("claude-code"), None).render(&vars("Q")).contains(&"--no-session-persistence".to_string()));
+        assert!(a.plan(Some("codex"), None).render(&vars("Q")).contains(&"--ephemeral".to_string()));
         // a continue template without a rule that reads the session id is never used
         let (_d, p) = tmp(Some("[agents.x]\nnew = [\"x\", \"{prompt}\"]\ncontinue = [\"x\", \"{session}\", \"{prompt}\"]\n"));
         let a = AgentProfiles::load(&p).unwrap();
@@ -484,11 +546,26 @@ new = ["codex2", "{prompt}"]
             ("[agents.x]\nnew = [\"a\"]\n[[agents.x.events]]\ndelta = \"text\"", "agents.x.events[0]"),
             ("[agents.x]\nnew = [\"a\"]\n[[agents.x.events]]\nmatch = { \"/t\" = \"x\" }", "agents.x.events[0]"),
             ("[agents.x]\nnew = [\"a\", \"-m\", \"{model}\"]\nresume = [\"a\", \"-m{model}\"]\nmodels = [\"m\"]", "whole element"),
+            ("[agents.claude-code]\nnew = [\"claude\", \"-p\"]", "agents.claude-code.new: add \"--settings\", \"{scope_settings}\""),
         ] {
             let (_d, p) = tmp(Some(text));
             let e = AgentProfiles::load(&p).err().unwrap_or_else(|| panic!("accepted: {text}"));
             assert!(e.contains(needle), "{text} -> {e}");
         }
+    }
+
+    /// Only a room or day plan whose template takes `{scope_settings}` enforces the list.
+    #[test]
+    fn a_listing_plan_is_scoped_only_when_its_argv_carries_the_settings() {
+        let (_d, p) = tmp(None);
+        let a = AgentProfiles::load(&p).unwrap();
+        assert!(a.plan_listing().scoped);
+        assert!(!a.plan(Some("claude-code"), None).scoped, "a doc ask is never scoped");
+        let (_d, p) = tmp(Some("default = \"codex\""));
+        let codex = AgentProfiles::load(&p).unwrap().plan_listing();
+        assert_eq!((codex.agent.as_str(), codex.scoped), ("codex", false));
+        let (_d, p) = tmp(Some("[agents.claude-code]\nnew = [\"claude\", \"--settings={scope_settings}\"]"));
+        assert!(AgentProfiles::load(&p).unwrap().plan_listing().scoped);
     }
 
     fn with_model<'a>(model: &'a str) -> Vars<'a> { Vars { model, ..vars("Q") } }
@@ -540,7 +617,7 @@ new = ["codex2", "{prompt}"]
         assert_eq!(codex.render(&with_model("gpt-6-sol")),
             vec!["codex", "exec", "fork", "S1", "-m", "gpt-6-sol", "-c", "sandbox_mode=\"read-only\"", "--skip-git-repo-check", "--json", "-"]);
         assert_eq!(a.plan(Some("codex"), None).render(&with_model("gpt-6-luna")),
-            vec!["codex", "exec", "-m", "gpt-6-luna", "-s", "read-only", "--skip-git-repo-check", "--json", "-"]);
+            vec!["codex", "exec", "-m", "gpt-6-luna", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "--json", "-"]);
         let aside_new = a.plan(Some("aside"), None);
         assert_eq!(aside_new.models, vec!["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]);
         assert_eq!(aside_new.render(&with_model("claude-haiku-4-5")), vec!["aside", "exec", "-m", "claude-haiku-4-5", "Q"]);

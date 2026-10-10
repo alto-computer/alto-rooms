@@ -1,5 +1,5 @@
 import type { Artifact, PluginInfo } from "@alto-rooms/protocol-ts";
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
 import { AppShell } from "@/shell/AppShell";
@@ -8,6 +8,7 @@ import { plugin } from "@/test/plugins";
 import { DocView } from "@/views/DocView";
 import { EnableCard } from "./EnableCard";
 import { flushAllPlugins } from "./host";
+import { pluginDataBus, type PluginDataChange } from "./pluginDataBus";
 
 afterEach(() => {
   cleanup();
@@ -113,13 +114,13 @@ describe("artifact side panel", () => {
   it("shows nothing without an enabled side-panel plugin", async () => {
     await openDoc([plugin({ enabled: false, needsApproval: true }), echoTab()]);
     expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
-    const group = screen.getByRole("group", { name: "Document actions" });
+    const group = screen.getByRole("group", { name: "Artifact actions" });
     expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share"]);
   });
 
   it("opens from an icon beside Share, drawn from the manifest's icon, else a pencil", async () => {
     await openDoc([plugin({ slots: { artifactSidePanel: { title: "Echo", icon: "palette" }, tab: null } })]);
-    const group = screen.getByRole("group", { name: "Document actions" });
+    const group = screen.getByRole("group", { name: "Artifact actions" });
     expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share", "Open Echo"]);
     const opener = within(group).getByRole("button", { name: "Open Echo" });
     expect(opener).toHaveTextContent("");
@@ -132,7 +133,7 @@ describe("artifact side panel", () => {
   it("an open panel leaves Share alone in the group", async () => {
     await openDoc();
     await openPanel();
-    const group = screen.getByRole("group", { name: "Document actions" });
+    const group = screen.getByRole("group", { name: "Artifact actions" });
     expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share"]);
   });
 
@@ -191,6 +192,22 @@ describe("artifact side panel", () => {
     expect(posted).not.toHaveBeenCalled();
     h.emit({ type: "plugin.data.changed", pluginId: "echo", path: "drawings/a.jsonl" });
     expect(posted).toHaveBeenLastCalledWith({ rooms: 1, type: "dataChanged", path: "drawings/a.jsonl" }, "*");
+  });
+
+  it("a bridge write tells the plugin's other frames, not the frame that wrote it", async () => {
+    await openDoc();
+    const { f, posted } = await openPanel();
+    const heard: PluginDataChange[] = [];
+    const off = pluginDataBus.subscribe((c) => heard.push(c));
+    fromFrame(f, { rooms: 1, id: "w1", method: "storage.write", params: { path: "notes/a.txt", text: "hi" } });
+    await act(async () => {});
+    off();
+    expect(heard).toEqual([{ pluginId: "echo", path: "notes/a.txt", from: f.contentWindow }]);
+    const changes = () => posted.mock.calls.map((c) => c[0] as { type?: string }).filter((m) => m.type === "dataChanged");
+    expect(changes(), "no echo of its own write").toEqual([]);
+    act(() => pluginDataBus.publish({ pluginId: "echo", path: "docs/9f2c000000000000/marks.json", from: window }));
+    act(() => pluginDataBus.publish({ pluginId: "other", path: "x.json", from: window }));
+    expect(changes()).toEqual([{ rooms: 1, type: "dataChanged", path: "docs/9f2c000000000000/marks.json" }]);
   });
 
   it("stops relaying data changes once the frame is gone", async () => {
@@ -284,42 +301,124 @@ describe("artifact side panel", () => {
   });
 });
 
-describe("plugin tabs, sidebar items, and the enable card", () => {
-  it("a sidebar item opens the plugin in a tab; right-click turns it off", async () => {
-    const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
+describe("plugin tabs, the sidebar flyout, and the enable card", () => {
+  const flyout = () => screen.getByRole("menu", { name: "Plugins" });
+  const plugins = () => screen.getByRole("button", { name: "Plugins" });
+
+  it("the sidebar has one Plugins row, then Settings, and no plugin list or right-click menu", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
     await act(async () => {});
-    const plugins = screen.getByRole("list", { name: "Plugins" });
-    fireEvent.click(within(plugins).getByRole("button", { name: "Echo" }));
-    expect(screen.getByRole("tab", { name: "Echo", selected: true })).toBeInTheDocument();
-    expect(frame("Echo").getAttribute("src")).toBe("http://files.test/_plugins/echo/index.html");
-    fireEvent.contextMenu(within(plugins).getByRole("button", { name: "Echo" }));
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Turn off" }));
-    });
-    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", false, undefined);
-    // Off stays listed, dimmed, with no card asking again; right-click turns it back on.
-    const off = within(screen.getByRole("list", { name: "Plugins" }))
-      .getByText("Echo")
-      .closest("li")!;
-    expect(off).toHaveTextContent("Off");
-    expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.contextMenu(within(off).getByText("Echo"));
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Turn on" }));
-    });
-    expect(h.client.setPluginEnabled).toHaveBeenLastCalledWith("echo", true, []);
-    expect(within(screen.getByRole("list", { name: "Plugins" })).getByRole("button", { name: "Echo" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Plugins" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Echo" })).toBeNull();
+    expect(plugins().nextElementSibling).toBe(screen.getByRole("button", { name: /^Settings/ }));
+    expect(plugins()).toHaveAttribute("aria-haspopup", "menu");
+    fireEvent.contextMenu(plugins());
+    expect(screen.queryByRole("menuitem", { name: /Turn (on|off)/ })).toBeNull();
   });
 
-  it("a side-panel-only plugin can be turned off from the Plugins list too", async () => {
+  it("a click opens the flyout: openable plugins, then Plugin settings…; an item opens its tab, marked current", async () => {
+    await renderWithStores(<AppShell />, {
+      rooms: [room("r1", "Bench")],
+      plugins: [
+        echoTab(),
+        plugin({ id: "side", name: "Side" }),
+        echoTab({ id: "off", name: "Off", enabled: false, slots: { artifactSidePanel: null, tab: { title: "Off", icon: null, sidebar: true } } }),
+      ],
+    });
+    await act(async () => {});
+    fireEvent.click(plugins());
+    expect(within(flyout()).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Echo", "Plugin settings…"]);
+    expect(within(flyout()).getByRole("menuitem", { name: "Echo" })).toHaveFocus();
+    fireEvent.click(within(flyout()).getByRole("menuitem", { name: "Echo" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Echo", selected: true })).toBeInTheDocument();
+    expect(frame("Echo").getAttribute("src")).toBe("http://files.test/_plugins/echo/index.html");
+    fireEvent.click(plugins());
+    expect(within(flyout()).getByRole("menuitem", { name: "Echo" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("⌘-click on a flyout item opens the plugin in a new tab", async () => {
+    const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
+    await act(async () => {});
+    fireEvent.click(plugins());
+    fireEvent.click(within(flyout()).getByRole("menuitem", { name: "Echo" }), { metaKey: true });
+    expect(h.viewer.getState().tabs.map((t) => t.kind)).toEqual(["journal", "plugin"]);
+  });
+
+  it("with nothing to open, the flyout holds only Plugin settings…, which opens Settings at Plugins", async () => {
+    const scrolled: string[] = [];
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
+      if (this.id.startsWith("settings-")) scrolled.push(this.id);
+    });
     const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [plugin()] });
     await act(async () => {});
-    const row = within(screen.getByRole("list", { name: "Plugins" })).getByText("Echo");
-    fireEvent.contextMenu(row);
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Turn off" }));
-    });
-    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", false, undefined);
+    fireEvent.click(plugins());
+    expect(within(flyout()).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Plugin settings…"]);
+    expect(within(flyout()).queryByRole("separator")).toBeNull();
+    fireEvent.click(within(flyout()).getByRole("menuitem", { name: "Plugin settings…" }));
+    const { tabs, activeId } = h.viewer.getState();
+    expect(tabs.find((t) => t.id === activeId)?.kind).toBe("settings");
+    expect(scrolled).toEqual(["settings-plugins"]);
+    // Already on Settings: it scrolls again without a second tab.
+    fireEvent.click(plugins());
+    fireEvent.click(within(flyout()).getByRole("menuitem", { name: "Plugin settings…" }));
+    expect(scrolled).toEqual(["settings-plugins", "settings-plugins"]);
+    expect(h.viewer.getState().tabs.filter((t) => t.kind === "settings")).toHaveLength(1);
+    spy.mockRestore();
+  });
+
+  it("keyboard: → opens at the first item, ↓/↑ move and wrap, ← and Esc go back to the row", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
+    await act(async () => {});
+    plugins().focus();
+    fireEvent.keyDown(plugins(), { key: "ArrowRight" });
+    const [echo, settings] = within(flyout()).getAllByRole("menuitem");
+    expect(echo).toHaveFocus();
+    fireEvent.keyDown(echo, { key: "ArrowDown" });
+    expect(settings).toHaveFocus();
+    fireEvent.keyDown(settings, { key: "ArrowDown" });
+    expect(echo).toHaveFocus();
+    fireEvent.keyDown(echo, { key: "ArrowUp" });
+    expect(settings).toHaveFocus();
+    fireEvent.keyDown(settings, { key: "ArrowLeft" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() => expect(plugins()).toHaveFocus()); // Radix hands focus back on the next tick
+    fireEvent.keyDown(plugins(), { key: "Enter" });
+    fireEvent.click(plugins()); // Enter on a button clicks it
+    expect(within(flyout()).getAllByRole("menuitem")[0]).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() => expect(plugins()).toHaveFocus());
+  });
+
+  it("hovering opens it after a short delay without taking focus, and it closes once the pointer has left", async () => {
+    await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [echoTab()] });
+    await act(async () => {});
+    const typing = document.createElement("textarea");
+    document.body.append(typing);
+    typing.focus();
+    vi.useFakeTimers();
+    const mouse = { pointerType: "mouse" };
+    fireEvent.pointerEnter(plugins(), mouse);
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.pointerLeave(plugins(), mouse); // passing by opens nothing
+    await act(async () => void vi.advanceTimersByTime(400));
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.pointerEnter(plugins(), mouse);
+    await act(async () => void vi.advanceTimersByTime(200));
+    expect(flyout()).toBeInTheDocument();
+    expect(typing).toHaveFocus();
+    // The pointer crosses to the flyout in time, so it stays; leaving it closes it.
+    fireEvent.pointerLeave(plugins(), mouse);
+    await act(async () => void vi.advanceTimersByTime(100));
+    fireEvent.pointerEnter(flyout(), mouse);
+    await act(async () => void vi.advanceTimersByTime(400));
+    expect(flyout()).toBeInTheDocument();
+    fireEvent.pointerLeave(flyout(), mouse);
+    await act(async () => void vi.advanceTimersByTime(400));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(typing).toHaveFocus();
+    typing.remove();
   });
 
   it("asks again with only the new permissions when an approved plugin wants more", async () => {
@@ -330,7 +429,7 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "Updated plugin: Echo" });
     expect(within(card).getByText("Can copy and paste")).toBeInTheDocument();
-    expect(within(card).queryByText("Can see your rooms and documents")).toBeNull();
+    expect(within(card).queryByText("Can see your rooms and artifacts")).toBeNull();
     await act(async () => {
       fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
     });
@@ -364,8 +463,9 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "New plugin: Marker" });
     expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "Can see your rooms and documents",
-      "Can read the text of documents and use the network inside them",
+      "Adds scripts inside artifacts",
+      "Can see your rooms and artifacts",
+      "Can read the text of artifacts and use the network inside them",
     ]);
     await act(async () => {
       fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
@@ -398,7 +498,7 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "New plugin: Echo" });
     expect(within(card).getByText("Echoes things.")).toBeInTheDocument();
-    expect(within(card).getByText("Can see your rooms and documents")).toBeInTheDocument();
+    expect(within(card).getByText("Can see your rooms and artifacts")).toBeInTheDocument();
     expect(within(card).getByText("Can save files you export")).toBeInTheDocument();
     expect(screen.queryByTitle("Echo")).toBeNull();
     await act(async () => {
@@ -406,7 +506,8 @@ describe("plugin tabs, sidebar items, and the enable card", () => {
     });
     expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", true, ["rooms.read", "downloads"]);
     expect(screen.queryByRole("dialog", { name: "New plugin: Echo" })).toBeNull();
-    expect(within(screen.getByRole("list", { name: "Plugins" })).getByRole("button", { name: "Echo" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+    expect(within(screen.getByRole("menu", { name: "Plugins" })).getByRole("menuitem", { name: "Echo" })).toBeInTheDocument();
   });
 
   it("Not now hides the card for this run without enabling", async () => {
@@ -552,5 +653,80 @@ describe("an open plugin when the plugin changes", () => {
     expect(close).toBeTruthy();
     fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
     await flushing;
+  });
+});
+
+describe("Settings › Plugins", () => {
+  const openSettings = async (plugins: PluginInfo[]) => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.open({ kind: "settings" });
+    const h = await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins, viewer });
+    await act(async () => {});
+    return h;
+  };
+  const section = () => screen.getByRole("region", { name: "Plugins" });
+
+  it("lists every plugin with what it adds and the permissions it holds, in the enable card's words", async () => {
+    await openSettings([
+      echoTab({ permissions: ["rooms.read", "clipboard"], granted: ["rooms.read", "clipboard"], description: "Echoes things." }),
+      plugin({ id: "marker", name: "Marker", slots: { artifactSidePanel: null, tab: null }, permissions: ["artifact.content"], granted: ["artifact.content"], enabled: false }),
+    ]);
+    expect(within(section()).getByText("Echoes things.")).toBeInTheDocument();
+    expect(within(section()).getByRole("list", { name: "Echo: what it adds and can do" }).textContent).toBe(
+      "Adds a tabCan see your rooms and artifactsCan copy and paste",
+    );
+    expect(within(section()).getByRole("list", { name: "Marker: what it adds and can do" }).textContent).toBe(
+      "Adds scripts inside artifactsCan read the text of artifacts and use the network inside them",
+    );
+    expect(within(section()).getByRole("switch", { name: "Echo" })).toBeChecked();
+    expect(within(section()).getByRole("switch", { name: "Marker" })).not.toBeChecked();
+  });
+
+  it("the switch turns a plugin off, keeping its approval, and on again with what the row lists", async () => {
+    const h = await openSettings([echoTab({ permissions: ["rooms.read"], granted: ["rooms.read"] })]);
+    await act(async () => {
+      fireEvent.click(within(section()).getByRole("switch", { name: "Echo" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenLastCalledWith("echo", false, undefined);
+    expect(within(section()).getByRole("switch", { name: "Echo" })).not.toBeChecked();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(async () => {
+      fireEvent.click(within(section()).getByRole("switch", { name: "Echo" }));
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenLastCalledWith("echo", true, ["rooms.read"]);
+    expect(within(section()).getByRole("switch", { name: "Echo" })).toBeChecked();
+  });
+
+  it("an update waiting for approval is off, with its new permissions marked; turning it on approves them", async () => {
+    const h = await openSettings([echoTab({ permissions: ["rooms.read", "clipboard"], granted: ["rooms.read"], needsApproval: true })]);
+    const sw = within(section()).getByRole("switch", { name: "Echo" });
+    expect(sw).not.toBeChecked();
+    expect(within(section()).getByText("Can copy and paste (new)")).toBeInTheDocument();
+    expect(within(section()).getByText("Can see your rooms and artifacts")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(sw);
+    });
+    expect(h.client.setPluginEnabled).toHaveBeenCalledWith("echo", true, ["rooms.read", "clipboard"]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a plugin that can't run says why and has no switch", async () => {
+    await openSettings([
+      plugin({ id: "broken", name: "", status: "invalid", reason: "manifest.json: missing id" }),
+      plugin({ id: "future", name: "Future", minAppVersion: "99.0.0" }),
+    ]);
+    expect(within(section()).getByText("Couldn't load: manifest.json: missing id")).toBeInTheDocument();
+    expect(within(section()).getByText("Needs Rooms 99.0.0 or later")).toBeInTheDocument();
+    expect(within(section()).queryByRole("switch")).toBeNull();
+  });
+
+  it("says why when turning a plugin off fails, and leaves it on", async () => {
+    const h = await openSettings([echoTab()]);
+    h.client.setPluginEnabled.mockRejectedValueOnce(new Error("boom"));
+    await act(async () => {
+      fireEvent.click(within(section()).getByRole("switch", { name: "Echo" }));
+    });
+    expect(within(section()).getByRole("alert")).toHaveTextContent("Couldn't turn it off");
+    expect(within(section()).getByRole("switch", { name: "Echo" })).toBeChecked();
   });
 });

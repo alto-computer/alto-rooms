@@ -74,28 +74,22 @@ test("screens for visual review", async ({ page, daemon }) => {
 
   // Empty room.
   await rooms.getByRole("button", { name: "Research" }).click();
-  await expect(page.getByText("No docs yet")).toBeVisible();
+  await expect(page.getByText("No artifacts yet")).toBeVisible();
   await settle(page);
   await shot(page, "empty-room");
 
   // Journal: dream, a room artifact, two notes.
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  await expect(page.getByRole("region", { name: "From agents" }).getByTestId("artifact-card")).toHaveCount(8);
-  await expect(page.getByRole("region", { name: "From me" }).getByRole("button", { name: "Review" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact")).toHaveCount(8);
+  await expect(page.getByRole("list", { name: "Your day" }).getByRole("button", { name: "Review", exact: true })).toBeVisible();
   await settle(page);
   await shot(page, "journal");
 
   // Note tab.
-  await page.getByRole("region", { name: "From me" }).getByRole("button", { name: "Plan" }).click();
+  await page.getByRole("list", { name: "Your day" }).getByRole("button", { name: "Plan" }).click();
   await expect(page.getByRole("textbox", { name: "Note" })).toHaveValue(/weekly benchmark report/);
   await settle(page);
   await shot(page, "note-tab");
-
-  // New tab.
-  await page.getByRole("button", { name: "New tab", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Since your last visit" })).toBeVisible();
-  await settle(page);
-  await shot(page, "new-tab");
 
   // Collapsed sidebar (on a room, so the strip shows at full width).
   await rooms.getByRole("button", { name: "Benchmarks" }).click();
@@ -109,7 +103,7 @@ test("screens for visual review", async ({ page, daemon }) => {
 
   // QuickFind open, with a query that hits a room and documents.
   await page.keyboard.press(`${MOD}+k`);
-  const input = page.getByPlaceholder("Find a room or doc");
+  const input = page.getByPlaceholder("Find a room or artifact");
   await expect(input).toBeVisible();
   await input.fill("report");
   await expect(page.getByRole("option", { name: /Weekly report/ })).toBeVisible();

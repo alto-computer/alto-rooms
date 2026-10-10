@@ -393,3 +393,96 @@ fn idle_archives_are_compressed_and_still_searchable() {
     let hits = search(&c.conn, &Query { text: "needle".into(), limit: 5, ..Default::default() }).unwrap();
     assert!(hits[0].excerpt.contains("compressed needle"), "{}", hits[0].excerpt);
 }
+
+fn cc_msg(role: &str, text: &str, sid: &str, ts: &str) -> Value {
+    json!({"type": role, "timestamp": ts, "cwd": "/work/proj", "sessionId": sid, "uuid": format!("u-{sid}-{ts}-{role}"),
+           "message": {"role": role, "content": text}})
+}
+
+fn cx_msg(role: &str, text: &str, ts: &str) -> Value {
+    let kind = if role == "user" { "input_text" } else { "output_text" };
+    json!({"timestamp": ts, "type": "response_item", "payload": {"type": "message", "role": role, "content": [{"type": kind, "text": text}]}})
+}
+
+#[test]
+fn conversations_by_day_span_midnight_and_skip_heartbeats() {
+    use rooms_collect::conversations::{get, on_day};
+    let e = Env::new();
+    let w = e.html("proj/report.html");
+    let mut write = cc("Write", &w, 0.0);
+    write["sessionId"] = json!("s-late");
+    write["timestamp"] = json!("2026-10-01T23:55:00Z");
+    e.claude_log("late.jsonl", &[
+        cc_msg("user", "<command-message>go</command-message> <command-name>/go</command-name> <command-args>plan the launch</command-args>", "s-late", "2026-10-01T23:50:00Z"),
+        cc_msg("assistant", "Drafting it.", "s-late", "2026-10-01T23:51:00Z"),
+        write,
+        cc_msg("user", "keep going", "s-late", "2026-10-02T00:10:00Z"),
+        cc_msg("assistant", "Done: report.html", "s-late", "2026-10-02T00:12:00Z"),
+    ]);
+    e.codex_log("rollout-2026-10-02T00-00-00-hb.jsonl", &[
+        json!({"timestamp": "2026-10-02T03:00:00Z", "type": "session_meta", "payload": {"id": "s-hb", "cwd": "/work/auto"}}),
+        cx_msg("user", "<heartbeat> <automation_id>pdf</automation_id> </heartbeat>", "2026-10-02T03:00:00Z"),
+        cx_msg("assistant", "checked", "2026-10-02T03:01:00Z"),
+    ]);
+    let c = { let mut c = e.collector(); c.drain().unwrap(); c };
+    let keys = |v: &[(String, rooms_protocol::Conversation)]| v.iter().map(|(at, c)| (at.clone(), c.id.key())).collect::<Vec<_>>();
+    let day1 = on_day(&c.conn, "2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z").unwrap();
+    let day2 = on_day(&c.conn, "2026-10-02T00:00:00Z", "2026-10-03T00:00:00Z").unwrap();
+    assert_eq!(keys(&day1), [("2026-10-01T23:50:00Z".to_string(), "claude-code:s-late".to_string())]);
+    assert_eq!(keys(&day2), [("2026-10-02T00:10:00Z".to_string(), "claude-code:s-late".to_string())], "the heartbeat run is left out");
+    let conv = &day2[0].1;
+    assert_eq!(conv.title.as_deref(), Some("plan the launch"));
+    assert_eq!((conv.started_at.as_str(), conv.ended_at.as_str(), conv.messages), ("2026-10-01T23:50:00Z", "2026-10-02T00:12:00Z", 4));
+    assert_eq!((conv.cwd.as_deref(), conv.last_reply.as_deref()), (Some("/work/proj"), Some("Done: report.html")));
+    assert_eq!(conv.artifacts_written, [w.to_string_lossy().into_owned()]);
+    let hb = rooms_protocol::ConversationId::parse_key("codex:s-hb").unwrap();
+    assert_eq!(get(&c.conn, &hb).unwrap().unwrap().messages, 2, "get still finds a heartbeat run");
+    assert_eq!(get(&c.conn, &rooms_protocol::ConversationId::parse_key("codex:nope").unwrap()).unwrap(), None);
+}
+
+#[test]
+fn titles_prefer_the_users_then_the_agents_then_the_first_prompt() {
+    use rooms_collect::conversations::title;
+    let e = Env::new();
+    let ts = "2026-10-02T01:00:00Z";
+    e.claude_log("t.jsonl", &[
+        json!({"type": "custom-title", "customTitle": "My name for it", "sessionId": "s-t"}),
+        cc_msg("user", "first prompt", "s-t", ts),
+        json!({"type": "ai-title", "aiTitle": "AI name", "sessionId": "s-t"}),
+    ]);
+    e.claude_log("a.jsonl", &[cc_msg("user", "first prompt", "s-a", ts), json!({"type": "ai-title", "aiTitle": "AI name", "sessionId": "s-a"})]);
+    e.claude_log("p.jsonl", &[cc_msg("user", "<task-notification> <task-id>x</task-id> </task-notification>", "s-p", ts), cc_msg("user", "the real ask", "s-p", "2026-10-02T01:00:01Z")]);
+    e.codex_log("rollout-2026-10-02T00-00-00-t.jsonl", &[
+        json!({"timestamp": ts, "type": "session_meta", "payload": {"id": "s-cx", "cwd": "/w"}}),
+        cx_msg("user", "codex prompt", ts),
+    ]);
+    Env::write_lines(&e.root.join(".codex/session_index.jsonl"), &[
+        json!({"id": "s-cx", "thread_name": "Old thread name", "updated_at": ts}),
+        json!({"id": "s-cx", "thread_name": "Renamed thread", "updated_at": ts}),
+    ], false);
+    let c = { let mut c = e.collector(); c.drain().unwrap(); c };
+    let t = |agent: &str, s: &str| title(&c.conn, agent, s).unwrap();
+    assert_eq!(t("claude-code", "s-t").as_deref(), Some("My name for it"));
+    assert_eq!(t("claude-code", "s-a").as_deref(), Some("AI name"));
+    assert_eq!(t("claude-code", "s-p").as_deref(), Some("the real ask"));
+    assert_eq!(t("codex", "s-cx").as_deref(), Some("Renamed thread"));
+}
+
+#[test]
+fn titles_reach_logs_read_before_adapters_knew_them() {
+    let e = Env::new();
+    e.claude_log("t.jsonl", &[cc_msg("user", "first prompt", "s-t", "2026-10-02T01:00:00Z"), json!({"type": "ai-title", "aiTitle": "AI name", "sessionId": "s-t"})]);
+    {
+        let mut c = e.collector();
+        c.drain().unwrap();
+        // what a store filled by the older adapters holds
+        c.conn.execute("DELETE FROM events WHERE kind='session.seen' AND preview IS NOT NULL", []).unwrap();
+        c.conn.execute("UPDATE meta SET value='none' WHERE key='reindex'", []).unwrap();
+        assert_eq!(rooms_collect::conversations::title(&c.conn, "claude-code", "s-t").unwrap().as_deref(), Some("first prompt"));
+    }
+    let mut c = e.collector();
+    let events = count(&c, "SELECT count(*) FROM events");
+    c.drain().unwrap();
+    assert_eq!(count(&c, "SELECT count(*) FROM events"), events + 1, "only the title is new");
+    assert_eq!(rooms_collect::conversations::title(&c.conn, "claude-code", "s-t").unwrap().as_deref(), Some("AI name"));
+}

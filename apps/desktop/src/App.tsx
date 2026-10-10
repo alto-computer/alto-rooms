@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AlertCircle } from "lucide-react";
 import { createRoomsClient } from "@alto-rooms/protocol-ts";
+import { applyAppearance } from "@/lib/appearance";
 import { DAEMON_EXITED, installQuitFlushResponder, listenAll, onBeforeQuitFlush, onQuitFlushAsync } from "@/lib/appEvents";
 import { flushAllPlugins } from "@/plugins/host";
 import { CLOSE_CAP_MS as PLUGIN_CLOSE_CAP_MS } from "@/plugins/PluginFrame";
@@ -81,6 +82,10 @@ export default function App() {
     connect();
   }, [connect]);
 
+  // Before paint, on every screen (the connecting and error screens too).
+  const appearance = useSyncExternalStore(viewer.subscribe, () => viewer.getState().appearance);
+  useLayoutEffect(() => applyAppearance(appearance), [appearance]);
+
   useEffect(
     () => () => {
       current.current?.stores.rooms.stop();
@@ -131,15 +136,15 @@ export default function App() {
 
   if (phase === "error") {
     return (
-      <main className="flex h-screen flex-col items-center justify-center gap-4 bg-surface text-ink">
-        <div className="flex items-center gap-2 text-[#c13515]">
+      <main className="flex h-screen flex-col items-center justify-center gap-4 bg-desk text-ink">
+        <div className="flex items-center gap-2 text-error">
           <AlertCircle size={20} aria-hidden />
-          <p className="text-[17px] font-medium">Couldn't connect to Rooms</p>
+          <p className="text-heading font-medium">Couldn't connect to Rooms</p>
         </div>
         <button
           type="button"
           onClick={connect}
-          className="rounded-lg bg-primary px-4 py-2 text-[14px] font-medium text-primary-foreground hover:bg-[var(--thread-deeper)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+          className="rounded-lg bg-primary px-4 py-2 text-body font-medium text-primary-foreground hover:bg-thread-deeper focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
         >
           Try again
         </button>
@@ -148,7 +153,7 @@ export default function App() {
   }
 
   if (phase === "pending" || !stores) {
-    return <main className="h-screen bg-surface" aria-busy="true" />;
+    return <main className="h-screen bg-desk" aria-busy="true" />;
   }
 
   return (

@@ -36,7 +36,7 @@ afterEach(cleanup);
 async function openMenu(doc = artifact("r1", "sub/report.html")) {
   await renderWithStores(
     <>
-      <ToolbarGroup label="Document actions">
+      <ToolbarGroup label="Artifact actions">
         <ShareMenu artifact={doc} />
       </ToolbarGroup>
       <Toaster />
@@ -58,6 +58,29 @@ describe("ShareMenu", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("/Users/me/project/report.html"));
     expect(native.invoke).toHaveBeenCalledWith("doc_original", { link: "/h/rooms/r1/sub/report.html" });
     expect(await screen.findByText("Copied file path")).toBeInTheDocument();
+  });
+
+  it("starts the clipboard write inside the click, before the app has answered, so WebKit allows it", async () => {
+    class FakeClipboardItem {
+      constructor(public data: Record<string, Promise<Blob>>) {}
+    }
+    (globalThis as { ClipboardItem?: unknown }).ClipboardItem = FakeClipboardItem;
+    const write = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { write }, configurable: true });
+    let answer!: (path: string) => void;
+    native.invoke.mockImplementation(() => new Promise<string>((res) => (answer = res)));
+    try {
+      await openMenu();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Copy file path" }));
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(native.invoke).toHaveBeenCalledWith("doc_original", { link: "/h/rooms/r1/sub/report.html" });
+      answer("/Users/me/project/report.html");
+      const [item] = (write.mock.calls[0] as unknown as [FakeClipboardItem[]])[0];
+      expect(await (await item.data["text/plain"]).text()).toBe("/Users/me/project/report.html");
+      expect(await screen.findByText("Copied file path")).toBeInTheDocument();
+    } finally {
+      delete (globalThis as { ClipboardItem?: unknown }).ClipboardItem;
+    }
   });
 
   it("reveals and opens the doc through its room link", async () => {

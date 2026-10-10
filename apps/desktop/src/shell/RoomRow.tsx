@@ -3,19 +3,38 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { Room } from "@alto-rooms/protocol-ts";
 import { Folder } from "lucide-react";
+import { RoomDot } from "@/components/RoomDot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useClient, useViewerStore } from "@/data/hooks";
-import { carriesArtifact, draggingFromRoom, endArtifactDrag, readArtifactPayload, type ArtifactDragPayload } from "@/lib/drag";
+import {
+  carriesArtifact,
+  carriesConversation,
+  draggingFromRoom,
+  endDrag,
+  readArtifactPayload,
+  readConversationPayload,
+  type ArtifactDragPayload,
+  type ConversationDragPayload,
+} from "@/lib/drag";
 import { wantsNewTab } from "@/lib/nav";
+import { roomTint } from "@/lib/roomTint";
 import { cn } from "@/lib/utils";
 import { EditableTitle } from "@/views/EditableTitle";
-import { ICON, ITEM, ITEM_INTERACTIVE } from "./sidebarItem";
+import { RoomMenu } from "./RoomMenu";
+import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE } from "./sidebarItem";
 
-/** Drop handlers for a room row that accepts artifacts; `over` drives the highlight. */
-function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomId: string) => void) | undefined) {
+/** What a room row does with what is dropped on it; a kind it has no handler for is refused. */
+export type RoomDrops = {
+  artifact?: (p: ArtifactDragPayload, toRoomId: string) => void;
+  conversation?: (p: ConversationDragPayload, toRoomId: string) => void;
+};
+
+/** Drop handlers for a room row that accepts artifacts and conversations; `over` drives the highlight. */
+function useDropTarget(roomId: string, drops: RoomDrops) {
   const [over, setOver] = useState(false);
-  if (!onMove) return { over: false, handlers: {} };
-  const accepts = (e: DragEvent) => carriesArtifact(e.dataTransfer) && draggingFromRoom() !== roomId;
+  if (!drops.artifact && !drops.conversation) return { over: false, handlers: {} };
+  const accepts = (e: DragEvent) =>
+    ((drops.artifact && carriesArtifact(e.dataTransfer)) || (drops.conversation && carriesConversation(e.dataTransfer))) && draggingFromRoom() !== roomId;
   const enter = (e: DragEvent) => {
     if (!accepts(e)) return;
     e.preventDefault();
@@ -33,45 +52,50 @@ function useDropTarget(roomId: string, onMove: ((p: ArtifactDragPayload, toRoomI
       },
       onDrop: (e: DragEvent) => {
         setOver(false);
-        const p = readArtifactPayload(e.dataTransfer);
-        if (!p) return;
+        const artifact = drops.artifact && readArtifactPayload(e.dataTransfer);
+        const conversation = !artifact && drops.conversation ? readConversationPayload(e.dataTransfer) : null;
+        if (!artifact && !conversation) return;
         e.preventDefault();
-        endArtifactDrag();
-        if (p.roomId === roomId) return;
-        onMove(p, roomId);
+        endDrag();
+        if (artifact && artifact.roomId !== roomId) drops.artifact?.(artifact, roomId);
+        if (conversation && conversation.roomId !== roomId) drops.conversation?.(conversation, roomId);
       },
     },
   };
 }
 
-/** A room in the sidebar list: opens on click, renames on double click, sorts by drag, and takes dropped docs. */
+/** A room in the sidebar list: opens on click, renames on double click, sorts by drag, takes dropped artifacts and conversations, and has a menu on right-click. */
 export function RoomRow({
   room,
   active,
+  unread,
   readOnly,
   sortable,
-  onMove,
+  drops,
 }: {
   room: Room;
   active: boolean;
+  /** Something arrived since the user last left the room: the name shows semibold. */
+  unread: boolean;
   readOnly: boolean;
   /** The row can be dragged up and down to reorder the rooms. */
   sortable: boolean;
-  /** Set when the row is a drop target for artifacts. */
-  onMove?: (p: ArtifactDragPayload, toRoomId: string) => void;
+  /** What the row takes when dropped on it (nothing when empty). */
+  drops: RoomDrops;
 }) {
   const viewer = useViewerStore();
   const client = useClient();
   const [editing, setEditing] = useState(false);
   const unavailable = room.status === "unavailable";
-  const drop = useDropTarget(room.id, onMove);
+  const drop = useDropTarget(room.id, drops);
   const sort = useSortable({ id: room.id, disabled: !sortable });
   const style = { transform: CSS.Translate.toString(sort.transform), transition: sort.transition };
+  const mark = room.color ? <RoomDot color={room.color} /> : null;
 
   if (editing && !readOnly) {
     return (
-      <li className="flex min-h-9 items-center gap-2.5 rounded-lg bg-white px-2.5 py-1.5 text-[15px] shadow-[0_0_0_2px_#222]">
-        <Folder {...ICON} className="shrink-0" />
+      <li className={cn(ITEM, "h-auto min-h-7 bg-sheet py-1 shadow-sheet ring-[1.5px] ring-ink/40 ring-inset")}>
+        {mark ?? <Folder {...ICON} className="shrink-0 text-ink-2" />}
         <div className="min-w-0 flex-1">
           <EditableTitle
             value={room.name}
@@ -82,7 +106,7 @@ export function RoomRow({
             }}
             onSaved={() => setEditing(false)}
             onCancel={() => setEditing(false)}
-            className="w-full text-[15px] text-ink"
+            className="w-full text-body text-ink"
             inputClassName="bg-transparent p-0"
           />
         </div>
@@ -99,32 +123,55 @@ export function RoomRow({
       onDoubleClick={readOnly ? undefined : () => setEditing(true)}
       {...(sortable ? { ...sort.attributes, ...sort.listeners } : {})}
       {...drop.handlers}
+      {...roomTint(room.color)}
       className={cn(
         ITEM,
         ITEM_INTERACTIVE,
-        active && "bg-[#ebebeb] hover:bg-[#ebebeb]",
-        drop.over && "bg-[#ebebeb] outline-1 outline-ink outline-solid hover:bg-[#ebebeb]",
-        sort.isDragging && "cursor-grabbing bg-white shadow-float hover:bg-white",
+        active && ITEM_CURRENT,
+        // The row whose menu is open (Radix sets data-state on the context menu trigger).
+        "data-[state=open]:ring-[1.5px] data-[state=open]:ring-ink/40 data-[state=open]:ring-inset",
+        drop.over &&
+          (room.color
+            ? "bg-[color-mix(in_oklch,var(--room-dot)_26%,transparent)] outline-[1.5px] -outline-offset-[1.5px] outline-room-dot outline-solid hover:bg-[color-mix(in_oklch,var(--room-dot)_26%,transparent)]"
+            : "bg-surface-strong outline-1 -outline-offset-1 outline-ink outline-solid hover:bg-surface-strong"),
+        // While carried the row is the gap where it would land; the lifted copy follows the pointer (RoomList).
+        sort.isDragging && "invisible",
       )}
     >
-      <Folder {...ICON} className={cn("shrink-0", active ? "fill-[#fff0f3]" : "fill-none")} />
-      {/* The native title shows a name the 232px sidebar cuts off (unavailable rows have their own tooltip). */}
-      <span title={unavailable ? undefined : room.name} className={cn("truncate", unavailable && "opacity-50")}>
+      {mark ?? <Folder {...ICON} className={cn("shrink-0", active ? "text-ink-2" : "text-ink-3")} />}
+      {/* The native title shows a name the sidebar cuts off (unavailable rows have their own tooltip). */}
+      <span title={unavailable ? undefined : room.name} className={cn("truncate", unread && "font-semibold", unavailable && "opacity-50")}>
         {room.name}
       </span>
     </button>
   );
 
   return (
-    <li ref={sort.setNodeRef} style={style} className={cn("relative", sort.isDragging && "z-10")}>
+    // Above the lifted copy (z 999), so the thread line shows over it.
+    <li ref={sort.setNodeRef} style={style} data-drop={sort.isDragging || undefined} className={cn("relative", sort.isDragging && "z-[1000]")}>
+      {sort.isDragging ? <ThreadLine /> : null}
       {unavailable ? (
         <Tooltip>
-          <TooltipTrigger asChild>{row}</TooltipTrigger>
+          <RoomMenu room={room} readOnly={readOnly} onRename={() => setEditing(true)}>
+            <TooltipTrigger asChild>{row}</TooltipTrigger>
+          </RoomMenu>
           <TooltipContent side="right">Folder not found</TooltipContent>
         </Tooltip>
       ) : (
-        row
+        <RoomMenu room={room} readOnly={readOnly} onRename={() => setEditing(true)}>
+          {row}
+        </RoomMenu>
       )}
     </li>
+  );
+}
+
+/** The drop indicator: a thin ink thread along the top of the gap, with a small knot where it starts. */
+function ThreadLine() {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute -top-[1.25px] right-1 left-2.5 h-[1.5px] rounded-full bg-ink before:absolute before:top-1/2 before:-left-1 before:size-[7px] before:-translate-y-1/2 before:rounded-full before:bg-desk before:shadow-[inset_0_0_0_1.5px_var(--ink)]"
+    />
   );
 }

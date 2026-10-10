@@ -9,6 +9,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { useClient, useRoomsStore, useViewerStore } from "@/data/hooks";
 import { BridgeError, handleBridgeCall } from "./bridge";
 import { registerFrame } from "./host";
+import { pluginDataBus } from "./pluginDataBus";
 import { frameAttrs } from "./permissions";
 import type { HostPlugin } from "./pluginsStore";
 
@@ -117,7 +118,9 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
         { id, method: d.method, params: d.params },
         {
           client,
-          navigate: (t) => viewer.navigate(t),
+          changed: (path) => pluginDataBus.publish({ pluginId: latest.current.plugin.id, path, from: win }),
+          slot: latest.current.context.slot,
+          viewer,
           rooms: () => rooms.getState().rooms,
         },
       ).then(
@@ -136,13 +139,21 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
     return () => window.removeEventListener("message", onMessage);
   }, [client, viewer, rooms, post, sendContext]);
 
-  // Tell the frame when a declared tool of its own plugin appended to its data.
+  // Tell the frame when its plugin's data changed: a declared tool appended to it, or another
+  // frame of the same plugin (a tab, a panel, a document's content script) wrote it.
   useEffect(
     () =>
       rooms.onSignal((_type, e) => {
         if (e.type === "plugin.data.changed" && e.pluginId === plugin.id) post({ type: "dataChanged", path: e.path });
       }),
     [rooms, plugin.id, post],
+  );
+  useEffect(
+    () =>
+      pluginDataBus.subscribe((c) => {
+        if (c.pluginId === plugin.id && c.from !== frameRef.current?.contentWindow) post({ type: "dataChanged", path: c.path });
+      }),
+    [plugin.id, post],
   );
 
   useEffect(() => {
@@ -199,7 +210,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
 
   const attrs = frameAttrs({ ...plugin, permissions: loadedAs.permissions });
   return (
-    <div className="relative min-h-0 flex-1 bg-white">
+    <div className="relative min-h-0 flex-1 bg-pane">
       <iframe
         key={`${shownRev}:${reload}`}
         ref={frameRef}
@@ -210,7 +221,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
         className="absolute inset-0 size-full border-0 bg-white"
       />
       {stalled ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/95 text-[15px] text-ink-2">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-pane/95 text-lead text-ink-2">
           <p>This plugin stopped responding</p>
           <button
             type="button"
@@ -219,7 +230,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
               setStalled(false);
               setReload((n) => n + 1);
             }}
-            className="rounded-lg border border-[#ddd] bg-white px-3 py-1.5 text-[14px] text-ink hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-ink"
+            className="rounded-lg border border-hairline bg-sheet px-3 py-1.5 text-body text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-ink"
           >
             Reload
           </button>

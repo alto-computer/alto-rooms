@@ -1,9 +1,10 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { ArrowDown } from "lucide-react";
 import type { AskTurn } from "@alto-rooms/protocol-ts";
-import { modelLabel } from "./askModel";
+import { askAction, SelectionBar } from "@/selection/SelectionBar";
+import { useTextSelection } from "@/selection/useTextSelection";
 import type { Live } from "./asksStore";
-import { SelectionAsk, useTextSelection } from "./SelectionAsk";
+import type { NoteTargetOf, TurnHeader } from "./askSubjects";
 import { PendingTurn, Turn } from "./Turn";
 import { ErrorText, TextButton } from "./ui";
 import type { Pending } from "./useComposer";
@@ -12,22 +13,10 @@ import { useStickToBottom } from "./useStickToBottom";
 /** Turns further back than this skip layout and paint while off screen: a long thread stays quick. */
 const RECENT_TURNS = 4;
 
-const HOW: Record<AskTurn["mode"], string> = {
-  resume: "continuing the thread that made it",
-  continue: "continuing this conversation",
-  new: "New conversation",
-};
-
-/** Who answers and how: the agent, its model, and which conversation it continues, if any. */
-function header(t: AskTurn): { text: string; title?: string } {
-  const text = [t.agent, t.model ? modelLabel(t.model) : null, HOW[t.mode]].filter(Boolean).join(" · ");
-  return t.mode === "new" ? { text, title: "Couldn't find the thread that made this doc" } : { text };
-}
-
 /** Said under the last question when earlier answers no longer fit in what goes along with it. */
 function LeftOutNote({ count, onCompact }: { count: number; onCompact: () => void }) {
   return (
-    <p className="mt-3 flex flex-wrap items-center gap-x-1 text-[12px] text-ink-2">
+    <p className="mt-3 flex flex-wrap items-center gap-x-1 text-small text-ink-2">
       {count === 1 ? "1 earlier answer wasn't" : `${count} earlier answers weren't`} sent along: the conversation got long.
       <TextButton onClick={onCompact}>Summarize it</TextButton>
     </p>
@@ -58,11 +47,14 @@ function useFollow(sheet: RefObject<HTMLDivElement | null>, turns: AskTurn[], li
 }
 
 /**
- * A doc's thread above the ask bar: its turns, a question on its way, and an "Ask" button over
- * text selected in an answer (it becomes a quote).
+ * A thread above the ask bar: its turns, a question on its way, and an "Ask" button over text
+ * selected in an answer (it becomes a quote).
  */
-export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
+export function ThreadSheet({ turns, header, noteTarget, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
   turns: AskTurn[];
+  header: (t: AskTurn) => TurnHeader;
+  /** Where "Save as note" files a finished answer; null shows no save button. Keep it stable: turns are memoized. */
+  noteTarget: NoteTargetOf | null;
   live: Record<string, Live>;
   loadError: boolean;
   pending: Pending | null;
@@ -81,8 +73,8 @@ export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompac
 
   return (
     <div ref={box} className="pointer-events-auto relative w-full max-w-[720px]">
-      <div ref={sheet} className="max-h-[50vh] overflow-y-auto rounded-[14px] border border-[#e3e3e3] bg-white px-4 py-3 text-[13.5px] shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
-        {head ? <div className="mb-2 text-[11.5px] text-ink-2" title={head.title}>{head.text}</div> : null}
+      <div ref={sheet} className="max-h-[50vh] overflow-y-auto rounded-xl border border-hairline bg-sheet px-4 py-3 text-body shadow-float">
+        {head ? <div className="mb-2 text-small text-ink-2" title={head.title}>{head.text}</div> : null}
         {loadError ? (
           <div>
             <ErrorText>Couldn't load the conversation</ErrorText>
@@ -91,7 +83,7 @@ export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompac
         ) : null}
         <div className="space-y-4">
           {turns.map((t, i) => (
-            <Turn key={t.id} t={t} live={live[t.id]} old={i < turns.length - RECENT_TURNS} onRetry={onRetry} />
+            <Turn key={t.id} t={t} live={live[t.id]} old={i < turns.length - RECENT_TURNS} noteTarget={noteTarget} onRetry={onRetry} />
           ))}
           {/* Until its turn shows up; a question that waits behind a running one shows in the queue instead. */}
           {pending && !turns.some((t) => t.status === "running") ? <PendingTurn pending={pending} /> : null}
@@ -103,19 +95,21 @@ export function ThreadSheet({ turns, live, loadError, pending, onRetry, onCompac
           type="button"
           aria-label="Scroll to the latest"
           onClick={toBottom}
-          className="absolute bottom-3 left-1/2 flex size-7 -translate-x-1/2 items-center justify-center rounded-full border border-[#e3e3e3] bg-white text-ink-2 shadow-sm hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+          className="absolute bottom-3 left-1/2 flex size-7 -translate-x-1/2 items-center justify-center rounded-full border border-hairline bg-sheet text-ink-2 shadow-sheet hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
         >
           <ArrowDown className="size-3.5" />
         </button>
       ) : null}
       {selection.picked ? (
-        <SelectionAsk
+        <SelectionBar
           rect={selection.picked.rect}
-          onAsk={() => {
-            onQuote(selection.picked!.text);
-            document.getSelection()?.removeAllRanges();
-            selection.dismiss();
-          }}
+          actions={[
+            askAction(() => {
+              onQuote(selection.picked!.text);
+              document.getSelection()?.removeAllRanges();
+              selection.dismiss();
+            }),
+          ]}
         />
       ) : null}
     </div>

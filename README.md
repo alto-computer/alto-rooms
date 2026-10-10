@@ -17,7 +17,7 @@ Agents like Claude Code and Codex write specs, reports, and reviews as HTML. The
 
 - **Room**: a topic. One folder in `~/rooms`, or an existing folder you link.
 - **Artifact**: one HTML file in a room. It can be a symlink to a file that lives elsewhere.
-- **Journal**: one page per day. It shows the artifacts created that day, next to your own notes.
+- **Journal**: one page per day. It shows the artifacts created that day, next to your own notes. Today's page is home: a new tab opens on it.
 
 ## How it works
 
@@ -95,7 +95,7 @@ aside = true
 | R4 | yes | nowhere yet: a vote for its repo; at 3 votes a room named after the repo is made and they move in |
 | R5 | | stays in `inbox` |
 
-To turn on R3 and R4, paste a [TypeSafe key](https://console.typesafe.ai/keys) into the panel above the inbox. The key is kept in the macOS Keychain; `TYPESAFE_API_KEY` in the app's environment wins over it. For each doc, Jev gets its title, its path inside the repo and its first 2,000 characters, plus each room's name and five recent titles.
+To turn on R3 and R4, paste a [TypeSafe key](https://console.typesafe.ai/keys) into **Settings › Auto-sort** (`⌘,`), which also shows the last run and undoes it. The key is kept in the macOS Keychain; `TYPESAFE_API_KEY` in the app's environment wins over it. For each doc, Jev gets its title, its path inside the repo and its first 2,000 characters, plus each room's name and five recent titles.
 
 ```sh
 rooms-sort log            # every decision with its rule and reason
@@ -128,15 +128,16 @@ Two come with the app, on by default:
 - [Goals](https://github.com/alto-computer/rooms-plugin-goals): long-, mid- and short-term goals and a TODO list, with documents linked to each.
 - [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw): sketch beside any document; export as PNG.
 
-Right-click a plugin in the sidebar to turn it off. To add another, copy its folder into `~/rooms/.rooms/plugins/`; Rooms asks before it runs. To write one, see [docs/plugins.md](docs/plugins.md).
+Open a plugin's tab from **Plugins** at the bottom of the sidebar. Turn plugins on or off, and see what each one may do, in **Settings › Plugins**. To add another, copy its folder into `~/rooms/.rooms/plugins/`; Rooms asks before it runs. To write one, see [docs/plugins.md](docs/plugins.md).
 
 ## Shortcuts
 
 | Key | Action |
 | --- | --- |
-| `⌘T` / `⌘W` | New tab / close tab |
+| `⌘T` / `⌘W` | New tab (today's Journal) / close tab |
 | `⌘K` | Find a room or document |
 | `⌘B` | Toggle the sidebar |
+| `⌘,` | Settings |
 | `⌘[` / `⌘]`, `⌘←` / `⌘→` | Back / forward |
 | `⌘`-click | Open in a new tab |
 

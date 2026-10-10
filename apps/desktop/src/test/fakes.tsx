@@ -1,4 +1,19 @@
-import type { Artifact, AskKind, AskScope, AskTarget, AskTurn, Info, JournalDay, PluginInfo, Room, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type {
+  Artifact,
+  AskKind,
+  AskMode,
+  AskScope,
+  AskTarget,
+  AskTurn,
+  Conversation,
+  ConversationId,
+  Info,
+  JournalDay,
+  PluginInfo,
+  Room,
+  RoomColor,
+  RoomsEvent,
+} from "@alto-rooms/protocol-ts";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { vi } from "vitest";
@@ -21,6 +36,20 @@ export const room = (id: string, name: string, extra: Partial<Room> = {}): Room 
   status: "ok",
   artifactCount: 0,
   updatedAt: null,
+  color: null,
+  ...extra,
+});
+
+export const conversation = (session: string, extra: Partial<Conversation> = {}): Conversation => ({
+  id: { agent: "claude-code", session },
+  title: `Conversation ${session}`,
+  cwd: "/h/code",
+  startedAt: "2026-10-05T01:00:00Z",
+  endedAt: "2026-10-05T02:00:00Z",
+  messages: 6,
+  lastReply: "Done.",
+  artifactsWritten: [],
+  roomId: null,
   ...extra,
 });
 
@@ -53,8 +82,12 @@ export function fakeClient(
     home?: string;
     /** Ask threads by file key (a doc scope). */
     asks?: Record<string, AskTurn[]>;
-    /** What `askTarget` answers (or throws), by file key; default: the doc's own agent with no models. */
+    /** What `askTarget` answers (or throws), by file key (or a conversation's scope key); default: the doc's own agent with no models. */
     askTargets?: Record<string, AskTarget | Error>;
+    /** Conversations roomsd knows, each in the room its `roomId` names. */
+    conversations?: Conversation[];
+    /** What listing a room's conversations throws, by room id. */
+    conversationErrors?: Record<string, Error>;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -67,6 +100,7 @@ export function fakeClient(
     plugins: opts.plugins ?? [],
     pluginData: opts.pluginData ?? {},
     asks: opts.asks ?? {},
+    conversations: opts.conversations ?? [],
   };
   const info: Info = {
     version: "0",
@@ -75,9 +109,21 @@ export function fakeClient(
     journalRoomId: "journal",
     filesOrigin: "http://files.test",
   };
-  // Like roomsd before F1-2: only a doc scope resolves, through the artifact holding its file.
-  const docOf = (scope: AskScope) =>
-    scope.kind === "doc" ? Object.values(state.artifacts).flat().find((a) => a.fileKey === scope.fileKey) : undefined;
+  /**
+   * Like roomsd: a doc goes to the agent that made it, a session to its own agent resumed, a room or
+   * day to the default agent in a new conversation.
+   */
+  const answerer = (scope: AskScope): { agent: string; mode: AskMode } => {
+    if (scope.kind === "conversation") {
+      const known = state.conversations.some((c) => c.id.agent === scope.agent && c.id.session === scope.session);
+      if (!known) throw new RoomsApiError(404, "Can't find this session", "not_found");
+      return { agent: scope.agent, mode: "resume" };
+    }
+    if (scope.kind !== "doc") return { agent: "claude-code", mode: "new" };
+    const a = Object.values(state.artifacts).flat().find((x) => x.fileKey === scope.fileKey);
+    if (!a) throw new RoomsApiError(404, "Can't find this artifact", "not_found");
+    return { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new" };
+  };
   const client = {
     info: async () => info,
     listPlugins: vi.fn(async () => state.plugins.map((p) => ({ ...p }))),
@@ -112,11 +158,11 @@ export function fakeClient(
       if (err) throw err;
       return { data: state.artifacts[roomId] ?? [], seq };
     },
-    journalDay: async (date: string) => {
+    journalDay: vi.fn(async (date: string) => {
       const err = opts.dayErrors?.[date];
       if (err) throw err;
-      return { data: { date, artifacts: [], notes: [], ...state.days[date] } as JournalDay, seq };
-    },
+      return { data: { date, artifacts: [], notes: [], conversations: [], ...state.days[date] } as JournalDay, seq };
+    }),
     // Like roomsd: the file is the name with exactly one trailing ".md" stripped, plus ".md".
     getNote: vi.fn(async (date: string, name: string): Promise<string> => {
       const v = state.notes[`${date}/${noteFile(name)}`];
@@ -129,6 +175,14 @@ export function fakeClient(
     renameRoom: vi.fn(async (id: string, name: string) => room(id, name)),
     saveNote: vi.fn(async (date: string, name: string, body: string = "") => {
       const file = noteFile(name);
+      state.notes[`${date}/${file}`] = body;
+      return { date, name: file, relPath: `${date}/${file}`, updatedAt: new Date().toISOString(), author: "me" as const };
+    }),
+    // Like roomsd's create-only PUT: 409 note_exists if any note folds to the name.
+    createNote: vi.fn(async (date: string, name: string, body: string) => {
+      const file = noteFile(name);
+      const key = `${date}/${file}`.toLowerCase();
+      if (Object.keys(state.notes).some((k) => k.toLowerCase() === key)) throw new RoomsApiError(409, "note exists", "note_exists");
       state.notes[`${date}/${file}`] = body;
       return { date, name: file, relPath: `${date}/${file}`, updatedAt: new Date().toISOString(), author: "me" as const };
     }),
@@ -150,13 +204,49 @@ export function fakeClient(
       if (day?.notes) day.notes = day.notes.map((n) => (n.name === noteFile(from) ? renamed : n));
       return renamed;
     }),
+    // Like roomsd: `to` counts the rooms other than the inbox and stays within the room's section (pinned first).
     moveRoom: vi.fn(async (id: string, to: number): Promise<string[]> => {
       const from = state.rooms.findIndex((r) => r.id === id);
       if (from < 0) throw new RoomsApiError(404, "room not found", "room_not_found");
       const [moved] = state.rooms.splice(from, 1);
       const others = state.rooms.flatMap((r, i) => (r.id === "inbox" ? [] : [i]));
-      state.rooms.splice(others[to] ?? state.rooms.length, 0, moved);
+      const pinned = others.filter((i) => state.rooms[i].color !== null).length;
+      const at = moved.color !== null ? Math.min(to, pinned) : Math.max(to, pinned);
+      state.rooms.splice(others[at] ?? state.rooms.length, 0, moved);
       return state.rooms.map((r) => r.id);
+    }),
+    // Like roomsd: pinning moves the room to the end of the pinned rooms, unpinning to the top of the others.
+    setRoomColor: vi.fn(async (id: string, color: RoomColor | null): Promise<Room> => {
+      if (id === "inbox") throw new RoomsApiError(400, "invalid input: the inbox can't be pinned", "invalid_input");
+      const from = state.rooms.findIndex((r) => r.id === id);
+      if (from < 0) throw new RoomsApiError(404, "room not found", "room_not_found");
+      const updated = { ...state.rooms[from], color };
+      if ((state.rooms[from].color !== null) === (color !== null)) {
+        state.rooms[from] = updated;
+        return updated;
+      }
+      state.rooms.splice(from, 1);
+      const others = state.rooms.flatMap((r, i) => (r.id === "inbox" ? [] : [i]));
+      const pinned = others.filter((i) => state.rooms[i].color !== null).length;
+      state.rooms.splice(others[pinned] ?? state.rooms.length, 0, updated);
+      return updated;
+    }),
+    getConversation: vi.fn(async (id: ConversationId) => {
+      const c = state.conversations.find((x) => x.id.agent === id.agent && x.id.session === id.session);
+      if (!c) throw new RoomsApiError(404, "not found", "not_found");
+      return { data: c, seq };
+    }),
+    listRoomConversations: vi.fn(async (roomId: string) => {
+      const err = opts.conversationErrors?.[roomId];
+      if (err) throw err;
+      return { data: state.conversations.filter((c) => c.roomId === roomId), seq };
+    }),
+    // Like roomsd, minus the conversation.moved event (tests emit it).
+    setConversationRoom: vi.fn(async (id: ConversationId, roomId: string | null): Promise<Conversation> => {
+      const i = state.conversations.findIndex((c) => c.id.agent === id.agent && c.id.session === id.session);
+      if (i < 0) throw new RoomsApiError(404, "not found", "not_found");
+      state.conversations[i] = { ...state.conversations[i], roomId };
+      return state.conversations[i];
     }),
     moveArtifact: vi.fn(async (roomId: string, artifactId: string, toRoomId: string): Promise<Artifact> => {
       const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);
@@ -164,13 +254,12 @@ export function fakeClient(
       return { ...a, roomId: toRoomId };
     }),
     startAsk: vi.fn(async (req: { scope: AskScope; question: string; model: string | null; images?: string[]; kind?: AskKind }): Promise<AskTurn> => {
-      const a = docOf(req.scope);
-      if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
+      const { agent, mode } = answerer(req.scope);
       const kind = req.kind ?? "question";
       const question = kind === "clear" ? "/new" : kind === "compact" ? "/compact" : req.question;
       return {
-        id: `ask-${question}`, scope: req.scope, question, answer: "", agent: a.source.agent ?? "claude-code",
-        model: req.model, mode: a.source.session ? "resume" : "new", status: kind === "clear" ? "done" : "running", error: null,
+        id: `ask-${question}`, scope: req.scope, question, answer: "", agent,
+        model: req.model, mode, status: kind === "clear" ? "done" : "running", error: null,
         startedAt: "2026-10-06T10:00:00+09:00", endedAt: kind === "clear" ? "2026-10-06T10:00:00+09:00" : null,
         images: kind === "question" ? (req.images ?? []) : [], kind, leftOut: 0, session: null,
       };
@@ -178,16 +267,14 @@ export function fakeClient(
     uploadAskImage: vi.fn(async (image: Blob) => ({ id: `img-${(image as File).name ?? "blob"}` })),
     askImageUrl: (i: Info, id: string) => `${i.filesOrigin}/_asks/images/${id}`,
     askTarget: vi.fn(async (scope: AskScope): Promise<AskTarget> => {
-      const a = docOf(scope);
-      if (!a) throw new RoomsApiError(404, "Can't find this doc", "not_found");
-      const t = opts.askTargets?.[a.fileKey];
+      const t = opts.askTargets?.[scope.kind === "doc" ? scope.fileKey : scopeKey(scope)];
       if (t instanceof Error) throw t;
-      return t ?? { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new", models: [] };
+      return t ?? { ...answerer(scope), models: [], scoped: scope.kind === "room" || scope.kind === "day" };
     }),
     askThread: vi.fn(async (scope: AskScope) => (scope.kind === "doc" ? state.asks[scope.fileKey] : state.asks[scopeKey(scope)]) ?? []),
     cancelAsk: vi.fn(async () => {}),
     // Like the real client minus encoding, and unversioned so tests can match plain paths.
-    fileUrl: (i: Info, a: Artifact) => `${i.filesOrigin}/${a.roomId}/${a.relPath}`,
+    fileUrl: (i: Info, a: Artifact, doc?: { contentKey: string }) => `${i.filesOrigin}/${a.roomId}/${a.relPath}${doc ? `?doc=1&cs=${doc.contentKey}` : ""}`,
     subscribe: (cb: (e: RoomsEvent) => void) => {
       onEvent = cb;
       return () => {};

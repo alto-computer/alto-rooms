@@ -3,15 +3,28 @@
 //! Note IO runs without `Inner`, under `notes_lock` (lock order: notes_lock → Inner); `Inner` is
 //! taken only to emit.
 
+use crate::asks::prompt::{ContextEntry, SessionEntry};
 use crate::core::RoomsCore;
 use crate::error::CoreError;
 use crate::lock::lock;
 use crate::rules::{classify_path, slug_key, validate_iso_date, validate_note_name, PathClass};
 use rooms_protocol::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 const MAX_NOTE_BYTES: usize = 1_048_576;
+
+/// `09:10–11:40` in local time; an end on a day other than `day` carries its date.
+fn local_span(day: &str, from: &str, to: &str) -> String {
+    let at = |t: &str| match chrono::DateTime::parse_from_rfc3339(t) {
+        Ok(t) => {
+            let t = t.with_timezone(&chrono::Local);
+            if t.format("%Y-%m-%d").to_string() == day { t.format("%H:%M").to_string() } else { t.format("%Y-%m-%d %H:%M").to_string() }
+        }
+        Err(_) => t.to_string(),
+    };
+    format!("{}–{}", at(from), at(to))
+}
 
 impl RoomsCore {
     pub fn journal_day(&self, date: &IsoDate) -> Result<JournalDay, CoreError> {
@@ -35,14 +48,71 @@ impl RoomsCore {
             }
         }
         notes.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(JournalDay { date: date.clone(), artifacts, notes })
+        Ok(JournalDay { date: date.clone(), artifacts, notes, conversations: self.day_conversations(date) })
     }
 
+    /// What a day ask lists: every file `journal_day` shows, in its order, as realpaths, and its
+    /// sessions newest first. Each item kind maps here and nowhere else, so a new `JournalDay` field
+    /// stops compiling until it does.
+    pub(crate) fn day_context(&self, day: &IsoDate) -> Result<(Vec<ContextEntry>, Vec<SessionEntry>), CoreError> {
+        let JournalDay { date, artifacts, notes, conversations } = self.journal_day(day)?;
+        let names: HashMap<RoomId, String> = lock(&self.inner).state.rooms.iter().map(|r| (r.id.clone(), r.name.clone())).collect();
+        let label = |a: &Artifact| match a.room_id.as_str() {
+            JOURNAL_ROOM_ID if Path::new(&a.rel_path).file_name().is_some_and(|n| n == "dream.html") => "Review".to_string(),
+            JOURNAL_ROOM_ID => "Journal".to_string(),
+            id => names.get(id).cloned().unwrap_or_else(|| id.to_string()),
+        };
+        let artifacts = artifacts.into_iter().rev().filter_map(|a| {
+            let path = self.resolve_file(&a.room_id, &a.rel_path).ok()?;
+            Some(ContextEntry { label: label(&a), title: a.title, path, day: date.clone() })
+        });
+        let notes = notes.into_iter().filter_map(|n| {
+            let path = std::fs::canonicalize(self.home.join("journal").join(&n.rel_path)).ok()?;
+            Some(ContextEntry { label: "Note".into(), title: n.name, path, day: date.clone() })
+        });
+        // A session is named by what collect.db summarized, never by its log: the listing's paths
+        // are the files the agent may read, and a session's log is not one of them.
+        let sessions = conversations.into_iter().rev().map(|JournalConversation { conversation: c, .. }| SessionEntry {
+            title: c.title.clone().or_else(|| c.last_reply.clone()).unwrap_or_else(|| "Untitled session".into()),
+            agent: c.id.agent,
+            span: local_span(&date, &c.started_at, &c.ended_at),
+            room: c.room_id.as_ref().map(|id| names.get(id).cloned().unwrap_or_else(|| id.to_string())),
+            last_reply: c.last_reply,
+        });
+        Ok((artifacts.chain(notes).collect(), sessions.collect()))
+    }
+
+    /// Writes `journal/<date>/<name>.md`, replacing what is there (editing a note).
     pub fn save_note(&self, date: &IsoDate, name: &str, body: &str) -> Result<Note, CoreError> {
+        self.write_note(date, name, body, |tmp, path| Ok(std::fs::rename(tmp, path)?))
+    }
+
+    /// Writes a new `journal/<date>/<name>.md`, or `NoteExists` if any note is there already: the
+    /// name itself (the hard link fails atomically, whoever wrote it), or one that folds to it
+    /// case-insensitively, as `rename_note` refuses.
+    pub fn create_note(&self, date: &IsoDate, name: &str, body: &str) -> Result<Note, CoreError> {
+        self.write_note(date, name, body, |tmp, path| {
+            let key = slug_key(&path.file_name().unwrap_or_default().to_string_lossy());
+            let dir = path.parent().ok_or(CoreError::NotFound)?;
+            // The scan is race-free only against in-process callers, which `notes_lock` serializes.
+            // A writer outside roomsd can land a file between the scan and the link; the hard link
+            // still refuses an exact-name clash then. The race test proves the lock, not the link.
+            let clash = std::fs::read_dir(dir)?.flatten().any(|e| slug_key(&e.file_name().to_string_lossy()) == key);
+            if clash { return Err(CoreError::NoteExists); }
+            std::fs::hard_link(tmp, path).map_err(|e| match e.kind() {
+                std::io::ErrorKind::AlreadyExists => CoreError::NoteExists,
+                _ => e.into(),
+            })
+        })
+    }
+
+    /// Writes `body` to a temp file beside the note, then `commit`s it to the note's path. The temp
+    /// file is gone afterwards either way (moved by a rename, unlinked after a hard link).
+    fn write_note(&self, date: &IsoDate, name: &str, body: &str, commit: impl FnOnce(&Path, &Path) -> Result<(), CoreError>) -> Result<Note, CoreError> {
         validate_iso_date(date)?;
         let name = validate_note_name(name)?;
         if body.len() > MAX_NOTE_BYTES { return Err(CoreError::InvalidInput("note too large".into())); }
-        // `notes_lock` is held across the write, the rename and the emit so NoteSaved order
+        // `notes_lock` is held across the write, the commit and the emit so NoteSaved order
         // equals file order.
         let _notes = lock(&self.notes_lock);
         let dir = self.home.join("journal").join(date);
@@ -50,7 +120,9 @@ impl RoomsCore {
         let path = dir.join(&name);
         let tmp = dir.join(format!(".{name}.{}.tmp", nanoid::nanoid!(8)));
         std::fs::write(&tmp, body)?;
-        std::fs::rename(&tmp, &path)?;
+        let committed = commit(&tmp, &path);
+        let _ = std::fs::remove_file(&tmp);
+        committed?;
         let (_, updated) = crate::meta::file_times(&path);
         let note = Note { date: date.clone(), name: name.clone(), rel_path: format!("{date}/{name}"), updated_at: updated, author: Author::Me };
         let mut inner = lock(&self.inner);
@@ -105,5 +177,44 @@ impl RoomsCore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(CoreError::NotFound),
             Err(e) => Err(CoreError::Internal(e.to_string())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rules::local_day;
+
+    /// Today at `h` o'clock, local time, as a `rooms:created` meta tag.
+    fn created_at(h: u32) -> String {
+        let t = chrono::Local::now().date_naive().and_hms_opt(h, 0, 0).unwrap().and_local_timezone(chrono::Local).unwrap();
+        format!(r#"<meta name="rooms:created" content="{}">"#, t.to_rfc3339())
+    }
+
+    #[test]
+    fn day_context_maps_every_journal_day_item_newest_first() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let day = local_day(&chrono::Local::now().to_rfc3339()).unwrap();
+        let room = core.create_room("Research").unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let orig = std::fs::canonicalize(outside.path()).unwrap().join("orig.html");
+        std::fs::write(&orig, format!("<title>Room doc</title>{}", created_at(3))).unwrap();
+        std::os::unix::fs::symlink(&orig, core.room_root(&room.id).unwrap().0.join("a.html")).unwrap();
+        let jdir = d.path().join("journal").join(&day);
+        std::fs::create_dir_all(&jdir).unwrap();
+        std::fs::write(jdir.join("dream.html"), format!("<title>Dream</title>{}", created_at(1))).unwrap();
+        std::fs::write(jdir.join("other.html"), format!("<title>Other</title>{}", created_at(2))).unwrap();
+        core.backfill_all().unwrap();
+        core.save_note(&day, "회고.md", "x").unwrap();
+
+        let (entries, sessions) = core.day_context(&day).unwrap();
+        assert!(sessions.is_empty(), "no collect.db, no sessions");
+        let JournalDay { artifacts, notes, .. } = core.journal_day(&day).unwrap();
+        assert_eq!(entries.len(), artifacts.len() + notes.len());
+        let got: Vec<(&str, &str)> = entries.iter().map(|e| (e.label.as_str(), e.title.as_str())).collect();
+        assert_eq!(got, vec![("Research", "Room doc"), ("Journal", "Other"), ("Review", "Dream"), ("Note", "회고.md")], "artifacts newest first, then notes");
+        assert!(entries.iter().all(|e| e.day == day && e.path == std::fs::canonicalize(&e.path).unwrap()), "{entries:?}");
+        assert_eq!(entries[0].path, orig, "a linked doc is listed by its original's path");
     }
 }

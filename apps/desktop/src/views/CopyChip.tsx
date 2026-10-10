@@ -40,12 +40,12 @@ export function useCopy(): { copied: boolean; failed: ReturnType<typeof useBrief
 /** The status line under a copy target: "Copied", or a brief "Something went wrong". */
 export function CopyStatus({ copied, failed }: { copied: boolean; failed: boolean }) {
   return failed ? (
-    <p role="status" className="flex min-h-5 items-center gap-1.5 text-[14px] text-[#c13515]">
+    <p role="status" className="flex min-h-5 items-center gap-1.5 text-body text-error">
       <CircleAlert size={16} aria-hidden />
       {GENERIC_ERROR}
     </p>
   ) : (
-    <p role="status" className="min-h-5 text-[14px] text-ink-3">
+    <p role="status" className="min-h-5 text-body text-ink-3">
       {copied ? "Copied" : null}
     </p>
   );
@@ -65,7 +65,7 @@ export function CopyChip({ text, label = text, className }: { text: string; labe
         type="button"
         onClick={() => void copy(text)}
         className={cn(
-          "max-w-full truncate rounded-lg border border-[#ddd] bg-white px-3 py-2 font-mono text-[13px] text-ink-2 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
+          "max-w-full truncate rounded-lg border border-hairline bg-sheet px-3 py-2 font-mono text-body text-ink-2 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
           className,
         )}
       >

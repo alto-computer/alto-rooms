@@ -2,6 +2,7 @@
 mod config;
 pub mod guard;
 mod home_files;
+pub mod inject;
 mod router;
 pub mod routes;
 pub mod sse;

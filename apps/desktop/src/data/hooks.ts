@@ -148,6 +148,19 @@ export function useJournalDay(date: string): JournalDay | undefined {
   return useSyncExternalStore(store.subscribe, () => store.getState().days[date]);
 }
 
+/** `useJournalDay` for several days at once, in the order given. */
+export function useJournalDays(dates: readonly string[]): (JournalDay | undefined)[] {
+  const store = useRoomsStore();
+  const key = dates.join(",");
+  useEffect(() => {
+    const list = key.split(",");
+    for (const d of list) void store.loadDay(d);
+    return () => list.forEach((d) => store.unwatchDay(d));
+  }, [store, key]);
+  const days = useSyncExternalStore(store.subscribe, () => store.getState().days);
+  return dates.map((d) => days[d]);
+}
+
 /**
  * True while nothing may be written: the core is read-only, or its info has
  * not arrived yet (before the first sync we can't tell). Every write

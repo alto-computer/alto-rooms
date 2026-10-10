@@ -53,7 +53,7 @@ pub(crate) fn reconcile_home_dirs(home: &Path, listing: Option<Vec<HomeDir>>, st
             }
         }
         let id: RoomId = nanoid::nanoid!(12);
-        state.rooms.push(RoomRecord { id: id.clone(), name, kind: RoomKind::Owned, path: p, dev, ino });
+        state.rooms.push(RoomRecord { id: id.clone(), name, kind: RoomKind::Owned, path: p, dev, ino, color: None });
         out.push(HomeChange::Added(id));
     }
     // Per-room `symlink_metadata` under the lock is intentional: a cheap stat over the handful of

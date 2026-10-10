@@ -1,4 +1,4 @@
-import type { Artifact, Info, JournalDay, Room, RoomsEvent, Snapshot } from "@alto-rooms/protocol-ts";
+import type { Artifact, Conversation, Info, JournalDay, Room, RoomsEvent, Snapshot } from "@alto-rooms/protocol-ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RoomsStore, type RoomsClientLike } from "./roomsStore";
 
@@ -11,7 +11,7 @@ const INFO: Info = {
 };
 
 function room(id: string, name = id): Room {
-  return { id, name, kind: "owned", path: `/h/${id}`, status: "ok", artifactCount: 0, updatedAt: null };
+  return { id, name, kind: "owned", path: `/h/${id}`, status: "ok", artifactCount: 0, updatedAt: null, color: null };
 }
 
 function art(id: string, roomId = "r1", createdAt = `2026-10-05T00:00:0${id.slice(-1)}Z`): Artifact {
@@ -28,7 +28,7 @@ function art(id: string, roomId = "r1", createdAt = `2026-10-05T00:00:0${id.slic
 }
 
 function day(date: string, n = 0): JournalDay {
-  return { date, artifacts: [], notes: Array.from({ length: n }, (_, i) => ({ date, name: `n${i}`, relPath: `n${i}.md`, updatedAt: date, author: "me" })) };
+  return { date, artifacts: [], notes: Array.from({ length: n }, (_, i) => ({ date, name: `n${i}`, relPath: `n${i}.md`, updatedAt: date, author: "me" })), conversations: [] };
 }
 
 /** Scripted roomsd: snapshot results are captured at call time; `hold()` delays responses until `release*()`. */
@@ -473,6 +473,20 @@ describe("RoomsStore rooms scope", () => {
     s.stop();
   });
 
+  it("a colour pin (room.updated, then rooms.reordered) shows the room pinned, after the inbox and earlier pins", async () => {
+    const c = new FakeClient();
+    c.rooms = { data: [room("inbox"), { ...room("r1"), color: "sage" }, room("r2"), room("r3")], seq: 1 };
+    const s = await liveStore(c);
+    c.emit({ seq: 2, type: "room.updated", room: { ...room("r3"), color: "rose" } });
+    c.emit({ seq: 3, type: "rooms.reordered", roomIds: ["inbox", "r1", "r3", "r2"] });
+    expect(s.getState().rooms.map((r) => `${r.id}:${r.color}`)).toEqual(["inbox:null", "r1:sage", "r3:rose", "r2:null"]);
+    // Unpinned: color goes back to null, not just away.
+    c.emit({ seq: 4, type: "room.updated", room: room("r1") });
+    c.emit({ seq: 5, type: "rooms.reordered", roomIds: ["inbox", "r3", "r1", "r2"] });
+    expect(s.getState().rooms.map((r) => `${r.id}:${r.color}`)).toEqual(["inbox:null", "r3:rose", "r1:null", "r2:null"]);
+    s.stop();
+  });
+
   it("room.removed removes the room and its artifacts", async () => {
     const c = new FakeClient();
     c.rooms = { data: [room("r1"), room("r2")], seq: 1 };
@@ -546,6 +560,24 @@ describe("RoomsStore days", () => {
     c.emit({ seq: 3, type: "note.removed", date: "2026-10-05", name: "x" });
     await vi.advanceTimersByTimeAsync(150);
     expect(c.calls.journalDay).toHaveLength(3);
+    s.stop();
+  });
+
+  it("conversation.moved refetches the watched days that list the conversation", async () => {
+    vi.useFakeTimers();
+    const c = new FakeClient();
+    const talk = (session: string, roomId: string | null = null): Conversation => ({
+      id: { agent: "codex", session }, title: session, cwd: null, startedAt: "", endedAt: "", messages: 1, lastReply: null, artifactsWritten: [], roomId,
+    });
+    c.days.set("2026-10-05", { data: { ...day("2026-10-05"), conversations: [{ at: "2026-10-05T01:00:00Z", conversation: talk("s1") }] }, seq: 1 });
+    c.days.set("2026-10-04", { data: day("2026-10-04"), seq: 1 });
+    const s = await liveStore(c);
+    await s.loadDay("2026-10-05");
+    await s.loadDay("2026-10-04");
+    c.emit({ seq: 2, type: "conversation.moved", conversation: talk("s1", "r1"), fromRoomId: null });
+    c.emit({ seq: 3, type: "conversation.moved", conversation: talk("other", "r1"), fromRoomId: null });
+    await vi.advanceTimersByTimeAsync(150);
+    expect(c.calls.journalDay).toEqual(["2026-10-05", "2026-10-04", "2026-10-05"]);
     s.stop();
   });
 

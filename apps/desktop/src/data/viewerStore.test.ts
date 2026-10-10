@@ -1,5 +1,6 @@
 import type { Artifact } from "@alto-rooms/protocol-ts";
 import { describe, expect, it, vi } from "vitest";
+import { localDate } from "@/lib/dates";
 import { VIEWER_STORAGE_KEY, ViewerStore } from "./viewerStore";
 
 function memoryStorage(init: Record<string, string> = {}) {
@@ -21,6 +22,9 @@ function clock(start = "2026-10-05T00:00:00Z") {
   };
 }
 
+/** Home under the default clock: the Journal for its local date. */
+const HOME = { kind: "journal", date: localDate(clock().now()) } as const;
+
 function art(roomId: string, createdAt: string): Artifact {
   return {
     id: "a",
@@ -35,11 +39,11 @@ function art(roomId: string, createdAt: string): Artifact {
 }
 
 describe("ViewerStore", () => {
-  it("starts with a single active new tab and firstRunAt = now", () => {
+  it("starts with a single active home tab (today's Journal) and firstRunAt = now", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const s = st.getState();
     expect(s.tabs).toHaveLength(1);
-    expect(s.tabs[0].kind).toBe("new");
+    expect(s.tabs[0]).toEqual({ id: s.tabs[0].id, ...HOME });
     expect(s.activeId).toBe(s.tabs[0].id);
     expect(s.firstRunAt).toBe("2026-10-05T00:00:00.000Z");
     expect(s.sidebarOpen).toBe(true);
@@ -65,7 +69,7 @@ describe("ViewerStore", () => {
     expect(st.getState().tabs.map((t) => t.id)).toContain(id);
   });
 
-  it("close activates the right neighbour, else left, else a fresh New tab", () => {
+  it("close activates the right neighbour, else left, else a fresh home tab", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const n = st.getState().tabs[0].id;
     const a = st.open({ kind: "room", roomId: "a" });
@@ -77,7 +81,7 @@ describe("ViewerStore", () => {
     expect(st.getState().activeId).toBe(n);
     st.close(n);
     const [only] = st.getState().tabs;
-    expect(only.kind).toBe("new");
+    expect(only).toEqual({ id: only.id, ...HOME });
     expect(only.id).not.toBe(n);
     expect(st.getState().activeId).toBe(only.id);
   });
@@ -92,7 +96,7 @@ describe("ViewerStore", () => {
     st.activate(n);
     st.reopen();
     const tabs = st.getState().tabs;
-    expect(tabs.map((t) => (t.kind === "room" ? t.roomId : t.kind))).toEqual(["new", "a2", "b"]);
+    expect(tabs.map((t) => (t.kind === "room" ? t.roomId : t.kind))).toEqual(["journal", "a2", "b"]);
     expect(st.getState().activeId).toBe(tabs[1].id);
     expect(st.canGoBack()).toBe(true);
     st.reopen(); // nothing left
@@ -108,19 +112,67 @@ describe("ViewerStore", () => {
     st.activate(home);
     st.go({ kind: "doc", roomId: "r", artifactId: "b" }, true);
     const order = () => st.getState().tabs.map((t) => (t.kind === "doc" ? t.artifactId : t.kind === "room" ? t.roomId : t.kind));
-    expect(order()).toEqual(["new", "a", "b", "end"]);
-    st.open({ kind: "journal", date: "2026-10-07" }); // ⌘T-style opens still go last
-    expect(order()).toEqual(["new", "a", "b", "end", "journal"]);
+    expect(order()).toEqual(["journal", "a", "b", "end"]);
+    st.open({ kind: "note", date: "2026-10-07", name: "n" }); // ⌘T-style opens still go last
+    expect(order()).toEqual(["journal", "a", "b", "end", "note"]);
   });
 
-  it("closing a New tab leaves nothing to reopen", () => {
+  it("closing the last tab while it shows home leaves nothing to reopen", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const r = st.open({ kind: "room", roomId: "a" });
     st.close(r);
-    st.close(st.getState().tabs[0].id); // the New tab: replaced by another New tab
+    st.close(st.getState().tabs[0].id); // home: replaced by another home tab
     st.close(st.getState().tabs[0].id);
-    st.reopen(); // the room, not one of the New tabs
-    expect(st.getState().tabs.map((t) => t.kind)).toEqual(["new", "room"]);
+    st.reopen(); // the room, not one of the home tabs
+    expect(st.getState().tabs.map((t) => t.kind)).toEqual(["journal", "room"]);
+  });
+
+  it("closing a home tab among others can be undone", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const home = st.getState().tabs[0].id;
+    st.open({ kind: "room", roomId: "a" });
+    st.close(home);
+    st.reopen();
+    expect(st.getState().tabs.map((t) => t.kind)).toEqual(["journal", "room"]);
+  });
+
+  it("home is the Journal for the local date at the moment it opens", () => {
+    const c = clock("2026-10-05T12:00:00");
+    const st = new ViewerStore(memoryStorage(), c.now);
+    expect(st.getState().tabs[0]).toMatchObject({ kind: "journal", date: "2026-10-05" });
+    c.set("2026-10-06T00:30:00");
+    st.open(st.home());
+    expect(st.getState().tabs.map((t) => (t.kind === "journal" ? t.date : t.kind))).toEqual(["2026-10-05", "2026-10-06"]);
+    st.open(st.home()); // already open: activated, not doubled
+    expect(st.getState().tabs).toHaveLength(2);
+  });
+
+  it("a persisted New tab (retired) comes back as today's Journal, history entries too", () => {
+    const saved = {
+      tabs: [{ id: "n", kind: "new" }, { id: "r", kind: "room", roomId: "r1" }],
+      activeId: "n",
+      history: { r: { back: [{ kind: "new" }], forward: [] } },
+      firstRunAt: "2026-10-01T00:00:00.000Z",
+    };
+    const st = new ViewerStore(memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify(saved) }), clock("2026-10-09T12:00:00").now);
+    const s = st.getState();
+    expect(s.tabs).toEqual([{ id: "n", kind: "journal", date: "2026-10-09" }, { id: "r", kind: "room", roomId: "r1" }]);
+    expect(s.activeId).toBe("n");
+    expect(s.history.r.back).toEqual([{ kind: "journal", date: "2026-10-09" }]);
+  });
+
+  it("a persisted New tab that becomes a Journal tab already open is dropped, with its history, for that tab", () => {
+    const saved = {
+      tabs: [{ id: "j", kind: "journal", date: "2026-10-09" }, { id: "r", kind: "room", roomId: "r1" }, { id: "n", kind: "new" }],
+      activeId: "n",
+      history: { n: { back: [{ kind: "room", roomId: "r2" }], forward: [] } },
+      firstRunAt: "2026-10-01T00:00:00.000Z",
+    };
+    const st = new ViewerStore(memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify(saved) }), clock("2026-10-09T12:00:00").now);
+    const s = st.getState();
+    expect(s.tabs).toEqual([{ id: "j", kind: "journal", date: "2026-10-09" }, { id: "r", kind: "room", roomId: "r1" }]);
+    expect(s.activeId).toBe("j");
+    expect(s.history).toEqual({});
   });
 
   it("activateAt picks by index (-1 = last); cycle wraps around", () => {
@@ -150,7 +202,7 @@ describe("ViewerStore", () => {
     expect(v.getState().tabs[1]).toEqual({ id: j, kind: "journal", date: "2026-10-05" });
     const before = v.getState();
     v.replace(j, { kind: "journal", date: "2026-10-05" });
-    v.replace("missing", { kind: "new" });
+    v.replace("missing", { kind: "room", roomId: "x" });
     expect(v.getState()).toBe(before);
   });
 
@@ -193,7 +245,7 @@ describe("ViewerStore", () => {
     const c = clock();
     const storage = memoryStorage();
     const st = new ViewerStore(storage, c.now);
-    st.flush(); // active tab is "new": nothing to record
+    st.flush(); // active tab is home, not a room: nothing to record
     expect(st.getState().lastVisit).toEqual({});
     st.open({ kind: "room", roomId: "r1" });
     c.set("2026-10-05T04:00:00Z");
@@ -213,7 +265,7 @@ describe("ViewerStore", () => {
 
     st.open({ kind: "room", roomId: "r1" });
     c.set("2026-10-05T05:00:00Z");
-    st.open({ kind: "new" });
+    st.open(st.home());
     expect(st.isNew(art("r1", "2026-10-05T04:00:00Z"))).toBe(false);
     expect(st.isNew(art("r1", "2026-10-05T06:00:00Z"))).toBe(true);
     expect(st.isNew(art("never", "2026-10-05T04:00:00Z"))).toBe(true);
@@ -259,12 +311,29 @@ describe("ViewerStore", () => {
     expect(JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!).sidebarOpen).toBe(true);
   });
 
+  it("defaults appearance to System and keeps the user's choice across restarts", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    expect(st.getState().appearance).toBe("system");
+    st.setAppearance("dark");
+    st.flush();
+    expect(new ViewerStore(storage, clock().now).getState().appearance).toBe("dark");
+  });
+
+  it("reads an unknown or missing appearance as System", () => {
+    const saved = (appearance: unknown) =>
+      memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify({ tabs: [], firstRunAt: "2026-10-01T00:00:00Z", appearance }) });
+    expect(new ViewerStore(saved("sepia"), clock().now).getState().appearance).toBe("system");
+    expect(new ViewerStore(saved(undefined), clock().now).getState().appearance).toBe("system");
+    expect(new ViewerStore(saved("light"), clock().now).getState().appearance).toBe("light");
+  });
+
   it("starts fresh on corrupt storage without throwing", () => {
     const storage = memoryStorage({ [VIEWER_STORAGE_KEY]: "{not json" });
     const st = new ViewerStore(storage, clock().now);
-    expect(st.getState().tabs.map((t) => t.kind)).toEqual(["new"]);
+    expect(st.getState().tabs.map((t) => t.kind)).toEqual(["journal"]);
     const st2 = new ViewerStore(memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify({ tabs: "nope" }) }), clock().now);
-    expect(st2.getState().tabs.map((t) => t.kind)).toEqual(["new"]);
+    expect(st2.getState().tabs.map((t) => t.kind)).toEqual(["journal"]);
   });
 
   it("survives storage that throws", () => {
@@ -314,10 +383,10 @@ describe("ViewerStore: in-tab history", () => {
     expect(activeTab(st)).toEqual({ id, ...room("r1") });
     expect(st.canGoForward()).toBe(true);
     st.back();
-    expect(activeTab(st)).toEqual({ id, kind: "new" });
+    expect(activeTab(st)).toEqual({ id, ...HOME });
     expect(st.canGoBack()).toBe(false);
     st.back();
-    expect(activeTab(st)).toEqual({ id, kind: "new" });
+    expect(activeTab(st)).toEqual({ id, ...HOME });
 
     st.forward();
     st.forward();
@@ -340,18 +409,18 @@ describe("ViewerStore: in-tab history", () => {
     st.navigate(room("r1"));
     st.navigate(room("r1"));
     st.back();
-    expect(activeTab(st).kind).toBe("new");
+    expect(activeTab(st)).toEqual({ id: st.getState().activeId, ...HOME });
   });
 
   it("each tab keeps its own history; a new tab starts without one", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     st.navigate(room("r1"));
-    const second = st.open({ kind: "new" });
+    const second = st.open(st.home());
     expect(st.getState().activeId).toBe(second);
     expect(st.canGoBack()).toBe(false);
     st.navigate(room("r2"));
     st.back();
-    expect(activeTab(st).kind).toBe("new");
+    expect(activeTab(st)).toEqual({ id: st.getState().activeId, ...HOME });
   });
 
   it("records lastVisit when navigating away from a room and when going back from it", () => {
@@ -439,5 +508,123 @@ describe("ViewerStore: plugins", () => {
     expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: true, width: 480, pluginId: "excalidraw" });
     storage.map.set(VIEWER_STORAGE_KEY, JSON.stringify({ ...JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!), pluginPanel: { open: "yes", width: -5 } }));
     expect(new ViewerStore(storage, clock().now).getState().pluginPanel).toEqual({ open: false, width: 360, pluginId: null });
+  });
+});
+
+describe("ViewerStore: conversations", () => {
+  it("a conversation tab is keyed by agent and session, persists, and comes back", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    const id = st.open({ kind: "conversation", agent: "codex", session: "s-1" });
+    expect(st.open({ kind: "conversation", agent: "codex", session: "s-1" })).toBe(id);
+    expect(st.open({ kind: "conversation", agent: "claude-code", session: "s-1" })).not.toBe(id);
+    st.flush();
+    const again = new ViewerStore(storage, clock().now);
+    expect(again.getState().tabs.filter((t) => t.kind === "conversation")).toEqual([
+      { id, kind: "conversation", agent: "codex", session: "s-1" },
+      expect.objectContaining({ agent: "claude-code", session: "s-1" }),
+    ]);
+  });
+
+  it("drops a saved conversation tab with an unknown agent or a session id roomsd would refuse", () => {
+    const tabs = [
+      { id: "ok", kind: "conversation", agent: "aside", session: "ses_01HQ" },
+      { id: "agent", kind: "conversation", agent: "cursor", session: "s1" },
+      { id: "flag", kind: "conversation", agent: "codex", session: "s;rm" },
+      { id: "none", kind: "conversation", agent: "codex" },
+    ];
+    const storage = memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify({ tabs, activeId: "ok", firstRunAt: "2026-10-01T00:00:00Z" }) });
+    expect(new ViewerStore(storage, clock().now).getState().tabs.map((t) => t.id)).toEqual(["ok"]);
+  });
+});
+
+describe("ViewerStore: settings", () => {
+  it("there is one Settings tab: opening it again shows that one, and it persists", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    const id = st.open({ kind: "settings" });
+    st.open(HOME);
+    expect(st.open({ kind: "settings" })).toBe(id);
+    expect(st.getState().activeId).toBe(id);
+    expect(st.getState().tabs.filter((t) => t.kind === "settings")).toHaveLength(1);
+    st.flush();
+    expect(new ViewerStore(storage, clock().now).getState().tabs).toContainEqual({ id, kind: "settings" });
+  });
+
+  it("back or forward to Settings while another tab shows it switches to that tab", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const a = st.getState().activeId!;
+    st.navigate({ kind: "settings" });
+    st.navigate({ kind: "room", roomId: "r1" });
+    const b = st.open({ kind: "settings" });
+    st.activate(a);
+    st.back();
+    expect(st.getState().activeId).toBe(b);
+    expect(st.getState().tabs.filter((t) => t.kind === "settings")).toHaveLength(1);
+    expect(st.getState().tabs.find((t) => t.id === a)).toMatchObject({ kind: "room", roomId: "r1" });
+  });
+});
+
+describe("ViewerStore: reveals", () => {
+  const doc = { kind: "doc", roomId: "r1", artifactId: "a" } as const;
+  /** What `takeReveal` offers, accepted or not. */
+  const offered = (st: ViewerStore, id: string, accept = true) => {
+    const got: unknown[] = [];
+    st.takeReveal(id, (r) => (got.push(r), accept));
+    return got;
+  };
+
+  it("holds an anchor for a doc tab until the doc accepts it, and tells subscribers", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.open(doc);
+    const heard = vi.fn();
+    st.subscribe(heard);
+    st.reveal(id, { pluginId: "marker", anchor: { mark: "x" } });
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(offered(st, id, false), "a script not ready yet leaves it waiting").toEqual([{ pluginId: "marker", anchor: { mark: "x" } }]);
+    expect(offered(st, id)).toEqual([{ pluginId: "marker", anchor: { mark: "x" } }]);
+    expect(offered(st, id), "handed over once").toEqual([]);
+  });
+
+  it("keeps only the last of two quick anchors for one tab", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.open(doc);
+    st.reveal(id, { pluginId: "marker", anchor: 1 });
+    st.reveal(id, { pluginId: "marker", anchor: 2 });
+    expect(offered(st, id)).toEqual([{ pluginId: "marker", anchor: 2 }]);
+  });
+
+  it("drops a waiting anchor when its tab closes or shows something else, so a reopened doc gets none", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const id = st.open(doc);
+    st.reveal(id, { pluginId: "marker", anchor: 1 });
+    st.close(id);
+    st.reopen();
+    const back = st.getState().activeId!;
+    expect(offered(st, id)).toEqual([]);
+    expect(offered(st, back)).toEqual([]);
+    st.reveal(back, { pluginId: "marker", anchor: 2 });
+    st.navigate({ kind: "doc", roomId: "r1", artifactId: "b" });
+    expect(offered(st, back)).toEqual([]);
+  });
+
+  it("only queues for a doc tab that exists", () => {
+    const st = new ViewerStore(memoryStorage(), clock().now);
+    const room = st.open({ kind: "room", roomId: "r1" });
+    st.reveal(room, { pluginId: "marker", anchor: 1 });
+    st.reveal("gone", { pluginId: "marker", anchor: 1 });
+    expect(offered(st, room)).toEqual([]);
+    expect(offered(st, "gone")).toEqual([]);
+  });
+
+  it("never writes an anchor to storage", () => {
+    const storage = memoryStorage();
+    const st = new ViewerStore(storage, clock().now);
+    const id = st.open(doc);
+    st.reveal(id, { pluginId: "marker", anchor: { mark: "secret-anchor" } });
+    st.setSidebarOpen(false);
+    st.flush();
+    expect(storage.map.get(VIEWER_STORAGE_KEY)).not.toContain("secret-anchor");
+    expect(offered(new ViewerStore(storage, clock().now), id)).toEqual([]);
   });
 });

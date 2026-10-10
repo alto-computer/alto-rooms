@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Artifact, AskScope, AskTarget, AskTurn } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTarget, AskTurn, Conversation } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
@@ -22,10 +23,10 @@ function Grab() { store = useAsksStore(); return null; }
 
 async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false, target?: AskTarget) {
   const askTargets = target ? { k1: target } : undefined;
-  return renderWithStores(<><Grab /><AskBar artifact={doc} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
+  return renderWithStores(<><Grab /><AskBar subject={{ kind: "doc", artifact: doc }} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
 }
 
-const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"] };
+const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"], scoped: false };
 
 describe("AskBar", () => {
   afterEach(() => {
@@ -35,24 +36,24 @@ describe("AskBar", () => {
 
   it("is open on mount without taking focus; toggling off hides it, toggling on focuses it", async () => {
     await setup();
-    const first = await screen.findByPlaceholderText("Ask about this doc…");
+    const first = await screen.findByPlaceholderText("Ask about this artifact…");
     expect(document.activeElement).not.toBe(first);
     expect(await screen.findByText("claude-code")).toBeTruthy();
     act(() => store.toggle());
-    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Ask about this artifact…")).toBeNull();
     act(() => store.toggle());
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     expect(document.activeElement).toBe(input);
   });
 
   it("renders nothing in read-only", async () => {
     await setup({}, true);
-    expect(screen.queryByPlaceholderText("Ask about this doc…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Ask about this artifact…")).toBeNull();
   });
 
   it("sends on Enter (not Shift+Enter, not while composing), shows waiting, then the markdown answer", async () => {
     const { client, emit } = await setup();
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.change(input, { target: { value: "왜?" } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
@@ -76,7 +77,7 @@ describe("AskBar", () => {
   it("says so when a new conversation was started because the thread couldn't be found", async () => {
     await setup({ k1: [turn({ mode: "new", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
     const head = await screen.findByText("claude-code · New conversation");
-    expect(head.getAttribute("title")).toBe("Couldn't find the thread that made this doc");
+    expect(head.getAttribute("title")).toBe("Couldn't find the thread that made this artifact");
   });
 
   it("says when a question went on in the conversation the thread started", async () => {
@@ -108,7 +109,7 @@ describe("AskBar", () => {
 
   it("when a turn ends, refocuses the input only if focus was on the body", async () => {
     const { emit } = await setup({ k1: [turn({})] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     input.blur();
     expect(document.activeElement).toBe(document.body);
     act(() => emit({ type: "ask.done", turn: turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" }) }));
@@ -184,7 +185,7 @@ describe("AskBar", () => {
     vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(() => height);
     try {
       await setup();
-      const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+      const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
       // The textarea's row sits in the bordered bar, under the attached images when there are any.
       const pill = input.parentElement!.parentElement!;
       expect(input.style.height).toBe("20px");
@@ -214,7 +215,7 @@ describe("AskBar", () => {
     const createObjectURL = vi.fn(() => "blob:preview");
     Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
     const { client } = await setup();
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     const shot = new File(["png"], "shot.png", { type: "image/png" });
     fireEvent.paste(input, { clipboardData: { files: [shot] } });
     await waitFor(() => expect(client.uploadAskImage).toHaveBeenCalledWith(shot));
@@ -238,7 +239,7 @@ describe("AskBar", () => {
     Object.assign(URL, { createObjectURL: vi.fn(() => "blob:p"), revokeObjectURL: vi.fn() });
     const { client } = await setup();
     client.uploadAskImage.mockRejectedValueOnce(new RoomsApiError(400, "Only PNG, JPEG, GIF and WebP images can be attached", "bad_request"));
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.paste(input, { clipboardData: { files: [new File(["x"], "bad.png", { type: "image/png" })] } });
     expect(await screen.findByLabelText("Only PNG, JPEG, GIF and WebP images can be attached")).toBeInTheDocument();
     fireEvent.change(input, { target: { value: "q" } });
@@ -267,7 +268,7 @@ describe("AskBar", () => {
 
   it("while an answer runs, Enter queues the question and it goes out when the answer ends", async () => {
     const { client, emit } = await setup({ k1: [turn({})] });
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     await screen.findByText("Thinking");
     expect(input.readOnly).toBe(false);
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
@@ -290,7 +291,7 @@ describe("AskBar", () => {
 
   it("⌘Enter stops the running answer and sends this question next", async () => {
     const { client, emit } = await setup({ k1: [turn({})] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     await screen.findByText("Thinking");
     fireEvent.change(input, { target: { value: "지금 바로" } });
     fireEvent.keyDown(input, { key: "Enter", metaKey: true });
@@ -301,7 +302,7 @@ describe("AskBar", () => {
 
   it("↑ in an empty input takes the last queued question back to edit; the row buttons send now or drop", async () => {
     const { client } = await setup({ k1: [turn({})] });
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     await screen.findByText("Thinking");
     for (const q of ["첫째", "둘째"]) {
       fireEvent.change(input, { target: { value: q } });
@@ -319,14 +320,14 @@ describe("AskBar", () => {
 
   it("↑ in an empty input with nothing queued brings back the last question", async () => {
     await setup({ k1: [turn({ status: "done", question: "> 인용\n\n지난 질문", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     fireEvent.keyDown(input, { key: "ArrowUp" });
     expect(input.value).toBe("지난 질문");
   });
 
   it("a fast double Enter sends once", async () => {
     const { client } = await setup();
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.change(input, { target: { value: "한 번만" } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -348,7 +349,7 @@ describe("AskBar", () => {
       turn({ id: "t1", question: "q1", status: "cancelled", answer: "부분", endedAt: "2026-10-06T10:00:02+09:00" }),
     ] });
     const error = await screen.findByText("claude-code exited with an error (code 1)");
-    expect(error.closest("p")).toHaveClass("text-[#c13515]");
+    expect(error.closest("p")).toHaveClass("text-error");
     expect(error.closest("p")!.querySelector("svg")).not.toBeNull();
     expect(screen.getByText("Stopped")).toBeTruthy();
     const retry = screen.getByRole("button", { name: "Retry" });
@@ -373,7 +374,7 @@ describe("AskBar", () => {
 
   it("Escape while running cancels the turn and does not fold the sheet", async () => {
     const { client } = await setup({ k1: [turn({ answer: "" })] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     expect(await screen.findByText("왜?")).toBeTruthy();
     fireEvent.keyDown(input, { key: "Escape" });
     expect(client.cancelAsk).toHaveBeenCalledWith("t1");
@@ -383,7 +384,7 @@ describe("AskBar", () => {
   it("shows the API error inline and keeps the draft", async () => {
     const { client } = await setup();
     client.startAsk.mockRejectedValueOnce(new RoomsApiError(409, "Waiting for an answer", "ask_busy"));
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.change(input, { target: { value: "또" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(await screen.findByText("Waiting for an answer")).toBeTruthy();
@@ -392,7 +393,7 @@ describe("AskBar", () => {
 
   it("Escape folds the sheet, focusing the input unfolds it", async () => {
     await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     expect(await screen.findByText("답")).toBeTruthy();
     fireEvent.keyDown(input, { key: "Escape" });
     expect(screen.queryByText("답")).toBeNull();
@@ -400,11 +401,12 @@ describe("AskBar", () => {
     expect(screen.getByText("답")).toBeTruthy();
   });
 
-  it("an outside pointerdown or a click into the doc iframe folds the sheet; inside does not", async () => {
-    await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    const input = await screen.findByPlaceholderText("Ask about this doc…");
+  it("floats over the page: an outside pointerdown or a click into the doc iframe folds the sheet; inside does not", async () => {
+    const { container } = await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.pointerDown(await screen.findByText("답"));
     expect(screen.getByText("답")).toBeTruthy();
+    expect(container.querySelector(".absolute")).toContainElement(screen.getByText("답"));
     fireEvent.pointerDown(document.body);
     expect(screen.queryByText("답")).toBeNull();
     expect(input.isConnected).toBe(true);
@@ -423,7 +425,7 @@ describe("AskBar", () => {
   });
 
   it("with no models shows just the agent the ask goes to, from roomsd, with no menu", async () => {
-    const { client } = await setup({}, false, { agent: "codex", mode: "new", models: [] });
+    const { client } = await setup({}, false, { agent: "codex", mode: "new", models: [], scoped: false });
     expect(await screen.findByText("codex")).toBeTruthy();
     expect(client.askTarget).toHaveBeenCalledWith(scope);
     expect(screen.queryByLabelText(/^Model/)).toBeNull();
@@ -433,7 +435,7 @@ describe("AskBar", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const noAgent = { ...doc, source: { ...doc.source, agent: null } };
-      await renderWithStores(<AskBar artifact={noAgent} />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { k1: new Error("down") } });
+      await renderWithStores(<AskBar subject={{ kind: "doc", artifact: noAgent }} />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { k1: new Error("down") } });
       expect(await screen.findByText("Default agent")).toBeTruthy();
       await waitFor(() => expect(warn).toHaveBeenCalled());
       expect(screen.getByText("Default agent")).toBeTruthy();
@@ -453,7 +455,7 @@ describe("AskBar", () => {
     expect(items.map((i) => i.getAttribute("aria-checked"))).toEqual(["true", "false", "false", "false", "false"]);
     fireEvent.click(items[2]);
     expect(await screen.findByLabelText("Model: claude-code · Sonnet")).toBeTruthy();
-    const input = screen.getByPlaceholderText("Ask about this doc…");
+    const input = screen.getByPlaceholderText("Ask about this artifact…");
     fireEvent.change(input, { target: { value: "왜?" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope, question: "왜?", model: "sonnet" }));
@@ -504,7 +506,7 @@ describe("AskBar", () => {
   describe("commands", () => {
     it("typing / lists the commands; arrows pick one, Enter runs it", async () => {
       const { client } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
-      const input = await screen.findByPlaceholderText("Ask about this doc…");
+      const input = await screen.findByPlaceholderText("Ask about this artifact…");
       fireEvent.change(input, { target: { value: "/" } });
       const menu = screen.getByRole("listbox", { name: "Commands" });
       expect(Array.from(menu.querySelectorAll("[role=option]")).map((o) => o.textContent)).toEqual([
@@ -522,7 +524,7 @@ describe("AskBar", () => {
 
     it("/new sent as text starts over with a divider; Escape closes the menu", async () => {
       const { client } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
-      const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+      const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
       fireEvent.change(input, { target: { value: "/ne" } });
       fireEvent.keyDown(input, { key: "Escape" });
       expect(input.value).toBe("");
@@ -558,7 +560,7 @@ describe("AskBar", () => {
 
     it("a command typed while an answer runs waits in the queue", async () => {
       const { client } = await setup({ k1: [turn({})] });
-      const input = await screen.findByPlaceholderText("Ask about this doc…");
+      const input = await screen.findByPlaceholderText("Ask about this artifact…");
       await screen.findByText("Thinking");
       fireEvent.change(input, { target: { value: "/new" } });
       fireEvent.keyDown(input, { key: "Enter" });
@@ -569,7 +571,7 @@ describe("AskBar", () => {
     it("shows roomsd's refusal", async () => {
       const { client } = await setup();
       client.startAsk.mockRejectedValueOnce(new RoomsApiError(400, "Nothing to clear yet", "bad_request"));
-      const input = await screen.findByPlaceholderText("Ask about this doc…");
+      const input = await screen.findByPlaceholderText("Ask about this artifact…");
       fireEvent.change(input, { target: { value: "/clear" } });
       fireEvent.keyDown(input, { key: "Enter" });
       expect(await screen.findByText("Nothing to clear yet")).toBeTruthy();
@@ -578,13 +580,13 @@ describe("AskBar", () => {
 
   it("keeps an unsent draft per doc, across a remount", async () => {
     const first = await setup();
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: "쓰다 만 질문" } });
     first.unmount();
     await setup();
-    expect(((await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement).value).toBe("쓰다 만 질문");
+    expect(((await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement).value).toBe("쓰다 만 질문");
     expect(localStorage.getItem("alto-rooms.askDraft.k1")).toBe("쓰다 만 질문");
-    fireEvent.keyDown(screen.getByPlaceholderText("Ask about this doc…"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByPlaceholderText("Ask about this artifact…"), { key: "Enter" });
     await waitFor(() => expect(localStorage.getItem("alto-rooms.askDraft.k1")).toBeNull());
   });
 
@@ -592,7 +594,7 @@ describe("AskBar", () => {
     const { client } = await setup();
     let refuse: (e: Error) => void = () => {};
     client.startAsk.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
-    const input = (await screen.findByPlaceholderText("Ask about this doc…")) as HTMLTextAreaElement;
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: "바로 보여?" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(await screen.findByText("바로 보여?")).toBeTruthy();
@@ -602,5 +604,174 @@ describe("AskBar", () => {
     expect(await screen.findByText("Waiting for an answer")).toBeTruthy();
     expect(screen.queryByText("Thinking")).toBeNull();
     expect(input.value).toBe("바로 보여?");
+  });
+});
+
+describe("AskBar for a room", () => {
+  const roomScope: AskScope = { kind: "room", roomId: "r1" };
+  const roomTurn = (extra: Partial<AskTurn>) => turn({ id: "rt1", scope: roomScope, mode: "new", ...extra });
+  const setupRoom = (opts: { asks?: Record<string, AskTurn[]>; readOnly?: boolean; target?: AskTarget } = {}) =>
+    renderWithStores(<AskBar subject={{ kind: "room", roomId: "r1" }} />, {
+      rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks: opts.asks, readOnly: opts.readOnly,
+      askTargets: opts.target ? { "room:r1": opts.target } : undefined,
+    });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  it("asks about the room, and heads its answer with the agent and model only", async () => {
+    const { client, emit } = await setupRoom();
+    const input = await screen.findByPlaceholderText("Ask about this room…");
+    fireEvent.change(input, { target: { value: "뭐가 있어?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope: roomScope, question: "뭐가 있어?", model: null }));
+    act(() => emit({ type: "ask.done", turn: roomTurn({ id: "ask-뭐가 있어?", question: "뭐가 있어?", model: "haiku", status: "done", answer: "세 개", endedAt: "2026-10-06T10:00:09+09:00" }) }));
+    expect(await screen.findByText("세 개")).toBeTruthy();
+    const head = screen.getByText("claude-code · Haiku", { exact: true });
+    expect(head.getAttribute("title")).toBeNull();
+  });
+
+  it("shows only the room's thread, never the doc's", async () => {
+    await setupRoom({
+      asks: {
+        k1: [turn({ question: "doc question", status: "done", answer: "doc answer", endedAt: "2026-10-06T10:00:01+09:00" })],
+        "room:r1": [roomTurn({ question: "room question", status: "done", answer: "room answer", endedAt: "2026-10-06T10:00:02+09:00" })],
+      },
+    });
+    expect(await screen.findByText("room answer")).toBeTruthy();
+    expect(screen.queryByText("doc answer")).toBeNull();
+  });
+
+  it("says the agent reads only the room's docs when roomsd scopes its reads, and nothing when it doesn't", async () => {
+    const first = await setupRoom({ target: { agent: "claude-code", mode: "new", models: ["haiku"], scoped: true } });
+    const hint = await screen.findByRole("button", { name: "Reads only this room's artifacts" });
+    expect(hint.tabIndex).toBe(0);
+    act(() => hint.focus());
+    expect((await screen.findByRole("tooltip")).textContent).toBe("Reads only this room's artifacts");
+    first.unmount();
+    await setupRoom({ target: { agent: "codex", mode: "new", models: [], scoped: false } });
+    expect(await screen.findByText("codex")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reads only this room's artifacts" })).toBeNull();
+  });
+
+  it("a room's answer keeps running while another room is shown, and is there on coming back", async () => {
+    let show: (roomId: string) => void = () => {};
+    function Switch() {
+      const [roomId, setRoomId] = useState("r1");
+      show = setRoomId;
+      return <AskBar key={roomId} subject={{ kind: "room", roomId }} />;
+    }
+    const { client, emit } = await renderWithStores(<Switch />, { rooms: [room("r1", "A"), room("r2", "B")], artifacts: { r1: [doc], r2: [] } });
+    const input = await screen.findByPlaceholderText("Ask about this room…");
+    fireEvent.change(input, { target: { value: "길게?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope: roomScope, question: "길게?", model: null }));
+    act(() => show("r2"));
+    expect(screen.queryByText("길게?")).toBeNull();
+    act(() => emit({ type: "ask.progress", id: "ask-길게?", scope: roomScope, answer: "절반", activity: null }));
+    act(() => emit({ type: "ask.done", turn: roomTurn({ id: "ask-길게?", question: "길게?", status: "done", answer: "끝까지 답함", endedAt: "2026-10-06T10:00:09+09:00" }) }));
+    act(() => show("r1"));
+    expect(await screen.findByText("끝까지 답함")).toBeTruthy();
+    expect(client.cancelAsk).not.toHaveBeenCalled();
+  });
+
+  it("renders nothing in read-only", async () => {
+    await setupRoom({ readOnly: true });
+    expect(screen.queryByPlaceholderText("Ask about this room…")).toBeNull();
+  });
+});
+
+describe("AskBar for a day", () => {
+  const monday: AskScope = { kind: "day", date: "2026-10-05" };
+  const dayTurn = (extra: Partial<AskTurn>) => turn({ id: "dt1", scope: monday, mode: "new", ...extra });
+  let show: (date: string) => void = () => {};
+  /** The Journal tab keeps one bar mounted and hands it the viewed date. */
+  function Journal() {
+    const [date, setDate] = useState("2026-10-05");
+    show = setDate;
+    return <AskBar subject={{ kind: "day", date }} />;
+  }
+  const setupDays = (asks: Record<string, AskTurn[]> = {}) =>
+    renderWithStores(<Journal />, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks });
+  const input = () => screen.getByPlaceholderText("Ask about this day…") as HTMLTextAreaElement;
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  it("follows the viewed date to that day's own thread and draft", async () => {
+    await setupDays({
+      "day:2026-10-06": [turn({ id: "dt2", scope: { kind: "day", date: "2026-10-06" }, question: "화요일?", status: "done", answer: "화요일 답", endedAt: "2026-10-06T10:00:01+09:00" })],
+    });
+    fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일 초안" } });
+    act(() => show("2026-10-06"));
+    expect(await screen.findByText("화요일 답")).toBeTruthy();
+    expect(input().value).toBe("");
+    fireEvent.change(input(), { target: { value: "화요일 초안" } });
+    act(() => show("2026-10-05"));
+    expect(input().value).toBe("월요일 초안");
+    expect(screen.queryByText("화요일 답")).toBeNull();
+    expect(localStorage.getItem("alto-rooms.askDraft.day:2026-10-05")).toBe("월요일 초안");
+    expect(localStorage.getItem("alto-rooms.askDraft.day:2026-10-06")).toBe("화요일 초안");
+  });
+
+  it("a question on its way stays with its day, and its answer keeps running while another day is shown", async () => {
+    const { client, emit } = await setupDays();
+    let accept: () => void = () => {};
+    client.startAsk.mockImplementationOnce(() => new Promise((resolve) => (accept = () => resolve(dayTurn({ id: "ask-월요일?", question: "월요일?" })))));
+    fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일?" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(await screen.findByText("Thinking")).toBeTruthy();
+    act(() => show("2026-10-06"));
+    expect(screen.queryByText("월요일?")).toBeNull();
+    expect(screen.queryByText("Thinking")).toBeNull();
+    await act(async () => accept());
+    act(() => emit({ type: "ask.progress", id: "ask-월요일?", scope: monday, answer: "절반", activity: null }));
+    expect(screen.queryByText("절반")).toBeNull();
+    act(() => emit({ type: "ask.done", turn: dayTurn({ id: "ask-월요일?", question: "월요일?", status: "done", answer: "월요일 답", endedAt: "2026-10-06T10:00:09+09:00" }) }));
+    act(() => show("2026-10-05"));
+    expect(await screen.findByText("월요일 답")).toBeTruthy();
+    expect(client.startAsk).toHaveBeenCalledWith({ scope: monday, question: "월요일?", model: null });
+    expect(client.cancelAsk).not.toHaveBeenCalled();
+  });
+
+  it("a question roomsd refuses after the day changed comes back in its own day's input", async () => {
+    const { client } = await setupDays();
+    let refuse: (e: Error) => void = () => {};
+    client.startAsk.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
+    fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일?" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(input().value).toBe("");
+    act(() => show("2026-10-06"));
+    await act(async () => refuse(new RoomsApiError(409, "Waiting for an answer", "ask_busy")));
+    expect(input().value).toBe("");
+    act(() => show("2026-10-05"));
+    expect(input().value).toBe("월요일?");
+  });
+});
+
+describe("AskBar for a session", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  const session = (agent: "aside" | "codex"): Conversation => ({
+    id: { agent, session: "S1" }, title: "t", cwd: null, startedAt: "", endedAt: "", messages: 2, lastReply: null, artifactsWritten: [], roomId: null,
+  });
+
+  it("says under the bar that an Aside session's asks continue it; a Codex session says nothing", async () => {
+    const target: AskTarget = { agent: "aside", mode: "resume", models: [], scoped: false };
+    const first = await renderWithStores(<AskBar subject={{ kind: "conversation", conversation: session("aside") }} />, {
+      rooms: [room("r1", "R")], askTargets: { "conversation:aside:S1": target },
+    });
+    expect(await screen.findByText("Asks continue this Aside session; it can use the browser.")).toBeTruthy();
+    first.unmount();
+    await renderWithStores(<AskBar subject={{ kind: "conversation", conversation: session("codex") }} />, { rooms: [room("r1", "R")] });
+    await screen.findByPlaceholderText("Ask about this session…");
+    expect(screen.queryByText(/continue this Aside session/)).toBeNull();
   });
 });

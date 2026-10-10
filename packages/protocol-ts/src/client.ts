@@ -4,17 +4,20 @@ import type { AskImage } from "./generated/AskImage";
 import type { AskScope } from "./generated/AskScope";
 import type { AskTarget } from "./generated/AskTarget";
 import type { AskTurn } from "./generated/AskTurn";
+import type { Conversation } from "./generated/Conversation";
+import type { ConversationId } from "./generated/ConversationId";
 import type { Info } from "./generated/Info";
 import type { JournalDay } from "./generated/JournalDay";
 import type { Note } from "./generated/Note";
 import type { PluginInfo } from "./generated/PluginInfo";
 import type { Room } from "./generated/Room";
+import type { RoomColor } from "./generated/RoomColor";
 import type { RoomsEvent } from "./generated/RoomsEvent";
 import type { StartAsk } from "./generated/StartAsk";
 
 export type Snapshot<T> = { data: T; seq: number };
 
-/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`. */
+/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `conversation:<agent>:<session>`. */
 export function scopeKey(scope: AskScope): string {
   switch (scope.kind) {
     case "doc":
@@ -23,6 +26,8 @@ export function scopeKey(scope: AskScope): string {
       return `room:${scope.roomId}`;
     case "day":
       return `day:${scope.date}`;
+    case "conversation":
+      return `conversation:${scope.agent}:${scope.session}`;
   }
 }
 
@@ -53,10 +58,10 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     if (!r.ok) throw await failure(r);
     return { data: (await r.json()) as T, seq: Number(r.headers.get("x-rooms-seq") ?? 0) };
   };
-  const write = async <T>(method: string, path: string, body: string, type = "application/json"): Promise<T> => {
+  const write = async <T>(method: string, path: string, body: string, type = "application/json", extra: Record<string, string> = {}): Promise<T> => {
     const r = await fetch(baseUrl + path, {
       method,
-      headers: { "content-type": type, ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      headers: { "content-type": type, ...(token ? { authorization: `Bearer ${token}` } : {}), ...extra },
       body,
     });
     if (!r.ok) throw await failure(r);
@@ -70,6 +75,15 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     listRooms: () => get<Room[]>("/v1/rooms"),
     listArtifacts: (roomId: string) => get<Artifact[]>(`/v1/rooms/${encodeURIComponent(roomId)}/artifacts`),
     journalDay: (date: string) => get<JournalDay>(`/v1/journal/${date}`),
+    /** The conversations added to a room, last active first; empty for the Journal. 404 `room_not_found`. */
+    listRoomConversations: (roomId: string) => get<Conversation[]>(`/v1/rooms/${encodeURIComponent(roomId)}/conversations`),
+    /** One conversation with its room, fresh from the agents' logs or as its room kept it. 404 `not_found`. */
+    getConversation: (id: ConversationId) =>
+      get<Conversation>(`/v1/conversations/${encodeURIComponent(id.agent)}/${encodeURIComponent(id.session)}`),
+    /** Puts a conversation in a room (out of any other), or out of every room with `null`. 400 `invalid_input` for an
+     *  unknown agent or a bad session id, 404 `not_found` / `room_not_found`. Emits `conversation.moved` when it moves. */
+    setConversationRoom: (id: ConversationId, roomId: string | null) =>
+      write<Conversation>("PUT", `/v1/conversations/${encodeURIComponent(id.agent)}/${encodeURIComponent(id.session)}/room`, JSON.stringify(roomId)),
     getNote: async (date: string, name: string): Promise<string> => {
       const r = await fetch(`${baseUrl}/v1/journal/${date}/notes/${encodeURIComponent(name)}`);
       if (!r.ok) throw await failure(r);
@@ -78,11 +92,20 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     createRoom: (name: string) => write<Room>("POST", "/v1/rooms", JSON.stringify({ name })),
     linkFolder: (path: string, name?: string) => write<Room>("POST", "/v1/rooms/link", JSON.stringify({ path, name })),
     renameRoom: (id: string, name: string) => write<Room>("PATCH", `/v1/rooms/${encodeURIComponent(id)}`, JSON.stringify({ name })),
-    /** Moves a room to position `to` among the rooms other than the inbox (past the end = last); returns the new order
-     *  of all room ids. 400 `invalid_input` for the inbox, 404 `room_not_found`. Also emits `rooms.reordered`. */
+    /** Moves a room to position `to` among the rooms other than the inbox (past the end = last), kept within its
+     *  section: pinned rooms stay first, unpinned ones after them. Returns the new order of all room ids.
+     *  400 `invalid_input` for the inbox, 404 `room_not_found`. Also emits `rooms.reordered`. */
     moveRoom: (id: string, to: number) => write<string[]>("POST", `/v1/rooms/${encodeURIComponent(id)}/move`, JSON.stringify({ to })),
+    /** Pins a room with a colour, or unpins it (`null`), and returns it. Pinning moves it to the end of the pinned
+     *  rooms, unpinning to the top of the others, recolouring keeps its place. 400 `invalid_input` for the inbox,
+     *  404 `room_not_found`. Emits `room.updated`, then `rooms.reordered` if it moved. */
+    setRoomColor: (id: string, color: RoomColor | null) =>
+      write<Room>("PUT", `/v1/rooms/${encodeURIComponent(id)}/color`, JSON.stringify({ color })),
     saveNote: (date: string, name: string, body: string) =>
       write<Note>("PUT", `/v1/journal/${date}/notes/${encodeURIComponent(name)}`, body, "text/markdown"),
+    /** Creates a note and never replaces one: 409 `note_exists` if the name (or a case variant of it) is taken. */
+    createNote: (date: string, name: string, body: string) =>
+      write<Note>("PUT", `/v1/journal/${date}/notes/${encodeURIComponent(name)}`, body, "text/markdown", { "if-none-match": "*" }),
     /** Renames a note in place; 404 `not_found` if `from` is gone, 409 `note_exists` if `to` is taken (case-insensitively). */
     renameNote: (date: string, from: string, to: string) =>
       write<Note>("POST", `/v1/journal/${date}/notes/${encodeURIComponent(from)}/rename`, JSON.stringify({ to })),
@@ -135,9 +158,12 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     },
     pluginEntryUrl: (info: Info, p: PluginInfo) =>
       `${info.filesOrigin}/_plugins/${encodeURIComponent(p.id)}/${p.entry.split("/").map(encodeURIComponent).join("/")}`,
-    /** Versioned by `updatedAt`: when the file changes, frames showing it get a new URL and reload. */
-    fileUrl: (info: Info, a: Artifact) =>
-      `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}?v=${encodeURIComponent(a.updatedAt)}`,
+    /** Versioned by `updatedAt`: when the file changes, frames showing it get a new URL and reload. A doc tab passes
+     *  `doc` and gets the document with the content scripts of the enabled plugins spliced in; `contentKey` names
+     *  that set, so a plugin toggle changes the URL and reloads the frame too. Without `doc` (card previews) the
+     *  document carries the selection bridge alone. */
+    fileUrl: (info: Info, a: Artifact, doc?: { contentKey: string }) =>
+      `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}?v=${encodeURIComponent(a.updatedAt)}${doc ? `&doc=1&cs=${encodeURIComponent(doc.contentKey)}` : ""}`,
     /** Every (re)connection first delivers `resync {roomId: null}`; `onOpen` fires on each (re)open. */
     subscribe: (onEvent: (e: RoomsEvent) => void, onOpen?: () => void) => {
       const es = new EventSource(baseUrl + "/v1/events");

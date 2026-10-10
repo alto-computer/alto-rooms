@@ -17,7 +17,7 @@ fn setup(meta: &str) -> (tempfile::TempDir, RoomsCore, AskScope, String) {
     core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
     std::fs::write(d.path().join(".rooms/agents.toml"), format!(
-        "[agents.claude-code]\nresume = [\"{FAKE}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\"]\n"
+        "[agents.claude-code]\nresume = [\"{FAKE}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n"
     )).unwrap();
     let a = core.list_artifacts(&room.id).unwrap().remove(0);
     (d, core, AskScope::Doc { file_key: a.file_key }, room.id)
@@ -66,7 +66,7 @@ async fn resume_turn_runs_template_and_records() {
 async fn mcp_config_arg_is_passed_only_when_the_file_exists() {
     let (d, core, doc, _room) = setup("");
     std::fs::write(d.path().join(".rooms/agents.toml"), format!(
-        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--mcp-config\", \"{{mcp_config}}\", \"{{prompt}}\"]\n")).unwrap();
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--mcp-config\", \"{{mcp_config}}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
     let t = asks.start(&doc, "one", None).unwrap();
@@ -154,7 +154,7 @@ async fn bad_config_and_missing_program() {
     let asks = Asks::new(core.clone(), None);
     std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = []\n").unwrap();
     match asks.start(&doc, "q", None) { Err(AskError::AgentConfig(m)) => assert!(m.contains("agents.claude-code.new")), other => panic!("{other:?}") }
-    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"no-such-cli-xyz\", \"{prompt}\"]\n").unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"no-such-cli-xyz\", \"{prompt}\", \"--settings\", \"{scope_settings}\"]\n").unwrap();
     let mut rx = core.subscribe();
     let t = asks.start(&doc, "q", None).unwrap();
     let done = wait_done(&mut rx, &t.id).await;
@@ -194,7 +194,7 @@ async fn capacity_is_four() {
     for i in 0..5 { std::fs::write(core.room_root(&room.id).unwrap().0.join(format!("d{i}.html")), format!("<title>d{i}</title>")).unwrap(); }
     core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"{{prompt}}\"]\n")).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
     let asks = Asks::new(core.clone(), None);
     let arts = core.list_artifacts(&room.id).unwrap();
     let scope = |a: &rooms_protocol::Artifact| AskScope::Doc { file_key: a.file_key.clone() };
@@ -285,7 +285,7 @@ async fn corrupt_sidecar_means_new_mode_without_error() {
 
 fn with_models(home: &std::path::Path) {
     std::fs::write(home.join(".rooms/agents.toml"), format!(
-        "[agents.claude-code]\nresume = [\"{FAKE}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"-m\", \"{{model}}\", \"{{prompt}}\"]\nmodels = [\"m1\", \"m2\"]\n[agents.codex]\nnew = [\"{FAKE}\", \"codex\", \"{{prompt}}\"]\n"
+        "[agents.claude-code]\nresume = [\"{FAKE}\", \"resume\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"-m\", \"{{model}}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\nmodels = [\"m1\", \"m2\"]\n[agents.codex]\nnew = [\"{FAKE}\", \"codex\", \"{{prompt}}\"]\n"
     )).unwrap();
 }
 
@@ -330,6 +330,20 @@ async fn target_lists_models_only_for_a_template_that_takes_one() {
     assert!(matches!(asks.target(&doc), Err(AskError::AgentConfig(_))));
 }
 
+/// `scoped` says whether the agent itself is held to the listed files, not just told to read them.
+#[tokio::test]
+async fn target_is_scoped_only_for_a_room_or_day_ask_whose_argv_carries_the_settings() {
+    let (d, core, doc, room_id) = setup("");
+    let asks = Asks::new(core.clone(), None);
+    let room = AskScope::Room { room_id };
+    let day = AskScope::Day { date: "2026-10-09".into() };
+    assert!(asks.target(&room).unwrap().scoped && asks.target(&day).unwrap().scoped);
+    assert!(!asks.target(&doc).unwrap().scoped);
+    std::fs::write(d.path().join(".rooms/agents.toml"), "default = \"codex\"\n").unwrap();
+    let codex = asks.target(&room).unwrap();
+    assert_eq!((codex.agent.as_str(), codex.scoped), ("codex", false));
+}
+
 #[tokio::test]
 async fn model_is_passed_and_recorded() {
     let (d, core, doc, _room) = setup("");
@@ -366,7 +380,7 @@ async fn json_lines_stream_as_progress_then_the_final_answer() {
     )).unwrap();
     std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
-        "[agents.claude-code]\nnew = [\"{}\", \"{{prompt}}\"]\n",
+        "[agents.claude-code]\nnew = [\"{}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n",
         "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"tool\" }}\nactivity = [\"/name\", \"/path\"]\n",
         "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"delta\" }}\ndelta = \"/text\"\n",
         "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"result\" }}\nanswer = \"/result\"\n",
@@ -397,7 +411,7 @@ async fn json_lines_stream_as_progress_then_the_final_answer() {
 async fn images_reach_the_template_and_the_prompt_and_stay_on_the_turn() {
     let (d, core, doc, _room) = setup("");
     std::fs::write(d.path().join(".rooms/agents.toml"), format!(
-        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--dir\", \"{{image_dir}}\", \"-i\", \"{{image}}\", \"{{prompt}}\"]\n")).unwrap();
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--dir\", \"{{image_dir}}\", \"-i\", \"{{image}}\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
     let asks = Asks::new(core.clone(), None);
     let id = asks.save_image(b"\x89PNG\r\n\x1a\none").unwrap();
     let id2 = asks.save_image(b"GIF89a-two").unwrap();
@@ -469,7 +483,7 @@ async fn doc_scope_skips_a_dangling_link_and_uses_the_next_room() {
     std::os::unix::fs::symlink(outside.path().join("o.html"), d.path().join("b/o.html")).unwrap();
     core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\"]\n")).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!("[agents.claude-code]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n")).unwrap();
     let key = core.list_artifacts(&a).unwrap().remove(0).file_key;
     assert_eq!(core.artifacts_by_file_key(&key).iter().map(|x| x.room_id.as_str()).collect::<Vec<_>>(), [a.as_str(), b.as_str()]);
     let doc = AskScope::Doc { file_key: key.clone() };
@@ -486,6 +500,144 @@ async fn doc_scope_skips_a_dangling_link_and_uses_the_next_room() {
     // both links gone: nothing resolves
     std::fs::remove_file(d.path().join("b/o.html")).unwrap();
     assert!(matches!(asks.target(&doc), Err(AskError::NotFound)));
+    asks.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_conversation_ask_resumes_that_conversation_in_its_folder() {
+    let (d, core, _doc, _room) = setup("");
+    let data = d.path().join("collect");
+    let work = tempfile::tempdir().unwrap();
+    let work_dir = std::fs::canonicalize(work.path()).unwrap();
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    db.execute("INSERT INTO events(id, kind, agent, session, ts, cwd, role, src_path, file_key, src_offset, src_len, preview)
+                VALUES('e1', 'message', 'claude-code', 'C-7', '2026-10-05T01:00:00Z', ?1, 'user', '/log', 'k', 0, 0, 'why is cold start slow')",
+        [work_dir.to_string_lossy()]).unwrap();
+    core.set_collect_data(&data);
+    let asks = Asks::new(core.clone(), None);
+    let scope = AskScope::Conversation { agent: rooms_protocol::Agent::ClaudeCode, session: rooms_protocol::SessionId::parse("C-7").unwrap() };
+    assert_eq!(asks.target(&scope).unwrap().mode, AskMode::Resume);
+    let mut rx = core.subscribe();
+    let t = asks.start(&scope, "three lines?", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [resume] [C-7] ["), "{}", done.answer);
+    assert!(done.answer.contains("Conversation: why is cold start slow\nAgent: claude-code, session C-7\n"), "{}", done.answer);
+    assert!(done.answer.contains(&format!("CWD: {}", work_dir.display())), "{}", done.answer);
+    assert_eq!(asks.thread(&scope).unwrap()[0].id, t.id);
+
+    let gone = AskScope::Conversation { agent: rooms_protocol::Agent::Codex, session: rooms_protocol::SessionId::parse("nope").unwrap() };
+    assert!(matches!(asks.start(&gone, "q", None), Err(AskError::ConversationNotFound)));
+    let flag_shaped = AskScope::Conversation { agent: rooms_protocol::Agent::ClaudeCode, session: rooms_protocol::SessionId::parse("-x").unwrap() };
+    db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
+                VALUES('e2', 'message', 'claude-code', '-x', '2026-10-05T01:00:00Z', 'user', '/log', 'k', 0, 0, 'hi')", []).unwrap();
+    assert_eq!(asks.target(&flag_shaped).unwrap().mode, AskMode::New, "a session id that reads as a flag is never resumed");
+    asks.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_aside_ask_resumes_that_session_under_its_account() {
+    let (d, core, _doc, _room) = setup("");
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n\
+         [agents.aside]\nresume = [\"{FAKE}\", \"resume\", \"--account\", \"{{account}}\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\"]\n"
+    )).unwrap();
+    let data = d.path().join("collect");
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    for (session, log) in [("A-1", "/Users/me/.aside/u/2/sessions/2026-10-05_A-1/messages.jsonl"), ("A-2", "/elsewhere/A-2.jsonl")] {
+        db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
+                    VALUES(?1, 'message', 'aside', ?1, '2026-10-05T01:00:00Z', 'user', ?2, 'k', 0, 0, 'find the invoice')",
+            [session, log]).unwrap();
+    }
+    core.set_collect_data(&data);
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let scope = |s: &str| AskScope::Conversation { agent: rooms_protocol::Agent::Aside, session: rooms_protocol::SessionId::parse(s).unwrap() };
+    let t = asks.start(&scope("A-1"), "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [resume] [--account] [u2] [A-1] ["), "{}", done.answer);
+    let t = asks.start(&scope("A-2"), "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [resume] [A-2] ["), "no account, no flag: {}", done.answer);
+    asks.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_day_ask_lists_the_days_sessions_but_never_their_logs() {
+    let (d, core, _doc, _room) = setup("");
+    let data = d.path().join("collect");
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    let at = |h: u32| chrono::Local::now().date_naive().and_hms_opt(h, 0, 0).unwrap().and_local_timezone(chrono::Local).unwrap()
+        .with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let log = "/Users/me/.claude/projects/-work/D-1.jsonl";
+    for (id, role, ts, text) in [("e1", "user", at(9), "plan the \"launch\"\nnow"), ("e2", "assistant", at(10), "Planned: three steps")] {
+        db.execute("INSERT INTO events(id, kind, agent, session, ts, cwd, role, src_path, file_key, src_offset, src_len, preview)
+                    VALUES(?1, 'message', 'claude-code', 'D-1', ?2, '/work/secret', ?3, ?4, 'k', 0, 0, ?5)",
+            [id, ts.as_str(), role, log, text]).unwrap();
+    }
+    core.set_collect_data(&data);
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let t = asks.start(&AskScope::Day { date }, "what happened?", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.contains("Sessions (1):\n- \"plan the \\\"launch\\\" now\" (claude-code, 09:00–10:00) last reply: \"Planned: three steps\"\n"), "{}", done.answer);
+    assert!(!done.answer.contains(log) && !done.answer.contains(".jsonl") && !done.answer.contains("/work/secret"), "{}", done.answer);
+    asks.shutdown().await;
+}
+
+#[tokio::test]
+async fn room_ask_streams_progress_under_its_scope() {
+    let (d, core, _doc, room_id) = setup("");
+    let script = d.path().join("stream-agent.sh");
+    std::fs::write(&script, concat!(
+        "#!/bin/sh\n",
+        "echo '{\"t\":\"d\",\"x\":\"one \"}'; sleep 0.3\n",
+        "echo '{\"t\":\"d\",\"x\":\"two\"}'; sleep 0.3\n",
+    )).unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(concat!(
+        "[agents.claude-code]\nnew = [\"{}\", \"--settings\", \"{{scope_settings}}\"]\n",
+        "[[agents.claude-code.events]]\nmatch = {{ \"/t\" = \"d\" }}\ndelta = \"/x\"\n",
+    ), script.display())).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let room = AskScope::Room { room_id };
+    let mut rx = core.subscribe();
+    let t = asks.start(&room, "q", None).unwrap();
+    let mut progress = Vec::new();
+    let done = loop {
+        let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("events in time").unwrap();
+        match ev.kind {
+            EventKind::AskProgress { id, scope, answer, .. } if id == t.id => progress.push((scope, answer)),
+            EventKind::AskDone { turn } if turn.id == t.id => break turn,
+            _ => {}
+        }
+    };
+    assert!(!progress.is_empty() && progress.iter().all(|(s, _)| *s == room), "{progress:?}");
+    assert_eq!(progress.last().map(|(_, a)| a.as_str()), Some("one two"), "{progress:?}");
+    assert_eq!((done.status, done.answer.as_str(), &done.scope), (AskStatus::Done, "one two", &room));
+    while let Ok(ev) = rx.try_recv() {
+        assert!(!matches!(ev.kind, EventKind::AskProgress { ref id, .. } if *id == t.id), "no progress after ask.done");
+    }
+    assert_eq!(asks.thread(&room).unwrap().len(), 1);
+}
+
+/// A room ask hands the default claude template its listed realpaths as read rules; a doc ask in
+/// the same room gets no `--settings`.
+#[tokio::test]
+async fn room_ask_limits_reads_to_its_listed_files() {
+    let (d, core, doc, room_id) = setup("");
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"--settings\", \"{{scope_settings}}\", \"{{prompt}}\"]\n")).unwrap();
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let t = asks.start(&AskScope::Room { room_id: room_id.clone() }, "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    let real = core.room_root(&room_id).unwrap().0.join("doc.html").canonicalize().unwrap();
+    let argv = done.answer.lines().next().unwrap();
+    assert!(argv.starts_with(&format!(r#"ARGV: [--settings] [{{"permissions":{{"allow":["Read(/{})"],"defaultMode":"dontAsk"}}}}] ["#, real.display())), "{argv}");
+    let t = asks.start(&doc, "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(!done.answer.contains("[--settings]") && !done.answer.contains("dontAsk"), "{}", done.answer);
     asks.shutdown().await;
 }
 
@@ -508,7 +660,7 @@ fn session_agent(home: &std::path::Path) -> std::path::PathBuf {
     std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     let s = script.display();
     std::fs::write(home.join(".rooms/agents.toml"), format!(concat!(
-        "[agents.claude-code]\nresume = [\"{s}\", \"fork\", \"{{session}}\"]\nnew = [\"{s}\", \"new\"]\ncontinue = [\"{s}\", \"cont\", \"{{session}}\"]\n",
+        "[agents.claude-code]\nresume = [\"{s}\", \"fork\", \"{{session}}\"]\nnew = [\"{s}\", \"new\", \"--settings\", \"{{scope_settings}}\"]\ncontinue = [\"{s}\", \"cont\", \"{{session}}\"]\n",
         "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"init\" }}\nsession = \"/sid\"\n",
         "[[agents.claude-code.events]]\nmatch = {{ \"/type\" = \"result\" }}\nanswer = \"/text\"\n",
     ), s = s)).unwrap();
@@ -516,7 +668,7 @@ fn session_agent(home: &std::path::Path) -> std::path::PathBuf {
 }
 
 #[tokio::test]
-async fn later_questions_continue_the_session_the_first_one_started() {
+async fn later_questions_continue_the_fork_the_first_one_made() {
     let (d, core, doc, _room) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="ORIG">"#);
     let agent = session_agent(d.path());
     let input = || std::fs::read_to_string(agent.join("input")).unwrap();
@@ -525,12 +677,12 @@ async fn later_questions_continue_the_session_the_first_one_started() {
     let ask = |q: &str| asks.start(&doc, q, None).unwrap();
     assert_eq!(asks.target(&doc).unwrap().mode, AskMode::Resume);
 
-    // The first question forks the doc's conversation; the session it got is kept on the turn.
+    // The first question forks the doc's conversation; the fork's id is kept on the turn.
     let t1 = wait_done(&mut rx, &ask("first").id).await;
     assert_eq!((t1.mode, t1.answer.as_str(), t1.session.as_deref()), (AskMode::Resume, "fork ORIG", Some("S1")));
     assert!(input().ends_with("Question: first"), "{}", input());
 
-    // The next one goes to that session with the question alone.
+    // The next one goes to that fork with the question alone.
     assert_eq!(asks.target(&doc).unwrap().mode, AskMode::Continue);
     let t2 = ask("second");
     assert_eq!((t2.mode, t2.session.as_deref()), (AskMode::Continue, Some("S1")));
@@ -557,16 +709,27 @@ async fn later_questions_continue_the_session_the_first_one_started() {
 }
 
 #[tokio::test]
-async fn a_continued_session_that_answers_then_fails_is_not_asked_again() {
+async fn a_new_run_is_never_continued_and_a_real_failure_is_not_asked_again() {
     let (d, core, doc, _room) = setup("");
     let agent = session_agent(d.path());
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
+    // A `new` run's session isn't kept, so the next question starts anew too.
+    for q in ["first", "second"] {
+        let t = wait_done(&mut rx, &asks.start(&doc, q, None).unwrap().id).await;
+        assert_eq!((t.mode, t.answer.as_str(), t.session), (AskMode::New, "new", None));
+    }
+
+    let (d, core, doc, _room) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="ORIG">"#);
+    let agent2 = session_agent(d.path());
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
     let t1 = wait_done(&mut rx, &asks.start(&doc, "first", None).unwrap().id).await;
-    assert_eq!((t1.mode, t1.answer.as_str(), t1.session.as_deref()), (AskMode::New, "new", Some("S1")));
-    // A real failure in the session (an error after it started) stays a failure.
-    std::fs::write(agent.join("session-agent.sh"), "#!/bin/sh\ncat >/dev/null; echo '{\"type\":\"init\",\"sid\":\"S1\"}'; echo boom >&2; exit 3\n").unwrap();
+    assert_eq!(t1.session.as_deref(), Some("S1"));
+    // A real failure in the fork (an error after it started) stays a failure.
+    std::fs::write(agent2.join("session-agent.sh"), "#!/bin/sh\ncat >/dev/null; echo '{\"type\":\"init\",\"sid\":\"S1\"}'; echo boom >&2; exit 3\n").unwrap();
     let t2 = wait_done(&mut rx, &asks.start(&doc, "second", None).unwrap().id).await;
     assert_eq!((t2.status, t2.mode, t2.session.as_deref()), (AskStatus::Failed, AskMode::Continue, Some("S1")));
     assert!(t2.error.unwrap().contains("boom"));
+    drop(agent);
 }

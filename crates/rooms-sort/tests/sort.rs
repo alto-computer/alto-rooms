@@ -20,7 +20,7 @@ struct FakeRooms {
 }
 
 fn room(id: &str, name: &str, home: &Path) -> Room {
-    Room { id: id.into(), name: name.into(), kind: RoomKind::Owned, path: home.join(name).to_string_lossy().into(), status: RoomStatus::Ok, artifact_count: 0, updated_at: None }
+    Room { id: id.into(), name: name.into(), kind: RoomKind::Owned, path: home.join(name).to_string_lossy().into(), status: RoomStatus::Ok, artifact_count: 0, updated_at: None, color: None }
 }
 
 impl FakeRooms {

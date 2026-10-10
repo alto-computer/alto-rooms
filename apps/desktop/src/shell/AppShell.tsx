@@ -3,6 +3,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAsksStore, useReadOnly, useViewer, useViewerStore } from "@/data/hooks";
+import type { Tab } from "@/data/viewerStore";
 import { cn } from "@/lib/utils";
 import { EnableCard } from "@/plugins/EnableCard";
 import { CurrentTabContext, TabVisibleContext } from "./currentTab";
@@ -16,7 +17,10 @@ import { useShellKeys } from "./useShellKeys";
 /** cmdk + dialog load on the first ⌘K, then stay mounted. */
 const QuickFind = lazy(() => import("@/views/QuickFind").then((m) => ({ default: m.QuickFind })));
 
-const SIDEBAR_STYLE = { "--sidebar-width": "232px" } as CSSProperties;
+const SIDEBAR_STYLE = { "--sidebar-width": "248px" } as CSSProperties;
+
+/** Tab kinds with an ask bar for ⌘J to toggle. */
+const ASKABLE = new Set<Tab["kind"]>(["doc", "conversation", "room", "journal"]);
 
 export function AppShell() {
   const { tabs, activeId, sidebarOpen } = useViewer();
@@ -32,7 +36,7 @@ export function AppShell() {
   const active = tabs.find((t) => t.id === activeId);
   const activeKind = active?.kind;
   const toggleAsk = useCallback(() => {
-    if (activeKind === "doc" && !readOnly) asks.toggle();
+    if (activeKind && ASKABLE.has(activeKind) && !readOnly) asks.toggle();
   }, [activeKind, readOnly, asks]);
   useShellKeys(viewer, openFind, toggleAsk);
   const mounted = useMountedTabs(tabs, active);
@@ -43,7 +47,7 @@ export function AppShell() {
         open={sidebarOpen}
         onOpenChange={(open) => viewer.setSidebarOpen(open)}
         style={SIDEBAR_STYLE}
-        className="h-svh min-h-0 overflow-hidden bg-surface text-ink"
+        className="h-svh min-h-0 overflow-hidden bg-desk text-ink"
       >
         <Sidebar onFind={openFind} />
         {/* Content column: padding 8px 8px 8px 0 (8px on the left too once the sidebar is gone). */}
@@ -53,7 +57,7 @@ export function AppShell() {
             id={TAB_PANEL_ID}
             role="tabpanel"
             aria-labelledby={active ? tabDomId(active.id) : undefined}
-            className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-[#ddd] bg-white"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-pane"
           >
             {mounted.map((tab) => (
               <Activity key={viewer.navKey(tab.id)} mode={tab === active ? "visible" : "hidden"}>

@@ -6,7 +6,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use rooms_core::asks::{AskError, Request, ScopeKey};
-use rooms_core::plugins::PluginAsset;
+use rooms_core::plugins::{ContentScript, PluginAsset};
 use rooms_core::{CoreError, RoomsCore};
 use rooms_protocol::*;
 use serde::Deserialize;
@@ -134,6 +134,26 @@ pub async fn list_artifacts(State(st): State<AppState>, Path(room_id): Path<Stri
     snapshot(&st, move |c| c.list_artifacts(&room_id)).await
 }
 
+pub async fn list_room_conversations(State(st): State<AppState>, Path(room_id): Path<String>) -> Result<Response, ApiErr> {
+    snapshot(&st, move |c| c.room_conversations(&room_id)).await
+}
+
+fn conversation_id(agent: &str, session: &str) -> Result<ConversationId, CoreError> {
+    ConversationId::parse_key(&format!("{agent}:{session}")).ok_or_else(|| CoreError::InvalidInput("unknown agent or bad session id".into()))
+}
+
+pub async fn get_conversation(State(st): State<AppState>, Path((agent, session)): Path<(String, String)>) -> Result<Response, ApiErr> {
+    let id = conversation_id(&agent, &session)?;
+    snapshot(&st, move |c| c.conversation(&id)).await
+}
+
+/// Body: the room id, or `null` to take the conversation out of its room.
+pub async fn set_conversation_room(State(st): State<AppState>, Path((agent, session)): Path<(String, String)>, b: Result<Json<Option<RoomId>>, JsonRejection>) -> Result<Json<Conversation>, ApiErr> {
+    let Json(room) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
+    let id = conversation_id(&agent, &session)?;
+    Ok(Json(blocking(&st, move |c| c.set_conversation_room(&id, room)).await?))
+}
+
 pub async fn journal_day(State(st): State<AppState>, Path(date): Path<String>) -> Result<Response, ApiErr> {
     snapshot(&st, move |c| c.journal_day(&date)).await
 }
@@ -159,8 +179,24 @@ pub async fn move_room(State(st): State<AppState>, Path(room_id): Path<String>, 
     Ok(Json(blocking(&st, move |c| c.move_room(&room_id, b.to)).await?))
 }
 
-pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>, body: String) -> Result<Json<Note>, ApiErr> {
-    Ok(Json(blocking(&st, move |c| c.save_note(&date, &name, &body)).await?))
+// `deserialize_with` makes `color` required: `{}` is refused instead of read as an unpin.
+#[derive(Deserialize)] pub struct RoomColorBody { #[serde(deserialize_with = "Option::deserialize")] color: Option<RoomColor> }
+/// Pins a room with a colour, or unpins it (`null`); returns the room. The new order, if it
+/// changed, arrives as `rooms.reordered`.
+pub async fn set_room_color(State(st): State<AppState>, Path(room_id): Path<String>, Json(b): Json<RoomColorBody>) -> Result<Json<Room>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.set_room_color(&room_id, b.color)).await?))
+}
+
+/// Saves a note. With `If-None-Match: *` it only creates one: 409 `note_exists` if the name (or a
+/// case variant of it) is taken, and the note on disk is left as it was. Any other If-None-Match
+/// is 400, so a malformed create never falls through to an overwrite.
+pub async fn put_note(State(st): State<AppState>, Path((date, name)): Path<(String, String)>, headers: HeaderMap, body: String) -> Result<Json<Note>, ApiErr> {
+    let values: Vec<&str> = headers.get_all("if-none-match").iter().map(|v| v.to_str().unwrap_or("")).collect();
+    let create_only = !values.is_empty();
+    if create_only && !none_match_items(values.into_iter()).any(|t| t == "*") {
+        return Err(CoreError::InvalidInput("If-None-Match on a note must be *".into()).into());
+    }
+    Ok(Json(blocking(&st, move |c| if create_only { c.create_note(&date, &name, &body) } else { c.save_note(&date, &name, &body) }).await?))
 }
 
 #[derive(Deserialize)] pub struct RenameNoteBody { to: String }
@@ -192,27 +228,65 @@ fn etag_of(meta: &std::fs::Metadata, suffix: &str) -> Option<HeaderValue> {
 /// Whether `If-None-Match` (all its header lines) matches `tag`: `*`, or any listed tag equal
 /// to it by weak comparison (opaque tags equal, `W/` ignored; RFC 9110 §13.1.2).
 fn none_match_hits<'a>(if_none_match: impl Iterator<Item = &'a str>, tag: &str) -> bool {
-    fn opaque(t: &str) -> &str { t.trim().trim_start_matches("W/") }
-    if_none_match.flat_map(|v| v.split(',')).any(|t| t.trim() == "*" || opaque(t) == opaque(tag))
+    fn opaque(t: &str) -> &str { t.trim_start_matches("W/") }
+    none_match_items(if_none_match).any(|t| t == "*" || opaque(t) == opaque(tag.trim()))
 }
 
-/// Appended to every HTML document Rooms shows, so "ask about this" works inside docs. The app
-/// frames a doc sandboxed with no origin of its own (agent-written HTML must not reach the app), so
-/// it can't read the doc's selection; this script, running inside, posts it out instead. It goes
-/// after `</html>`, where the parser still runs it, so the document is never parsed or rewritten;
-/// files on disk are untouched.
+/// The list members of `If-None-Match` across all its header lines, trimmed, empty ones dropped.
+fn none_match_items<'a>(if_none_match: impl Iterator<Item = &'a str>) -> impl Iterator<Item = &'a str> {
+    if_none_match.flat_map(|v| v.split(',')).map(str::trim).filter(|t| !t.is_empty())
+}
+
+/// Spliced into every HTML document Rooms shows, so "ask about this" works inside docs and a light
+/// doc can be dimmed in dark mode. The app frames a doc sandboxed with no origin of its own
+/// (agent-written HTML must not reach the app), so it can't read the doc's selection or background;
+/// this script, running inside, posts them out instead. It goes
+/// right after `<head>`, before any `<meta>` policy the document declares, which would block a
+/// script after it (`inject`). The file on disk is untouched.
 const SELECTION_BRIDGE: &[u8] = include_bytes!("selection-bridge.html");
-/// Bumped when the bridge changes, so cached documents pick up the new one.
-const BRIDGE_VERSION: &str = "b2";
+/// Bumped when the bridge or its placement changes, so cached documents pick up the new one.
+const BRIDGE_VERSION: &str = "b4";
+
+/// `doc=1` asks for the doc-tab variant: the bridge plus the content scripts of enabled plugins.
+/// Card previews send nothing and get the bridge alone.
+#[derive(Deserialize)]
+pub struct FileQuery { doc: Option<String> }
+
+/// The block spliced into an HTML document: the bridge, then one tag per content script. The
+/// tag's URL is absolute so a document's `<base href>` cannot redirect it.
+fn inject_block(scripts: &[ContentScript], files_origin: &str) -> axum::body::Bytes {
+    let attr = |s: &str| s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;");
+    let mut block = SELECTION_BRIDGE.to_vec();
+    for s in scripts {
+        block.extend_from_slice(format!("<script src=\"{}\"></script>\n", attr(&format!("{files_origin}/_plugins/{}/{}?r={}", s.plugin_id, s.path, s.rev))).as_bytes());
+    }
+    block.into()
+}
+
+/// The ETag suffix of an HTML response: the bridge version, and a hash of the content scripts
+/// when there are any, so turning a plugin on or off, or editing its script, misses the cache.
+fn inject_version(scripts: &[ContentScript]) -> String {
+    use std::hash::{Hash, Hasher};
+    if scripts.is_empty() { return BRIDGE_VERSION.to_string(); }
+    let mut h = std::hash::DefaultHasher::new();
+    for s in scripts { (&s.plugin_id, &s.rev, &s.path).hash(&mut h); }
+    format!("{BRIDGE_VERSION}-{:x}", h.finish())
+}
 
 /// Serves a room file. Previews remount often (scrolling, tab switches), so responses carry an
 /// ETag with `no-cache`: the webview revalidates every time and gets a bodyless 304 while unchanged.
-pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, ApiErr> {
-    let path = blocking(&st, move |c| c.resolve_file(&room_id, &rel)).await?;
+pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>, Query(q): Query<FileQuery>, headers: HeaderMap) -> Result<Response, ApiErr> {
+    let doc = q.doc.as_deref() == Some("1");
+    let (path, ext, scripts) = blocking(&st, move |c| {
+        let path = c.resolve_file(&room_id, &rel)?;
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        let scripts = if doc && matches!(ext.as_str(), "html" | "htm") { c.content_scripts() } else { Vec::new() };
+        Ok((path, ext, scripts))
+    }).await?;
     let read_err = |e: std::io::Error| ApiErr(CoreError::Io(e));
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let html = matches!(ext.as_str(), "html" | "htm");
-    let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?, if html { BRIDGE_VERSION } else { "" });
+    let suffix = if html { inject_version(&scripts) } else { String::new() };
+    let etag = etag_of(&tokio::fs::metadata(&path).await.map_err(read_err)?, &suffix);
     if let Some(tag) = &etag {
         let tag_str = tag.to_str().unwrap_or_default();
         if none_match_hits(headers.get_all("if-none-match").iter().filter_map(|v| v.to_str().ok()), tag_str) {
@@ -220,10 +294,8 @@ pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String
         }
     }
     let body = if html {
-        use futures::StreamExt;
         let f = tokio::fs::File::open(&path).await.map_err(read_err)?;
-        let tail = futures::stream::once(async { Ok::<_, std::io::Error>(axum::body::Bytes::from_static(SELECTION_BRIDGE)) });
-        Body::from_stream(tokio_util::io::ReaderStream::new(f).chain(tail))
+        Body::from_stream(crate::inject::splice(inject_block(&scripts, &st.files_origin), tokio_util::io::ReaderStream::new(f)))
     } else {
         file_body(&path).await.map_err(read_err)?
     };

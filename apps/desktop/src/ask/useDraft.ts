@@ -22,6 +22,12 @@ function save(key: string, text: string): void {
   }
 }
 
+/** Puts `text` back as a scope's draft unless one was typed since, even when no bar shows that scope any more. */
+export function restoreDraft(scope: AskScope, text: string): void {
+  const key = storageKey(scope);
+  if (!load(key)) save(key, text);
+}
+
 type SetDraft = (next: string | ((current: string) => string)) => void;
 
 /** The unsent question typed in a scope: kept per scope, across tabs and restarts. */

@@ -20,7 +20,7 @@ function setup(thread: AskTurn[] = []) {
   const client = {
     startAsk: vi.fn(async () => turn("t1", "running")),
     askThread: vi.fn(async () => thread),
-    askTarget: vi.fn(async (): Promise<AskTarget> => ({ agent: "codex", mode: "new", models: ["gpt-6-sol"] })),
+    askTarget: vi.fn(async (): Promise<AskTarget> => ({ agent: "codex", mode: "new", models: ["gpt-6-sol"], scoped: false })),
     cancelAsk: vi.fn(async () => {}),
     uploadAskImage: vi.fn(async () => ({ id: "img.png" })),
   };
@@ -218,7 +218,7 @@ describe("AsksStore", () => {
     client.startAsk.mockResolvedValueOnce(turn("c1", "done", { kind: "clear" }));
     await store.submit(docScope("k2"), q("/new", { kind: "clear" }));
     expect(client.startAsk).toHaveBeenLastCalledWith({ scope: docScope("k2"), question: "/new", model: null, kind: "clear" });
-    expect(await store.target(doc)).toEqual({ agent: "codex", mode: "new", models: ["gpt-6-sol"] });
+    expect(await store.target(doc)).toEqual({ agent: "codex", mode: "new", models: ["gpt-6-sol"], scoped: false });
     expect(client.askTarget).toHaveBeenCalledWith(doc);
     client.askTarget.mockRejectedValueOnce(new Error("x"));
     expect(await store.target(doc)).toBeNull();

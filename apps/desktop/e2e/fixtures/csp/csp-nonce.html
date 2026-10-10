@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-abc'">
+<title>CSP nonce</title>
+</head>
+<body>
+<h1>CSP nonce</h1>
+<p id="text">The quick brown fox jumps over the lazy dog.</p>
+<script nonce="abc">document.documentElement.dataset.own = "1";</script>
+</body>
+</html>

@@ -55,6 +55,8 @@ async fn core_errors() {
     assert_eq!(wire(&app, req("GET", "/v1/artifacts/by-file-key/0000000000000000", "")).await, w(404, "not_found", "not found"));
     assert_eq!(wire(&app, req("GET", "/v1/journal/2026-13-40", "")).await, w(400, "invalid_input", "invalid input: date"));
     assert_eq!(wire(&app, req("POST", "/v1/rooms/inbox/move", r#"{"to":1}"#)).await, w(400, "invalid_input", "invalid input: the inbox can't be moved"));
+    assert_eq!(wire(&app, req("PUT", "/v1/rooms/inbox/color", r#"{"color":"sage"}"#)).await, w(400, "invalid_input", "invalid input: the inbox can't be pinned"));
+    assert_eq!(wire(&app, req("PUT", "/v1/rooms/nope/color", r#"{"color":"sage"}"#)).await, w(404, "room_not_found", "room not found"));
     let big = "x".repeat(1_048_577);
     assert_eq!(wire(&app, req("PUT", "/v1/journal/2026-10-05/notes/a", &big)).await, w(400, "invalid_input", "invalid input: note too large"));
     assert_eq!(wire(&app, req("GET", "/v1/journal/2026-10-05/notes/missing", "")).await, w(404, "not_found", "not found"));
@@ -147,8 +149,11 @@ async fn tool_errors() {
 async fn ask_errors() {
     let (d, app, st) = app();
     assert_eq!(wire(&app, req("GET", "/v1/asks?scope=doc:..%2Fx", "")).await, w(400, "bad_request", "bad scope key"));
-    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=doc:0000000000000000", "")).await, w(404, "not_found", "Can't find this doc"));
-    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=room:inbox", "")).await, w(400, "bad_request", "Room and day asks are not available yet"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=doc:0000000000000000", "")).await, w(404, "not_found", "Can't find this artifact"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=room:nope", "")).await, w(404, "not_found", "Can't find this room"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=room:journal", "")).await, w(400, "bad_request", "bad scope key"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks/target?scope=conversation:codex:s-1", "")).await, w(404, "not_found", "Can't find this session"));
+    assert_eq!(wire(&app, req("GET", "/v1/asks?scope=conversation:cursor:s-1", "")).await, w(400, "bad_request", "bad scope key"));
     let (status, code, _) = wire(&app, req("GET", "/v1/asks", "")).await;
     assert_eq!((status, code.as_str()), (400, "bad_request"));
     std::fs::write(d.path().join("inbox/x.html"), "<title>x</title>").unwrap();

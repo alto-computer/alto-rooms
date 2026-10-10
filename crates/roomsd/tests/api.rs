@@ -79,6 +79,16 @@ async fn cors_preflight_allows_tauri_only() {
 }
 
 #[tokio::test]
+async fn cors_preflight_allows_a_create_only_note_put() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let r = app.oneshot(Request::options("/v1/journal/2026-10-05/notes/a").header("host", API_HOST)
+        .header("origin", "tauri://localhost").header("access-control-request-method", "PUT")
+        .header("access-control-request-headers", "authorization,content-type,if-none-match").body(Body::empty()).unwrap()).await.unwrap();
+    let allowed = r.headers()["access-control-allow-headers"].to_str().unwrap().to_ascii_lowercase();
+    assert!(allowed.contains("if-none-match"), "{allowed}");
+}
+
+#[tokio::test]
 async fn create_room_requires_token_host_and_loopback() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
     let ok = app.clone().oneshot(post("/v1/rooms", r#"{"name":"연구 도구"}"#, Some("t0k"), "127.0.0.1:4317")).await.unwrap();
@@ -121,6 +131,73 @@ async fn note_put_and_journal_get() {
     assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::OK);
     let r = app.oneshot(get("/v1/journal/2026-10-05", API_HOST)).await.unwrap();
     assert_eq!(body_json(r).await["notes"][0]["name"], "회고.md");
+}
+
+fn put_json(uri: &str, json: &str, token: Option<&str>) -> Request<Body> {
+    let mut b = Request::put(uri).header("content-type", "application/json").header("host", API_HOST);
+    if let Some(t) = token { b = b.header("authorization", format!("Bearer {t}")); }
+    b.body(Body::from(json.to_string())).unwrap()
+}
+
+#[tokio::test]
+async fn without_collect_data_there_are_no_conversations() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert!(r.headers().get("x-rooms-seq").is_some());
+    assert_eq!(body_json(r).await, serde_json::json!([]));
+    let r = app.clone().oneshot(get("/v1/journal/2026-10-05", API_HOST)).await.unwrap();
+    assert_eq!(body_json(r).await["conversations"], serde_json::json!([]));
+    let r = app.clone().oneshot(put_json("/v1/conversations/claude-code/s1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let r = app.oneshot(get("/v1/conversations/claude-code/s1", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_unreadable_collect_db_is_500_not_404() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let data = d.path().join("collect");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(rooms_collect::store::path_in(&data), b"this is not a database at all, not even close............................................").unwrap();
+    st.core.set_collect_data(&data);
+    let r = app.clone().oneshot(get("/v1/conversations/codex/s-1", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let r = app.oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn conversations_join_and_leave_a_room() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let data = d.path().join("collect");
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
+                VALUES('e1', 'message', 'codex', 's-1', '2026-10-05T01:00:00Z', 'user', '/log', 'k', 0, 0, 'tidy the report')", []).unwrap();
+    st.core.set_collect_data(&data);
+    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN, "writes need the token");
+    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!((&v["roomId"], &v["title"], &v["id"]), (&serde_json::json!("inbox"), &serde_json::json!("tidy the report"), &serde_json::json!({"agent": "codex", "session": "s-1"})));
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    assert_eq!(body_json(r).await.as_array().map(Vec::len), Some(1));
+    let r = app.clone().oneshot(get("/v1/conversations/codex/s-1", API_HOST)).await.unwrap();
+    assert!(r.headers().get("x-rooms-seq").is_some());
+    assert_eq!(body_json(r).await["roomId"], serde_json::json!("inbox"));
+    let r = app.clone().oneshot(get("/v1/conversations/codex/s%3B1", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", "null", Some("t0k"))).await.unwrap();
+    assert_eq!(body_json(r).await["roomId"], serde_json::Value::Null);
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    assert_eq!(body_json(r).await, serde_json::json!([]));
+    for (uri, body) in [("/v1/conversations/cursor/s-1/room", r#""inbox""#), ("/v1/conversations/codex/s%3B1/room", r#""inbox""#), ("/v1/conversations/codex/s-1/room", "{}")] {
+        let r = app.clone().oneshot(put_json(uri, body, Some("t0k"))).await.unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{uri} {body}");
+    }
+    let r = app.oneshot(put_json("/v1/conversations/codex/s-1/room", r#""nope""#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -178,12 +255,23 @@ async fn files_stream_a_big_document_whole() {
     let r = files.oneshot(get(&format!("/{}/big.html", room.id), FILES_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     assert_eq!(r.headers()["content-type"], "text/html; charset=utf-8");
-    // The whole file, then the selection bridge Rooms appends to every HTML document it shows.
+    // No <head> anywhere, so the bridge Rooms splices into every HTML document goes first, then the whole file.
     let body = r.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(&body[..big.len()], big.as_slice());
-    let tail = std::str::from_utf8(&body[big.len()..]).unwrap();
-    assert!(tail.starts_with("<script data-rooms-bridge>") && tail.contains("roomsSelection"), "{tail}");
+    let head = std::str::from_utf8(&body[..body.len() - big.len()]).unwrap();
+    assert!(head.starts_with("<script data-rooms-bridge>") && head.contains("roomsSelection") && head.contains("roomsTone"), "{head}");
+    assert_eq!(&body[body.len() - big.len()..], big.as_slice());
     assert_eq!(std::fs::read(d.path().join("a/big.html")).unwrap(), big, "the file on disk is unchanged");
+}
+
+const DOC: &str = "<!doctype html><html><head><meta charset=\"utf-8\"><title>t</title></head><body><p>hi</p></body></html>\n";
+
+/// The bytes between `<head>` and the file's own `<meta charset>`: what Rooms spliced in.
+fn spliced(body: &str) -> &str {
+    let (start, rest) = body.split_once("<head>").unwrap();
+    assert_eq!(start, "<!doctype html><html>");
+    let (block, rest) = rest.split_once("<meta charset=\"utf-8\">").unwrap();
+    assert_eq!(rest, "<title>t</title></head><body><p>hi</p></body></html>\n", "the rest of the file is untouched, nothing after </html>");
+    block
 }
 
 #[tokio::test]
@@ -191,9 +279,156 @@ async fn only_html_gets_the_selection_bridge() {
     let (d, _app, st) = app(false, "127.0.0.1:5000");
     let room = st.core.create_room("a").unwrap();
     std::fs::write(d.path().join("a/x.css"), "p{}").unwrap();
+    std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
     let files = build_files_router(st);
-    let r = files.oneshot(get(&format!("/{}/x.css", room.id), FILES_HOST)).await.unwrap();
+    let r = files.clone().oneshot(get(&format!("/{}/x.css", room.id), FILES_HOST)).await.unwrap();
     assert_eq!(r.into_body().collect().await.unwrap().to_bytes().as_ref(), b"p{}");
+    let r = files.oneshot(get(&format!("/{}/x.html", room.id), FILES_HOST)).await.unwrap();
+    let block = text(r).await;
+    let block = spliced(&block);
+    assert!(block.starts_with("<script data-rooms-bridge>") && block.trim_end().ends_with("</script>") && block.contains("roomsSelection"), "{block}");
+    assert_eq!(block.matches("<script").count(), 1, "the bridge alone");
+}
+
+fn install_marker(home: &std::path::Path, id: &str) {
+    let dir = home.join(".rooms/plugins").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("manifest.json"), format!(
+        r#"{{"id":"{id}","name":"{id}","version":"0.1.0","minAppVersion":"0.3.0","permissions":["artifact.content"],"contentScripts":["content.js","lib/more.js"]}}"#)).unwrap();
+    std::fs::write(dir.join("content.js"), "mark()").unwrap();
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    std::fs::write(dir.join("lib/more.js"), "more()").unwrap();
+}
+
+fn rev_of(st: &AppState, id: &str) -> String {
+    st.core.plugins().into_iter().find(|p| p.id == id).unwrap().rev
+}
+
+#[tokio::test]
+async fn doc_variant_injects_bridge_then_content_scripts() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
+    install_marker(d.path(), "marker");
+    install_marker(d.path(), "alpha");
+    install_marker(d.path(), "off");
+    install_marker(d.path(), "unapproved");
+    install_echo(d.path(), r#"["rooms.read"]"#);
+    for id in ["marker", "alpha", "echo"] { st.core.set_plugin_enabled(id, true, None).unwrap(); }
+    st.core.set_plugin_enabled("unapproved", true, Some(Vec::new())).unwrap();
+    let files = build_files_router(st.clone());
+    let r = files.clone().oneshot(get(&format!("/{}/x.html?v=1&doc=1&cs=abc", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(r.headers()["content-type"], "text/html; charset=utf-8");
+    let body = text(r).await;
+    let block = spliced(&body);
+    let (bridge, tags) = block.split_once("</script>\n").unwrap();
+    assert!(bridge.starts_with("<script data-rooms-bridge>"), "{bridge}");
+    let tag = |id: &str, path: &str| format!("<script src=\"http://127.0.0.1:4318/_plugins/{id}/{path}?r={}\"></script>\n", rev_of(&st, id));
+    assert_eq!(tags, format!("{}{}{}{}", tag("alpha", "content.js"), tag("alpha", "lib/more.js"), tag("marker", "content.js"), tag("marker", "lib/more.js")));
+    assert_eq!(std::fs::read_to_string(d.path().join("a/x.html")).unwrap(), DOC, "the file on disk is unchanged");
+
+    std::fs::write(d.path().join("a/x.svg"), "<svg/>").unwrap();
+    let r = files.oneshot(get(&format!("/{}/x.svg?doc=1", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(text(r).await, "<svg/>", "a non-HTML file is served as is, whatever the query says");
+}
+
+#[tokio::test]
+async fn a_policy_before_a_late_head_lands_after_the_block() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/desktop/e2e/fixtures/csp/csp-implied-head.html")).unwrap();
+    std::fs::write(d.path().join("a/x.html"), &doc).unwrap();
+    install_marker(d.path(), "marker");
+    st.core.set_plugin_enabled("marker", true, None).unwrap();
+    let files = build_files_router(st.clone());
+    let r = files.oneshot(get(&format!("/{}/x.html?doc=1", room.id), FILES_HOST)).await.unwrap();
+    let body = text(r).await;
+    let at = "<!doctype html>\n<html>".len();
+    assert_eq!(&body[..at], &doc[..at]);
+    let (block, after) = body[at..].split_at(body.len() - doc.len());
+    assert!(block.starts_with("<script data-rooms-bridge>") && block.contains("_plugins/marker/content.js") && block.ends_with("</script>\n"), "{block}");
+    assert_eq!(after, &doc[at..], "the <meta> before <head> opens the head itself, so the block goes right after <html> and the late <head> stays where it was");
+    assert!(after.starts_with("\n<meta http-equiv"), "{after}");
+}
+
+#[tokio::test]
+async fn card_variant_has_only_the_bridge() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
+    install_marker(d.path(), "marker");
+    st.core.set_plugin_enabled("marker", true, None).unwrap();
+    let files = build_files_router(st);
+    for query in ["", "?v=1", "?doc=0", "?doc="] {
+        let r = files.clone().oneshot(get(&format!("/{}/x.html{query}", room.id), FILES_HOST)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK, "{query}");
+        let body = text(r).await;
+        let block = spliced(&body);
+        assert_eq!(block.matches("<script").count(), 1, "{query}: {block}");
+        assert!(!block.contains("_plugins"), "{query}");
+    }
+}
+
+#[tokio::test]
+async fn doc_etag_changes_when_a_content_plugin_toggles() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
+    install_marker(d.path(), "marker");
+    let files = build_files_router(st.clone());
+    let uri = format!("/{}/x.html?doc=1", room.id);
+    let fetch = |tag: Option<String>| {
+        let mut b = Request::get(&uri).header("host", FILES_HOST);
+        if let Some(t) = tag { b = b.header("if-none-match", t); }
+        files.clone().oneshot(b.body(Body::empty()).unwrap())
+    };
+    let etag = |r: &axum::response::Response| r.headers()["etag"].to_str().unwrap().to_string();
+    let off = fetch(None).await.unwrap();
+    let card = files.clone().oneshot(get(&format!("/{}/x.html", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(etag(&off), etag(&card), "with no content plugin on, the doc variant is the card body");
+    let off_tag = etag(&off);
+
+    st.core.set_plugin_enabled("marker", true, None).unwrap();
+    let on = fetch(Some(off_tag.clone())).await.unwrap();
+    assert_eq!(on.status(), StatusCode::OK, "the cached body has no tag, so the old tag must miss");
+    let on_tag = etag(&on);
+    assert_ne!(on_tag, off_tag);
+    assert!(text(on).await.contains("_plugins/marker/content.js"));
+    assert_eq!(fetch(Some(on_tag.clone())).await.unwrap().status(), StatusCode::NOT_MODIFIED);
+
+    std::fs::write(d.path().join(".rooms/plugins/marker/content.js"), "mark(); mark()").unwrap();
+    let edited = fetch(Some(on_tag.clone())).await.unwrap();
+    assert_eq!(edited.status(), StatusCode::OK, "an edited content script changes the rev, so the tag misses");
+    assert_ne!(etag(&edited), on_tag);
+    assert!(text(edited).await.contains(&format!("content.js?r={}", rev_of(&st, "marker"))));
+
+    st.core.set_plugin_enabled("marker", false, None).unwrap();
+    let back = fetch(Some(on_tag)).await.unwrap();
+    assert_eq!(back.status(), StatusCode::OK, "off again: the on tag must miss");
+    assert_eq!(etag(&back), off_tag, "and the body is the card body again");
+}
+
+#[tokio::test]
+async fn big_doc_variant_streams_whole() {
+    let (d, _app, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_room("a").unwrap();
+    let mut big = b"<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n</head>\n<body>".to_vec();
+    big.extend((0..300_000u32).map(|i| b"ab \n"[(i % 4) as usize]));
+    big.extend_from_slice(b"</body>\n</html>\n");
+    std::fs::write(d.path().join("a/big.html"), &big).unwrap();
+    install_marker(d.path(), "marker");
+    st.core.set_plugin_enabled("marker", true, None).unwrap();
+    let files = build_files_router(st);
+    let r = files.oneshot(get(&format!("/{}/big.html?doc=1", room.id), FILES_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let body = r.into_body().collect().await.unwrap().to_bytes();
+    let at = b"<!doctype html>\n<html>\n<head>".len();
+    assert_eq!(&body[..at], &big[..at]);
+    let block_len = body.len() - big.len();
+    let block = std::str::from_utf8(&body[at..at + block_len]).unwrap();
+    assert!(block.starts_with("<script data-rooms-bridge>") && block.contains("_plugins/marker/lib/more.js"), "{block}");
+    assert_eq!(&body[at + block_len..], &big[at..], "the rest of the file, byte for byte, with nothing after </html>");
 }
 
 #[tokio::test]
@@ -381,6 +616,45 @@ fn put_note(app: &axum::Router, name: &str, body: &str) -> impl std::future::Fut
     async move { app.oneshot(req).await.unwrap().status() }
 }
 
+fn put_color(room_id: &str, json: &str, token: Option<&str>) -> Request<Body> {
+    let mut b = Request::put(format!("/v1/rooms/{room_id}/color")).header("content-type", "application/json").header("host", API_HOST);
+    if let Some(t) = token { b = b.header("authorization", format!("Bearer {t}")); }
+    b.body(Body::from(json.to_string())).unwrap()
+}
+
+#[tokio::test]
+async fn room_color_pins_and_unpins_and_the_list_follows() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    for n in ["a", "b"] { st.core.create_room(n).unwrap(); }
+    let b = st.core.list_rooms().into_iter().find(|r| r.name == "b").unwrap().id;
+    let names = || async {
+        let v = body_json(app.clone().oneshot(get("/v1/rooms", API_HOST)).await.unwrap()).await;
+        v.as_array().unwrap().iter().map(|r| format!("{}:{}", r["name"].as_str().unwrap(), r["color"])).collect::<Vec<_>>()
+    };
+    assert_eq!(names().await, ["inbox:null", "a:null", "b:null"]);
+
+    let r = app.clone().oneshot(put_color(&b, r#"{"color":"sage"}"#, Some("t0k"))).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v = body_json(r).await;
+    assert_eq!((v["id"].as_str().unwrap(), v["color"].as_str().unwrap()), (b.as_str(), "sage"));
+    assert_eq!(names().await, ["inbox:null", "b:\"sage\"", "a:null"]);
+
+    let r = app.clone().oneshot(put_color(&b, r#"{"color":null}"#, Some("t0k"))).await.unwrap();
+    assert!(body_json(r).await["color"].is_null());
+    assert_eq!(names().await, ["inbox:null", "b:null", "a:null"]);
+
+    let r = app.clone().oneshot(put_color(&b, r#"{"color":"sage"}"#, None)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert_eq!(names().await, ["inbox:null", "b:null", "a:null"]);
+
+    st.core.set_room_color(&b, Some(rooms_protocol::RoomColor::Sea)).unwrap();
+    for bad in ["{}", r#"{"color":"teal"}"#] {
+        let r = app.clone().oneshot(put_color(&b, bad, Some("t0k"))).await.unwrap();
+        assert!(r.status().is_client_error(), "{bad}: {}", r.status());
+    }
+    assert_eq!(names().await, ["inbox:null", "b:\"sea\"", "a:null"]);
+}
+
 #[tokio::test]
 async fn note_rename_returns_the_note_and_moves_the_body() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
@@ -406,6 +680,54 @@ async fn note_rename_missing_is_404_and_taken_is_409() {
     let r = app.oneshot(post("/v1/journal/2026-10-05/notes/a/rename", r#"{"to":"B"}"#, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::CONFLICT);
     assert_eq!(body_json(r).await["error"], "note_exists");
+}
+
+#[tokio::test]
+async fn note_put_with_if_none_match_only_creates() {
+    let (_d, app, _) = app(false, "127.0.0.1:5000");
+    let create = |name: &str, body: &str| Request::put(format!("/v1/journal/2026-10-05/notes/{name}"))
+        .header("host", API_HOST).header("authorization", "Bearer t0k").header("if-none-match", "*")
+        .header("content-type", "text/markdown").body(Body::from(body.to_string())).unwrap();
+    let r = app.clone().oneshot(create("a", "first")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await["name"], "a.md");
+    let r = app.clone().oneshot(create("A", "second")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::CONFLICT);
+    assert_eq!(body_json(r).await["error"], "note_exists");
+    let r = app.clone().oneshot(get("/v1/journal/2026-10-05/notes/a", API_HOST)).await.unwrap();
+    assert_eq!(&r.into_body().collect().await.unwrap().to_bytes()[..], b"first");
+    assert_eq!(put_note(&app, "a", "edited").await, StatusCode::OK);
+    let r = app.oneshot(get("/v1/journal/2026-10-05/notes/a", API_HOST)).await.unwrap();
+    assert_eq!(&r.into_body().collect().await.unwrap().to_bytes()[..], b"edited");
+}
+
+#[tokio::test]
+async fn note_put_if_none_match_never_overwrites() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let put = |name: &str, tags: &[&str]| {
+        let mut b = Request::put(format!("/v1/journal/2026-10-05/notes/{name}"))
+            .header("host", API_HOST).header("authorization", "Bearer t0k").header("content-type", "text/markdown");
+        for t in tags { b = b.header("if-none-match", *t); }
+        b.body(Body::from("clobber")).unwrap()
+    };
+    assert_eq!(put_note(&app, "a", "kept").await, StatusCode::OK);
+    for tags in [&[" *"][..], &["*, \"abc\""], &["\"abc\"", "*"], &[" * , "]] {
+        let r = app.clone().oneshot(put("a", tags)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::CONFLICT, "{tags:?}");
+        assert_eq!(body_json(r).await["error"], "note_exists", "{tags:?}");
+    }
+    for tags in [&["\"abc\""][..], &["W/\"abc\""], &[""], &[","], &["**"]] {
+        let r = app.clone().oneshot(put("a", tags)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{tags:?}");
+        assert_eq!(body_json(r).await["error"], "invalid_input", "{tags:?}");
+    }
+    assert_eq!(st.core.read_note(&"2026-10-05".to_string(), "a").unwrap(), "kept");
+    let r = app.clone().oneshot(put("new", &["\"abc\""])).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert!(st.core.read_note(&"2026-10-05".to_string(), "new").is_err(), "a rejected create writes nothing");
+    let r = app.oneshot(put("new", &[" * "])).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(st.core.read_note(&"2026-10-05".to_string(), "new").unwrap(), "clobber");
 }
 
 #[tokio::test]
@@ -680,7 +1002,7 @@ async fn ask_routes() {
     std::fs::write(root.join("doc.html"), "<title>d</title>").unwrap();
     st.core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"hi\"]\n").unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"hi\", \"--settings\", \"{scope_settings}\"]\n").unwrap();
     let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
     let mut rx = st.core.subscribe();
 
@@ -733,7 +1055,7 @@ async fn ask_routes_take_a_scope_key() {
     std::fs::write(st.core.room_root(&room.id).unwrap().0.join("doc.html"), "<title>d</title>").unwrap();
     st.core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"hi\"]\n").unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"hi\", \"--settings\", \"{scope_settings}\"]\n").unwrap();
     let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
 
     for path in ["/v1/asks", "/v1/asks/target"] {
@@ -744,17 +1066,17 @@ async fn ask_routes_take_a_scope_key() {
             assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{path} {bad}");
             assert_eq!(body_json(r).await["error"], "bad_request");
         }
-        // a room scope until F1-2; room ids are nanoids, which can start with `-` or `_`
+        // room ids are nanoids, which can start with `-` or `_`; none of these rooms exists
         for id in ["-Ab3_xYz9Q-0", "_abc", "abc"] {
             let r = app.clone().oneshot(get(&format!("{path}?scope=room:{id}"), API_HOST)).await.unwrap();
-            assert_eq!(r.status(), if path == "/v1/asks" { StatusCode::OK } else { StatusCode::BAD_REQUEST }, "{path} room:{id}");
+            assert_eq!(r.status(), if path == "/v1/asks" { StatusCode::OK } else { StatusCode::NOT_FOUND }, "{path} room:{id}");
         }
         let r = app.clone().oneshot(get(&format!("{path}?fileKey={}", art.file_key), API_HOST)).await.unwrap();
         assert_eq!(r.status(), StatusCode::BAD_REQUEST, "the old query is gone");
     }
     for (scope, status) in [
-        (r#"{"kind":"room","roomId":"-Ab3_xYz9Q-0"}"#.to_string(), StatusCode::BAD_REQUEST),
-        (r#"{"kind":"day","date":"2026-10-09"}"#.to_string(), StatusCode::BAD_REQUEST),
+        (r#"{"kind":"room","roomId":"-Ab3_xYz9Q-0"}"#.to_string(), StatusCode::NOT_FOUND),
+        (r#"{"kind":"day","date":"2026-13-09"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"room","roomId":"journal"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"doc","fileKey":"../x"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"doc","fileKey":"0000000000000000"}"#.to_string(), StatusCode::NOT_FOUND),
@@ -764,6 +1086,38 @@ async fn ask_routes_take_a_scope_key() {
         if status == StatusCode::BAD_REQUEST { assert_eq!(body_json(r).await["error"], "bad_request", "{scope}"); }
     }
     assert!(!d.path().join(".rooms/asks").exists(), "nothing was written for a refused scope");
+}
+
+#[tokio::test]
+async fn room_and_day_asks_list_their_documents() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let r = app.clone().oneshot(get("/v1/asks/target?scope=day:2026-10-09", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["opus", "sonnet", "haiku"], "scoped": true}));
+    assert!(!d.path().join(".rooms/asks").exists(), "a target lookup writes nothing");
+
+    let room = st.core.create_room("r").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let orig = std::fs::canonicalize(outside.path()).unwrap().join("orig.html");
+    std::fs::write(&orig, "<title>Original</title>").unwrap();
+    std::os::unix::fs::symlink(&orig, st.core.room_root(&room.id).unwrap().0.join("link.html")).unwrap();
+    st.core.backfill_all().unwrap();
+    std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"{prompt}\", \"--settings\", \"{scope_settings}\"]\n").unwrap();
+    let mut rx = st.core.subscribe();
+
+    let body = format!(r#"{{"scope":{{"kind":"room","roomId":"{}"}},"question":"q"}}"#, room.id);
+    let r = app.clone().oneshot(post("/v1/asks", &body, Some("t0k"), API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::ACCEPTED);
+    let turn = body_json(r).await;
+    assert_eq!((turn["status"].as_str(), turn["mode"].as_str()), (Some("running"), Some("new")));
+    let answer = loop {
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+        if let rooms_protocol::EventKind::AskDone { turn: t } = ev.kind { break t.answer; }
+    };
+    assert!(answer.contains(&format!("Room: r\nDocuments (1):\n- {orig:?} \"Original\" (r, ")), "{answer}");
+    assert!(!answer.contains("link.html"), "{answer}");
+    assert!(d.path().join(format!(".rooms/asks/room-{}.jsonl", room.id)).exists());
 }
 
 #[tokio::test]
@@ -786,13 +1140,13 @@ async fn ask_target_route_and_model() {
     std::fs::write(st.core.room_root(&room.id).unwrap().0.join("doc.html"), "<title>d</title>").unwrap();
     st.core.backfill_all().unwrap();
     std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
-    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"-m\", \"{model}\"]\nmodels = [\"m1\"]\n").unwrap();
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"-m\", \"{model}\", \"--settings\", \"{scope_settings}\"]\nmodels = [\"m1\"]\n").unwrap();
     let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
 
     let uri = format!("/v1/asks/target?scope=doc:{}", art.file_key);
     let r = app.clone().oneshot(get(&uri, API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
-    assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["m1"]}));
+    assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["m1"], "scoped": false}));
     let r = app.clone().oneshot(get("/v1/asks/target?scope=doc:0000000000000000", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
     let r = app.clone().oneshot(get("/v1/asks/target", API_HOST)).await.unwrap();
@@ -816,6 +1170,12 @@ async fn ask_target_route_and_model() {
     let r = app.clone().oneshot(get(&uri, API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body_json(r).await["error"], "agent_config");
+    std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\"]\n").unwrap();
+    let r = app.clone().oneshot(get("/v1/asks/target?scope=day:2026-10-09", API_HOST)).await.unwrap();
+    assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let e = body_json(r).await;
+    assert_eq!(e["error"], "agent_config");
+    assert!(e["message"].as_str().unwrap().contains("agents.claude-code.new: add \"--settings\", \"{scope_settings}\""), "{e}");
 }
 
 // ---- plugin tools ----

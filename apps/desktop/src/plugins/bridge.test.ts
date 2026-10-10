@@ -1,7 +1,7 @@
 import type { Artifact, Room } from "@alto-rooms/protocol-ts";
 import { PERMISSIONS, RoomsApiError } from "@alto-rooms/protocol-ts";
 import { describe, expect, it, vi } from "vitest";
-import { BridgeError, handleBridgeCall, validPath } from "./bridge";
+import { BridgeError, handleBridgeCall, validPath, type BridgeDeps } from "./bridge";
 import { frameAttrs, PERMISSION_COPY, permissionLine } from "./permissions";
 import { plugin } from "@/test/plugins";
 
@@ -26,8 +26,9 @@ function deps() {
     listArtifacts: vi.fn(async () => ({ data: [art("old", "2026-01-01T00:00:00Z"), art("new", "2026-02-01T00:00:00Z")], seq: 1 })),
     findArtifactByFileKey: vi.fn(async (k: string) => (k === "key-new" ? art("new", "2026-02-01T00:00:00Z") : null)),
   };
-  const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null }];
-  return { client, navigate: vi.fn(), rooms: () => rooms };
+  const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null, color: null }];
+  const viewer = { navigate: vi.fn(() => "current"), open: vi.fn(() => "opened"), reveal: vi.fn() };
+  return { client, changed: vi.fn(), slot: "artifact.sidePanel" as BridgeDeps["slot"], viewer, rooms: () => rooms };
 }
 
 const call = (method: string, params: unknown = {}) => ({ id: "1", method, params });
@@ -52,10 +53,10 @@ describe("frameAttrs", () => {
   });
   it("has plain words for every permission", () => {
     expect(PERMISSION_COPY).toEqual({
-      "rooms.read": "Can see your rooms and documents",
+      "rooms.read": "Can see your rooms and artifacts",
       clipboard: "Can copy and paste",
       downloads: "Can save files you export",
-      "artifact.content": "Can read the text of documents and use the network inside them",
+      "artifact.content": "Can read the text of artifacts and use the network inside them",
     });
   });
   it("has copy for exactly the permissions the core accepts", () => {
@@ -84,6 +85,7 @@ describe("handleBridgeCall", () => {
     expect(await handleBridgeCall(plugin(), call("storage.list", { prefix: "" }), d)).toEqual(["a.txt"]);
     await handleBridgeCall(plugin(), call("storage.delete", { path: "a.txt" }), d);
     expect(d.client.deletePluginData).toHaveBeenCalledWith("echo", "a.txt");
+    expect(d.changed.mock.calls).toEqual([["a.txt"], ["a.txt"]]);
   });
 
   it("refuses bad paths and oversized text before any request", async () => {
@@ -107,14 +109,71 @@ describe("handleBridgeCall", () => {
     ]);
   });
 
-  it("opens rooms and documents by fileKey in the current tab", async () => {
+  it("opens rooms and documents by fileKey in the current tab from a side panel", async () => {
     const d = deps();
     await handleBridgeCall(plugin(), call("open", { roomId: "r1" }), d);
-    expect(d.navigate).toHaveBeenLastCalledWith({ kind: "room", roomId: "r1" });
+    expect(d.viewer.navigate).toHaveBeenLastCalledWith({ kind: "room", roomId: "r1" });
     await handleBridgeCall(plugin(), call("open", { fileKey: "key-new" }), d);
-    expect(d.navigate).toHaveBeenLastCalledWith({ kind: "doc", roomId: "r1", artifactId: "new" });
+    expect(d.viewer.navigate).toHaveBeenLastCalledWith({ kind: "doc", roomId: "r1", artifactId: "new" });
+    expect(d.viewer.open).not.toHaveBeenCalled();
+    expect(d.viewer.reveal).not.toHaveBeenCalled();
     expect(await codeOf(handleBridgeCall(plugin(), call("open", { fileKey: "nope" }), d))).toBe("not_found");
     expect(await codeOf(handleBridgeCall(plugin(), call("open", { roomId: "gone" }), d))).toBe("not_found");
+  });
+
+  it("from a tab, opens a document in a tab next to it and a room in place", async () => {
+    const d = { ...deps(), slot: "tab" as const };
+    await handleBridgeCall(plugin(), call("open", { fileKey: "key-new" }), d);
+    expect(d.viewer.open).toHaveBeenCalledWith({ kind: "doc", roomId: "r1", artifactId: "new" }, { nextToActive: true });
+    expect(d.viewer.navigate).not.toHaveBeenCalled();
+    await handleBridgeCall(plugin(), call("open", { roomId: "r1" }), d);
+    expect(d.viewer.navigate).toHaveBeenCalledWith({ kind: "room", roomId: "r1" });
+  });
+
+  it("hands the anchor, as a copy of its JSON, to the tab the document opened in", async () => {
+    const tab = { ...deps(), slot: "tab" as const };
+    const anchor = { mark: "x", at: [1, 2], when: new Date("2026-01-01T00:00:00Z") };
+    await handleBridgeCall(plugin({ id: "marker" }), call("open", { fileKey: "key-new", anchor }), tab);
+    expect(tab.viewer.reveal).toHaveBeenCalledWith("opened", { pluginId: "marker", anchor: { mark: "x", at: [1, 2], when: "2026-01-01T00:00:00.000Z" } });
+    const panel = deps();
+    await handleBridgeCall(plugin({ id: "marker" }), call("open", { fileKey: "key-new", anchor: null }), panel);
+    expect(panel.viewer.reveal).toHaveBeenCalledWith("current", { pluginId: "marker", anchor: null });
+  });
+
+  it("refuses an anchor over 4 KiB or that is not JSON, before opening anything", async () => {
+    const d = { ...deps(), slot: "tab" as const };
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    for (const anchor of ["x".repeat(5 * 1024), "é".repeat(2048), cyclic, 1n, () => 1]) {
+      expect(await codeOf(handleBridgeCall(plugin(), call("open", { fileKey: "key-new", anchor }), d))).toBe("bad_request");
+    }
+    expect(d.client.findArtifactByFileKey).not.toHaveBeenCalled();
+    expect(d.viewer.open).not.toHaveBeenCalled();
+    expect(d.viewer.reveal).not.toHaveBeenCalled();
+    expect(await codeOf(handleBridgeCall(plugin(), call("open", { fileKey: "key-new", anchor: "x".repeat(4094) }), d))).toBe("ok");
+  });
+
+  it("refuses a multi-megabyte anchor without serializing it whole", async () => {
+    const d = { ...deps(), slot: "tab" as const };
+    let visited = 0;
+    const item = {
+      toJSON() {
+        visited++;
+        return 0;
+      },
+    };
+    const wide = new Array<unknown>(2_000_000).fill(item);
+    for (const anchor of ["x".repeat(8 * 1024 * 1024), wide, { deep: wide }]) {
+      expect(await codeOf(handleBridgeCall(plugin(), call("open", { fileKey: "key-new", anchor }), d))).toBe("bad_request");
+    }
+    expect(visited, "stops within the 4 KiB budget").toBeLessThan(2 * 4096);
+    expect(d.viewer.open).not.toHaveBeenCalled();
+  });
+
+  it("hands the anchor to the calling plugin, whatever plugin the call names", async () => {
+    const d = { ...deps(), slot: "tab" as const };
+    await handleBridgeCall(plugin({ id: "marker" }), call("open", { fileKey: "key-new", anchor: 1, plugin: "other", pluginId: "other" }), d);
+    expect(d.viewer.reveal).toHaveBeenCalledWith("opened", { pluginId: "marker", anchor: 1 });
   });
 
   it("maps server errors and unknown methods to codes", async () => {

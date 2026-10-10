@@ -1,10 +1,11 @@
 //! Artifacts: lookups, moving one between owned rooms, and resolving a room file to serve.
 
+use crate::asks::prompt::ContextEntry;
 use crate::core::{Inner, RoomsCore};
 use crate::error::CoreError;
 use crate::index::Change;
 use crate::lock::lock;
-use crate::rules::is_html;
+use crate::rules::{is_html, local_day};
 use rooms_protocol::*;
 use std::path::{Path, PathBuf};
 
@@ -182,6 +183,18 @@ impl RoomsCore {
         }
     }
 
+    /// What a room ask lists: the room's name and its artifacts, newest first, as realpaths (`rg`
+    /// skips symlinks). An artifact whose link no longer resolves is left out.
+    pub(crate) fn room_context(&self, room: &RoomId) -> Result<(String, Vec<ContextEntry>), CoreError> {
+        if room == JOURNAL_ROOM_ID { return Err(CoreError::InvalidInput("the Journal is asked by day".into())); }
+        let name = lock(&self.inner).state.find(room).ok_or(CoreError::RoomNotFound)?.name.clone();
+        let entries = self.list_artifacts(room)?.into_iter().rev().filter_map(|a| {
+            let path = self.resolve_file(room, &a.rel_path).ok()?;
+            Some(ContextEntry { label: name.clone(), day: local_day(&a.created_at).unwrap_or_default(), title: a.title, path })
+        }).collect();
+        Ok((name, entries))
+    }
+
     pub fn resolve_file(&self, room: &RoomId, rel: &str) -> Result<PathBuf, CoreError> {
         let (root, _) = self.room_root(room).ok_or(CoreError::RoomNotFound)?;
         let rel_p = Path::new(rel);
@@ -241,6 +254,73 @@ mod tests {
             EventKind::ArtifactRemoved { artifact_id, .. }, EventKind::ArtifactAdded { artifact }, EventKind::JournalChanged { .. },
         ] if artifact_id == &a.id && artifact == &moved), "{evs:?}");
         assert_eq!(rels(&core, &r.id), vec!["a.html".to_string()]);
+    }
+
+    /// Today at `h` o'clock, local time, as a `rooms:created` meta tag.
+    fn created_at(h: u32) -> String {
+        let t = chrono::Local::now().date_naive().and_hms_opt(h, 0, 0).unwrap().and_local_timezone(chrono::Local).unwrap();
+        format!(r#"<meta name="rooms:created" content="{}">"#, t.to_rfc3339())
+    }
+
+    #[test]
+    fn room_context_lists_realpaths_newest_first_and_skips_missing() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let r = core.create_room("Research").unwrap();
+        let root = core.room_root(&r.id).unwrap().0;
+        let o = tempfile::tempdir().unwrap();
+        let orig = std::fs::canonicalize(o.path()).unwrap().join("orig.html");
+        let gone = orig.with_file_name("gone.html");
+        std::fs::write(&orig, format!("<title>Linked</title>{}", created_at(3))).unwrap();
+        std::fs::write(&gone, "<title>Gone</title>").unwrap();
+        std::os::unix::fs::symlink(&orig, root.join("link.html")).unwrap();
+        std::os::unix::fs::symlink(&gone, root.join("dangling.html")).unwrap();
+        std::fs::write(root.join("plain.html"), format!("<title>Plain\n  file</title>{}", created_at(1))).unwrap();
+        std::fs::write(root.join("mid.html"), format!("<title>Mid</title>{}", created_at(2))).unwrap();
+        core.backfill_all().unwrap();
+        assert_eq!(core.list_artifacts(&r.id).unwrap().len(), 4);
+        std::fs::remove_file(&gone).unwrap();
+
+        let (name, entries) = core.room_context(&r.id).unwrap();
+        assert_eq!(name, "Research");
+        let paths: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
+        let real = |f: &str| std::fs::canonicalize(root.join(f)).unwrap();
+        assert_eq!(paths, vec![orig, real("mid.html"), real("plain.html")], "realpaths, newest first; the dangling link is left out");
+        let today = local_day(&chrono::Local::now().to_rfc3339()).unwrap();
+        assert!(entries.iter().all(|e| e.label == "Research" && e.day == today), "{entries:?}");
+        assert!(matches!(core.room_context(&"nope".into()), Err(CoreError::RoomNotFound)));
+    }
+
+    #[test]
+    fn room_context_refuses_the_journal() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let day = core.home().join("journal").join(local_day(&chrono::Local::now().to_rfc3339()).unwrap());
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(day.join("a.html"), "<title>a</title>").unwrap();
+        core.backfill_all().unwrap();
+        assert_eq!(core.list_artifacts(&JOURNAL_ROOM_ID.into()).unwrap().len(), 1, "the Journal lists like a room");
+        assert!(matches!(core.room_context(&JOURNAL_ROOM_ID.into()), Err(CoreError::InvalidInput(m)) if m == "the Journal is asked by day"));
+    }
+
+    #[test]
+    fn a_capped_room_prompt_keeps_the_newest() {
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        let r = core.create_room("Big").unwrap();
+        let root = core.room_root(&r.id).unwrap().0;
+        let n = crate::asks::prompt::MAX_LISTED + 2;
+        for i in 0..n {
+            let t = chrono::DateTime::from_timestamp(1_767_225_600 + i as i64 * 60, 0).unwrap().to_rfc3339();
+            std::fs::write(root.join(format!("{}.html", n - i)), format!(r#"<title>doc{i}</title><meta name="rooms:created" content="{t}">"#)).unwrap();
+        }
+        core.backfill_all().unwrap();
+        let (_, entries) = core.room_context(&r.id).unwrap();
+        let prompt = crate::asks::prompt::build_scope_prompt(&crate::asks::prompt::Listing::Room("Big".into()), &entries, &Default::default(), "q");
+        let listed: Vec<&str> = prompt.lines().filter_map(|l| l.split('"').nth(3)).collect();
+        assert_eq!(listed.len(), crate::asks::prompt::MAX_LISTED);
+        assert_eq!(listed.first(), Some(&format!("doc{}", n - 1).as_str()), "the newest is listed first");
+        assert!(!listed.contains(&"doc0") && !listed.contains(&"doc1") && listed.contains(&"doc2"), "the two oldest are the ones left out");
     }
 
     /// Makes the index step of `move_artifact` fail on this thread (after the filesystem move).

@@ -1,13 +1,18 @@
-import type { Artifact } from "@alto-rooms/protocol-ts";
+import type { Agent, Artifact } from "@alto-rooms/protocol-ts";
+import { isAgent } from "@/lib/agents";
+import { isAppearance, type Appearance } from "@/lib/appearance";
 import { globalTimers, type Clock } from "@/lib/clock";
+import { localDate } from "@/lib/dates";
 
 export type Tab =
   | { id: string; kind: "room"; roomId: string }
   | { id: string; kind: "doc"; roomId: string; artifactId: string }
   | { id: string; kind: "journal"; date: string }
   | { id: string; kind: "note"; date: string; name: string }
-  | { id: string; kind: "new" }
-  | { id: string; kind: "plugin"; pluginId: string };
+  | { id: string; kind: "plugin"; pluginId: string }
+  | { id: string; kind: "conversation"; agent: Agent; session: string }
+  /** One per window: opening it again shows the one already open. */
+  | { id: string; kind: "settings" };
 
 /** `Omit` distributed over the union, so each kind keeps its own id fields. */
 export type TabInput = Tab extends infer T ? (T extends Tab ? Omit<T, "id"> : never) : never;
@@ -26,6 +31,9 @@ export type PluginPanel = { open: boolean; width: number; pluginId: string | nul
 
 export const DEFAULT_PLUGIN_PANEL: PluginPanel = { open: false, width: 360, pluginId: null };
 
+/** An anchor a plugin passed to `open`, on its way to that plugin's content script in a doc tab. Opaque to the app. */
+export type Reveal = { pluginId: string; anchor: unknown };
+
 export type ViewerState = {
   tabs: Tab[];
   pluginPanel: PluginPanel;
@@ -33,6 +41,7 @@ export type ViewerState = {
   history: Record<string, TabHistory>;
   activeId: string | null;
   sidebarOpen: boolean;
+  appearance: Appearance;
   lastVisit: Record<string, string>; // roomId -> ISO time the user last LEFT that room tab
   firstRunAt: string; // rooms never visited use this as their last visit
 };
@@ -53,9 +62,14 @@ function defaultStorage(): StorageLike | undefined {
 }
 
 const isStr = (v: unknown): v is string => typeof v === "string";
+/** roomsd's session id rule; anything else could never name a conversation. */
+const isSession = (v: unknown): v is string => isStr(v) && /^[A-Za-z0-9_-]{1,128}$/.test(v);
 
-/** Rebuilds a tab from untrusted JSON, keeping only its id fields. */
-function parseTab(v: unknown): Tab | null {
+/**
+ * Rebuilds a tab from untrusted JSON, keeping only its id fields. The retired New tab
+ * (`kind: "new"`) comes back as the Journal for `today`, which took its place as home.
+ */
+function parseTab(v: unknown, today: string): Tab | null {
   if (!v || typeof v !== "object") return null;
   const t = v as Record<string, unknown>;
   if (!isStr(t.id)) return null;
@@ -69,25 +83,29 @@ function parseTab(v: unknown): Tab | null {
     case "note":
       return isStr(t.date) && isStr(t.name) ? { id: t.id, kind: "note", date: t.date, name: t.name } : null;
     case "new":
-      return { id: t.id, kind: "new" };
+      return { id: t.id, kind: "journal", date: today };
     case "plugin":
       return isStr(t.pluginId) ? { id: t.id, kind: "plugin", pluginId: t.pluginId } : null;
+    case "conversation":
+      return isAgent(t.agent) && isSession(t.session) ? { id: t.id, kind: "conversation", agent: t.agent, session: t.session } : null;
+    case "settings":
+      return { id: t.id, kind: "settings" };
     default:
       return null;
   }
 }
 
 /** A history entry from untrusted JSON: a tab's id fields, without an id. */
-function parseInput(v: unknown): TabInput | null {
+function parseInput(v: unknown, today: string): TabInput | null {
   if (!v || typeof v !== "object") return null;
-  const tab = parseTab({ ...(v as object), id: "" });
+  const tab = parseTab({ ...(v as object), id: "" }, today);
   return tab ? toInput(tab) : null;
 }
 
-function parseHistory(v: unknown, ids: Set<string>): Record<string, TabHistory> {
+function parseHistory(v: unknown, ids: Set<string>, today: string): Record<string, TabHistory> {
   const out: Record<string, TabHistory> = {};
   if (!v || typeof v !== "object") return out;
-  const list = (x: unknown) => (Array.isArray(x) ? x.map(parseInput).filter((t): t is TabInput => t !== null).slice(-HISTORY_LIMIT) : []);
+  const list = (x: unknown) => (Array.isArray(x) ? x.map((e) => parseInput(e, today)).filter((t): t is TabInput => t !== null).slice(-HISTORY_LIMIT) : []);
   for (const [id, h] of Object.entries(v as Record<string, unknown>)) {
     if (!ids.has(id) || !h || typeof h !== "object") continue;
     const { back, forward } = h as Record<string, unknown>;
@@ -103,31 +121,39 @@ function parsePluginPanel(v: unknown): PluginPanel {
   return ok ? { open: p.open as boolean, width: p.width as number, pluginId: p.pluginId as string | null } : DEFAULT_PLUGIN_PANEL;
 }
 
-function parseState(raw: string | null): ViewerState | null {
+function parseState(raw: string | null, today: string): ViewerState | null {
   if (raw === null) return null;
   try {
     const v = JSON.parse(raw) as Record<string, unknown>;
     if (!v || typeof v !== "object" || !Array.isArray(v.tabs) || !isStr(v.firstRunAt)) return null;
     const tabs: Tab[] = [];
     const seen = new Set<string>();
+    // A migrated New tab can equal a Journal tab already open; it goes, and stands for that one.
+    const twinOf = new Map<string, string>();
     for (const t of v.tabs) {
-      const tab = parseTab(t);
-      if (tab && !seen.has(tab.id)) {
-        seen.add(tab.id);
-        tabs.push(tab);
+      const tab = parseTab(t, today);
+      if (!tab || seen.has(tab.id) || twinOf.has(tab.id)) continue;
+      const twin = tabs.find((x) => sameTab(x, tab));
+      if (twin) {
+        twinOf.set(tab.id, twin.id);
+        continue;
       }
+      seen.add(tab.id);
+      tabs.push(tab);
     }
     const lastVisit: Record<string, string> = {};
     if (v.lastVisit && typeof v.lastVisit === "object") {
       for (const [k, t] of Object.entries(v.lastVisit as Record<string, unknown>)) if (isStr(t)) lastVisit[k] = t;
     }
-    const activeId = isStr(v.activeId) && seen.has(v.activeId) ? v.activeId : (tabs[0]?.id ?? null);
+    const savedActive = isStr(v.activeId) ? (twinOf.get(v.activeId) ?? v.activeId) : null;
+    const activeId = savedActive && seen.has(savedActive) ? savedActive : (tabs[0]?.id ?? null);
     return {
       tabs,
       pluginPanel: parsePluginPanel(v.pluginPanel),
-      history: parseHistory(v.history, seen),
+      history: parseHistory(v.history, seen, today),
       activeId,
       sidebarOpen: typeof v.sidebarOpen === "boolean" ? v.sidebarOpen : true,
+      appearance: isAppearance(v.appearance) ? v.appearance : "system",
       lastVisit,
       firstRunAt: v.firstRunAt,
     };
@@ -147,10 +173,12 @@ function sameTab(a: TabInput | Tab, b: TabInput | Tab): boolean {
       return b.kind === "journal" && a.date === b.date;
     case "note":
       return b.kind === "note" && a.date === b.date && a.name === b.name;
-    case "new":
-      return b.kind === "new";
     case "plugin":
       return b.kind === "plugin" && a.pluginId === b.pluginId;
+    case "conversation":
+      return b.kind === "conversation" && a.agent === b.agent && a.session === b.session;
+    case "settings":
+      return b.kind === "settings";
   }
 }
 
@@ -171,14 +199,16 @@ function makeTab(id: string, t: TabInput): Tab {
       return { id, kind: "journal", date: t.date };
     case "note":
       return { id, kind: "note", date: t.date, name: t.name };
-    case "new":
-      return { id, kind: "new" };
     case "plugin":
       return { id, kind: "plugin", pluginId: t.pluginId };
+    case "conversation":
+      return { id, kind: "conversation", agent: t.agent, session: t.session };
+    case "settings":
+      return { id, kind: "settings" };
   }
 }
 
-/** Per-viewer UI state (tabs, sidebar, last visits), persisted to localStorage. */
+/** Per-viewer UI state (tabs, sidebar, appearance, last visits), persisted to localStorage. */
 export class ViewerStore {
   private state: ViewerState;
   private listeners = new Set<() => void>();
@@ -189,6 +219,8 @@ export class ViewerStore {
   private lastChild: { opener: string; id: string } | null = null;
   /** Transient: recently closed tabs, oldest first. */
   private closed: { tab: TabInput; index: number; history: TabHistory }[] = [];
+  /** Transient: tab id -> the anchor waiting for the doc it shows. Dropped once taken, or when the tab closes or moves on. */
+  private reveals = new Map<string, Reveal>();
   private readonly storage: StorageLike | undefined;
   private readonly now: () => Date;
   private readonly timers: Clock;
@@ -204,23 +236,29 @@ export class ViewerStore {
     } catch {
       raw = null;
     }
-    this.state = parseState(raw) ?? {
+    this.state = parseState(raw, localDate(this.now())) ?? {
       tabs: [],
       pluginPanel: DEFAULT_PLUGIN_PANEL,
       history: {},
       activeId: null,
       sidebarOpen: true,
+      appearance: "system",
       lastVisit: {},
       firstRunAt: this.now().toISOString(),
     };
     if (this.state.tabs.length === 0) {
-      const tab = makeTab(this.newId(), { kind: "new" });
+      const tab = makeTab(this.newId(), this.home());
       this.state = { ...this.state, tabs: [tab], activeId: tab.id };
     }
     this.persist();
   }
 
   getState = (): ViewerState => this.state;
+
+  /** Home, where a new window and a new tab start: the Journal for the local date right now. */
+  home(): TabInput {
+    return { kind: "journal", date: localDate(this.now()) };
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -253,19 +291,20 @@ export class ViewerStore {
     const i = this.state.tabs.findIndex((t) => t.id === id);
     if (i < 0) return;
     const closing = this.state.tabs[i];
-    // A New tab is nothing to bring back (and the last tab's close leaves one anyway).
-    if (closing.kind !== "new") {
+    let tabs = this.state.tabs.filter((t) => t.id !== id);
+    // Closing the last tab goes home; if it already showed home, nothing changed and nothing needs bringing back.
+    if (tabs.length > 0 || !sameTab(closing, this.home())) {
       this.closed = [...this.closed, { tab: toInput(closing), index: i, history: this.historyOf(id) }].slice(-CLOSED_LIMIT);
     }
-    let tabs = this.state.tabs.filter((t) => t.id !== id);
     const { [id]: _dropped, ...history } = this.state.history;
     this.navCounts.delete(id);
+    this.reveals.delete(id);
     if (this.state.activeId !== id) {
       this.set({ tabs, history });
       return;
     }
-    // The window always shows a tab: closing the last one leaves a New tab.
-    if (tabs.length === 0) tabs = [makeTab(this.newId(), { kind: "new" })];
+    // The window always shows a tab: closing the last one goes home.
+    if (tabs.length === 0) tabs = [makeTab(this.newId(), this.home())];
     const next = tabs[i] ?? tabs[i - 1];
     this.set({ ...this.leaving(), tabs, history, activeId: next.id });
   }
@@ -303,17 +342,15 @@ export class ViewerStore {
 
   /**
    * Shows `tab` in the active tab, browser style: what it showed goes on its back
-   * list and its forward list is dropped. With no tab open, opens one instead.
+   * list and its forward list is dropped. With no tab open, opens one instead. Returns the tab's id.
    */
-  navigate(tab: TabInput): void {
+  navigate(tab: TabInput): string {
     const active = this.activeTab();
-    if (!active) {
-      this.open(tab);
-      return;
-    }
-    if (sameTab(active, tab)) return;
+    if (!active) return this.open(tab);
+    if (sameTab(active, tab)) return active.id;
     const h = this.historyOf(active.id);
     this.moveTo(active.id, tab, { back: [...h.back, toInput(active)].slice(-HISTORY_LIMIT), forward: [] });
+    return active.id;
   }
 
   /** A click's destination: a new tab (⌘/Ctrl or middle click) or this one. */
@@ -380,6 +417,23 @@ export class ViewerStore {
     this.set({ ...this.leaving(), activeId: id });
   }
 
+  /** Queues `r` for the doc that tab `id` shows, replacing one still waiting there. */
+  reveal(id: string, r: Reveal): void {
+    if (!this.state.tabs.some((t) => t.id === id && t.kind === "doc")) return;
+    this.reveals.set(id, r);
+    this.emit();
+  }
+
+  /**
+   * Offers the anchor waiting for tab `id` to `accept`, and forgets it once `accept` returns true.
+   * It stays while the doc's script is not ready yet, so a channel the tab drops and makes again
+   * does not lose it.
+   */
+  takeReveal(id: string, accept: (r: Reveal) => boolean): void {
+    const r = this.reveals.get(id);
+    if (r && accept(r)) this.reveals.delete(id);
+  }
+
   setPluginPanel(patch: Partial<PluginPanel>): void {
     const next = { ...this.state.pluginPanel, ...patch };
     next.width = Math.min(1200, Math.max(240, Math.round(next.width)));
@@ -388,6 +442,10 @@ export class ViewerStore {
 
   setSidebarOpen(open: boolean): void {
     if (open !== this.state.sidebarOpen) this.set({ sidebarOpen: open });
+  }
+
+  setAppearance(appearance: Appearance): void {
+    if (appearance !== this.state.appearance) this.set({ appearance });
   }
 
   /** Records leaving the active room tab now (the app is quitting or hiding) and persists synchronously. */
@@ -423,8 +481,12 @@ export class ViewerStore {
 
   /** Points tab `id` (the active one) at `to` with history `h`, recording leaving a room. */
   private moveTo(id: string, to: TabInput, h: TabHistory) {
+    // Settings is one per window: going to it where another tab shows it switches to that tab.
+    const shown = to.kind === "settings" && this.state.tabs.find((t) => t.id !== id && sameTab(t, to));
+    if (shown) return this.activate(shown.id);
     const tabs = this.state.tabs.map((t) => (t.id === id ? makeTab(id, to) : t));
     this.navCounts.set(id, (this.navCounts.get(id) ?? 0) + 1);
+    this.reveals.delete(id);
     this.set({ ...this.leaving(), tabs, history: { ...this.state.history, [id]: h } });
   }
 
@@ -438,6 +500,10 @@ export class ViewerStore {
   private set(p: Partial<ViewerState>) {
     this.state = { ...this.state, ...p };
     this.schedulePersist();
+    this.emit();
+  }
+
+  private emit() {
     for (const l of [...this.listeners]) l();
   }
 

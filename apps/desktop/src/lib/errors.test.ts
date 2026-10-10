@@ -30,8 +30,8 @@ describe("errorCopy", () => {
 });
 
 describe("moveErrorCopy", () => {
-  it("invalid_input is This doc can't be moved; the rest map as usual", () => {
-    expect(moveErrorCopy(new RoomsApiError(400, "linked room", "invalid_input"))).toBe("This doc can't be moved");
+  it("invalid_input is This artifact can't be moved; the rest map as usual", () => {
+    expect(moveErrorCopy(new RoomsApiError(400, "linked room", "invalid_input"))).toBe("This artifact can't be moved");
     expect(moveErrorCopy(new RoomsApiError(500, "x", "write_failed"))).toBe("Couldn't save. Trying again");
     expect(moveErrorCopy(new Error("x"))).toBe("Something went wrong");
   });

@@ -4,73 +4,103 @@
 @import "@fontsource/jost/400.css";
 @import "@fontsource/jost/500.css";
 @import "@fontsource/jost/600.css";
-@import "@fontsource/ibm-plex-mono/400.css";
 
-/* ---- Alto tokens: verbatim copy of ~/personal/alto-site/design/tokens.css ---- */
+/* ---- Alto tokens: "Cozy Den" (warm paper light, warm charcoal dark) ---- */
 /*
-  Alto design tokens, v3.
-  Airbnb's DLS palette: near-white canvas, #222 ink, hairline borders, and Rausch as the
-  one colour, used in very few places. For Alto, Rausch is the thread.
-  Works as-is with shadcn/ui on Tailwind v4: paste into app/globals.css after
-  `@import "tailwindcss";` (it replaces the theme block shadcn generates).
+  A warm desk holds the sidebar; an opaque paper pane holds the content; cards and popovers are sheets.
+  Rausch (the thread) is rare: the primary action, "New" and live status.
+  `.dark` on <html> switches every token; the appearance setting decides when (lib/appearance.ts).
 */
 
 :root{
-  /* Brand ground: the warm grey of the site and banners. Rausch sits on it. */
-  --ground:#efefed;
-
-  /* Neutrals (Airbnb), for product UI */
-  --canvas:#ffffff;
-  --surface:#f7f7f7;
-  --surface-strong:#f2f2f2;
-  --hairline:#dddddd;
-  --ink:#222222;
-  --ink-2:#6a6a6a;
-  --ink-3:#929292;
+  --desk:#ebe4da; --pane:#f8f4ee; --sheet:#fffdf9;
+  --surface:#efe8df; --surface-strong:#e5ddd2; --row-hover:rgb(120 90 60 / .07);
+  --hairline:rgb(70 48 30 / .11); --hairline-strong:rgb(70 48 30 / .18);
+  --ink:#27211e; --ink-2:#6b625b; --ink-3:#958b83;
+  --menu:rgb(252 249 245 / .94);
+  /* The sidebar's material: a faint sheen over the desk, so it reads as translucent. */
+  --sidebar-sheen-top:rgb(255 250 244 / .3); --sidebar-sheen-bottom:rgb(255 250 244 / .1);
+  /* A room's header band: warm paper, never grey. A pinned room sets --room-tint on the band instead. */
+  --paper-band:#f1e9de; --on-band:rgb(255 253 249 / .6); --on-band-hover:rgb(255 253 249 / .9);
+  /* Agent pages keep their own colours; in dark mode a light page is dimmed so it doesn't glare. */
+  --artifact-filter:none; --thumb-filter:none;
 
   /* The one colour */
   --thread:#ff385c;        /* Rausch: the thread, knots, live status */
   --thread-deep:#e31c5f;   /* button fill: white text passes AA (about 4.6:1) */
   --thread-deeper:#d70466; /* button hover and pressed */
-  --thread-tint:#fff0f3;   /* live badge, active icon fill */
+  --thread-soft:rgb(255 56 92 / .3);
+  --on-thread:#ffffff;
 
-  /* Illustration only */
-  --water:#e8efee; --wave:#a9bcc0;
-
-  /* Status (Airbnb), kept apart from the thread */
+  /* Status, kept apart from the thread */
   --error:#c13515; --success:#008a05;
 
+  /* Room tints: a pinned room's colour is a hue (lib/roomTint.ts); the theme sets the dot's lightness and chroma, and how far the band thins the dot. */
+  --dot-l:.72; --dot-c:.075; --dot-edge:rgb(0 0 0 / .08); --band-mix:22%; --band-base:#fff;
+
+  /* Elevation: only floating layers and hovered cards cast shadows. */
+  --elev-sheet:0 1px 1px rgb(70 45 20 / .05), 0 3px 10px -3px rgb(70 45 20 / .13);
+  --elev-lift:0 2px 2px rgb(70 45 20 / .05), 0 10px 22px -6px rgb(70 45 20 / .2);
+  --elev-float:0 0 0 .5px rgb(70 45 20 / .14), 0 2px 4px rgb(70 45 20 / .06), 0 16px 40px -10px rgb(70 45 20 / .3);
+
   /* shadcn/ui */
-  --background:var(--canvas);         --foreground:var(--ink);
-  --card:#ffffff;                     --card-foreground:var(--ink);
-  --popover:#ffffff;                  --popover-foreground:var(--ink);
-  --primary:var(--thread-deep);       --primary-foreground:#ffffff;
+  --background:var(--pane);           --foreground:var(--ink);
+  --card:var(--sheet);                --card-foreground:var(--ink);
+  --popover:var(--menu);              --popover-foreground:var(--ink);
+  --primary:var(--thread-deep);       --primary-foreground:var(--on-thread);
   --secondary:var(--surface-strong);  --secondary-foreground:var(--ink);
   --muted:var(--surface);             --muted-foreground:var(--ink-2);
   --accent:var(--surface-strong);     --accent-foreground:var(--ink);
   --destructive:var(--error);
-  --border:var(--hairline);           --input:var(--hairline);
+  --border:var(--hairline);           --input:var(--hairline-strong);
   --ring:var(--ink);                  /* focus is ink, so red stays rare */
-  --chart-1:var(--thread); --chart-2:#222222; --chart-3:#6a6a6a; --chart-4:#a9bcc0; --chart-5:#dddddd;
-  --sidebar:var(--surface);           --sidebar-foreground:var(--ink);
-  --sidebar-primary:var(--thread-deep); --sidebar-primary-foreground:#ffffff;
+  --chart-1:var(--thread); --chart-2:var(--ink); --chart-3:var(--ink-2); --chart-4:var(--ink-3); --chart-5:var(--hairline-strong);
+  --sidebar:var(--desk);              --sidebar-foreground:var(--ink);
+  --sidebar-primary:var(--thread-deep); --sidebar-primary-foreground:var(--on-thread);
   --sidebar-accent:var(--surface-strong); --sidebar-accent-foreground:var(--ink);
   --sidebar-border:var(--hairline);   --sidebar-ring:var(--ink);
 
-  /* Shape (Airbnb: 8 buttons, 14 cards, pill search) */
+  /* Shape: 12 pane and cards, 10 menus, 8 controls, 6 items inside menus, pill */
   --radius:0.5rem;
+  color-scheme:light;
 }
 
 .dark{
-  --canvas:#121212; --surface:#1c1c1c; --surface-strong:#262626; --hairline:#3a3a3a;
-  --ink:#f2f2f2; --ink-2:#a3a3a3; --ink-3:#737373;
-  --thread:#ff5a76; --thread-deep:#ff385c; --thread-deeper:#ff5a76; --thread-tint:#3a1520;
-  --water:#1b2224; --wave:#4b5d61;
-  --error:#ff6b4a; --success:#4cc35a;
-  --card:#1c1c1c; --popover:#1c1c1c; --primary-foreground:#121212;
+  --desk:#161311; --pane:#211c19; --sheet:#2a2420;
+  --surface:#312a26; --surface-strong:#3b332e; --row-hover:rgb(255 240 225 / .05);
+  --hairline:rgb(255 235 215 / .08); --hairline-strong:rgb(255 235 215 / .14);
+  --ink:#efe7df; --ink-2:#b3a89e; --ink-3:#8a7f76;
+  --menu:rgb(44 38 34 / .95);
+  --sidebar-sheen-top:rgb(255 240 225 / .035); --sidebar-sheen-bottom:rgb(255 240 225 / .012);
+  --paper-band:#2a241f; --on-band:rgb(255 240 225 / .07); --on-band-hover:rgb(255 240 225 / .12);
+  --artifact-filter:brightness(.86) sepia(.07); --thumb-filter:brightness(.9) sepia(.05);
+  --thread:#ff5a76; --thread-deep:#ff7088; --thread-deeper:#ff8a9e; --thread-soft:rgb(255 90 118 / .32);
+  --on-thread:#1c1714;
+  --error:#ff7a5c; --success:#4cc35a;
+  --dot-l:.70; --dot-c:.065; --band-mix:28%; --band-base:#000;
+  --elev-sheet:0 1px 1px rgb(0 0 0 / .25), 0 3px 10px -3px rgb(0 0 0 / .45);
+  --elev-lift:0 2px 2px rgb(0 0 0 / .25), 0 12px 24px -6px rgb(0 0 0 / .55);
+  --elev-float:0 0 0 .5px rgb(255 235 215 / .12), 0 2px 4px rgb(0 0 0 / .3), 0 18px 44px -10px rgb(0 0 0 / .7);
+  color-scheme:dark;
 }
 
-/* Tailwind v4: turns the variables into classes such as bg-primary, text-ink-2, border-hairline */
+/*
+  `data-tint` (set by roomTint) gives an element and its children --room-band and --room-dot.
+  The band is the dot thinned with white (dark: black) in sRGB, which keeps the dot's hue and
+  dustiness, so the two read as one colour. A band built at the dot's OKLCH hue with its own
+  lightness and chroma read as a different, cleaner colour (rose went candy pink beside a mauve dot).
+*/
+[data-tint]{
+  --tint-dot-c:var(--dot-c);
+  --room-dot:oklch(var(--dot-l) var(--tint-dot-c) var(--tint-h));
+  --room-band:color-mix(in srgb, var(--room-dot) var(--band-mix), var(--band-base));
+}
+[data-tint="rose"]{--tint-h:356} [data-tint="clay"]{--tint-h:52} [data-tint="oat"]{--tint-h:88} [data-tint="sage"]{--tint-h:148}
+[data-tint="sea"]{--tint-h:196} [data-tint="dusk"]{--tint-h:256} [data-tint="lilac"]{--tint-h:308}
+[data-tint="stone"]{--tint-h:70; --tint-dot-c:.014}
+[data-tint="none"]{ --room-band:var(--paper-band); --room-dot:transparent; }
+
+/* Tailwind v4: turns the variables into classes such as bg-pane, text-ink-2, border-hairline, shadow-float */
 @theme inline{
   --color-background:var(--background); --color-foreground:var(--foreground);
   --color-card:var(--card); --color-card-foreground:var(--card-foreground);
@@ -88,21 +118,39 @@
   --color-sidebar-border:var(--sidebar-border); --color-sidebar-ring:var(--sidebar-ring);
 
   /* brand */
-  --color-thread:var(--thread); --color-thread-deep:var(--thread-deep); --color-thread-tint:var(--thread-tint);
+  --color-desk:var(--desk); --color-pane:var(--pane); --color-sheet:var(--sheet); --color-menu:var(--menu);
+  --color-surface:var(--surface); --color-surface-strong:var(--surface-strong); --color-row-hover:var(--row-hover);
+  --color-hairline:var(--hairline); --color-hairline-strong:var(--hairline-strong);
+  --color-paper-band:var(--paper-band); --color-on-band:var(--on-band); --color-on-band-hover:var(--on-band-hover);
   --color-ink:var(--ink); --color-ink-2:var(--ink-2); --color-ink-3:var(--ink-3);
-  --color-surface:var(--surface); --color-surface-strong:var(--surface-strong); --color-hairline:var(--hairline);
-  --color-ground:var(--ground); --color-water:var(--water); --color-wave:var(--wave);
-  --color-success:var(--success);
+  --color-thread:var(--thread); --color-thread-deep:var(--thread-deep); --color-thread-deeper:var(--thread-deeper);
+  --color-thread-soft:var(--thread-soft); --color-on-thread:var(--on-thread);
+  --color-error:var(--error); --color-success:var(--success);
+  --color-room-band:var(--room-band); --color-room-dot:var(--room-dot); --color-dot-edge:var(--dot-edge);
 
-  --radius-sm:calc(var(--radius) - 4px); --radius-md:calc(var(--radius) - 2px);
-  --radius-lg:var(--radius); --radius-xl:14px; --radius-pill:999px;
-  --shadow-float:0 6px 16px rgba(0,0,0,.12);
+  --radius-sm:4px; --radius-md:6px; --radius-lg:8px; --radius-menu:10px; --radius-xl:12px; --radius-pill:999px;
+  --shadow-sheet:var(--elev-sheet); --shadow-lift:var(--elev-lift); --shadow-float:var(--elev-float);
 
-  --font-sans:"Jost","Futura","Avenir Next",ui-sans-serif,system-ui,sans-serif;
-  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  /* Type: SF Pro for the UI at macOS sizes, Jost only for display, a serif for the user's own words. */
+  --font-sans:system-ui,-apple-system,"SF Pro Text","Helvetica Neue","Apple SD Gothic Neo",sans-serif;
+  --font-display:"Jost","Avenir Next","Futura",system-ui,sans-serif;
+  --font-serif:ui-serif,"New York",Charter,"Iowan Old Style",Georgia,serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --text-caption:11px; --text-caption--line-height:14px;
+  --text-small:12px;   --text-small--line-height:16px;
+  --text-body:13px;    --text-body--line-height:18px;
+  --text-lead:15px;    --text-lead--line-height:22px;
+  --text-heading:17px; --text-heading--line-height:22px;
+  --text-title:22px;   --text-title--line-height:28px;
+  --text-display:32px; --text-display--line-height:36px;
+
   /* ask bar waiting text: a highlight sweeping left to right (no built-in Tailwind shimmer) */
   --animate-shimmer:shimmer 1.6s linear infinite;
   @keyframes shimmer { from { background-position:100% 0 } to { background-position:-100% 0 } }
+
+  /* Clew asleep: one slow breath every five seconds, nothing else moves (off under reduced motion) */
+  --animate-breathe:breathe 5.2s ease-in-out infinite;
+  @keyframes breathe { 0%,100% { transform:scale(1,1) } 50% { transform:scale(1.008,1.022) } }
 }
 
 @custom-variant dark (&:is(.dark *));
@@ -115,7 +163,7 @@
 }
 
 /* App base */
-body { font-family: Jost, 'Apple SD Gothic Neo', system-ui; background: var(--surface); color: var(--ink); }
+body { font-family: var(--font-sans); font-size: var(--text-body); background: var(--desk); color: var(--ink); -webkit-font-smoothing: antialiased; }
 
 /* Reduced motion: no slides, zooms or fades anywhere (sidebar, dialogs, tooltips, tab moves). */
 @media (prefers-reduced-motion: reduce) {

@@ -3,9 +3,11 @@ import type { AskTurn } from "@alto-rooms/protocol-ts";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import type { Live } from "./asksStore";
+import type { NoteTargetOf } from "./askSubjects";
 import { TurnImages } from "./attachments";
 import { CopyAnswerButton } from "./CopyAnswerButton";
 import { splitQuotes } from "./quotes";
+import { SaveAsNote } from "./SaveAsNote";
 import { ThinkingLine } from "./ThinkingLine";
 import { ErrorText, TextButton } from "./ui";
 import type { Pending } from "./useComposer";
@@ -17,7 +19,7 @@ const AnswerMarkdown = lazy(() => preloadAnswer().then((m) => ({ default: m.Answ
 /** An answer as Markdown. Until the renderer loads, plain text in the same typography, so the swap doesn't jump. */
 function Answer({ text }: { text: string }) {
   return (
-    <Suspense fallback={<div className="text-[13.5px] leading-[1.55] whitespace-pre-wrap">{text}</div>}>
+    <Suspense fallback={<div className="text-body leading-[1.55] whitespace-pre-wrap">{text}</div>}>
       <AnswerMarkdown text={text} />
     </Suspense>
   );
@@ -27,9 +29,9 @@ function Answer({ text }: { text: string }) {
 function QuestionBubble({ text }: { text: string }) {
   const { quotes, text: asked } = splitQuotes(text);
   return (
-    <div className="ml-auto w-fit max-w-[80%] rounded-[10px] bg-[#f2f2f2] px-3 py-1.5">
+    <div className="ml-auto w-fit max-w-[80%] rounded-xl bg-surface px-3 py-1.5">
       {quotes.map((q, i) => (
-        <div key={i} className="mb-1 line-clamp-3 border-l-2 border-[#d0d0d0] pl-2 text-[12.5px] whitespace-pre-wrap text-ink-2">{q}</div>
+        <div key={i} className="mb-1 line-clamp-3 border-l-2 border-hairline-strong pl-2 text-small whitespace-pre-wrap text-ink-2">{q}</div>
       ))}
       <div className="whitespace-pre-wrap">{asked}</div>
     </div>
@@ -38,7 +40,7 @@ function QuestionBubble({ text }: { text: string }) {
 
 function Waiting({ label }: { label?: string }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 text-[12.5px] text-ink-2">
+    <div className="flex min-w-0 items-center gap-2 text-small text-ink-2">
       <ThinkingLine label={label} />
     </div>
   );
@@ -56,14 +58,14 @@ function Failure({ t, onRetry }: { t: AskTurn; onRetry: (t: AskTurn) => void }) 
 /** A thin rule with a label in the middle, between turns. */
 function Divider({ children }: { children: string }) {
   return (
-    <div role="separator" aria-label={children} className="flex items-center gap-3 text-[11.5px] text-ink-2 before:h-px before:flex-1 before:bg-[#e8e8e8] after:h-px after:flex-1 after:bg-[#e8e8e8]">
+    <div role="separator" aria-label={children} className="flex items-center gap-3 text-small text-ink-2 before:h-px before:flex-1 before:bg-hairline after:h-px after:flex-1 after:bg-hairline">
       {children}
     </div>
   );
 }
 
 /** A question and its answer: streaming in with what the agent is doing, then whole, stopped, or failed with Retry. */
-function QuestionTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: (t: AskTurn) => void }) {
+function QuestionTurn({ t, live, noteTarget, onRetry }: { t: AskTurn; live?: Live; noteTarget: NoteTargetOf | null; onRetry: (t: AskTurn) => void }) {
   const running = t.status === "running";
   const answer = running ? live?.answer : t.answer;
   return (
@@ -72,11 +74,12 @@ function QuestionTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: 
       <QuestionBubble text={t.question} />
       {answer ? <Answer text={answer} /> : null}
       {running ? <Waiting label={live?.activity ?? undefined} /> : null}
-      {t.status === "cancelled" ? <div className="text-[12.5px] text-ink-2">Stopped</div> : null}
+      {t.status === "cancelled" ? <div className="text-small text-ink-2">Stopped</div> : null}
       {t.status === "failed" ? <Failure t={t} onRetry={onRetry} /> : null}
       {!running && t.answer ? (
-        <div className="-my-1.5 flex items-center gap-2 text-[11.5px] text-ink-2">
+        <div className="-my-1.5 flex flex-wrap items-center gap-x-1 text-small text-ink-2">
           <CopyAnswerButton text={t.answer} />
+          {t.status === "done" && noteTarget ? <SaveAsNote question={t.question} answer={t.answer} target={noteTarget} /> : null}
         </div>
       ) : null}
     </>
@@ -87,7 +90,7 @@ function QuestionTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: 
 function CompactTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: (t: AskTurn) => void }) {
   const [open, setOpen] = useState(false);
   if (t.status === "running") return <Waiting label={live?.activity ?? "Summarizing the conversation"} />;
-  if (t.status === "cancelled") return <div className="text-[12.5px] text-ink-2">Stopped summarizing</div>;
+  if (t.status === "cancelled") return <div className="text-small text-ink-2">Stopped summarizing</div>;
   if (t.status === "failed") return <Failure t={t} onRetry={onRetry} />;
   return (
     <>
@@ -96,11 +99,11 @@ function CompactTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: (
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="-ml-2 inline-flex min-h-7 items-center rounded-md px-2 text-[12.5px] text-ink-2 hover:bg-[#f2f2f2] hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+        className="-ml-2 inline-flex min-h-7 items-center rounded-md px-2 text-small text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
       >
         {open ? "Hide summary" : "Show summary"}
       </button>
-      {open ? <div className="rounded-lg bg-[#fafafa] px-3 py-2"><Answer text={t.answer} /></div> : null}
+      {open ? <div className="rounded-lg bg-surface px-3 py-2"><Answer text={t.answer} /></div> : null}
     </>
   );
 }
@@ -110,13 +113,19 @@ function CompactTurn({ t, live, onRetry }: { t: AskTurn; live?: Live; onRetry: (
  * sent along anymore). Memoized: progress re-renders the thread ten times a second, and only the
  * running turn changes. An `old` turn skips layout and paint while off screen.
  */
-export const Turn = memo(function Turn({ t, live, old, onRetry }: { t: AskTurn; live?: Live; old: boolean; onRetry: (t: AskTurn) => void }) {
+export const Turn = memo(function Turn({ t, live, old, noteTarget, onRetry }: {
+  t: AskTurn;
+  live?: Live;
+  old: boolean;
+  noteTarget: NoteTargetOf | null;
+  onRetry: (t: AskTurn) => void;
+}) {
   const kind = t.kind ?? "question";
   return (
     <div data-turn-id={t.id} className={cn("space-y-2", old && "[contain-intrinsic-size:auto_160px] [content-visibility:auto]")}>
       {kind === "clear" ? <Divider>New conversation</Divider> : null}
       {kind === "compact" ? <CompactTurn t={t} live={live} onRetry={onRetry} /> : null}
-      {kind === "question" ? <QuestionTurn t={t} live={live} onRetry={onRetry} /> : null}
+      {kind === "question" ? <QuestionTurn t={t} live={live} noteTarget={noteTarget} onRetry={onRetry} /> : null}
     </div>
   );
 });

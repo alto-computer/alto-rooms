@@ -82,15 +82,15 @@ export function AttachmentStrip({ items, onRemove }: { items: Attachment[]; onRe
           <img
             src={a.preview}
             alt={a.name}
-            className={cn("size-12 rounded-lg border border-[#e3e3e3] object-cover", !a.id && !a.error && "opacity-50", a.error && "border-[#c13515] opacity-60")}
+            className={cn("size-12 rounded-lg border border-hairline object-cover", !a.id && !a.error && "opacity-50", a.error && "border-error opacity-60")}
           />
           {!a.id && !a.error ? <LoaderCircle aria-label="Uploading" className="absolute inset-0 m-auto size-4 animate-spin text-ink" /> : null}
-          {a.error ? <CircleAlert aria-label={a.error} className="absolute inset-0 m-auto size-4 text-[#c13515]" /> : null}
+          {a.error ? <CircleAlert aria-label={a.error} className="absolute inset-0 m-auto size-4 text-error" /> : null}
           <button
             type="button"
             aria-label={`Remove ${a.name}`}
             onClick={() => onRemove(a.key)}
-            className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full border border-[#e3e3e3] bg-white text-ink-2 shadow-sm hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
+            className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full border border-hairline bg-sheet text-ink-2 shadow-sheet hover:text-ink focus-visible:outline-2 focus-visible:outline-ink"
           >
             <X className="size-3" />
           </button>
@@ -112,7 +112,7 @@ export function TurnImages({ ids }: { ids: string[] }) {
       <div className="ml-auto flex w-fit max-w-[80%] flex-wrap justify-end gap-1.5">
         {ids.map((id) => (
           <button key={id} type="button" aria-label="Open image" onClick={() => setOpen(id)} className="rounded-lg focus-visible:outline-2 focus-visible:outline-ink">
-            <img src={url(id)} alt="" loading="lazy" className="size-16 rounded-lg border border-[#e3e3e3] object-cover" />
+            <img src={url(id)} alt="" loading="lazy" className="size-16 rounded-lg border border-hairline object-cover" />
           </button>
         ))}
       </div>

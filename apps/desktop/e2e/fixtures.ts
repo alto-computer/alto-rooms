@@ -28,7 +28,7 @@ const BASE = `http://127.0.0.1:${API_PORT}`;
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const ROOMSD = path.join(REPO_ROOT, "target", "debug", "roomsd");
 
-type Room = { id: string; name: string; path: string; artifactCount: number };
+type Room = { id: string; name: string; path: string; artifactCount: number; color: string | null };
 
 export type Daemon = {
   /** The daemon's home (canonical, as /v1/info reports it). */
@@ -47,23 +47,34 @@ export type Daemon = {
   read(rel: string): Promise<string>;
   /** Copies a built fixture plugin (see buildFixturePlugin) into <home>/.rooms/plugins/<id>/. */
   installPlugin(id: string): Promise<void>;
+  /** Adds a conversation's messages, alternating user and agent from the first, to this daemon's own collect.db. */
+  addConversation(c: { agent: string; session: string; cwd: string; at: Date; messages: string[] }): Promise<void>;
 };
+
+/** collect.db's schema, as rooms-collect creates it. */
+const collectSchema = async () => (await fs.readFile(path.join(REPO_ROOT, "crates/rooms-collect/src/store.rs"), "utf8")).split('r#"')[1].split('"#')[0];
 
 const PLUGIN_FIXTURES = path.join(import.meta.dirname, "fixtures", "plugins");
 const builtPlugins = new Map<string, string>();
 
-/** Builds e2e/fixtures/plugins/<id> once per run: main.ts (using the real plugin SDK) → main.js, beside the manifest and HTML. */
+/**
+ * Builds e2e/fixtures/plugins/<id> once per run: main.ts (using the real plugin SDK) → main.js and
+ * content.ts → content.js, whichever exist, beside the manifest and the HTML when there is one.
+ */
 export function buildFixturePlugin(id: string): string {
   const cached = builtPlugins.get(id);
   if (cached) return cached;
   const src = path.join(PLUGIN_FIXTURES, id);
   const out = path.join(os.tmpdir(), `rooms-e2e-plugin-${id}-${process.pid}`);
-  execFileSync(
-    "bun",
-    ["build", path.join(src, "main.ts"), "--outfile", path.join(out, "main.js"), "--target", "browser", "--format", "esm"],
-    { stdio: "pipe" },
-  );
-  for (const f of ["manifest.json", "index.html"]) execFileSync("cp", [path.join(src, f), path.join(out, f)]);
+  const has = (f: string) => existsSync(path.join(src, f));
+  for (const entry of ["main.ts", "content.ts"].filter(has)) {
+    execFileSync(
+      "bun",
+      ["build", path.join(src, entry), "--outfile", path.join(out, entry.replace(/\.ts$/, ".js")), "--target", "browser", "--format", "esm"],
+      { stdio: "pipe" },
+    );
+  }
+  for (const f of ["manifest.json", "index.html"].filter(has)) execFileSync("cp", [path.join(src, f), path.join(out, f)]);
   builtPlugins.set(id, out);
   return out;
 }
@@ -132,14 +143,18 @@ export const test = base.extend<{ daemon: Daemon; bundledPlugins: string | undef
       if (!(await portFree(port))) throw new Error(`port ${port} is busy; stop whatever holds it before running e2e`);
     }
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "rooms-e2e-"));
+    const collect = await fs.mkdtemp(path.join(os.tmpdir(), "rooms-e2e-collect-"));
     let output = "";
+    // Never the real collect.db: a shell that exports ROOMS_COLLECT_DATA would hand it to roomsd.
+    const { ROOMS_COLLECT_DATA: _realCollectData, ...env } = process.env;
     const child = spawn(roomsdBinary, [], {
       env: {
-        ...process.env,
+        ...env,
         ROOMS_HOME: dir,
         ROOMS_API_PORT: String(API_PORT),
         ROOMS_FILES_PORT: String(FILES_PORT),
         ROOMS_DEV_ORIGIN: APP_ORIGIN,
+        ROOMS_COLLECT_DATA: collect,
         ...(bundledPlugins ? { ROOMS_BUNDLED_PLUGINS: bundledPlugins } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -202,6 +217,15 @@ export const test = base.extend<{ daemon: Daemon; bundledPlugins: string | undef
           );
         },
         read: (rel) => fs.readFile(abs(rel), "utf8"),
+        async addConversation({ agent, session, cwd, at, messages }) {
+          const q = (v: string) => `'${v.replace(/'/g, "''")}'`;
+          const rows = messages.map((text, i) => {
+            const ts = new Date(at.getTime() + i * 60_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+            const role = i % 2 === 0 ? "user" : "assistant";
+            return `INSERT INTO events(id, kind, agent, session, ts, cwd, role, src_path, file_key, src_offset, src_len, preview) VALUES(${q(`${session}-${i}`)}, 'message', ${q(agent)}, ${q(session)}, ${q(ts)}, ${q(cwd)}, ${q(role)}, '/log', 'k', 0, 0, ${q(text)});`;
+          });
+          execFileSync("sqlite3", [path.join(collect, "collect.db")], { input: [await collectSchema(), ...rows].join("\n") });
+        },
       };
       await use(daemon);
     } finally {
@@ -210,6 +234,7 @@ export const test = base.extend<{ daemon: Daemon; bundledPlugins: string | undef
         await testInfo.attach("roomsd.log", { body: output, contentType: "text/plain" });
       }
       await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(collect, { recursive: true, force: true });
     }
   },
 });

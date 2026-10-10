@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+<!-- The favicon: WoolGlyph's 24px drawing, the flat brand mark after the app icon. -->
+<mask id="w"><circle cx="13.75" cy="10" r="8.5" fill="#fff"/>
+<path d="M6.92 15.06A7.36 3.29 109.44 0 1 11.61 1.77" fill="none" stroke="#000" stroke-width="1" stroke-linecap="round"/><path d="M10.91 18.01A8.5 3.8 109.44 0 1 16.57 1.98" fill="none" stroke="#000" stroke-width="1" stroke-linecap="round"/><path d="M15.88 18.23A7.36 3.29 109.44 1 1 20.57 4.93" fill="none" stroke="#000" stroke-width="1" stroke-linecap="round"/>
+<path d="M6.11 6.27A8.5 2.23 206.03 0 1 21.39 13.73" fill="none" stroke="#fff" stroke-width="5.1" stroke-linecap="butt"/>
+<path d="M6.89 4.98A8.38 2.2 206.03 0 1 21.93 12.33" fill="none" stroke="#000" stroke-width="1" stroke-linecap="round"/><path d="M5.58 7.67A8.38 2.2 206.03 1 1 20.61 15.01" fill="none" stroke="#000" stroke-width="1" stroke-linecap="round"/></mask>
+<path d="M8 16.2C6.4 17.8 5.2 19.4 6.6 20.4C8 21.3 11.4 21 14.4 20.7S19.6 20.6 22.4 21.4" fill="none" stroke="#ff385c" stroke-width="1.75" stroke-linecap="round"/>
+<circle cx="13.75" cy="10" r="8.5" fill="#ff385c" mask="url(#w)"/>
+</svg>

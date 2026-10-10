@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { Artifact, AskScope, AskTurn } from "@alto-rooms/protocol-ts";
+import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
+import { frameSubject, type AskSubject, type SubjectFraming } from "./askSubjects";
 import { Composer } from "./Composer";
-import { AgentChip, ModelPicker } from "./ModelPicker";
+import { AgentChip, ModelPicker, ReadScopeHint } from "./ModelPicker";
 import { ThreadSheet } from "./ThreadSheet";
 import { preloadAnswer } from "./Turn";
 import { ErrorText } from "./ui";
@@ -14,20 +15,27 @@ import { useComposer } from "./useComposer";
 const PART_OF_THE_BAR = "[data-slot=dropdown-menu-content], [data-slot=dialog-content], [data-slot=dialog-overlay], [data-selection-ask]";
 
 /**
- * The ask bar under a doc (⌘J): the doc's thread, and the input that asks the agent that made the
- * doc about it. The thread folds on Esc or a click elsewhere, and unfolds when the input is focused.
+ * The ask bar at the bottom of a doc, room or Journal tab (⌘J): the subject's thread, and the input that
+ * asks about it. The thread folds on Esc or a click elsewhere, and unfolds when the input is focused.
  */
-export function AskBar({ artifact }: { artifact: Artifact }) {
+export function AskBar({ subject }: { subject: AskSubject }) {
+  const framing = frameSubject(subject);
+  // The pending question, images and error belong to one scope; a new subject in the same tab starts fresh.
+  return <ScopedAskBar key={scopeKey(framing.scope)} framing={framing} />;
+}
+
+function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const store = useAsksStore();
   const { open, threads, live } = useAsks();
   const readOnly = useReadOnly();
   const shown = open && !readOnly;
-  const scope: AskScope = { kind: "doc", fileKey: artifact.fileKey };
+  const { scope } = framing;
   const key = scopeKey(scope);
   const thread = threads[key];
   const turns = thread?.turns ?? [];
   const running = turns.find((t) => t.status === "running");
   const { target, model, pick, modelFor } = useAskTarget(scope, shown);
+  const note = framing.note?.(target);
   const composer = useComposer(scope, model);
   const [unfolded, setUnfolded] = useState(true);
   const [dragging, setDragging] = useState(false);
@@ -47,13 +55,15 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
   const retryWith = useRef<(t: AskTurn) => void>(() => {});
   retryWith.current = (t: AskTurn) => composer.retry(t, modelFor(t));
   const retry = useCallback((t: AskTurn) => retryWith.current(t), []);
+  // The scope alone decides where answers are saved, and the bar remounts when it changes.
+  const noteTarget = useState(() => framing.noteTarget)[0];
 
   if (!shown) return null;
   const showThread = unfolded && (turns.length > 0 || !!thread?.error || !!composer.pending);
   return (
     <div
       ref={container}
-      className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-4 pb-4"
+      className="pointer-events-none absolute inset-x-4 bottom-4 flex flex-col items-center gap-3 px-4 pb-4"
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
@@ -72,6 +82,8 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       {showThread ? (
         <ThreadSheet
           turns={turns}
+          header={framing.header}
+          noteTarget={noteTarget}
           live={live}
           loadError={!!thread?.error}
           pending={composer.pending}
@@ -87,14 +99,21 @@ export function AskBar({ artifact }: { artifact: Artifact }) {
       <Composer
         composer={composer}
         inputRef={input}
+        placeholder={framing.placeholder}
         turns={turns}
         running={running}
         dragging={dragging}
-        model={target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={artifact.source.agent ?? "Default agent"} />}
+        model={
+          <>
+            <ReadScopeHint text={framing.hint(target)} />
+            {target ? <ModelPicker target={target} model={model} onChange={pick} /> : <AgentChip name={framing.agent} />}
+          </>
+        }
         onStop={() => running && store.cancel(running.id)}
         onFold={() => setUnfolded(false)}
         onFocus={() => setUnfolded(true)}
       />
+      {note ? <p className="pointer-events-auto -mt-1.5 rounded-full bg-sheet/90 px-2 text-caption text-ink-3">{note}</p> : null}
     </div>
   );
 }

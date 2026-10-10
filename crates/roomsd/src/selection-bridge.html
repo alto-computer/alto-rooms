@@ -1,12 +1,14 @@
 <script data-rooms-bridge>
 /* Added by Rooms when it shows this file (the file itself is unchanged): tells the Rooms window
-   what text is selected, so you can ask about it. Sends only the selected text and where it is.
+   what text is selected, so you can ask about it, and whether the page is light or dark, so a
+   light page can be dimmed in dark mode. Sends only the selected text and where it is, and that.
 
    Why a script inside: Rooms shows this page in a sandboxed frame with no origin, so the window
    around it can't look in. Posting out is the one way across, and the window takes a message only
-   from its own frame and only in this shape: {roomsSelection: 1, text, rect | null}.
-   Why "*": the script doesn't know the app's origin, which differs by platform; the selection is
-   all it ever sends. */
+   from its own frame and only in these shapes: {roomsSelection: 1, text, rect | null} and
+   {roomsTone: 1, tone: "light" | "dark"}.
+   Why "*": the script doesn't know the app's origin, which differs by platform; the selection and
+   the tone are all it ever sends. */
 (function () {
   if (window.parent === window) return;
   var down = false, timer = 0, last = "";
@@ -28,5 +30,38 @@
   document.addEventListener("selectionchange", function () { later(200); });
   window.addEventListener("scroll", function () { if (last) later(30); }, true);
   window.addEventListener("resize", function () { if (last) later(30); });
+
+  /* The page's own background: the body's, else the root's, else the canvas (white unless the page
+     asks for a dark scheme). A 1px canvas reads any CSS colour syntax as sRGB. */
+  var told = "";
+  function rgba(css) {
+    var c = document.createElement("canvas");
+    c.width = c.height = 1;
+    var g = c.getContext("2d");
+    if (!g) return null;
+    g.fillStyle = css;
+    g.fillRect(0, 0, 1, 1);
+    return g.getImageData(0, 0, 1, 1).data;
+  }
+  function tone() {
+    var els = [document.body, document.documentElement];
+    for (var i = 0; i < els.length; i++) {
+      var p = els[i] && rgba(getComputedStyle(els[i]).backgroundColor);
+      if (p && p[3] > 127) return 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2] > 127 ? "light" : "dark";
+    }
+    var scheme = getComputedStyle(document.documentElement).colorScheme || "";
+    var osDark = !!window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return /\bdark\b/.test(scheme) && (osDark || !/\blight\b/.test(scheme)) ? "dark" : "light";
+  }
+  function tell() {
+    var t = tone();
+    if (t === told) return;
+    told = t;
+    window.parent.postMessage({ roomsTone: 1, tone: t }, "*");
+  }
+  if (document.body) tell();
+  document.addEventListener("DOMContentLoaded", tell);
+  window.addEventListener("load", tell);
+  if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", tell);
 })();
 </script>

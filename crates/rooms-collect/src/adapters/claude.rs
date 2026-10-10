@@ -42,6 +42,16 @@ impl Adapter for Claude {
             }
             return;
         }
+        let named = match ty { "ai-title" => rec.get("aiTitle"), "custom-title" => rec.get("customTitle"), _ => None };
+        if let Some(t) = named.and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
+            let mut e = base(Kind::SessionSeen, ctx);
+            if let Some(sid) = rec.get("sessionId").and_then(Value::as_str) { e.session = Some(sid.to_string()); }
+            e.title = Some(t.to_string());
+            // A title the user typed outranks the agent's (conversations::title).
+            e.role = (ty == "custom-title").then_some(Role::User);
+            out.push(e);
+            return;
+        }
         if ty != "user" && ty != "assistant" { return; }
         if let Some(cwd) = rec.get("cwd").and_then(Value::as_str) { ctx.cwd = Some(cwd.to_string()); }
         if let Some(sid) = rec.get("sessionId").and_then(Value::as_str) {
@@ -83,8 +93,6 @@ impl Adapter for Claude {
             e.sub = i as u32;
         }
     }
-
-    fn resume_command(&self, session: &str) -> String { format!("claude --resume {session}") }
 }
 
 impl Claude {

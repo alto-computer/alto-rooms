@@ -3,6 +3,8 @@ import { CircleAlert, Folder } from "lucide-react";
 import { useClient, useViewerStore } from "@/data/hooks";
 import { errorCopy } from "@/lib/errors";
 import { pickFolder } from "@/lib/native";
+import { cn } from "@/lib/utils";
+import { ICON, ITEM } from "./sidebarItem";
 
 /**
  * The inline "new room" row at the top of the room list. Enter creates the
@@ -61,8 +63,8 @@ export function NewRoomRow({ onDone }: { onDone: () => void }) {
 
   return (
     <li className="flex flex-col gap-1">
-      <div className="flex min-h-9 items-center gap-2.5 rounded-lg bg-white px-2.5 text-[15px] shadow-[0_0_0_2px_#222]">
-        <Folder size={17} strokeWidth={1.75} aria-hidden className="shrink-0" />
+      <div className={cn(ITEM, "bg-sheet shadow-sheet ring-[1.5px] ring-ink/40 ring-inset")}>
+        <Folder {...ICON} className="shrink-0 text-ink-2" />
         <label htmlFor={inputId} className="sr-only">
           New room name
         </label>
@@ -89,12 +91,12 @@ export function NewRoomRow({ onDone }: { onDone: () => void }) {
           }}
           className="min-w-0 flex-1 bg-transparent outline-none disabled:opacity-60"
         />
-        <span aria-hidden className="shrink-0 text-[12px] text-ink-3">
+        <span aria-hidden className="shrink-0 text-caption text-ink-3">
           ↵
         </span>
       </div>
       {error ? (
-        <p id={errorId} role="alert" className="flex items-center gap-1.5 px-2.5 pt-1 text-[13px] text-[#c13515]">
+        <p id={errorId} role="alert" className="flex items-center gap-1.5 px-2 pt-1 text-small text-error">
           <CircleAlert size={14} aria-hidden className="shrink-0" />
           {error}
         </p>
@@ -103,7 +105,7 @@ export function NewRoomRow({ onDone }: { onDone: () => void }) {
         type="button"
         onClick={link}
         disabled={busy}
-        className="self-start rounded-lg px-2.5 py-1.5 text-[14px] text-ink-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-ink disabled:opacity-60"
+        className="self-start rounded-lg px-2 py-1 text-small text-ink-2 hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-ink disabled:opacity-60"
       >
         Link a folder…
       </button>

@@ -7,7 +7,7 @@ import type { Outgoing, Queued } from "./asksStore";
 import { useAttachments } from "./attachments";
 import { commandText, exactCommand, matchCommands, type CommandKind } from "./commands";
 import { splitQuotes, withQuotes } from "./quotes";
-import { useDraft } from "./useDraft";
+import { restoreDraft, useDraft } from "./useDraft";
 
 /** A question on its way to roomsd, shown in the thread before roomsd answers with its turn. */
 export type Pending = { question: string; images: string[] };
@@ -70,6 +70,8 @@ export function useComposer(scope: AskScope, model: string | null) {
 
   /** Puts a question back in the input: its text (unless something new was typed), quotes and images. */
   const restore = (text: string, qs: string[], images: string[]) => {
+    // The bar may have moved to another scope while roomsd answered; storage still brings the text back there.
+    restoreDraft(scope, text);
     setDraft((d) => d || text);
     qs.forEach((x) => store.addQuote(scope, x));
     attachments.restore(images);

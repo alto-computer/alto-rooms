@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, MOD, test } from "./fixtures";
 
-const PLACEHOLDER = "Ask about this doc…";
+const PLACEHOLDER = "Ask about this artifact…";
 
 async function openDocTab(page: Page, room: string, title: string) {
   await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: room, exact: true }).click();
@@ -20,7 +20,7 @@ test("ask a doc and get the fake agent's answer", async ({ page, daemon }) => {
   writeFileSync(bin, '#!/bin/sh\nfor a in "$@"; do last="$a"; done\nprintf "**Answer:** %s\\n" "$(printf %s "$last" | tail -n 1)"\n');
   chmodSync(bin, 0o755);
   mkdirSync(join(daemon.home, ".rooms"), { recursive: true });
-  writeFileSync(join(daemon.home, ".rooms/agents.toml"), `[agents.claude-code]\nnew = ["${bin}", "{prompt}"]\n`);
+  writeFileSync(join(daemon.home, ".rooms/agents.toml"), `[agents.claude-code]\nnew = ["${bin}", "{prompt}", "--settings", "{scope_settings}"]\n`);
 
   const harness = await daemon.createRoom("harness");
   await daemon.write("harness/doc.html", "<html><head><title>Doc</title></head><body>hello</body></html>");
@@ -39,7 +39,7 @@ test("ask a doc and get the fake agent's answer", async ({ page, daemon }) => {
   await expect(page.getByText("Question: 왜 이렇게 했어?")).toBeVisible({ timeout: 10_000 });
   const head = page.getByText("claude-code · New conversation", { exact: true });
   await expect(head).toBeVisible();
-  await expect(head).toHaveAttribute("title", "Couldn't find the thread that made this doc");
+  await expect(head).toHaveAttribute("title", "Couldn't find the thread that made this artifact");
 
   // Survives a reload: the thread comes back from roomsd.
   await page.reload();
