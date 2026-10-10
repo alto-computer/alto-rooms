@@ -140,14 +140,14 @@ function Loaded({ conversation }: { conversation: Conversation }) {
         <div data-scroll-root className="min-h-0 flex-1 overflow-y-auto">
           <article aria-label={conversationTitle(conversation)} className="mx-auto max-w-[736px] px-14 pt-7 pb-44">
             <MetaLine conversation={conversation} home={info?.home} />
-            <h1 className="mt-3 font-serif text-title leading-[1.36] font-medium text-pretty text-ink">{conversationTitle(conversation)}</h1>
+            <h1 className="mt-3 font-serif text-title leading-[1.36] font-medium text-pretty break-keep text-ink [overflow-wrap:anywhere]">{conversationTitle(conversation)}</h1>
             {reply ? (
               <section aria-label="Last reply" className="mt-8">
                 <h2 className="flex items-center gap-2 text-small text-ink-3">
                   <span className="font-semibold text-ink-2">{agent}</span>
                   last replied
                 </h2>
-                <blockquote className="mt-2 border-l-2 border-hairline-strong pl-4 text-lead text-ink-2">
+                <blockquote className="mt-2 border-l-2 border-hairline-strong pl-4 text-lead break-keep text-ink-2 [overflow-wrap:anywhere]">
                   {reply}
                   {reply.length >= PREVIEW_CHARS ? "…" : null}
                 </blockquote>

@@ -92,7 +92,7 @@ function NoteText({ text }: { text: string }) {
   }, [text]);
   return (
     <>
-      <div ref={body} data-note-preview className="line-clamp-4 break-keep">
+      <div ref={body} data-note-preview className="line-clamp-4 break-keep [overflow-wrap:anywhere]">
         {blocks.map((b, i) =>
           "list" in b ? (
             <ul key={i} className="mt-1.5 list-disc pl-[18px] marker:text-ink-3">
@@ -138,7 +138,7 @@ function NoteEntry({ note }: { note: Note }) {
       }}
       className="-mx-3 -my-1.5 min-w-0 cursor-pointer rounded-lg px-3 py-1.5 outline-none hover:bg-row-hover focus-visible:outline-2 focus-visible:outline-ink"
     >
-      <h3 className="font-serif text-heading leading-6 font-semibold text-ink">{name}</h3>
+      <h3 className="font-serif text-heading leading-6 font-semibold break-keep text-ink [overflow-wrap:anywhere]">{name}</h3>
       {text ? (
         <div className="max-w-[60ch] font-serif text-lead leading-[1.6] text-ink-2">
           <NoteText text={text} />

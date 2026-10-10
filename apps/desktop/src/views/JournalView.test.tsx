@@ -117,7 +117,7 @@ describe("JournalView: the daybook", () => {
     const [manyItem, wideItem, shortItem] = within(daybook()).getAllByRole("listitem");
     for (const [item, first] of [[manyItem, "줄 1"], [wideItem, wide]] as const) {
       const body = (await within(item).findByText(first)).closest("[data-note-preview]");
-      expect(body).toHaveClass("line-clamp-4", "break-keep");
+      expect(body).toHaveClass("line-clamp-4", "break-keep", "[overflow-wrap:anywhere]");
       expect(within(item).getByText("…")).toBeInTheDocument();
       expect(within(item).getByText("The note goes on")).toHaveClass("sr-only");
     }

@@ -81,6 +81,13 @@ describe("Session view", () => {
     expect(within(screen.getByRole("region", { name: "Last reply" })).getByText(/Spawning roomsd after first paint/)).toBeInTheDocument();
   });
 
+  it("wraps a long unbroken title or reply anywhere, keeping Hangul words whole", async () => {
+    await setup({ title: "https://example.com/a/very/long/path/without/any/breaks", lastReply: "/Users/me/code/alto-rooms/apps/desktop/src/views/ConversationView.tsx" }).render();
+    for (const el of [await screen.findByRole("heading", { level: 1 }), screen.getByText(/ConversationView\.tsx/)]) {
+      expect(el).toHaveClass("[overflow-wrap:anywhere]", "break-keep");
+    }
+  });
+
   it("the breadcrumb starts at its room when it is in one, and opens it", async () => {
     const h = await setup({ roomId: "p" }).render();
     const crumb = within(await screen.findByRole("navigation", { name: "Breadcrumb" }));
