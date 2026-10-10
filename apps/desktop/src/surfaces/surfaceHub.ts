@@ -351,10 +351,11 @@ export class SurfaceHub {
   private flash(key: string, rangeId: string): void {
     const s = this.surfaces.get(key);
     if (!s) return;
-    s.root.scrollIntoView({ block: "center" });
-    const reg = registry();
     let range: Range | null = null;
     for (const seat of this.seats.values()) range ??= this.rangeOf(seat, key, rangeId);
+    // The element holding the range's first text node: a long answer's top may be a screen away from it.
+    (range?.startContainer.parentElement ?? s.root).scrollIntoView({ block: "center" });
+    const reg = registry();
     if (!reg || !range) return;
     reg.set(FLASH, new Highlight(range));
     if (this.flashTimer) clearTimeout(this.flashTimer);
