@@ -39,9 +39,10 @@ export type HostMessage =
 
 const STORAGE = new Set<string>(["storage.read", "storage.write", "storage.list", "storage.delete"]);
 
-const isColor = (v: string): boolean => typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("color", v);
+export const isColor = (v: string): boolean => typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("color", v);
 
-function parseActions(items: unknown, validColor: (v: string) => boolean): ContentAction[] | null {
+/** Up to 6 `{id, title, color?}` with distinct short ids and readable titles, or null when any item is off. */
+export function parseActions(items: unknown, validColor: (v: string) => boolean): ContentAction[] | null {
   if (!Array.isArray(items) || items.length > MAX_ACTIONS) return null;
   const out: ContentAction[] = [];
   for (const it of items as unknown[]) {

@@ -1,4 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
+import type { SurfaceSpan } from "@/surfaces/surfaceHub";
 
 /** Where the selection is, in px from the top-left of the box the bar is placed in. */
 export type SelectionRect = { x: number; y: number; w: number; h: number };
@@ -13,12 +14,22 @@ export function readSelectionMessage(data: unknown): { text: string; rect: Selec
   return { text: text.slice(0, 4000), rect: ok ? (r as SelectionRect) : null };
 }
 
+export type PickedText = { text: string; rect: SelectionRect; span: SurfaceSpan | null };
+
+const nowhere = () => null;
+
 /**
  * Text selected inside `scope`, with where it is relative to `box`; null when nothing is. Read on
- * release, not while dragging, so a bar over it doesn't chase the pointer.
+ * release, not while dragging, so a bar over it doesn't chase the pointer. `locate` names the host
+ * text surface the selection lies in, when it lies in one.
  */
-export function useTextSelection(scope: RefObject<HTMLElement | null>, box: RefObject<HTMLElement | null>, enabled: boolean) {
-  const [picked, setPicked] = useState<{ text: string; rect: SelectionRect } | null>(null);
+export function useTextSelection(
+  scope: RefObject<HTMLElement | null>,
+  box: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  locate: (range: Range) => SurfaceSpan | null = nowhere,
+) {
+  const [picked, setPicked] = useState<PickedText | null>(null);
   useEffect(() => {
     if (!enabled) return;
     const read = () => {
@@ -28,8 +39,9 @@ export function useTextSelection(scope: RefObject<HTMLElement | null>, box: RefO
       const inside = !!s && !s.isCollapsed && !!el && !!s.anchorNode && el.contains(s.anchorNode) && el.contains(s.focusNode);
       const text = inside ? s.toString().trim() : "";
       if (!text || !b) return setPicked(null);
-      const r = s!.getRangeAt(0).getBoundingClientRect();
-      setPicked({ text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height } });
+      const range = s!.getRangeAt(0);
+      const r = range.getBoundingClientRect();
+      setPicked({ text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height }, span: locate(range) });
     };
     const onUp = () => setTimeout(read, 0);
     const onChange = () => {
@@ -43,6 +55,6 @@ export function useTextSelection(scope: RefObject<HTMLElement | null>, box: RefO
       document.removeEventListener("keyup", onUp);
       document.removeEventListener("selectionchange", onChange);
     };
-  }, [scope, box, enabled]);
+  }, [scope, box, enabled, locate]);
   return { picked, dismiss: () => setPicked(null) };
 }
