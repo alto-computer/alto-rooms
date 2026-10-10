@@ -46,9 +46,9 @@ test("save a room answer into today's Journal twice, then open the note", async 
   expect(await daemon.read(`journal/${date}/What is in here?.md`)).toBe(body);
 
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  const mine = page.getByRole("region", { name: "From me" });
-  await expect(mine.getByRole("button", { name: "What is in here?", exact: true })).toBeVisible();
-  await expect(mine.getByRole("button", { name: "What is in here? (2)", exact: true })).toBeVisible();
+  const day = page.getByRole("list", { name: "Your day" });
+  await expect(day.getByRole("button", { name: "What is in here?", exact: true })).toBeVisible();
+  await expect(day.getByRole("button", { name: "What is in here? (2)", exact: true })).toBeVisible();
 });
 
 test("save a day answer into the viewed day, not today", async ({ page, daemon }) => {
@@ -62,12 +62,12 @@ test("save a day answer into the viewed day, not today", async ({ page, daemon }
   await page.getByRole("button", { name: "Journal", exact: true }).click();
   const strip = `${other.toLocaleString("en-US", { month: "short" })} ${other.getDate()}`;
   await page.getByRole("button", { name: strip, exact: true }).click();
-  await expect(page.getByRole("region", { name: "From agents" }).getByTestId("artifact-card")).toHaveCount(1);
+  await expect(page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact")).toHaveCount(1);
   const answer = "Day answer to What happened? (1 docs)";
   await ask(page, "Ask about this day…", "What happened?", answer);
   await saveAsNote(page);
 
   await expect.poll(() => daemon.read(`journal/${date}/What happened?.md`)).toBe(`## What happened?\n\n${answer}`);
   expect(await daemon.exists(`journal/${today()}/What happened?.md`)).toBe(false);
-  await expect(page.getByRole("region", { name: "From me" }).getByRole("button", { name: "What happened?", exact: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Your day" }).getByRole("button", { name: "What happened?", exact: true })).toBeVisible();
 });
