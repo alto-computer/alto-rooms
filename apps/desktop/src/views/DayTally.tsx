@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { clockTime } from "@/lib/dates";
 import { wantsNewTab } from "@/lib/nav";
+import { cn } from "@/lib/utils";
 
 /** Something the day holds, as a tally list shows it. */
 export type TallyItem = { key: string; title: string; at: string; meta: string; open: (newTab: boolean) => void };
@@ -119,9 +120,9 @@ function Cell({ cell }: { cell: TallyCell }) {
 }
 
 /** The viewed day at a glance: one cell per kind of thing it holds, side by side. */
-export function DayTally({ label, cells }: { label: string; cells: TallyCell[] }) {
+export function DayTally({ label, cells, className }: { label: string; cells: TallyCell[]; className?: string }) {
   return (
-    <section aria-label={label} className="flex flex-col gap-4">
+    <section aria-label={label} className={cn("flex flex-col gap-4", className)}>
       <h2 className="flex h-7 items-center text-small font-semibold tracking-[0.02em] text-ink-3">{label}</h2>
       <div className="grid auto-cols-[minmax(min-content,1fr)] grid-flow-col overflow-hidden rounded-xl bg-sheet shadow-sheet [&>*+*]:border-l [&>*+*]:border-hairline">
         {cells.map((c) => (

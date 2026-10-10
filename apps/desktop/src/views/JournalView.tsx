@@ -156,20 +156,23 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
       </section>
     );
   } else {
+    // Below 960px of room the tally goes above the day in one column, so neither crowds the other.
     body = (
-      <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-14 px-14 pt-9 pb-10">
-        <section aria-label="Your day" className="flex min-w-0 flex-col">
-          <div className="mb-4 flex h-7 items-center justify-between">
-            <h2 className="text-small font-semibold tracking-[0.02em] text-ink-3">Your day</h2>
-            {entries.length ? writeNote : null}
-          </div>
-          {entries.length ? (
-            <Daybook entries={entries} info={info} />
-          ) : (
-            <EmptyDay date={date} rooms={rooms} writeNote={writeNote} onPick={setDate} />
-          )}
-        </section>
-        <DayTally label={isToday ? "Today" : monthDay(date)} cells={cells} />
+      <div className="@container">
+        <div className="grid grid-cols-1 gap-8 px-14 pt-9 pb-10 @[960px]:grid-cols-[minmax(0,1fr)_300px] @[960px]:gap-14">
+          <section aria-label="Your day" className="flex min-w-0 flex-col">
+            <div className="mb-4 flex h-7 items-center justify-between">
+              <h2 className="text-small font-semibold tracking-[0.02em] text-ink-3">Your day</h2>
+              {entries.length ? writeNote : null}
+            </div>
+            {entries.length ? (
+              <Daybook entries={entries} info={info} />
+            ) : (
+              <EmptyDay date={date} rooms={rooms} writeNote={writeNote} onPick={setDate} />
+            )}
+          </section>
+          <DayTally label={isToday ? "Today" : monthDay(date)} cells={cells} className="order-first @[960px]:order-none" />
+        </div>
       </div>
     );
   }

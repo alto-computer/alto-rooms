@@ -101,3 +101,20 @@ test("renaming a note from its heading moves the file and keeps the body typed j
   await expect(page.getByText("A note with that name already exists")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Note name" })).toHaveValue("회고");
 });
+
+test("in a narrow window the tally sits above the day in one column, and nothing overlaps it", async ({ page, daemon }) => {
+  await daemon.createRoom("벤치마크");
+  await daemon.write("벤치마크/report.html", stamped("주간 리포트", 2));
+  for (const [width, stacked] of [[900, true], [1440, false]] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    await openJournal(page);
+    const tally = await page.getByRole("region", { name: "Today" }).boundingBox();
+    const day = await page.getByRole("region", { name: "Your day" }).boundingBox();
+    const thumb = await page.getByTestId("day-artifact").first().boundingBox();
+    if (!tally || !day || !thumb) throw new Error("the Journal did not lay out");
+    const apart = (a: typeof tally, b: typeof tally) => a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y;
+    expect(apart(tally, day), `${width}px: the tally and the day overlap`).toBe(true);
+    expect(apart(tally, thumb), `${width}px: an artifact overlaps the tally`).toBe(true);
+    expect(tally.y + tally.height <= day.y, `${width}px: tally above the day`).toBe(stacked);
+  }
+});
