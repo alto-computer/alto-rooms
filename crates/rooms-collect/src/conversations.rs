@@ -38,6 +38,14 @@ pub fn get(c: &Connection, id: &ConversationId) -> rusqlite::Result<Option<Conve
     summarize(c, id.clone(), &prompts)
 }
 
+/// The Aside account `session` was recorded under, from where its log is.
+pub fn aside_account(c: &Connection, session: &SessionId) -> rusqlite::Result<Option<String>> {
+    let log: Option<String> = c.query_row(
+        "SELECT src_path FROM events WHERE agent='aside' AND session=?1 LIMIT 1",
+        [session.as_str()], |r| r.get(0)).optional()?;
+    Ok(log.and_then(|p| crate::adapters::aside::account_of(std::path::Path::new(&p))))
+}
+
 /// A session's title: one the user gave it, else the agent's latest (Claude Code's AI title or
 /// summary, Codex's thread name), else its first prompt with the agents' wrapper blocks removed.
 pub fn title(c: &Connection, agent: &str, session: &str) -> rusqlite::Result<Option<String>> {

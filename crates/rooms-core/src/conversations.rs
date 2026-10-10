@@ -114,6 +114,11 @@ impl RoomsCore {
         collect::get(&db, id).map_err(unreadable)
     }
 
+    /// The Aside account `session` is under, as collect.db recorded it.
+    pub(crate) fn aside_account(&self, session: &SessionId) -> Option<String> {
+        collect::aside_account(&self.collect_db()?, session).ok().flatten()
+    }
+
     fn room_id_set(&self) -> HashSet<RoomId> {
         lock(&self.inner).state.rooms.iter().map(|r| r.id.clone()).collect()
     }

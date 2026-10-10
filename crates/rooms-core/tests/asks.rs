@@ -535,6 +535,33 @@ async fn a_conversation_ask_resumes_that_conversation_in_its_folder() {
 }
 
 #[tokio::test]
+async fn an_aside_ask_resumes_that_session_under_its_account() {
+    let (d, core, _doc, _room) = setup("");
+    std::fs::write(d.path().join(".rooms/agents.toml"), format!(
+        "[agents.claude-code]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\", \"--settings\", \"{{scope_settings}}\"]\n\
+         [agents.aside]\nresume = [\"{FAKE}\", \"resume\", \"--account\", \"{{account}}\", \"{{session}}\", \"{{prompt}}\"]\nnew = [\"{FAKE}\", \"new\", \"{{prompt}}\"]\n"
+    )).unwrap();
+    let data = d.path().join("collect");
+    let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
+    for (session, log) in [("A-1", "/Users/me/.aside/u/2/sessions/2026-10-05_A-1/messages.jsonl"), ("A-2", "/elsewhere/A-2.jsonl")] {
+        db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
+                    VALUES(?1, 'message', 'aside', ?1, '2026-10-05T01:00:00Z', 'user', ?2, 'k', 0, 0, 'find the invoice')",
+            [session, log]).unwrap();
+    }
+    core.set_collect_data(&data);
+    let asks = Asks::new(core.clone(), None);
+    let mut rx = core.subscribe();
+    let scope = |s: &str| AskScope::Conversation { agent: rooms_protocol::Agent::Aside, session: rooms_protocol::SessionId::parse(s).unwrap() };
+    let t = asks.start(&scope("A-1"), "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [resume] [--account] [u2] [A-1] ["), "{}", done.answer);
+    let t = asks.start(&scope("A-2"), "q", None).unwrap();
+    let done = wait_done(&mut rx, &t.id).await;
+    assert!(done.answer.starts_with("ARGV: [resume] [A-2] ["), "no account, no flag: {}", done.answer);
+    asks.shutdown().await;
+}
+
+#[tokio::test]
 async fn room_ask_streams_progress_under_its_scope() {
     let (d, core, _doc, room_id) = setup("");
     let script = d.path().join("stream-agent.sh");

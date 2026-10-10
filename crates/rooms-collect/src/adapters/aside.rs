@@ -23,6 +23,15 @@ fn dirs(p: &Path) -> Vec<PathBuf> {
     v
 }
 
+/// The account a session log is under, as Aside names it (`u<n>`), from its path
+/// `<root>/<n>/sessions/<day>_<session>/messages.jsonl`.
+pub fn account_of(log: &Path) -> Option<String> {
+    let sessions = log.parent()?.parent()?;
+    if sessions.file_name()? != "sessions" { return None; }
+    let n: u32 = sessions.parent()?.file_name()?.to_str()?.parse().ok()?;
+    Some(format!("u{n}"))
+}
+
 impl Adapter for Aside {
     fn agent(&self) -> &'static str { "aside" }
 

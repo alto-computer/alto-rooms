@@ -18,7 +18,7 @@ use crate::RoomsCore;
 use agents::{claude_read_scope, AgentProfiles, Plan, Vars};
 use log::AskLog;
 use prompt::{build_conversation_prompt, build_prompt, build_scope_prompt, context, listed, valid_file_key, valid_ident, with_image_paths, ContextEntry, Listing, COMPACT_ASK, PRIOR_CHARS_ARGV, PRIOR_CHARS_STDIN};
-use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, Conversation, ConversationId, EventKind, JOURNAL_ROOM_ID};
+use rooms_protocol::{AskKind, AskScope, AskStatus, AskTarget, AskTurn, Conversation, ConversationId, EventKind, SessionId, JOURNAL_ROOM_ID};
 use run::{spawn_agent, Killer, Outcome, Reason, Running, SpawnSpec};
 use stream::{EventRule, Reader};
 use std::collections::HashMap;
@@ -391,9 +391,14 @@ impl Asks {
         let mcp = self.0.core.home().join(".rooms/mcp.json");
         let mcp_s = if mcp.is_file() { mcp.to_string_lossy().into_owned() } else { String::new() };
         let stdin = plan.prompt_on_stdin();
+        let account = match (plan.agent.as_str(), session.as_deref().and_then(SessionId::parse)) {
+            ("aside", Some(s)) => self.0.core.aside_account(&s).unwrap_or_default(),
+            _ => String::new(),
+        };
         let argv = plan.render(&Vars {
             prompt: if stdin { "" } else { &prompt }, session: session.as_deref().unwrap_or(""), file: &file_s, cwd: &cwd_s, mcp_config: &mcp_s,
             model: model.unwrap_or(""), images: &image_paths, image_dir: &image_dir, scope_settings: &scope_settings,
+            account: &account,
         });
         self.launch(running, turn, argv, stdin.then_some(prompt), cwd, plan.events)
     }
