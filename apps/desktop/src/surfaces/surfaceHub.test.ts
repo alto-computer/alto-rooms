@@ -167,7 +167,7 @@ describe("SurfaceHub", () => {
     expect(hub.dropped).toBe(before + 1);
   });
 
-  it("flashes a revealed range once its surface opens, and now when it is open", () => {
+  it("flashes a revealed range once a paint carries it, now when it is painted, and forgets one nobody paints", () => {
     vi.useFakeTimers();
     const hub = new SurfaceHub();
     const tagger = seat(hub);
@@ -175,16 +175,23 @@ describe("SurfaceHub", () => {
     expect(hub.getSnapshot().reveal).toEqual({ id: answer("t1"), rangeId: "q" });
     const root = surface(hub, answer("t1"), "<p>the quick brown fox</p>");
     root.scrollIntoView = vi.fn();
+    vi.advanceTimersByTime(500);
+    expect(hub.getSnapshot().reveal, "the surface is open but the plugin has not painted yet").not.toBeNull();
+    expect(highlights.has("rooms-flash")).toBe(false);
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "other", start: 0, end: 3, color: "amber" }] });
+    expect(hub.getSnapshot().reveal, "a paint without the range is not it").not.toBeNull();
     tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, color: "amber" }] });
-    vi.runOnlyPendingTimers();
     expect(hub.getSnapshot().reveal).toBeNull();
     expect(painted("rooms-flash")).toEqual(["quick"]);
     expect(root.scrollIntoView).toHaveBeenCalledWith({ block: "center" });
     vi.advanceTimersByTime(1300);
     expect(highlights.has("rooms-flash")).toBe(false);
     hub.reveal(answer("t1"), "q");
-    expect(hub.getSnapshot().reveal).toBeNull();
+    expect(hub.getSnapshot().reveal, "already painted: flashed at once").toBeNull();
     expect(painted("rooms-flash")).toEqual(["quick"]);
+    hub.reveal(answer("t1"), "never");
+    vi.advanceTimersByTime(10_001);
+    expect(hub.getSnapshot().reveal).toBeNull();
     vi.useRealTimers();
   });
 

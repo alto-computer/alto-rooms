@@ -31,6 +31,7 @@ const FLASH = "rooms-flash";
 
 /** Ranges one `paint` may carry for one surface. */
 export const MAX_RANGES = 1000;
+const REVEAL_WAIT_MS = 10_000;
 const ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -141,6 +142,7 @@ export class SurfaceHub {
   private snapshot: SurfaceSnapshot = { actions: [], menu: null, reveal: null };
   private style: HTMLStyleElement | null = null;
   private flashTimer: ReturnType<typeof setTimeout> | null = null;
+  private revealTimer: ReturnType<typeof setTimeout> | null = null;
   /** Messages from a frame that were malformed, named a closed surface, or carried ranges outside the text. */
   dropped = 0;
 
@@ -161,11 +163,6 @@ export class SurfaceHub {
       seat.post({ type: "surface.open", surface: id, text: index.text });
     }
     if (was) this.repaintAll();
-    const r = this.snapshot.reveal;
-    if (r && surfaceKey(r.id) === key) {
-      this.set({ reveal: null });
-      setTimeout(() => this.flash(key, r.rangeId), 0);
-    }
   }
 
   close(key: string): void {
@@ -180,15 +177,19 @@ export class SurfaceHub {
     if (this.snapshot.menu?.key === key) this.set({ menu: null });
   }
 
-  /** Where a DOM range lies, when both ends are inside one open surface. */
+  /**
+   * Where a DOM range lies: inside one open surface, or from inside one to past its end (a
+   * triple-click ends in the next block), clamped to the surface. A range over two surfaces is nowhere.
+   */
   locate = (range: Range): SurfaceSpan | null => {
-    for (const s of this.surfaces.values()) {
-      if (!s.root.contains(range.startContainer) || !s.root.contains(range.endContainer)) continue;
-      const start = offsetOf(s.index, range.startContainer, range.startOffset);
-      const end = offsetOf(s.index, range.endContainer, range.endOffset);
-      return end > start ? { key: s.key, start, end } : null;
-    }
-    return null;
+    const holding = (n: Node) => [...this.surfaces.values()].find((s) => s.root.contains(n)) ?? null;
+    const a = holding(range.startContainer);
+    const b = holding(range.endContainer);
+    const s = a ?? b;
+    if (!s || (a && b && a !== b)) return null;
+    const start = a ? offsetOf(s.index, range.startContainer, range.startOffset) : 0;
+    const end = b ? offsetOf(s.index, range.endContainer, range.endOffset) : s.index.text.length;
+    return end > start ? { key: s.key, start, end } : null;
   };
 
   /** One plugin's background frame: `receive` takes its messages, `dispose` forgets its paint and buttons. */
@@ -213,11 +214,17 @@ export class SurfaceHub {
             seat.actions = m.items;
             this.set({ actions: this.allActions() });
             return;
-          case "paint":
+          case "paint": {
             this.dropped += m.dropped;
             seat.paints.set(m.key, m.ranges);
             this.repaint(seat);
+            const r = this.snapshot.reveal;
+            if (r && surfaceKey(r.id) === m.key && m.ranges.some((x) => x.id === r.rangeId)) {
+              this.set({ reveal: null });
+              this.flash(m.key, r.rangeId);
+            }
             return;
+          }
           case "menu": {
             const range = this.rangeOf(seat, m.key, m.rangeId);
             if (!range) {
@@ -275,15 +282,25 @@ export class SurfaceHub {
     if (this.snapshot.menu) this.set({ menu: null });
   }
 
-  /** Brings a range into view and flashes it, now if its surface is open, else when it opens. */
+  /**
+   * Brings a range into view and flashes it: now when its surface is open and painted, else once a
+   * paint carries it. The plugin paints after an async read, so an open surface may not hold the
+   * range yet. A reveal nobody paints within 10 s is forgotten.
+   */
   reveal(id: SurfaceId, rangeId: string): void {
     const key = surfaceKey(id);
-    if (this.surfaces.has(key)) {
-      this.set({ reveal: null });
-      this.flash(key, rangeId);
-    } else {
-      this.set({ reveal: { id, rangeId } });
+    if (this.revealTimer) clearTimeout(this.revealTimer);
+    for (const seat of this.seats.values()) {
+      if (seat.paints.get(key)?.some((r) => r.id === rangeId)) {
+        this.set({ reveal: null });
+        this.flash(key, rangeId);
+        return;
+      }
     }
+    this.set({ reveal: { id, rangeId } });
+    this.revealTimer = setTimeout(() => {
+      if (this.snapshot.reveal?.rangeId === rangeId && surfaceKey(this.snapshot.reveal.id) === key) this.set({ reveal: null });
+    }, REVEAL_WAIT_MS);
   }
 
   private flash(key: string, rangeId: string): void {

@@ -124,4 +124,44 @@ describe("useTextSelection with surfaces", () => {
     expect(result.current.picked!.text).toContain("second");
     expect(result.current.picked!.span).toBeNull();
   });
+
+  it("clamps a selection that runs past the sheet and the surface, as a triple-click does, to the surface's end", async () => {
+    const view = render(
+      <div>
+        <div data-sheet>
+          <TextSurface id={id}>
+            <p>first answer here</p>
+          </TextSurface>
+          <div data-after>Save as note</div>
+        </div>
+        <div data-sr>Answer done</div>
+      </div>,
+    );
+    await act(async () => {});
+    const sheet = view.container.querySelector("[data-sheet]") as HTMLElement;
+    const { result } = renderHook(() => {
+      const scope = useRef<HTMLElement | null>(sheet);
+      return useTextSelection(scope, scope, true, surfaceHub.locate);
+    });
+    const p1 = view.container.querySelector("p")!.firstChild!;
+    const sr = view.container.querySelector("[data-sr]")!;
+    select(p1, 0, sr, 0);
+    await act(async () => {
+      document.dispatchEvent(new Event("mouseup"));
+      await new Promise((r) => setTimeout(r, 1));
+    });
+    expect(result.current.picked).toMatchObject({ text: "first answer hereSave as note", span: { key: surfaceKey(id), start: 0, end: 17 } });
+    select(p1, 6, view.container.querySelector("[data-after]")!.firstChild!, 4);
+    await act(async () => {
+      document.dispatchEvent(new Event("mouseup"));
+      await new Promise((r) => setTimeout(r, 1));
+    });
+    expect(result.current.picked, "a selection into the surface's trailing row still marks only the answer").toMatchObject({ text: "answer hereSave", span: { key: surfaceKey(id), start: 6, end: 17 } });
+    select(sr, 0, sr, 1);
+    await act(async () => {
+      document.dispatchEvent(new Event("mouseup"));
+      await new Promise((r) => setTimeout(r, 1));
+    });
+    expect(result.current.picked, "a selection wholly outside the sheet is nothing").toBeNull();
+  });
 });

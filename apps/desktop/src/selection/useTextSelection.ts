@@ -19,9 +19,10 @@ export type PickedText = { text: string; rect: SelectionRect; span: SurfaceSpan 
 const nowhere = () => null;
 
 /**
- * Text selected inside `scope`, with where it is relative to `box`; null when nothing is. Read on
- * release, not while dragging, so a bar over it doesn't chase the pointer. `locate` names the host
- * text surface the selection lies in, when it lies in one.
+ * Text selected inside `scope`, with where it is relative to `box`; null when nothing is. A
+ * selection with one end outside the scope counts for the part inside it. Read on release, not
+ * while dragging, so a bar over it doesn't chase the pointer. `locate` names the host text surface
+ * the selection lies in, when it lies in one.
  */
 export function useTextSelection(
   scope: RefObject<HTMLElement | null>,
@@ -36,10 +37,16 @@ export function useTextSelection(
       const s = document.getSelection();
       const el = scope.current;
       const b = box.current?.getBoundingClientRect();
-      const inside = !!s && !s.isCollapsed && !!el && !!s.anchorNode && el.contains(s.anchorNode) && el.contains(s.focusNode);
-      const text = inside ? s.toString().trim() : "";
-      if (!text || !b) return setPicked(null);
-      const range = s!.getRangeAt(0);
+      if (!s || s.isCollapsed || s.rangeCount === 0 || !el || !b) return setPicked(null);
+      // A triple-click or a drag can run past the scope (into a live region or the composer); what counts is the part inside it.
+      const range = s.getRangeAt(0).cloneRange();
+      const startIn = el.contains(range.startContainer);
+      const endIn = el.contains(range.endContainer);
+      if (!startIn && !endIn) return setPicked(null);
+      if (!startIn) range.setStart(el, 0);
+      if (!endIn) range.setEnd(el, el.childNodes.length);
+      const text = range.toString().trim();
+      if (!text) return setPicked(null);
       const r = range.getBoundingClientRect();
       setPicked({ text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height }, span: locate(range) });
     };
