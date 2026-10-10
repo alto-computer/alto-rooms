@@ -174,12 +174,22 @@ export class SurfaceHub {
   };
   getSnapshot = (): SurfaceSnapshot => this.snapshot;
 
-  /** A surface's element and text are on screen: every background frame hears `surface.open`. */
+  /**
+   * A surface's element and text are on screen: every background frame hears `surface.open`. The
+   * same text in new nodes (React swapped them) re-anchors the paint and posts nothing; new text
+   * drops the paint, since its offsets no longer mean anything. Either way a menu over the surface
+   * pointed into the old nodes and closes.
+   */
   open(id: SurfaceId, root: HTMLElement): void {
     const key = surfaceKey(id);
     const index = buildIndex(root);
     const was = this.surfaces.get(key);
     this.surfaces.set(key, { id, key, root, index });
+    if (this.snapshot.menu?.key === key) this.set({ menu: null });
+    if (was?.index.text === index.text) {
+      this.repaintAll();
+      return;
+    }
     for (const seat of this.seats.values()) {
       if (was) seat.paints.delete(key);
       seat.post({ type: "surface.open", surface: id, text: index.text });

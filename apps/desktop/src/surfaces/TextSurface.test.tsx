@@ -54,6 +54,35 @@ describe("TextSurface", () => {
     expect(sent.at(-1)).toMatchObject({ type: "surface.close", surface: id });
   });
 
+  it("keeps the paint on text React re-renders into new nodes, without posting the same text again", async () => {
+    class FakeHighlight {
+      ranges: Range[];
+      constructor(...ranges: Range[]) {
+        this.ranges = ranges;
+      }
+    }
+    const highlights = new Map<string, FakeHighlight>();
+    vi.stubGlobal("Highlight", FakeHighlight);
+    vi.stubGlobal("CSS", { highlights, supports: () => true });
+    const page = (n: number) => (
+      <TextSurface id={id}>
+        <p key={n}>the quick brown fox</p>
+      </TextSurface>
+    );
+    const view = render(page(1));
+    await act(async () => {});
+    seat.receive({ rooms: "surface", v: 1, type: "paint", surface: id, styles: { amber: "#c79a3e" }, ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    const painted = () => highlights.get("rooms-tagger-amber")!.ranges.map((r) => r.toString());
+    expect(painted()).toEqual(["quick"]);
+    const before = view.container.querySelector("p")!;
+    view.rerender(page(2));
+    await act(async () => {});
+    expect(view.container.querySelector("p"), "the key change gave the answer new nodes").not.toBe(before);
+    expect(painted()).toEqual(["quick"]);
+    expect(opens()).toEqual(["the quick brown fox"]);
+    vi.unstubAllGlobals();
+  });
+
   it("sends a click on a painted range to the plugin and leaves other clicks alone", async () => {
     vi.stubGlobal("Highlight", class { constructor(..._r: Range[]) {} });
     vi.stubGlobal("CSS", { highlights: new Map(), supports: () => true });

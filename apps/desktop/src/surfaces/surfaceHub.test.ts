@@ -290,6 +290,42 @@ describe("SurfaceHub", () => {
     expect(painted("rooms-tagger-amber"), "old offsets are not re-applied to new text").toEqual([]);
     expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.open", text: "a longer answer, the quick brown fox" });
   });
+
+  it("re-anchors the paint to new nodes that hold the same text, and tells no plugin", () => {
+    const hub = new SurfaceHub();
+    const root = surface(hub, answer("t1"), "<p>the quick brown fox</p>");
+    const tagger = seat(hub);
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    const posted = tagger.sent.length;
+    root.innerHTML = "<p>the <em>quick</em> brown fox</p>";
+    expect(painted("rooms-tagger-amber"), "the old range died with its node").toEqual([""]);
+    hub.open(answer("t1"), root);
+    expect(painted("rooms-tagger-amber")).toEqual(["quick"]);
+    expect(tagger.sent.length, "same text: nothing to tell the plugin").toBe(posted);
+  });
+
+  it("closes a menu over a surface whose nodes were replaced, with the same text or new text", () => {
+    const hub = new SurfaceHub();
+    const root = surface(hub, answer("t1"), "<p>the quick brown fox</p>");
+    const tagger = seat(hub);
+    const showMenu = () => {
+      tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+      tagger.say({ type: "menu", surface: answer("t1"), rangeId: "q", items: [{ id: "untag", title: "Untag" }] });
+      expect(hub.getSnapshot().menu).not.toBeNull();
+    };
+    showMenu();
+    root.innerHTML = "<p>the quick brown fox</p>";
+    hub.open(answer("t1"), root);
+    expect(hub.getSnapshot().menu, "same text, new nodes").toBeNull();
+    showMenu();
+    root.innerHTML = "<p>the quick brown fox, edited</p>";
+    hub.open(answer("t1"), root);
+    expect(hub.getSnapshot().menu, "new text").toBeNull();
+    const other = surface(hub, answer("t2"), "<p>other</p>");
+    showMenu();
+    hub.open(answer("t2"), other);
+    expect(hub.getSnapshot().menu, "another surface's re-open leaves it").not.toBeNull();
+  });
 });
 
 describe("surfaceKey", () => {

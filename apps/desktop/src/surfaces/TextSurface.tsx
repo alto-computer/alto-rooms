@@ -3,8 +3,9 @@ import { surfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
 
 /**
  * A host text surface: once its content is in (no `[data-answer-pending]` fallback left), the
- * subtree's text goes to every surface plugin, and changes to it go again. The same text twice
- * posts once. A click on a painted range is the plugin's, not the page's.
+ * subtree goes to the hub, and again on every change to it, so paint follows the nodes React
+ * puts there; the hub tells plugins only when the text changed. A click on a painted range is
+ * the plugin's, not the page's.
  */
 export function TextSurface({ id, children }: { id: SurfaceId; children: ReactNode }) {
   const root = useRef<HTMLDivElement>(null);
@@ -14,16 +15,11 @@ export function TextSurface({ id, children }: { id: SurfaceId; children: ReactNo
   useEffect(() => {
     const el = root.current;
     if (!el) return;
-    let opened: string | null = null;
-    const tryOpen = () => {
-      if (el.querySelector("[data-answer-pending]")) return;
-      const text = el.textContent ?? "";
-      if (text === opened) return;
-      opened = text;
-      surfaceHub.open(latest.current, el);
+    const open = () => {
+      if (!el.querySelector("[data-answer-pending]")) surfaceHub.open(latest.current, el);
     };
-    tryOpen();
-    const observer = new MutationObserver(tryOpen);
+    open();
+    const observer = new MutationObserver(open);
     observer.observe(el, { childList: true, subtree: true, characterData: true });
     return () => {
       observer.disconnect();
