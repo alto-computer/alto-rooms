@@ -37,13 +37,11 @@ export function ConversationRow({ conversation, room, entryKey }: {
   const hasMenu = useCanMoveConversation();
   const title = conversationTitle(conversation);
   const open = (newTab: boolean) => viewer.go(conversationTab(conversation.id), newTab);
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+  // A native button clicks on Enter; ⌘-Enter opens a new tab instead.
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key !== "Enter" || !wantsNewTab(e)) return;
     e.preventDefault();
-    open(wantsNewTab(e));
-  };
-  const onAuxClick = (e: MouseEvent<HTMLDivElement>) => {
-    if (e.button === 1) open(true);
+    open(true);
   };
   return (
     <ConversationMenu conversation={conversation}>
@@ -51,20 +49,24 @@ export function ConversationRow({ conversation, room, entryKey }: {
         data-testid="day-conversation"
         data-entry-key={entryKey}
         role="group"
-        tabIndex={0}
         aria-label={title}
-        onClick={(e) => open(wantsNewTab(e))}
-        onAuxClick={onAuxClick}
-        onKeyDown={onKeyDown}
         {...(readOnly ? {} : conversationDragSource({ id: conversation.id, roomId: conversation.roomId }))}
         className={cn(
-          "group -ml-2 flex h-[30px] min-w-0 cursor-default items-center gap-2.5 rounded-lg pr-1.5 pl-2 outline-none hover:bg-row-hover focus-visible:outline-2 focus-visible:outline-ink",
+          "group -ml-2 flex h-[30px] min-w-0 cursor-default items-center gap-1 rounded-lg pr-1.5 hover:bg-row-hover",
           "data-[state=open]:bg-row-hover data-[state=open]:shadow-[inset_0_0_0_1.5px_color-mix(in_srgb,var(--ink)_30%,transparent)]",
         )}
       >
-        <AgentMark agent={conversation.id.agent} className="text-ink-2" />
-        <span className="min-w-0 flex-1 truncate text-body text-ink">{title}</span>
-        {room ? <RoomChip room={room} /> : null}
+        <button
+          type="button"
+          onClick={(e) => open(wantsNewTab(e))}
+          onAuxClick={(e: MouseEvent) => e.button === 1 && open(true)}
+          onKeyDown={onKeyDown}
+          className="flex h-full min-w-0 flex-1 cursor-default items-center gap-2.5 rounded-lg pl-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-ink"
+        >
+          <AgentMark agent={conversation.id.agent} labelled className="text-ink-2" />
+          <span className="min-w-0 flex-1 truncate text-body text-ink">{title}</span>
+          {room ? <RoomChip room={room} /> : null}
+        </button>
         {/* While the menu is open the ⋯ stays, so focus can come back to it. */}
         {hasMenu ? (
           <button

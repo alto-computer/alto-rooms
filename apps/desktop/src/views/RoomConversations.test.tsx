@@ -121,7 +121,7 @@ describe("Room: conversations", () => {
 
   it("opens a card's menu from the keyboard, offering Move to Room and Remove from Room and no Continue", async () => {
     await renderWithStores(<RoomView roomId="p" />, { rooms: [room("p", "벤치마크")], artifacts: { p: [] }, conversations: [conversation("s1", { title: "Cold start", roomId: "p" })] });
-    const card = await screen.findByRole("article", { name: "Cold start" });
+    const card = await screen.findByRole("button", { name: "Cold start" });
     expect(within(card).queryByRole("button")).toBeNull();
     fireEvent.keyDown(card, { key: "F10", shiftKey: true });
     const menu = within(await screen.findByRole("menu", { name: "Cold start menu" }));

@@ -49,6 +49,8 @@ function day(conversations: Conversation[]) {
 }
 
 const rows = () => screen.getAllByTestId("day-conversation");
+/** Row `i`'s open button, named by its agent and title. */
+const open = (i: number) => within(rows()[i]).getAllByRole("button")[0];
 const menu = async () => screen.findByRole("menu", { name: /menu$/ });
 
 describe("Journal: conversations", () => {
@@ -69,21 +71,27 @@ describe("Journal: conversations", () => {
   it("a click opens the session in this tab, ⌘-click and Enter with ⌘ in a new one, and none continues it", async () => {
     const h = await renderWithStores(<Journal />, day([conversation("s1"), conversation("s2", { id: { agent: "codex", session: "s2" } })]));
     const conversations = () => h.viewer.getState().tabs.filter((t) => t.kind === "conversation");
-    fireEvent.click(rows()[1], { metaKey: true });
+    fireEvent.click(open(1), { metaKey: true });
     expect(conversations()).toEqual([expect.objectContaining({ agent: "codex", session: "s2" })]);
     expect(h.viewer.getState().tabs.some((t) => t.kind === "journal")).toBe(true);
-    fireEvent.keyDown(rows()[0], { key: "Enter", metaKey: true });
+    fireEvent.keyDown(open(0), { key: "Enter", metaKey: true });
     expect(conversations()).toHaveLength(2);
-    fireEvent.click(rows()[0]);
+    fireEvent.click(open(0));
     const active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
     expect(active).toMatchObject({ kind: "conversation", agent: "claude-code", session: "s1" });
     expect(continueConversation).not.toHaveBeenCalled();
   });
 
+  it("a row opens from a real button named by its agent and title, apart from its ⋯", async () => {
+    await renderWithStores(<Journal />, day([conversation("s1", { title: "Why is cold start slow?", roomId: "p" })]));
+    expect(within(rows()[0]).getByRole("button", { name: /^Claude Code\s*Why is cold start slow\?\s*벤치마크$/ })).toBeInTheDocument();
+    expect(within(rows()[0]).getByRole("button", { name: /^More for/ })).toBeInTheDocument();
+  });
+
   it("a row offers no Continue: only its ⋯, whose menu is about rooms", async () => {
     await renderWithStores(<Journal />, day([conversation("s1", { id: { agent: "codex", session: "s1" } })]));
     const row = within(rows()[0]);
-    expect(row.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([expect.stringMatching(/^More for/)]);
+    expect(row.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([null, expect.stringMatching(/^More for/)]);
     fireEvent.click(row.getByRole("button", { name: /^More for/ }));
     expect(within(await menu()).queryByRole("menuitem", { name: /^Continue in/ })).toBeNull();
     expect(continueConversation).not.toHaveBeenCalled();
@@ -91,7 +99,7 @@ describe("Journal: conversations", () => {
 
   it("read-only, a row has no ⋯ and right-click opens no menu", async () => {
     await renderWithStores(<Journal />, { ...day([conversation("s1")]), readOnly: true });
-    expect(within(rows()[0]).queryByRole("button")).toBeNull();
+    expect(within(rows()[0]).queryByRole("button", { name: /^More for/ })).toBeNull();
     fireEvent.contextMenu(rows()[0]);
     expect(screen.queryByRole("menu")).toBeNull();
   });

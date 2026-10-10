@@ -1,4 +1,5 @@
 import type { Agent } from "@alto-rooms/protocol-ts";
+import { AGENT_NAMES } from "@/lib/agents";
 import { cn } from "@/lib/utils";
 
 /** Each agent's mark on the 16px icon grid: Claude Code a spark, Codex a terminal, Aside a window with its side panel. */
@@ -8,12 +9,15 @@ const MARKS: Record<Agent, string[]> = {
   aside: ["M4.25 3h7.5A2 2 0 0 1 13.75 5v6a2 2 0 0 1-2 2h-7.5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z", "M2.25 5.75h11.5M9.75 5.75V13"],
 };
 
-/** A small stroked mark for the agent a conversation ran in; ink is `currentColor`. */
-export function AgentMark({ agent, className }: { agent: Agent; className?: string }) {
+/**
+ * A small stroked mark for the agent a conversation ran in; ink is `currentColor`. Hidden from
+ * screen readers unless `labelled`, where nothing beside it names the agent.
+ */
+export function AgentMark({ agent, labelled = false, className }: { agent: Agent; labelled?: boolean; className?: string }) {
   return (
     <svg
       viewBox="0 0 16 16"
-      aria-hidden
+      {...(labelled ? { role: "img", "aria-label": AGENT_NAMES[agent] } : { "aria-hidden": true })}
       fill="none"
       stroke="currentColor"
       strokeWidth={1.5}

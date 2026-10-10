@@ -22,6 +22,7 @@ export function ConversationCard({ conversation }: { conversation: Conversation 
     <ConversationMenu conversation={conversation}>
       <article
         data-testid="conversation-card"
+        role="button"
         aria-label={title}
         tabIndex={0}
         onClick={(e) => open(wantsNewTab(e))}

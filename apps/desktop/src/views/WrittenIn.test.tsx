@@ -46,7 +46,7 @@ describe("Doc: written in", () => {
     });
     const sessions = () => h.viewer.getState().tabs.filter((t) => t.kind === "conversation");
     const tabsBefore = h.viewer.getState().tabs.length;
-    const writtenIn = await screen.findByRole("button", { name: "Written in Why is cold start slow?" });
+    const writtenIn = await screen.findByRole("button", { name: "Written in Why is cold start slow?, a Claude Code session" });
     fireEvent.click(writtenIn, { metaKey: true });
     expect(h.viewer.getState().tabs).toHaveLength(tabsBefore + 1);
     expect(sessions()).toEqual([expect.objectContaining({ agent: "claude-code", session: "s7" })]);

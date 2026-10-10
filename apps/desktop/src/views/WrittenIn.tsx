@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Artifact, Conversation } from "@alto-rooms/protocol-ts";
 import { AgentMark } from "@/components/AgentMark";
+import { AGENT_NAMES } from "@/lib/agents";
 import { useClient, useViewerStore } from "@/data/hooks";
 import { isAgent } from "@/lib/agents";
 import { conversationKey, conversationTab, conversationTitle, sameConversation } from "@/lib/conversations";
@@ -49,6 +50,7 @@ export function WrittenIn({ artifact }: { artifact: Artifact }) {
       <AgentMark agent={conversation.id.agent} className="text-ink-2" />
       Written in{" "}
       <span className="max-w-[240px] min-w-0 truncate font-medium text-ink">{conversationTitle(conversation)}</span>
+      <span className="sr-only">, a {AGENT_NAMES[conversation.id.agent]} session</span>
     </button>
   );
 }
