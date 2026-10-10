@@ -28,7 +28,7 @@ function deps() {
   };
   const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null, color: null }];
   const viewer = { navigate: vi.fn(() => "current"), open: vi.fn(() => "opened"), reveal: vi.fn() };
-  return { client, changed: vi.fn(), slot: "artifact.sidePanel" as BridgeDeps["slot"], viewer, rooms: () => rooms, revealSurface: vi.fn() };
+  return { client, changed: vi.fn(), slot: "artifact.sidePanel" as BridgeDeps["slot"], viewer, rooms: () => rooms, revealSurface: vi.fn(), lastSurfaceGesture: vi.fn((): number | null => null) };
 }
 
 const call = (method: string, params: unknown = {}) => ({ id: "1", method, params });
@@ -151,6 +151,28 @@ describe("handleBridgeCall", () => {
     expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: docAnswer, rangeId: "q r" }), tab))).toBe("bad_request");
     expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: docAnswer }), tab))).toBe("bad_request");
     expect(tab.revealSurface).toHaveBeenCalledTimes(2);
+  });
+
+  it("from a background page, opens anything only within 2 s of the user's click on that plugin", async () => {
+    const surfaces = plugin({ permissions: ["surfaces.text"], background: "background.html" });
+    const docAnswer = { kind: "answer", scope: { kind: "doc", fileKey: "key-new" }, turnId: "t1" };
+    const d = { ...deps(), slot: "background" as const };
+    const targets = [{ surface: docAnswer, rangeId: "q" }, { roomId: "r1" }, { fileKey: "key-new" }];
+    for (const target of targets) expect(await codeOf(handleBridgeCall(surfaces, call("open", target), d)), "no click yet").toBe("permission_denied");
+    d.lastSurfaceGesture.mockImplementation(() => Date.now() - 2001);
+    for (const target of targets) expect(await codeOf(handleBridgeCall(surfaces, call("open", target), d)), "a click too long ago").toBe("permission_denied");
+    expect(d.viewer.navigate).not.toHaveBeenCalled();
+    expect(d.revealSurface).not.toHaveBeenCalled();
+    d.lastSurfaceGesture.mockImplementation(() => Date.now() - 1500);
+    for (const target of targets) expect(await codeOf(handleBridgeCall(surfaces, call("open", target), d))).toBe("ok");
+    expect(d.viewer.navigate).toHaveBeenNthCalledWith(1, { kind: "doc", roomId: "r1", artifactId: "new" });
+    expect(d.viewer.navigate).toHaveBeenNthCalledWith(2, { kind: "room", roomId: "r1" });
+    expect(d.viewer.navigate).toHaveBeenNthCalledWith(3, { kind: "doc", roomId: "r1", artifactId: "new" });
+    expect(d.viewer.navigate).toHaveBeenCalledTimes(3);
+    expect(d.revealSurface).toHaveBeenCalledWith(docAnswer, "q");
+    const panel = deps();
+    expect(await codeOf(handleBridgeCall(surfaces, call("open", { roomId: "r1" }), panel)), "a panel the user can see needs no click").toBe("ok");
+    expect(panel.lastSurfaceGesture).not.toHaveBeenCalled();
   });
 
   it("hands the anchor, as a copy of its JSON, to the tab the document opened in", async () => {

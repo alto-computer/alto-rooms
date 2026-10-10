@@ -62,7 +62,15 @@ type FrameMessage =
   | { type: "menu"; key: string; rangeId: string; items: ContentAction[] };
 
 type OpenSurface = { id: SurfaceId; key: string; root: HTMLElement; index: TextIndex };
-type Seat = { id: string; post: (m: HostMessage) => void; actions: ContentAction[]; styles: Styles; paints: Map<string, SurfaceRange[]> };
+type Seat = {
+  id: string;
+  post: (m: HostMessage) => void;
+  actions: ContentAction[];
+  styles: Styles;
+  paints: Map<string, SurfaceRange[]>;
+  /** `Date.now()` of the last click the user gave this plugin: a button, a painted range, or a menu item. */
+  gestureAt: number | null;
+};
 
 /** The surface a plugin named, as JSON from its frame, or null. */
 export function parseSurfaceId(v: unknown): SurfaceId | null {
@@ -209,7 +217,7 @@ export class SurfaceHub {
   /** One plugin's background frame: `receive` takes its messages, `dispose` forgets its paint and buttons. */
   register(plugin: string, post: (m: Record<string, unknown>) => void): { receive(data: unknown): void; dispose(): void } {
     if (!/^[a-z0-9-]{2,40}$/.test(plugin)) throw new Error(`not a plugin id: ${plugin}`);
-    const seat: Seat = { id: plugin, post: (m) => post({ rooms: "surface", v: 1, ...m }), actions: [], styles: new Map(), paints: new Map() };
+    const seat: Seat = { id: plugin, post: (m) => post({ rooms: "surface", v: 1, ...m }), actions: [], styles: new Map(), paints: new Map(), gestureAt: null };
     this.seats.set(plugin, seat);
     this.restyle();
     return {
@@ -269,7 +277,13 @@ export class SurfaceHub {
     const seat = this.seats.get(plugin);
     const s = this.surfaces.get(span.key);
     if (!seat || !s || !seat.actions.some((a) => a.id === actionId)) return;
+    seat.gestureAt = Date.now();
     seat.post({ type: "selection.action", surface: s.id, actionId, start: span.start, end: span.end, text: s.index.text.slice(span.start, span.end) });
+  }
+
+  /** When the user last clicked one of `plugin`'s buttons, ranges or menu items, or null. */
+  lastGesture(plugin: string): number | null {
+    return this.seats.get(plugin)?.gestureAt ?? null;
   }
 
   /** A click at a point in surface `key`: the plugin whose painted range is under it hears `range.click`. True when one was. */
@@ -284,6 +298,7 @@ export class SurfaceHub {
       for (const range of seat.paints.get(key) ?? []) if (range.start <= at && at < range.end) hit = { seat, range };
     }
     if (!hit) return false;
+    hit.seat.gestureAt = Date.now();
     hit.seat.post({ type: "range.click", surface: s.id, rangeId: hit.range.id });
     return true;
   }
@@ -293,7 +308,10 @@ export class SurfaceHub {
     const s = m && this.surfaces.get(m.key);
     this.set({ menu: null });
     if (!m || !s || !m.items.some((a) => a.id === actionId)) return;
-    this.seats.get(m.plugin)?.post({ type: "range.action", surface: s.id, rangeId: m.rangeId, actionId });
+    const seat = this.seats.get(m.plugin);
+    if (!seat) return;
+    seat.gestureAt = Date.now();
+    seat.post({ type: "range.action", surface: s.id, rangeId: m.rangeId, actionId });
   }
 
   closeMenu(): void {

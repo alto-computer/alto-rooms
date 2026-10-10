@@ -133,6 +133,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
             asks.setOpen(true);
             surfaceHub.reveal(surface, rangeId);
           },
+          lastSurfaceGesture: () => surfaceHub.lastGesture(latest.current.plugin.id),
         },
       ).then(
         (result) => post({ id, result: result ?? null }),

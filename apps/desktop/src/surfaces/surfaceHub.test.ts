@@ -194,6 +194,39 @@ describe("SurfaceHub", () => {
     delete (document as unknown as { caretPositionFromPoint?: unknown }).caretPositionFromPoint;
   });
 
+  it("remembers when the user last clicked a plugin's button, range or menu item, and not a click it refused", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const hub = new SurfaceHub();
+    const root = surface(hub, answer("t1"), "<p>the quick brown fox</p>");
+    const tagger = seat(hub);
+    const key = surfaceKey(answer("t1"));
+    expect(hub.lastGesture("tagger")).toBeNull();
+    expect(hub.lastGesture("nobody")).toBeNull();
+    tagger.say({ type: "actions", items: [{ id: "tag", title: "Tag" }] });
+    hub.runAction("tagger", "nope", { key, start: 0, end: 3 });
+    expect(hub.lastGesture("tagger"), "a button the plugin never declared").toBeNull();
+    hub.runAction("tagger", "tag", { key, start: 0, end: 3 });
+    expect(hub.lastGesture("tagger")).toBe(1_000);
+    vi.setSystemTime(2_000);
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    const textNode = root.querySelector("p")!.firstChild!;
+    (document as unknown as { caretPositionFromPoint: unknown }).caretPositionFromPoint = (x: number) => ({ offsetNode: textNode, offset: x });
+    hub.click(key, 1, 0);
+    expect(hub.lastGesture("tagger"), "a click beside any range").toBe(1_000);
+    hub.click(key, 6, 0);
+    expect(hub.lastGesture("tagger")).toBe(2_000);
+    vi.setSystemTime(3_000);
+    tagger.say({ type: "menu", surface: answer("t1"), rangeId: "q", items: [{ id: "untag", title: "Untag" }] });
+    hub.runMenu("other");
+    expect(hub.lastGesture("tagger"), "an item the menu never had").toBe(2_000);
+    tagger.say({ type: "menu", surface: answer("t1"), rangeId: "q", items: [{ id: "untag", title: "Untag" }] });
+    hub.runMenu("untag");
+    expect(hub.lastGesture("tagger")).toBe(3_000);
+    delete (document as unknown as { caretPositionFromPoint?: unknown }).caretPositionFromPoint;
+    vi.useRealTimers();
+  });
+
   it("forgets a plugin's paint, buttons and menu when its frame goes, and ignores other envelopes", () => {
     const hub = new SurfaceHub();
     surface(hub, answer("t1"), "<p>the quick brown fox</p>");

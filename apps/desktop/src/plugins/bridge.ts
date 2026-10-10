@@ -38,9 +38,14 @@ export type BridgeDeps = {
   rooms(): Room[];
   /** The tab that shows `surface` is open: unfold its thread and flash the range once the surface is on screen. */
   revealSurface(surface: SurfaceId, rangeId: string): void;
+  /** `Date.now()` of the user's last click on one of this plugin's surface buttons, painted ranges or menu items, or null. */
+  lastSurfaceGesture(): number | null;
 };
 
 const RANGE_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/** How long after a click on a plugin's button, range or menu item its hidden background page may still `open` something. */
+export const OPEN_AFTER_GESTURE_MS = 2000;
 
 /** Largest text a plugin may store in one file (UTF-8 bytes); matches roomsd. */
 export const MAX_DATA_BYTES = 10 * 1024 * 1024;
@@ -154,6 +159,13 @@ export async function handleBridgeCall(p: PluginInfo, call: BridgeCall, deps: Br
         .map((a) => ({ roomId: a.roomId, artifactId: a.id, fileKey: a.fileKey, title: a.title, createdAt: a.createdAt }));
     }
     case "open": {
+      // A hidden page is never in front of the user, so it navigates only on the heels of a click they gave it.
+      if (deps.slot === "background") {
+        const at = deps.lastSurfaceGesture();
+        if (at === null || Date.now() - at > OPEN_AFTER_GESTURE_MS) {
+          throw new BridgeError("permission_denied", `a background page may open only within ${OPEN_AFTER_GESTURE_MS} ms of a click on one of its buttons, ranges or menu items`);
+        }
+      }
       const roomId = field(call.params, "roomId");
       const fileKey = field(call.params, "fileKey");
       const anchor = anchorOf(call.params);
