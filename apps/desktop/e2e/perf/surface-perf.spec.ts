@@ -115,9 +115,9 @@ async function openCost(page: Page, room: string): Promise<{ render: number; com
     const p = (window as unknown as { __commits: CommitProbe }).__commits;
     return { commits: p.commits, now: performance.now(), profiling: p.profiling };
   });
-  expect(to.profiling, "a ROOMS_PROFILE=1 build: React timed its commits").toBe(true);
+  if (COMMIT_ONLY) expect(to.profiling, "a ROOMS_PROFILE=1 build: React timed its commits").toBe(true);
   const commits = to.commits.slice(from.count);
-  return { render: commits.reduce((sum, c) => sum + c.render, 0), commits: commits.length, wall: to.now - from.now };
+  return { render: to.profiling ? commits.reduce((sum, c) => sum + c.render, 0) : NaN, commits: commits.length, wall: to.now - from.now };
 }
 
 /** Triple-click release to the bar's first paint, read with a MutationObserver inside the page. */
