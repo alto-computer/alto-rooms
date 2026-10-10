@@ -90,6 +90,8 @@ declare global {
       open(surface: SurfaceId, rangeId: string): Promise<void>;
       tagged(): Promise<string[]>;
       fetchBlocked(url: string): Promise<boolean>;
+      /** Paints `n` word-sized ranges over the longest open surface, for the perf probe. */
+      paintMany(n: number): void;
     };
   }
 }
@@ -118,4 +120,12 @@ window.tagger = {
   open: (surface, rangeId) => rooms.open({ surface, rangeId }),
   tagged: () => rooms.storage.list("answer/"),
   fetchBlocked: (url) => fetch(url).then(() => false, () => true),
+  paintMany(n) {
+    const longest = [...open.values()].sort((a, b) => b.text.length - a.text.length)[0];
+    if (!longest) return;
+    const step = Math.max(6, Math.floor(longest.text.length / n));
+    const ranges: SurfaceRange[] = [];
+    for (let i = 0; i < n && i * step + 5 <= longest.text.length; i++) ranges.push({ id: `m${i}`, start: i * step, end: i * step + 5, color: "amber" });
+    surfaces.paint(longest.surface, ranges);
+  },
 };
