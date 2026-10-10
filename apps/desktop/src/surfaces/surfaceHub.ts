@@ -30,8 +30,8 @@ const STYLE = /^[a-z][a-z0-9-]{0,31}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export type SurfaceRange = { id: string; start: number; end: number; style: string };
-/** Where a selection lies: inside one open surface, as offsets into its text. */
-export type SurfaceSpan = { key: string; start: number; end: number };
+/** Where a selection lies: inside one open surface, as offsets into its text, with that slice of it. */
+export type SurfaceSpan = { key: string; start: number; end: number; text: string };
 export type SurfaceAction = ContentAction & { plugin: string };
 export type SurfaceMenu = { plugin: string; key: string; rangeId: string; range: Range; items: ContentAction[] };
 export type SurfaceReveal = { id: SurfaceId; rangeId: string };
@@ -200,18 +200,17 @@ export class SurfaceHub {
   }
 
   /**
-   * Where a DOM range lies: inside one open surface, or from inside one to past its end (a
-   * triple-click ends in the next block), clamped to the surface. A range over two surfaces is nowhere.
+   * Where a DOM range lies: the one open surface it touches, clamped to it, since a triple-click
+   * ends in the next block and a drag may start before the answer. A range that touches two
+   * surfaces, even one it only crosses, is nowhere.
    */
   locate = (range: Range): SurfaceSpan | null => {
-    const holding = (n: Node) => [...this.surfaces.values()].find((s) => s.root.contains(n)) ?? null;
-    const a = holding(range.startContainer);
-    const b = holding(range.endContainer);
-    const s = a ?? b;
-    if (!s || (a && b && a !== b)) return null;
-    const start = a ? offsetOf(s.index, range.startContainer, range.startOffset) : 0;
-    const end = b ? offsetOf(s.index, range.endContainer, range.endOffset) : s.index.text.length;
-    return end > start ? { key: s.key, start, end } : null;
+    const touched = [...this.surfaces.values()].filter((s) => range.intersectsNode(s.root));
+    if (touched.length !== 1) return null;
+    const [s] = touched;
+    const start = s.root.contains(range.startContainer) ? offsetOf(s.index, range.startContainer, range.startOffset) : 0;
+    const end = s.root.contains(range.endContainer) ? offsetOf(s.index, range.endContainer, range.endOffset) : s.index.text.length;
+    return end > start ? { key: s.key, start, end, text: s.index.text.slice(start, end) } : null;
   };
 
   /** One plugin's background frame: `receive` takes its messages, `dispose` forgets its paint and buttons. */

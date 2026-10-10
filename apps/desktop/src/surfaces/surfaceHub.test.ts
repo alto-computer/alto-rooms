@@ -159,7 +159,7 @@ describe("SurfaceHub", () => {
     range.setStart(root.querySelector("b")!.firstChild!, 0);
     range.setEnd(root.querySelector("p")!.lastChild!, 6);
     const span = hub.locate(range)!;
-    expect(span).toEqual({ key: surfaceKey(answer("t1")), start: 4, end: 15 });
+    expect(span).toEqual({ key: surfaceKey(answer("t1")), start: 4, end: 15, text: "quick brown" });
     hub.runAction("zed", "tag", span);
     expect(z.sent.at(-1)).toEqual({ rooms: "surface", v: 1, type: "selection.action", surface: answer("t1"), actionId: "tag", start: 4, end: 15, text: "quick brown" });
     hub.runAction("zed", "note", span);
@@ -168,7 +168,10 @@ describe("SurfaceHub", () => {
     expect(a.types()).not.toContain("selection.action");
     const outside = document.createRange();
     outside.selectNodeContents(document.body);
-    expect(hub.locate(outside), "a range that leaves the surface is nowhere").toBeNull();
+    expect(hub.locate(outside), "a range around the one surface is all of it").toEqual({ key: surfaceKey(answer("t1")), start: 0, end: 19, text: "the quick brown fox" });
+    surface(hub, answer("t2"), "<p>another</p>");
+    outside.selectNodeContents(document.body);
+    expect(hub.locate(outside), "a range around two surfaces is nowhere").toBeNull();
   });
 
   it("routes a click on a painted range to its plugin, shows the menu it answers with, and runs the pick", () => {
@@ -204,9 +207,9 @@ describe("SurfaceHub", () => {
     expect(hub.lastGesture("tagger")).toBeNull();
     expect(hub.lastGesture("nobody")).toBeNull();
     tagger.say({ type: "actions", items: [{ id: "tag", title: "Tag" }] });
-    hub.runAction("tagger", "nope", { key, start: 0, end: 3 });
+    hub.runAction("tagger", "nope", { key, start: 0, end: 3, text: "the" });
     expect(hub.lastGesture("tagger"), "a button the plugin never declared").toBeNull();
-    hub.runAction("tagger", "tag", { key, start: 0, end: 3 });
+    hub.runAction("tagger", "tag", { key, start: 0, end: 3, text: "the" });
     expect(hub.lastGesture("tagger")).toBe(1_000);
     vi.setSystemTime(2_000);
     tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });

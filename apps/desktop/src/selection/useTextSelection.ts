@@ -22,7 +22,8 @@ const nowhere = () => null;
  * Text selected inside `scope`, with where it is relative to `box`; null when nothing is. A
  * selection with one end outside the scope counts for the part inside it. Read on release, not
  * while dragging, so a bar over it doesn't chase the pointer. `locate` names the host text surface
- * the selection lies in, when it lies in one.
+ * the selection lies in, when it lies in one, and then the text is that surface's slice: a
+ * triple-click on an answer runs into the row under it, and the quote must not.
  */
 export function useTextSelection(
   scope: RefObject<HTMLElement | null>,
@@ -45,10 +46,11 @@ export function useTextSelection(
       if (!startIn && !endIn) return setPicked(null);
       if (!startIn) range.setStart(el, 0);
       if (!endIn) range.setEnd(el, el.childNodes.length);
-      const text = range.toString().trim();
+      const span = locate(range);
+      const text = (span ? span.text : range.toString()).trim();
       if (!text) return setPicked(null);
       const r = range.getBoundingClientRect();
-      setPicked({ text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height }, span: locate(range) });
+      setPicked({ text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height }, span });
     };
     const onUp = () => setTimeout(read, 0);
     const onChange = () => {

@@ -115,7 +115,7 @@ describe("useTextSelection with surfaces", () => {
       document.dispatchEvent(new Event("mouseup"));
       await new Promise((r) => setTimeout(r, 1));
     });
-    expect(result.current.picked).toMatchObject({ text: "answer", span: { key: surfaceKey(id), start: 6, end: 12 } });
+    expect(result.current.picked).toMatchObject({ text: "answer", span: { key: surfaceKey(id), start: 6, end: 12, text: "answer" } });
     select(p1, 6, p2, 6);
     await act(async () => {
       document.dispatchEvent(new Event("mouseup"));
@@ -123,6 +123,43 @@ describe("useTextSelection with surfaces", () => {
     });
     expect(result.current.picked!.text).toContain("second");
     expect(result.current.picked!.span).toBeNull();
+  });
+
+  it("marks nothing for a drag from a question across one answer into the next, though only one answer holds an end", async () => {
+    const t2: SurfaceId = { ...id, turnId: "t2" };
+    const view = render(
+      <div data-sheet>
+        <div data-q>Question one</div>
+        <TextSurface id={id}>
+          <p>first answer here</p>
+        </TextSurface>
+        <div data-q>Question two</div>
+        <TextSurface id={t2}>
+          <p>second answer</p>
+        </TextSurface>
+      </div>,
+    );
+    await act(async () => {});
+    const sheet = view.container.querySelector("[data-sheet]") as HTMLElement;
+    const { result } = renderHook(() => {
+      const scope = useRef<HTMLElement | null>(sheet);
+      return useTextSelection(scope, scope, true, surfaceHub.locate);
+    });
+    const [q1] = Array.from(view.container.querySelectorAll("[data-q]")).map((q) => q.firstChild!);
+    const p2 = view.container.querySelectorAll("p")[1].firstChild!;
+    select(q1, 0, p2, 6);
+    await act(async () => {
+      document.dispatchEvent(new Event("mouseup"));
+      await new Promise((r) => setTimeout(r, 1));
+    });
+    expect(result.current.picked!.text).toBe("Question onefirst answer hereQuestion twosecond");
+    expect(result.current.picked!.span, "the first answer is crossed, so the selection is in no one surface").toBeNull();
+    select(q1, 0, view.container.querySelector("p")!.firstChild!, 5);
+    await act(async () => {
+      document.dispatchEvent(new Event("mouseup"));
+      await new Promise((r) => setTimeout(r, 1));
+    });
+    expect(result.current.picked, "a drag from the question into one answer counts for the part inside it").toMatchObject({ text: "first", span: { key: surfaceKey(id), start: 0, end: 5 } });
   });
 
   it("clamps a selection that runs past the sheet and the surface, as a triple-click does, to the surface's end", async () => {
@@ -150,13 +187,13 @@ describe("useTextSelection with surfaces", () => {
       document.dispatchEvent(new Event("mouseup"));
       await new Promise((r) => setTimeout(r, 1));
     });
-    expect(result.current.picked).toMatchObject({ text: "first answer hereSave as note", span: { key: surfaceKey(id), start: 0, end: 17 } });
+    expect(result.current.picked, "the quote and the span both stop at the answer's end").toMatchObject({ text: "first answer here", span: { key: surfaceKey(id), start: 0, end: 17, text: "first answer here" } });
     select(p1, 6, view.container.querySelector("[data-after]")!.firstChild!, 4);
     await act(async () => {
       document.dispatchEvent(new Event("mouseup"));
       await new Promise((r) => setTimeout(r, 1));
     });
-    expect(result.current.picked, "a selection into the surface's trailing row still marks only the answer").toMatchObject({ text: "answer hereSave", span: { key: surfaceKey(id), start: 6, end: 17 } });
+    expect(result.current.picked, "a selection into the surface's trailing row still quotes and marks only the answer").toMatchObject({ text: "answer here", span: { key: surfaceKey(id), start: 6, end: 17 } });
     select(sr, 0, sr, 1);
     await act(async () => {
       document.dispatchEvent(new Event("mouseup"));
