@@ -40,9 +40,10 @@ Install a plugin by copying its built folder there. Rooms notices it and asks th
 | `version`, `minAppVersion` | semver. Rooms older than `minAppVersion` won't run the plugin |
 | `description` | optional, up to 200 characters, shown when Rooms asks the user |
 | `entry` | optional, defaults to `index.html`; not under `data/` |
-| `permissions` | any of `rooms.read`, `clipboard`, `downloads`, `artifact.content` |
-| `slots` | at least one of the two below, unless the plugin has `contentScripts`. Unknown slots are ignored |
+| `permissions` | any of `rooms.read`, `clipboard`, `downloads`, `artifact.content`, `surfaces.text` |
+| `slots` | at least one of the two below, unless the plugin has `contentScripts` or a `background` page. Unknown slots are ignored |
 | `contentScripts` | optional, up to 4 `.js` files in the plugin folder, not under `data/`. Needs `artifact.content`, and `artifact.content` needs it. See [Content scripts](#content-scripts) |
+| `background` | optional, an `.html` page in the plugin folder, not under `data/`, that runs hidden while the plugin is on. Needs `surfaces.text`, and `surfaces.text` needs it. See [Host text surfaces](#host-text-surfaces) |
 
 Slots:
 
@@ -63,6 +64,7 @@ Storing your own files is always allowed. Everything else is declared, and the u
 | `clipboard` | Can copy and paste | clipboard access in the frame |
 | `downloads` | Can save files you export | file downloads from the frame |
 | `artifact.content` | Can read the text of documents and use the network inside them | your `contentScripts` run inside documents |
+| `surfaces.text` | Can read and mark chat answers | your `background` page hears the text of chat answers and paints them |
 
 If a new version asks for more permissions, Rooms asks the user again.
 
@@ -185,11 +187,51 @@ The app can stop listening while your script keeps running, for example while th
 
 The document's own script shares the window with your content script and can post the same messages. Rooms takes the document's `fileKey` from the tab, never from a message, and accepts only plugin ids that are on and declare `artifact.content`. So a hostile document can read, forge, or delete your files under `docs/<its fileKey>/`, and nothing else: not another document's folder, not the rest of your `data/`, not another plugin's data, and not the token. Two content plugins in one document share the window too, so each can reach the other's folder for that document. Treat every file under `docs/` as untrusted input, and render its text as text.
 
+## Host text surfaces
+
+Text the app itself shows, like a chat answer, is host DOM: no plugin code runs there. A plugin that declares `surfaces.text` and a `background` page can still read and mark it. The app runs the page in a hidden frame, under the same sandbox and CSP as a tab or panel, for as long as the plugin is on. One frame per plugin, next to the one its tab or panel may have.
+
+```json
+"permissions": ["surfaces.text"],
+"background": "background.html"
+```
+
+The page uses `connect()` for storage and `open`, and `connectSurfaces` from SDK 0.5.0 for the surfaces.
+
+```ts
+import { connect, connectSurfaces, surfacePath } from "@alto-rooms/plugin-sdk";
+
+const rooms = await connect();
+const surfaces = connectSurfaces("highlight");
+surfaces.setActions([{ id: "yellow", title: "Highlight", color: "#ffd400" }]);
+surfaces.onOpen(async (surface, text) => {
+  const saved = JSON.parse((await rooms.storage.read(`${surfacePath(surface)}.json`)) ?? "[]");
+  surfaces.paint(surface, saved.map((h) => ({ id: h.id, start: text.indexOf(h.quote), end: text.indexOf(h.quote) + h.quote.length, color: "amber" })));
+});
+surfaces.onAction((id, { surface, start, end, text }) => save(surface, { quote: text, start, end }));
+surfaces.onRangeClick((surface, rangeId) => surfaces.menu(surface, rangeId, [{ id: "delete", title: "Delete" }]));
+surfaces.ready();
+```
+
+| Call | What it does |
+| --- | --- |
+| `onOpen(cb)` | Calls `cb(surface, text)` when an answer is on screen, for every open answer right after `ready()`, and again when an answer's text changes. `surface` is `{ kind: "answer", scope, turnId }`, `scope` one of `{ kind: "doc", fileKey }`, `{ kind: "room", roomId }`, `{ kind: "day", date }`. `text` is the answer's text content, so offsets you store point into it; keep the quote and some context too, and re-anchor on each open |
+| `onClose(cb)` | The answer left the screen. Its paint went with it |
+| `setActions(items)` | Replaces your buttons in the selection bar over answers, shown after Ask: up to 6 `{ id, title, color? }`, as for content scripts |
+| `onAction(cb)` | Calls `cb(id, { surface, start, end, text })` when one of your buttons is clicked over a selection in an answer |
+| `paint(surface, ranges)` | Replaces your ranges on that answer: up to 1,000 `{ id, start, end, color }`. `color` is one of `amber`, `green`, `red`, `violet`, `blue`, `gray`; the app owns the paint and draws it with the CSS Custom Highlight API, so the answer's DOM never changes. A range outside the text, a repeated id, or another color is dropped; the rest paint |
+| `onRangeClick(cb)` | The user clicked one of your painted ranges. Answer with `menu(surface, rangeId, items)` to show up to 6 buttons there, or do nothing |
+| `onRangeAction(cb)` | Calls `cb(surface, rangeId, actionId)` when the user picks from that menu |
+| `rooms.open({ surface, rangeId })` | Opens the thread that holds the answer, unfolds it, and flashes your range once you have painted it |
+| `surfaceKey(surface)`, `surfacePath(surface)` | The answer's name, `answer:doc:<fileKey>/<turnId>`, and the same as a storage path, `answer/doc/<fileKey>/<turnId>` |
+
+Messages are `{ rooms: "surface", v: 1, type, … }` posted to `window.parent`, and the SDK trusts only messages whose source is `window.parent`. The background frame has no network and no token, like every plugin frame, so what it reads stays in your `data/`. Notes become a surface in a later release; the `surface.kind` tells them apart.
+
 ## Rules of the sandbox
 
 - **Paths** are relative to `data/`: 1–200 characters, `/`-separated segments of `A–Z a–z 0–9 . _ -`, no `.` or `..`, at most 8 deep.
 - **No network** in the plugin frame. `fetch` to anywhere is blocked. Bundle your fonts, images and wasm into the plugin folder.
-- **Your files only.** You can't read other plugins' data or Rooms' own state. Only content scripts see document contents.
+- **Your files only.** You can't read other plugins' data or Rooms' own state. Only content scripts see document contents, and only a background page with `surfaces.text` sees chat answers.
 - **Save as you go.** Switching tabs closes your frame right away; `onBeforeClose` is reliable when the panel closes or the app quits, but not on a tab switch. Debounce writes to a few hundred milliseconds.
 - **Stay responsive.** If your frame stops answering pings, Rooms shows "This plugin stopped responding" with a Reload button.
 
