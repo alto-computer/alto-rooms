@@ -65,11 +65,6 @@ export function dayOfMonth(date: string): number {
   return parts(date)[2];
 }
 
-/** Journal heading: `{Weekday}, {Mon} {D}`, e.g. `Monday, Oct 5`. */
-export function journalTitle(date: string): string {
-  return `${WEEKDAYS[weekdayIndex(date)]}, ${monthDay(date)}`;
-}
-
 /** `1 artifact`, `3 artifacts`: a count with its noun, singular for exactly one. */
 export function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;

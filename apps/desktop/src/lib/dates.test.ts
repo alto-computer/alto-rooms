@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { addDays, agoPhrase, clockTime, daybookTitle, isNewSince, isoWeek, journalTitle, localDate, shortAge, weekdayIndex, weekOf, WEEKDAY_LETTERS } from "./dates";
+import { addDays, agoPhrase, clockTime, daybookTitle, isNewSince, isoWeek, localDate, shortAge, weekdayIndex, weekOf, WEEKDAY_LETTERS } from "./dates";
 
 describe("isNewSince", () => {
   it("is true only when createdAt is strictly after the baseline", () => {
@@ -68,12 +68,6 @@ describe("calendar-date math (YYYY-MM-DD, local calendar)", () => {
     // Spans a month and a year boundary.
     expect(weekOf("2026-12-31")).toEqual(["2026-12-27", "2026-12-28", "2026-12-29", "2026-12-30", "2026-12-31", "2027-01-01", "2027-01-02"]);
     expect(weekOf("2026-07-01")[0]).toBe("2026-06-28");
-  });
-
-  it("titles a day as {M}월 {D}일 {요일}요일", () => {
-    expect(journalTitle("2026-10-05")).toBe("Monday, Oct 5");
-    expect(journalTitle("2026-10-04")).toBe("Sunday, Oct 4");
-    expect(journalTitle("2027-01-02")).toBe("Saturday, Jan 2");
   });
 });
 
