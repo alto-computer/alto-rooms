@@ -18,7 +18,7 @@ const STYLE_NAMES = Object.keys(STYLES);
 
 const rooms = await connect();
 const surfaces = connectSurfaces();
-const open = new Map<string, { surface: SurfaceId; text: string }>();
+const open = new Map<string, { surface: SurfaceId; text: string; version: number }>();
 const file = (s: SurfaceId) => `${surfacePath(s)}.json`;
 
 async function load(s: SurfaceId): Promise<File> {
@@ -43,11 +43,12 @@ async function repaint(s: SurfaceId) {
     const start = anchor(entry.text, t);
     if (start >= 0) ranges.push({ id: t.id, start, end: start + t.quote.length, style: STYLE_NAMES[i % STYLE_NAMES.length] });
   });
-  surfaces.paint(s, ranges, STYLES);
+  // The storage read above may have outlasted the text: the paint names the one these offsets index.
+  surfaces.paint(s, ranges, STYLES, entry.version);
 }
 
-surfaces.onOpen((s, text) => {
-  open.set(surfacePath(s), { surface: s, text });
+surfaces.onOpen((s, text, version) => {
+  open.set(surfacePath(s), { surface: s, text, version });
   void repaint(s);
 });
 surfaces.onClose((s) => void open.delete(surfacePath(s)));
@@ -138,6 +139,6 @@ window.tagger = {
     const step = Math.max(6, Math.floor(longest.text.length / n));
     const ranges: SurfaceRange[] = [];
     for (let i = 0; i < n && i * step + 5 <= longest.text.length; i++) ranges.push({ id: `m${i}`, start: i * step, end: i * step + 5, style: "important" });
-    surfaces.paint(longest.surface, ranges, STYLES);
+    surfaces.paint(longest.surface, ranges, STYLES, longest.version);
   },
 };

@@ -109,19 +109,22 @@ export interface RoomsSurfaces {
   /**
    * Replaces your ranges on one open surface; up to 1,000. `styles` declares the names the ranges
    * use, and stays declared for later paints; a range naming an undeclared style, or outside the
-   * text, is dropped. A paint with a bad style name or color is refused whole. The offsets are
-   * read against the text you last heard for the surface, so a paint lands right while the user
-   * types; one made against an older text is ignored, and you hear the newer text.
+   * text, is dropped. A paint with a bad style name or color is refused whole. `version` names
+   * the text the offsets index, as `onOpen` gave it with that text: pass it whenever you paint
+   * after an `await`, since a newer text may have arrived meanwhile. Without it the offsets are
+   * read against the text you last heard. Either way a paint lands on its words while the user
+   * types, and one against an older text is ignored; you hear the newer text.
    */
-  paint(surface: SurfaceId, ranges: SurfaceRange[], styles?: SurfaceStyles): void;
+  paint(surface: SurfaceId, ranges: SurfaceRange[], styles?: SurfaceStyles, version?: number): void;
   /** Shows a menu over one of your painted ranges, in the same shape as `setActions`; at most 6. */
   menu(surface: SurfaceId, rangeId: string, items: ContentAction[]): void;
   /**
    * A surface is on screen with this text. Also fires for every open surface right after `ready()`,
    * and again when its text changes: for a note, once the user pauses typing. The app moves your
    * paint through each keystroke meanwhile; re-anchor from your quotes here and paint again.
+   * `version` is the app's number for this text; hand it to `paint` with offsets computed on it.
    */
-  onOpen(cb: (surface: SurfaceId, text: string) => void): () => void;
+  onOpen(cb: (surface: SurfaceId, text: string, version: number) => void): () => void;
   /** A surface left the screen; its paint is gone with it. */
   onClose(cb: (surface: SurfaceId) => void): () => void;
   /** One of your buttons was clicked over a selection. */
@@ -135,7 +138,7 @@ export interface RoomsSurfaces {
 }
 
 type Inbound =
-  | { type: "surface.open"; surface: SurfaceId; text: string; version?: number }
+  | { type: "surface.open"; surface: SurfaceId; text: string; version: number }
   | { type: "surface.close"; surface: SurfaceId }
   | { type: "selection.action"; surface: SurfaceId; actionId: string; start: number; end: number; text: string }
   | { type: "range.click"; surface: SurfaceId; rangeId: string }
@@ -145,7 +148,7 @@ export function connectSurfaces(): RoomsSurfaces {
   const parent = window.parent;
   const post = (m: Record<string, unknown>) => parent.postMessage({ rooms: "surface", v: 1, ...m }, "*");
   const listeners = {
-    open: new Set<(s: SurfaceId, text: string) => void>(),
+    open: new Set<(s: SurfaceId, text: string, version: number) => void>(),
     close: new Set<(s: SurfaceId) => void>(),
     action: new Set<(id: string, sel: SurfaceSelection) => void>(),
     rangeClick: new Set<(s: SurfaceId, rangeId: string) => void>(),
@@ -158,7 +161,7 @@ export function connectSurfaces(): RoomsSurfaces {
   const fire = <T extends unknown[]>(set: Set<(...a: T) => void>, ...a: T) => {
     for (const l of [...set]) l(...a);
   };
-  /** The version of the text last heard per open surface; a paint names it so the app reads the offsets against that text. */
+  /** The version of the text last heard per open surface: what a paint names when the plugin names none. */
   const heard = new Map<string, number>();
 
   window.addEventListener("message", (e: MessageEvent) => {
@@ -167,8 +170,8 @@ export function connectSurfaces(): RoomsSurfaces {
     if (!d || typeof d !== "object" || d.rooms !== "surface" || d.v !== 1) return;
     switch (d.type) {
       case "surface.open":
-        if (typeof d.version === "number") heard.set(surfaceKey(d.surface), d.version);
-        return fire(listeners.open, d.surface, d.text);
+        heard.set(surfaceKey(d.surface), d.version);
+        return fire(listeners.open, d.surface, d.text, d.version);
       case "surface.close":
         heard.delete(surfaceKey(d.surface));
         return fire(listeners.close, d.surface);
@@ -183,8 +186,7 @@ export function connectSurfaces(): RoomsSurfaces {
 
   return {
     setActions: (items) => post({ type: "actions", items }),
-    paint: (surface, ranges, styles) => {
-      const version = heard.get(surfaceKey(surface));
+    paint: (surface, ranges, styles, version = heard.get(surfaceKey(surface))) => {
       post({ type: "paint", surface, ranges, ...(styles ? { styles } : {}), ...(version === undefined ? {} : { version }) });
     },
     menu: (surface, rangeId, items) => post({ type: "menu", surface, rangeId, items }),

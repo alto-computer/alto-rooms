@@ -92,7 +92,7 @@ type OpenSurface = OpenOptions & {
   index: TextIndex;
   /** The text plugins last heard for this surface, null before the first `surface.open`. */
   told: string | null;
-  /** Counts the texts told, and goes with each `surface.open`; a paint names the one it was read against. */
+  /** The hub-wide number of the text last told for this surface (0 before the first); a paint names the one it was read against. */
   version: number;
   timer: ReturnType<typeof setTimeout> | null;
 };
@@ -292,6 +292,8 @@ export class SurfaceHub {
   private flashSheet: CSSStyleSheet | null = null;
   private flashTimer: ReturnType<typeof setTimeout> | null = null;
   private revealTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Texts told so far, over every surface: a surface that closes and opens again never repeats a number, so a paint from its earlier life cannot match. */
+  private versions = 0;
   /** Messages from a frame that were malformed, named a closed surface, or carried ranges outside the text. */
   dropped = 0;
 
@@ -337,7 +339,7 @@ export class SurfaceHub {
     const post = () => {
       s.timer = null;
       s.told = s.index.text;
-      s.version++;
+      s.version = ++this.versions;
       for (const seat of this.seats.values()) seat.post({ type: "surface.open", surface: s.id, text: s.told, version: s.version });
     };
     if (!now && s.quietMs && s.told !== null) s.timer = setTimeout(post, s.quietMs);
