@@ -3,9 +3,14 @@
 //! like the repo" rule), which reads `linked.jsonl` to know what the collector put there. It
 //! never creates rooms, never writes into rooms, and never re-adds a link the user removed.
 //! The same pass records each written file's session in sources.json.
+//!
+//! A page published with Claude Code's Artifact tool is a document even in a scratchpad or temp
+//! folder: it is copied into the collector's store (`published`) and the copy is linked.
 use super::sources::{self, Entry};
-use crate::filter::{link_targets, linked_roots, not_a_document, repo_info};
+use crate::event::Kind;
+use crate::filter::{link_targets, linked_roots, not_a_document, repo_info, transient};
 use crate::pathutil::under;
+use crate::published;
 use crate::store::{event_by_rowid, events_after, set_sink_cursor, sink_cursor, StoredEvent};
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -72,9 +77,13 @@ fn append_linked(home: &Path, line: &Value) -> std::io::Result<()> {
     f.sync_data()
 }
 
+/// A page the agent published: its URL, and the temp file it was copied from (when it was).
+struct Published<'a> { url: &'a str, copied_from: Option<&'a Path> }
+
 struct Run<'a> {
     c: &'a Connection,
     home: &'a Path,
+    store: &'a Path,
     rooms_real: PathBuf,
     user_home: &'a Path,
     now_ms: i64,
@@ -86,11 +95,12 @@ struct Run<'a> {
     out: Outcome,
 }
 
-/// Handles due retries, then every file.written event after the sink's cursor.
-pub fn run(c: &Connection, home: &Path, user_home: &Path, now_ms: i64) -> rusqlite::Result<Outcome> {
+/// Handles due retries, then every file.written and artifact.published event after the sink's
+/// cursor. `store` is where copies of published temp pages go.
+pub fn run(c: &Connection, home: &Path, store: &Path, user_home: &Path, now_ms: i64) -> rusqlite::Result<Outcome> {
     if !home.join(".rooms").is_dir() { return Ok(Outcome::default()); } // not a Rooms home (yet)
     let mut r = Run {
-        c, home, rooms_real: std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf()), user_home, now_ms,
+        c, home, store, rooms_real: std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf()), user_home, now_ms,
         since: linker_since(home, now_ms), linked: read_linked(home), targets: None, roots: linked_roots(home),
         sources: BTreeMap::new(), out: Outcome::default(),
     };
@@ -107,7 +117,7 @@ pub fn run(c: &Connection, home: &Path, user_home: &Path, now_ms: i64) -> rusqli
     }
     let mut cursor = sink_cursor(c, SINK)?;
     loop {
-        let batch = events_after(c, "file.written", cursor, BATCH)?;
+        let batch = events_after(c, &[Kind::FileWritten, Kind::ArtifactPublished], cursor, BATCH)?;
         for e in &batch { r.handle(e, 0)?; cursor = e.rowid; }
         set_sink_cursor(c, SINK, cursor)?;
         if (batch.len() as i64) < BATCH { break; }
@@ -138,27 +148,45 @@ impl Run<'_> {
         }
         self.c.execute("DELETE FROM link_retry WHERE event_rowid=?1", [e.rowid])?;
         let Ok(real) = std::fs::canonicalize(&raw) else { return Ok(()) };
+        if let Some(p) = &e.publish {
+            if transient(&raw, self.user_home) || transient(&real, self.user_home) {
+                match published::keep(self.store, &p.url, &real, &p.files).and_then(std::fs::canonicalize) {
+                    Ok(copy) => self.accept(e, &copy, ts, Some(Published { url: &p.url, copied_from: Some(&raw) })),
+                    Err(err) => eprintln!("rooms-collect: could not keep {}: {err}", raw.display()),
+                }
+                return Ok(());
+            }
+        }
         if not_a_document(&raw, self.user_home, self.home) || not_a_document(&real, self.user_home, &self.rooms_real) { return Ok(()); }
         if !e.explicit {
             // L3: a shell line naming the path may only read or mention it
             let mtime = std::fs::metadata(&real).map(|m| m.mtime() * 1000 + m.mtime_nsec() / 1_000_000).unwrap_or(0);
             if mtime < ts.timestamp_millis() - MTIME_SLACK_MS { return Ok(()); }
         }
+        self.accept(e, &real, ts, e.publish.as_ref().map(|p| Published { url: &p.url, copied_from: None }));
+        Ok(())
+    }
+
+    /// Records the file's session in sources.json and links it.
+    fn accept(&mut self, e: &StoredEvent, real: &Path, ts: DateTime<Utc>, published: Option<Published>) {
         let real_s = real.to_string_lossy().into_owned();
         if let Some(session) = &e.session {
             let entry = Entry {
                 agent: e.agent.clone(), session: session.clone(),
                 cwd: e.cwd.clone().unwrap_or_else(|| real.parent().unwrap_or(Path::new("/")).to_string_lossy().into_owned()),
                 written_at: ts.to_rfc3339_opts(SecondsFormat::Secs, true), explicit: e.explicit,
+                artifact_url: published.as_ref().map(|p| p.url.to_string()),
+                copied_from: published.as_ref().and_then(|p| p.copied_from).map(|f| f.to_string_lossy().into_owned()),
             };
             let best = sources::better(self.sources.get(&real_s), entry);
             self.sources.insert(real_s.clone(), best);
         }
-        self.link(&real, &real_s, ts);
-        Ok(())
+        // a copy has no repo of its own; rooms-sort takes it from the folder the agent worked in
+        let origin = published.as_ref().filter(|p| p.copied_from.is_some()).and(e.cwd.as_deref());
+        self.link(real, &real_s, ts, origin);
     }
 
-    fn link(&mut self, real: &Path, real_s: &str, ts: DateTime<Utc>) {
+    fn link(&mut self, real: &Path, real_s: &str, ts: DateTime<Utc>, origin: Option<&str>) {
         if self.since.is_none_or(|s| ts < s) { return; } // L1
         if under(real, &self.rooms_real) || self.linked.real.contains(real_s) { return; } // L4, L6
         if self.roots.iter().any(|r| under(real, r)) { return; } // L5: its linked room shows it
@@ -177,8 +205,9 @@ impl Run<'_> {
             if link.symlink_metadata().is_ok() { continue; } // L9: never replace what is there
             match std::os::unix::fs::symlink(real, &link) {
                 Ok(()) => {
-                    let line = json!({"real": real_s, "link": link.to_string_lossy(), "repo": repo, "rel": rel,
+                    let mut line = json!({"real": real_s, "link": link.to_string_lossy(), "repo": repo, "rel": rel,
                         "at": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)});
+                    if let Some(o) = origin { line["origin"] = json!(o); }
                     if let Err(e) = append_linked(self.home, &line) { eprintln!("rooms-collect: could not note link: {e}"); }
                     self.linked.real.insert(real_s.to_string());
                     self.linked.in_repo.insert((repo, rel));

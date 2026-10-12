@@ -32,6 +32,8 @@ pub struct Opts {
 impl Opts {
     pub fn db_path(&self) -> PathBuf { store::path_in(&self.data) }
     pub fn archive_dir(&self) -> PathBuf { self.data.join("archive") }
+    /// Copies of pages agents published from temp folders (`published`).
+    pub fn artifacts_dir(&self) -> PathBuf { self.data.join("artifacts") }
 }
 
 pub struct Collector { pub opts: Opts, pub conn: Connection }
@@ -55,7 +57,7 @@ impl Collector {
         let archive_dir = self.opts.archive_dir();
         let s = Settings { history_days: cfg.history_days, archive: cfg.archive, archive_dir: &archive_dir, now_ms };
         let ingest = ingest::pass(&mut self.conn, &adapters, &s)?;
-        let link = linker::run(&self.conn, &self.opts.home, &self.opts.roots.user_home, now_ms)?;
+        let link = linker::run(&self.conn, &self.opts.home, &self.opts.artifacts_dir(), &self.opts.roots.user_home, now_ms)?;
         Ok(Tick { enabled: true, ingest, link })
     }
 

@@ -486,3 +486,152 @@ fn titles_reach_logs_read_before_adapters_knew_them() {
     assert_eq!(count(&c, "SELECT count(*) FROM events"), events + 1, "only the title is new");
     assert_eq!(rooms_collect::sessions::title(&c.conn, "claude-code", "s-t").unwrap().as_deref(), Some("AI name"));
 }
+
+// ---- pages published with Claude Code's Artifact tool ----
+
+/// An Artifact publish call (`id` pairs it with its result) and the result line that follows it.
+fn publish(id: &str, input: Value, url: Option<&str>, days_ago: f64) -> [Value; 2] {
+    let (result, is_error) = match url {
+        Some(u) => (json!({"url": u, "path": input["file_path"], "artifact_id": "x", "updated": false}), false),
+        None => (json!("Error: Permission for this action was denied"), true),
+    };
+    [
+        json!({"type": "assistant", "timestamp": iso(days_ago), "cwd": "/work/alto-rooms", "sessionId": "sess-pub", "uuid": format!("a-{id}"),
+               "message": {"content": [{"type": "tool_use", "id": id, "name": "Artifact", "input": input}]}}),
+        json!({"type": "user", "timestamp": iso(days_ago), "cwd": "/work/alto-rooms", "sessionId": "sess-pub", "uuid": format!("r-{id}"),
+               "toolUseResult": result,
+               "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": id, "content": "Published", "is_error": is_error}]}}),
+    ]
+}
+
+const URL: &str = "https://claude.ai/artifact/DU8TsWQvmd23";
+
+#[test]
+fn a_page_published_from_a_scratchpad_is_copied_and_the_copy_linked() {
+    let e = Env::new();
+    e.since(5.0);
+    let pad = e.root.join("private/tmp/claude-501/-proj/sess-pub/scratchpad/cmp");
+    let page = e.html("private/tmp/claude-501/-proj/sess-pub/scratchpad/cmp/index.html");
+    std::fs::create_dir_all(pad.join("img")).unwrap();
+    std::fs::write(pad.join("img/a.png"), "png").unwrap();
+    std::fs::write(pad.join("before.html"), "<p>before</p>").unwrap();
+    let mut lines = vec![cc("Write", &page, 0.5)];
+    lines.extend(publish("t1", json!({"file_path": page, "root": pad, "files": {"img/a.png": "img/a.png", "before.html": {"from": "before.html"}}}), Some(URL), 0.5));
+    e.claude_log("s1.jsonl", &lines);
+    e.collector().drain().unwrap();
+
+    let copy = e.data.join("artifacts/DU8TsWQvmd23/index.html");
+    assert_eq!(e.links(), vec![("inbox/index.html".into(), copy.clone())]);
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), std::fs::read_to_string(&page).unwrap());
+    assert_eq!(std::fs::read_to_string(e.data.join("artifacts/DU8TsWQvmd23/img/a.png")).unwrap(), "png");
+    assert_eq!(std::fs::read_to_string(e.data.join("artifacts/DU8TsWQvmd23/before.html")).unwrap(), "<p>before</p>");
+    let src = &e.sources()["sources"][copy.to_str().unwrap()];
+    assert_eq!((src["session"].as_str(), src["artifactUrl"].as_str(), src["copiedFrom"].as_str()), (Some("sess-pub"), Some(URL), page.to_str()));
+    assert!(e.sources()["sources"].get(page.to_str().unwrap()).is_none(), "the temp file itself is not recorded");
+    let linked = std::fs::read_to_string(e.home.join(".rooms/collect/linked.jsonl")).unwrap();
+    let line: Value = serde_json::from_str(linked.lines().next().unwrap()).unwrap();
+    assert_eq!(line["origin"], "/work/alto-rooms", "rooms-sort takes the repo from where the agent worked");
+
+    std::fs::remove_dir_all(&pad).unwrap(); // the session ends; its scratchpad goes
+    assert!(std::fs::read_to_string(e.home.join("inbox/index.html")).is_ok(), "the link still opens");
+}
+
+#[test]
+fn a_republish_refreshes_the_copy_under_the_same_link_and_a_removed_link_stays_removed() {
+    let e = Env::new();
+    e.since(5.0);
+    let page = e.html("tmp/sess/scratchpad/plan.html");
+    let log = e.claude_log("s1.jsonl", &publish("t1", json!({"file_path": page}), Some(URL), 0.5));
+    let mut c = e.collector();
+    c.drain().unwrap();
+    let copy = e.data.join("artifacts/DU8TsWQvmd23/plan.html");
+    assert_eq!(e.links(), vec![("inbox/plan.html".into(), copy.clone())]);
+
+    std::fs::write(&page, "<title>v2</title>").unwrap();
+    Env::write_lines(&log, &publish("t2", json!({"file_path": page, "url": URL}), Some(URL), 0.1), true);
+    let t = c.drain().unwrap();
+    assert!(t.link.linked.is_empty(), "no second link");
+    assert_eq!(e.links(), vec![("inbox/plan.html".into(), copy.clone())]);
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), "<title>v2</title>");
+
+    std::fs::remove_file(e.home.join("inbox/plan.html")).unwrap();
+    std::fs::write(&page, "<title>v3</title>").unwrap();
+    Env::write_lines(&log, &publish("t3", json!({"file_path": page, "url": URL}), Some(URL), 0.0), true);
+    c.drain().unwrap();
+    assert!(e.links().is_empty(), "the user removed it; it is not linked again");
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), "<title>v3</title>", "the copy still follows the artifact");
+}
+
+#[test]
+fn temp_html_that_was_not_published_stays_out() {
+    let e = Env::new();
+    e.since(5.0);
+    let draft = e.html("tmp/sess/scratchpad/draft.html");
+    let denied = e.html("tmp/sess/scratchpad/denied.html");
+    let read = e.html("tmp/sess/scratchpad/read.html");
+    let mut lines = vec![cc("Write", &draft, 0.5)];
+    lines.extend(publish("t1", json!({"file_path": denied}), None, 0.5));
+    lines.extend(publish("t2", json!({"action": "read", "file_path": read, "url": URL}), Some(URL), 0.5));
+    e.claude_log("s1.jsonl", &lines);
+    let mut c = e.collector();
+    c.drain().unwrap();
+    assert!(e.links().is_empty());
+    assert!(!e.data.join("artifacts").exists(), "nothing copied");
+    assert_eq!(count(&c, "SELECT count(*) FROM events WHERE kind='artifact.published'"), 0);
+}
+
+#[test]
+fn a_page_published_from_a_repo_links_the_original() {
+    let e = Env::new();
+    e.since(5.0);
+    let page = e.html("proj/docs/spec.html");
+    e.claude_log("s1.jsonl", &publish("t1", json!({"file_path": page}), Some(URL), 0.5));
+    e.collector().drain().unwrap();
+    assert_eq!(e.links(), vec![("inbox/spec.html".into(), page.clone())]);
+    assert!(!e.data.join("artifacts").exists(), "a durable page is not copied");
+    let src = &e.sources()["sources"][page.to_str().unwrap()];
+    assert_eq!((src["artifactUrl"].as_str(), src.get("copiedFrom")), (Some(URL), None));
+}
+
+#[test]
+fn codex_and_aside_temp_writes_are_still_skipped() {
+    let e = Env::new();
+    e.since(5.0);
+    let cx = e.html("tmp/cx/scratchpad/c.html");
+    let patch = format!("tools.apply_patch(\"*** Begin Patch\\n*** Add File: {}\\n+<html>\\n*** End Patch\")", cx.display());
+    e.codex_log("rollout-2026-10-09T00-00-00-def.jsonl", &[
+        json!({"timestamp": iso(1.0), "type": "session_meta", "payload": {"id": "sess-cx", "cwd": e.root.join("proj")}}),
+        json!({"timestamp": iso(1.0), "type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec", "input": patch}}),
+    ]);
+    let ad = e.html("tmp/ad/scratchpad/a.html");
+    let ms = (Utc::now() - Duration::hours(1)).timestamp_millis();
+    e.aside_log("ses0Aside2", &[json!({"role": "assistant", "timestamp": ms, "content": [
+        {"type": "toolCall", "name": "repl", "arguments": {"code": format!("await fs.writeFile('{}', html);", ad.display())}}]})]);
+    let mut c = e.collector();
+    c.drain().unwrap();
+    assert!(count(&c, "SELECT count(*) FROM events WHERE kind='file.written'") >= 2, "both writes were read");
+    assert!(e.links().is_empty());
+    assert!(!e.data.join("artifacts").exists());
+}
+
+#[test]
+fn publishes_in_logs_read_before_the_collector_knew_them_are_backfilled() {
+    let e = Env::new();
+    e.since(5.0);
+    let page = e.html("tmp/sess/scratchpad/old.html");
+    e.claude_log("s1.jsonl", &publish("t1", json!({"file_path": page}), Some(URL), 1.0));
+    {
+        let mut c = e.collector();
+        c.drain().unwrap();
+        // what a store filled by the older adapter holds
+        c.conn.execute("DELETE FROM events WHERE kind='artifact.published'", []).unwrap();
+        c.conn.execute("UPDATE meta SET value='titles' WHERE key='reindex'", []).unwrap();
+        std::fs::remove_file(e.home.join("inbox/old.html")).unwrap();
+        std::fs::remove_file(e.home.join(".rooms/collect/linked.jsonl")).unwrap();
+    }
+    let mut c = e.collector();
+    let events = count(&c, "SELECT count(*) FROM events");
+    c.drain().unwrap();
+    assert_eq!(count(&c, "SELECT count(*) FROM events"), events + 1, "only the publish is new");
+    assert_eq!(e.links(), vec![("inbox/old.html".into(), e.data.join("artifacts/DU8TsWQvmd23/old.html"))]);
+}

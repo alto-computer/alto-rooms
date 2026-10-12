@@ -44,13 +44,18 @@ struct Target {
     repo: Option<(String, PathBuf)>,
 }
 
-/// `.rooms/collect/linked.jsonl`: realpath → when rooms-collect linked it (T1, T3).
-pub fn collected(home: &Path) -> HashMap<String, DateTime<Utc>> {
+/// One link rooms-collect made: when (T1, T3), and for a copy of a published page, the folder the
+/// agent worked in (`origin`), whose repo stands in for the copy's (N1).
+pub struct Collected { pub at: DateTime<Utc>, pub origin: Option<PathBuf> }
+
+/// `.rooms/collect/linked.jsonl`: realpath → what rooms-collect noted when it linked it.
+pub fn collected(home: &Path) -> HashMap<String, Collected> {
     let Ok(s) = std::fs::read_to_string(home.join(".rooms/collect/linked.jsonl")) else { return HashMap::new() };
     s.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter_map(|v| {
         let real = v.get("real")?.as_str()?.to_string();
         let at = DateTime::parse_from_rfc3339(v.get("at")?.as_str()?).ok()?.with_timezone(&Utc);
-        Some((real, at))
+        let origin = v.get("origin").and_then(|o| o.as_str()).map(PathBuf::from);
+        Some((real, Collected { at, origin }))
     }).collect()
 }
 
@@ -100,13 +105,13 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
     for a in &inbox {
         let link = o.home.join("inbox").join(&a.rel_path);
         let Ok(real) = std::fs::canonicalize(&link) else { continue };
-        let Some(at) = linked.get(real.to_string_lossy().as_ref()) else { continue }; // T1
+        let Some(Collected { at, origin }) = linked.get(real.to_string_lossy().as_ref()) else { continue }; // T1
         if (o.now - *at).num_seconds() < SETTLE_SECS { continue; } // T3
         match store.decision(&a.file_key).map_err(db)? { // T2
             Some(r) if !(r.action == "kept" && r.rooms_hash != hash) => continue,
             _ => {}
         }
-        let repo = prompt::repo_of(&real);
+        let repo = prompt::repo_of(&real).or_else(|| origin.as_deref().and_then(prompt::repo_of_dir));
         let d = Candidate { file_key: a.file_key.clone(), repo: repo.as_ref().map(|r| r.0.clone()) };
         targets.push((*at, Target { artifact: a.clone(), candidate: d, real, repo }));
     }

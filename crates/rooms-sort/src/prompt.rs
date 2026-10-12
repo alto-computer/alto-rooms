@@ -18,8 +18,13 @@ pub const INSTRUCTIONS: &str = "이 문서를 어느 룸에 두면 나중에 찾
 /// N1: (repo name, repo root) when the file is inside a git repo (a worktree is named after its
 /// main repo) or an Orca workspace. Unlike rooms-collect, a plain parent folder is not a repo.
 pub fn repo_of(real: &Path) -> Option<(String, PathBuf)> {
+    repo_of_dir(real.parent()?)
+}
+
+/// N1 for a folder: the repo or Orca workspace it is in.
+pub fn repo_of_dir(dir: &Path) -> Option<(String, PathBuf)> {
     let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.is_empty());
-    let mut d = real.parent();
+    let mut d = Some(dir);
     while let Some(dir) = d {
         let g = dir.join(".git");
         if g.is_dir() { return Some((name(dir)?, dir.to_path_buf())); }
@@ -32,11 +37,11 @@ pub fn repo_of(real: &Path) -> Option<(String, PathBuf)> {
         d = dir.parent();
     }
     // …/orca/workspaces/<project>/<workspace>/…
-    let s = real.to_string_lossy();
+    let s = dir.to_string_lossy();
     let at = s.find("/orca/workspaces/")? + "/orca/workspaces/".len();
     let mut parts = s[at..].splitn(3, '/');
     let (project, ws) = (parts.next()?, parts.next()?);
-    if project.is_empty() || ws.is_empty() || parts.next().is_none() { return None; }
+    if project.is_empty() || ws.is_empty() { return None; }
     Some((project.to_string(), PathBuf::from(&s[..at + project.len() + 1 + ws.len()])))
 }
 
