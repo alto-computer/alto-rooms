@@ -58,7 +58,7 @@ export type SurfaceSnapshot = {
 };
 
 type HostMessage =
-  | { type: "surface.open"; surface: SurfaceId; text: string }
+  | { type: "surface.open"; surface: SurfaceId; text: string; version: number }
   | { type: "surface.close"; surface: SurfaceId }
   | { type: "selection.action"; surface: SurfaceId; actionId: string; start: number; end: number; text: string }
   | { type: "range.click"; surface: SurfaceId; rangeId: string }
@@ -70,7 +70,10 @@ type Styles = Map<string, string>;
 type FrameMessage =
   | { type: "ready" }
   | { type: "actions"; items: ContentAction[] }
+  /** Ranges as offsets into the text the plugin last heard (`OpenSurface.told`), not the text on screen. */
   | { type: "paint"; key: string; styles: Styles; ranges: SurfaceRange[]; dropped: number }
+  /** A paint against a text older than the one last told; the plugin heard the newer one and paints again. */
+  | { type: "stale" }
   | { type: "menu"; key: string; rangeId: string; items: ContentAction[] };
 
 export type OpenOptions = {
@@ -91,6 +94,8 @@ type OpenSurface = OpenOptions & {
   index: TextIndex;
   /** The text plugins last heard for this surface, null before the first `surface.open`. */
   told: string | null;
+  /** Counts the texts told, and goes with each `surface.open`; a paint names the one it was read against. */
+  version: number;
   timer: ReturnType<typeof setTimeout> | null;
 };
 
@@ -237,8 +242,9 @@ function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurf
   const open = id && surfaces.get(surfaceKey(id));
   if (!open) return null;
   if (d.type === "paint") {
+    if (d.version !== undefined && d.version !== open.version) return isInt(d.version) ? { type: "stale" } : null;
     const styles = parseStyles(d.styles, known);
-    const parsed = styles && parseRanges(d.ranges, open.index.text.length, styles);
+    const parsed = styles && parseRanges(d.ranges, (open.told ?? open.index.text).length, styles);
     return styles && parsed ? { type: "paint", key: open.key, styles, ...parsed } : null;
   }
   if (d.type === "menu" && typeof d.rangeId === "string" && ID.test(d.rangeId)) {
@@ -292,7 +298,7 @@ export class SurfaceHub {
     const key = surfaceKey(id);
     const index = buildIndex(root);
     const was = this.surfaces.get(key);
-    const s: OpenSurface = { ...opts, id, key, root, index, told: was?.told ?? null, timer: was?.timer ?? null };
+    const s: OpenSurface = { ...opts, id, key, root, index, told: was?.told ?? null, version: was?.version ?? 0, timer: was?.timer ?? null };
     this.surfaces.set(key, s);
     if (this.snapshot.menu?.key === key) this.set({ menu: null });
     if (was && was.index.text !== index.text) {
@@ -306,17 +312,21 @@ export class SurfaceHub {
     this.tell(s);
   }
 
-  /** Plugins hear `s`'s text once it differs from what they last heard: the first text now, a change after the quiet time. */
-  private tell(s: OpenSurface): void {
+  /**
+   * Plugins hear `s`'s text once it differs from what they last heard: the first text now, a
+   * change after the quiet time, or now when `now` (a click over the text needs them on it).
+   */
+  private tell(s: OpenSurface, now = false): void {
     if (s.timer) clearTimeout(s.timer);
     s.timer = null;
     if (s.told === s.index.text) return;
     const post = () => {
       s.timer = null;
       s.told = s.index.text;
-      for (const seat of this.seats.values()) seat.post({ type: "surface.open", surface: s.id, text: s.told });
+      s.version++;
+      for (const seat of this.seats.values()) seat.post({ type: "surface.open", surface: s.id, text: s.told, version: s.version });
     };
-    if (s.quietMs && s.told !== null) s.timer = setTimeout(post, s.quietMs);
+    if (!now && s.quietMs && s.told !== null) s.timer = setTimeout(post, s.quietMs);
     else post();
   }
 
@@ -369,7 +379,9 @@ export class SurfaceHub {
         }
         switch (m.type) {
           case "ready":
-            for (const s of this.surfaces.values()) seat.post({ type: "surface.open", surface: s.id, text: s.index.text });
+            for (const s of this.surfaces.values()) seat.post({ type: "surface.open", surface: s.id, text: s.told ?? s.index.text, version: s.version });
+            return;
+          case "stale":
             return;
           case "actions":
             seat.actions = m.items;
@@ -381,7 +393,9 @@ export class SurfaceHub {
               seat.styles = m.styles;
               this.restyle(seat);
             }
-            seat.paints.set(m.key, m.ranges);
+            // Read against the text the plugin heard; keystrokes since then move it, as they move every paint.
+            const s = this.surfaces.get(m.key)!;
+            seat.paints.set(m.key, s.told !== null && s.told !== s.index.text ? shiftRanges(m.ranges, editBetween(s.told, s.index.text)) : m.ranges);
             this.repaint(seat);
             const r = this.snapshot.reveal;
             if (r && surfaceKey(r.id) === m.key && m.ranges.some((x) => x.id === r.rangeId)) {
@@ -411,13 +425,18 @@ export class SurfaceHub {
     };
   }
 
-  /** A button of `plugin` was clicked over `span`: the plugin hears where and what. */
+  /**
+   * A button of `plugin` was clicked over `span`: the plugin hears where and what, in the text on
+   * screen, which it hears first if a quiet time still held it. A span whose text is no longer at
+   * its offsets (the text changed under a bar) is not a click.
+   */
   runAction(plugin: string, actionId: string, span: SurfaceSpan): void {
     const seat = this.seats.get(plugin);
     const s = this.surfaces.get(span.key);
-    if (!seat || !s || !seat.actions.some((a) => a.id === actionId)) return;
+    if (!seat || !s || !seat.actions.some((a) => a.id === actionId) || s.index.text.slice(span.start, span.end) !== span.text) return;
+    this.tell(s, true);
     seat.gestureAt = Date.now();
-    seat.post({ type: "selection.action", surface: s.id, actionId, start: span.start, end: span.end, text: s.index.text.slice(span.start, span.end) });
+    seat.post({ type: "selection.action", surface: s.id, actionId, start: span.start, end: span.end, text: span.text });
   }
 
   /** When the user last clicked one of `plugin`'s buttons or menu items, or null. A range click does not count. */
