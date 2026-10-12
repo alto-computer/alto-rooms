@@ -1,9 +1,10 @@
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Artifact, AskScope, AskTarget, AskTurn, Session } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
+import { surfaceHub } from "@/surfaces/surfaceHub";
 import { renderWithStores, room } from "@/test/fakes";
 import { AskBar } from "./AskBar";
 
@@ -252,30 +253,75 @@ describe("AskBar", () => {
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.not.objectContaining({ images: expect.anything() })));
   });
 
-  it("Ask over an answer quotes the text selected when the button runs, not the selection the bar was shown for", async () => {
-    Range.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 10, height: 10 }) as DOMRect;
-    await setup({ k1: [turn({ status: "done", answer: "the quick brown fox", endedAt: "2026-10-06T10:00:05+09:00" })] });
-    const text = (await screen.findByText("the quick brown fox")).firstChild!;
-    const select = (start: number, end: number) => {
-      const r = document.createRange();
-      r.setStart(text, start);
-      r.setEnd(text, end);
-      const s = document.getSelection()!;
-      s.removeAllRanges();
-      s.addRange(r);
-    };
-    select(4, 9);
-    await act(async () => {
+  /** Selects `[start, end)` of `text`, as a drag or Shift+Arrow leaves the document selection. */
+  function select(text: Node, start: number, end: number) {
+    const r = document.createRange();
+    r.setStart(text, start);
+    r.setEnd(text, end);
+    const s = document.getSelection()!;
+    s.removeAllRanges();
+    s.addRange(r);
+  }
+  /** The pointer comes up and the bar's deferred read of the selection runs. */
+  const release = () =>
+    act(async () => {
       document.dispatchEvent(new Event("mouseup"));
       await new Promise((r) => setTimeout(r, 1));
     });
+  const quoted = () => within(screen.getByRole("list", { name: "Quoted text" })).getAllByRole("listitem").map((li) => li.textContent);
+
+  it("Ask over an answer quotes the text selected when the button runs, not the selection the bar was shown for; with the selection gone it quotes nothing", async () => {
+    Range.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 10, height: 10 }) as DOMRect;
+    await setup({ k1: [turn({ status: "done", answer: "the quick brown fox", endedAt: "2026-10-06T10:00:05+09:00" })] });
+    const text = (await screen.findByText("the quick brown fox")).firstChild!;
+    select(text, 4, 9);
+    await release();
     const ask = await screen.findByRole("button", { name: "Ask" });
     // Shift+Arrow grew the selection; its deferred read is still queued when the button runs.
-    select(4, 15);
+    select(text, 4, 15);
     fireEvent.click(ask);
-    const chips = await screen.findByRole("list", { name: "Quoted text" });
-    expect(chips.textContent).toContain("quick brown");
+    await screen.findByRole("list", { name: "Quoted text" });
+    expect(quoted()).toEqual(["quick brown"]);
     expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+    select(text, 10, 15);
+    await release();
+    const again = await screen.findByRole("button", { name: "Ask" });
+    document.getSelection()!.removeAllRanges();
+    fireEvent.click(again);
+    expect(quoted(), "nothing selected when the button ran, nothing quoted").toEqual(["quick brown"]);
+    expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+  });
+
+  it("a plugin's button over an answer runs on the text selected when it runs, through the surface the answer is, and on no selection sends nothing", async () => {
+    Range.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 10, height: 10 }) as DOMRect;
+    const sent: Record<string, unknown>[] = [];
+    const seat = surfaceHub.register("tagger", (m) => void sent.push(m));
+    seat.receive({ rooms: "surface", v: 1, api: 2, type: "hello" });
+    seat.receive({ rooms: "surface", v: 1, api: 2, type: "actions", items: [{ id: "tag", title: "Tag" }] });
+    try {
+      await setup({ k1: [turn({ status: "done", answer: "the quick brown fox", endedAt: "2026-10-06T10:00:05+09:00" })] });
+      const text = (await screen.findByText("the quick brown fox")).firstChild!;
+      select(text, 4, 9);
+      await release();
+      const tag = await screen.findByRole("button", { name: "Tag" });
+      select(text, 4, 15);
+      fireEvent.click(tag);
+      expect(sent.at(-1)).toEqual({
+        rooms: "surface", v: 1, type: "selection.action", surface: { kind: "answer", scope, turnId: "t1" }, actionId: "tag", start: 4, end: 15, text: "quick brown",
+      });
+      expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
+      select(text, 4, 9);
+      await release();
+      const again = await screen.findByRole("button", { name: "Tag" });
+      const posted = sent.length;
+      document.getSelection()!.removeAllRanges();
+      fireEvent.click(again);
+      expect(sent.length, "no action for an empty selection").toBe(posted);
+      expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+    } finally {
+      seat.dispose();
+    }
   });
 
   it("shows quotes waiting above the input and on the asked question", async () => {

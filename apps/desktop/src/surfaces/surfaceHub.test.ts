@@ -48,10 +48,13 @@ function cssColor(v: string): string {
 /** The styles the test plugin paints with; a paint that names none declares these. */
 const STYLES = { amber: "#c79a3e", blue: "#608cc8", green: "#7a9971" };
 
-function seat(hub: SurfaceHub, plugin = "tagger") {
+/** One plugin's frame: on SDK 0.6 by default (it says `hello` and puts `api: 2` on every message), or on 0.5 (`api` 1), which says neither. */
+function seat(hub: SurfaceHub, plugin = "tagger", api: 1 | 2 = 2) {
   const sent: Record<string, unknown>[] = [];
   const s = hub.register(plugin, (m) => void sent.push(m));
-  const say = (m: Record<string, unknown>) => s.receive({ rooms: "surface", v: 1, ...(m.type === "paint" ? { styles: STYLES } : {}), ...m });
+  const envelope = api === 2 ? { rooms: "surface", v: 1, api } : { rooms: "surface", v: 1 };
+  const say = (m: Record<string, unknown>) => s.receive({ ...envelope, ...(m.type === "paint" ? { styles: STYLES } : {}), ...m });
+  if (api === 2) say({ type: "hello" });
   return { sent, say, dispose: s.dispose, types: () => sent.map((m) => m.type) };
 }
 
@@ -229,7 +232,7 @@ describe("SurfaceHub", () => {
     const a = seat(hub, "abc");
     z.say({ type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] });
     a.say({ type: "actions", items: [{ id: "note", title: "Note" }] });
-    expect(hub.getSnapshot().actions).toEqual([
+    expect(hub.getSnapshot().actions.answer).toEqual([
       { plugin: "abc", id: "note", title: "Note" },
       { plugin: "zed", id: "tag", title: "Tag", color: "#ffd400" },
     ]);
@@ -318,7 +321,7 @@ describe("SurfaceHub", () => {
     expect(painted("rooms-tagger-amber")).toEqual(["quick"]);
     tagger.dispose();
     expect(highlights.has("rooms-tagger-amber")).toBe(false);
-    expect(hub.getSnapshot().actions).toEqual([]);
+    expect(hub.getSnapshot().actions).toEqual({ answer: [], note: [] });
     expect(rules().has("rooms-tagger-amber")).toBe(false);
     expect(document.adoptedStyleSheets, "its sheet went with it").toHaveLength(0);
     const again = seat(hub);
@@ -593,12 +596,11 @@ describe("surface shapes per plugin SDK", () => {
   const inArtifact: SurfaceId = { kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t1" };
   const inSession: SurfaceId = { kind: "answer", scope: { kind: "session", agent: "claude-code", id: "s-1" }, turnId: "t2" };
 
-  /** The surface in every message one plugin hears about `id`: open, the open `ready` repeats, a button, a range click, a menu pick, close. */
-  function heard(id: SurfaceId, envelope: Record<string, unknown> = {}): unknown[] {
+  /** The surface in every message a plugin on `api` hears about `id`: open, the open `ready` repeats, a button, a range click, a menu pick, close. */
+  function heard(id: SurfaceId, api: 1 | 2): unknown[] {
     const hub = new SurfaceHub();
-    const plugin = seat(hub);
-    const say = (m: Record<string, unknown>) => plugin.say({ ...envelope, ...m });
-    if (envelope.api) say({ type: "hello" });
+    const plugin = seat(hub, "tagger", api);
+    const { say } = plugin;
     const root = surface(hub, id, "<p>the quick brown fox</p>");
     const key = surfaceKey(id);
     say({ type: "ready" });
@@ -618,19 +620,52 @@ describe("surface shapes per plugin SDK", () => {
   }
 
   it("names artifact and session scopes the SDK 0.5 way to a plugin that never says which SDK it has", () => {
-    expect(heard(inArtifact)).toEqual(Array(6).fill({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" }));
-    expect(heard(inSession)).toEqual(Array(6).fill({ kind: "answer", scope: { kind: "conversation", agent: "claude-code", session: "s-1" }, turnId: "t2" }));
+    expect(heard(inArtifact, 1)).toEqual(Array(6).fill({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" }));
+    expect(heard(inSession, 1)).toEqual(Array(6).fill({ kind: "answer", scope: { kind: "conversation", agent: "claude-code", session: "s-1" }, turnId: "t2" }));
   });
 
   it("names them the SDK 0.6 way to a plugin that says it reads API 2", () => {
-    expect(heard(inArtifact, { api: 2 })).toEqual(Array(6).fill(inArtifact));
-    expect(heard(inSession, { api: 2 })).toEqual(Array(6).fill(inSession));
+    expect(heard(inArtifact, 2)).toEqual(Array(6).fill(inArtifact));
+    expect(heard(inSession, 2)).toEqual(Array(6).fill(inSession));
   });
 
-  it("names a note the one way it has, whichever SDK the plugin says", () => {
+  it("names a note the one way it has to a plugin that reads API 2", () => {
     const note: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
-    expect(heard(note)).toEqual(Array(6).fill(note));
-    expect(heard(note, { api: 2 })).toEqual(Array(6).fill(note));
+    expect(heard(note, 2)).toEqual(Array(6).fill(note));
+  });
+
+  it("tells a plugin that never says it reads API 2 nothing of a note, and keeps its buttons off the note bar, while answers reach it as before", () => {
+    const hub = new SurfaceHub();
+    const old = seat(hub, "old", 1);
+    const fresh = seat(hub, "fresh");
+    const note: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    const key = surfaceKey(note);
+    surface(hub, note, "<p>the quick brown fox</p>");
+    surface(hub, answer("t1"), "<p>an answer</p>");
+    old.say({ type: "ready" });
+    fresh.say({ type: "ready" });
+    expect(old.sent.map((m) => m.surface), "the open and the ready replay skip the note").toEqual([answer("t1"), answer("t1")]);
+    expect(fresh.sent.map((m) => m.surface)).toEqual([note, answer("t1"), note, answer("t1")]);
+    old.say({ type: "actions", items: [{ id: "mark", title: "Mark" }] });
+    fresh.say({ type: "actions", items: [{ id: "tag", title: "Tag" }] });
+    expect(hub.getSnapshot().actions).toEqual({
+      answer: [
+        { plugin: "fresh", id: "tag", title: "Tag" },
+        { plugin: "old", id: "mark", title: "Mark" },
+      ],
+      note: [{ plugin: "fresh", id: "tag", title: "Tag" }],
+    });
+    const dropped = hub.dropped;
+    old.say({ type: "paint", surface: note, ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    old.say({ type: "menu", surface: note, rangeId: "q", items: [{ id: "x", title: "X" }] });
+    expect(hub.dropped, "its paint and menu for a note are refused").toBe(dropped + 2);
+    expect(painted("rooms-old-amber")).toEqual([]);
+    expect(hub.getSnapshot().menu).toBeNull();
+    hub.runAction("old", "mark", { key, start: 4, end: 9, text: "quick" });
+    expect(hub.lastGesture("old"), "a note bar button of its is not a click").toBeNull();
+    hub.close(key);
+    expect(old.types()).toEqual(["surface.open", "surface.open"]);
+    expect(fresh.types().filter((t) => t === "surface.close")).toEqual(["surface.close"]);
   });
 
   it("gives a plugin built on SDK 0.6 surfaces its own surfacePath reads", () => {

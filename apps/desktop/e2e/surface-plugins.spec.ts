@@ -638,3 +638,35 @@ test("tagging a note's first words from the keyboard paints those words and noth
   await onlyTheQuote();
   expect(await daemon.read(`journal/${date}/Plums.md`), "a paint never writes the note").toBe(PLUMS);
 });
+
+test("a plugin built on SDK 0.5 (no api on its messages) hears answers and never notes: no note text, no button on the note bar, while the 0.6 plugin gets both", async ({ page, daemon }) => {
+  installStreamingAgent(daemon, "Room");
+  const date = today();
+  await daemon.createRoom("harness");
+  await daemon.installPlugin("tagger");
+  await daemon.installPlugin("oldhand");
+  await daemon.saveNote(date, "Plums.md", PLUMS);
+  await page.goto("/");
+  await turnOn(page, "Oldhand");
+  await turnOnTagger(page);
+  const tagger = await backgroundFrame(page);
+  await expect.poll(() => page.frame({ url: /\/_plugins\/oldhand\/background\.html/ }) !== null).toBe(true);
+  const oldhand = page.frame({ url: /\/_plugins\/oldhand\/background\.html/ })!;
+  await expect.poll(() => oldhand.evaluate(() => typeof window.oldhand)).toBe("object");
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
+  await page.getByRole("region", { name: "Your day" }).getByRole("button", { name: "Plums" }).click();
+  const ta = noteEditor(page);
+  await expect(ta).toHaveValue(PLUMS);
+  await ta.click();
+  await expect.poll(() => tagger.evaluate(() => window.tagger.surfaces().map((s) => s.kind)), "the 0.6 plugin hears the note").toEqual(["note"]);
+  await selectInNote(page, "Plums", 5);
+  // One button is a lone pill, not a toolbar.
+  await expect(page.getByRole("button", { name: "Tag" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Mark" }), "the 0.5 plugin's button stays off the note bar").toHaveCount(0);
+  await openRoom(page, "harness");
+  const answer = await ask(page, "Ask about this room…", "Which artifact is first?");
+  await answer.click({ clickCount: 3 });
+  await expect(bar(page).getByRole("button"), "the answer bar lists both").toHaveText(["Ask", "Mark", "Tag"]);
+  const kinds = await oldhand.evaluate(() => [...new Set(window.oldhand.heard().map((m) => (m.surface as { kind: string } | undefined)?.kind))]);
+  expect(kinds, "the 0.5 plugin heard the answer and nothing of the note").toEqual(["answer"]);
+});

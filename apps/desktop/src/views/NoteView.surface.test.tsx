@@ -73,10 +73,11 @@ async function renderNote(plugins = [tagger], otherNotes: Record<string, string>
   return r;
 }
 
-/** The tagger's background frame, as the hub sees it: one Tag button, paint on request. */
+/** The tagger's background frame, as the hub sees it: on SDK 0.6 (it says `api: 2`), one Tag button, paint on request. */
 function sitDown() {
   seat = surfaceHub.register("tagger", (m) => void sent.push(m));
-  seat.receive({ rooms: "surface", v: 1, type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] });
+  seat.receive({ rooms: "surface", v: 1, api: 2, type: "hello" });
+  seat.receive({ rooms: "surface", v: 1, api: 2, type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] });
   return {
     paint: (ranges: { id: string; start: number; end: number }[]) =>
       seat!.receive({ rooms: "surface", v: 1, type: "paint", surface: id, styles: { amber: "#c79a3e" }, ranges: ranges.map((r) => ({ ...r, style: "amber" })) }),
@@ -117,6 +118,16 @@ describe("NoteView as a text surface", () => {
     frame.paint([{ id: "q", start: 15, end: 20 }]);
     expect(painted()).toEqual(["quick"]);
     expect(backdrop()!.textContent).toBe(TEXT);
+  });
+
+  it("with only a plugin on SDK 0.5 on (it never says api 2), the plugin hears no note and a selection shows no button of its", async () => {
+    seat = surfaceHub.register("tagger", (m) => void sent.push(m));
+    seat.receive({ rooms: "surface", v: 1, type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] });
+    await renderNote();
+    seat.receive({ rooms: "surface", v: 1, type: "ready" });
+    expect(sent.map((m) => m.type), "no open, and the ready replay skips the note").toEqual([]);
+    await select(15, 20);
+    expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
   });
 
   it("keeps the bar while focus moves onto its button, so Tab + Enter and an accessibility press run the action on the selection the bar was shown for", async () => {
