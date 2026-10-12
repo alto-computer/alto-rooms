@@ -167,3 +167,41 @@ test("a content-script plugin says it reads documents, and turning it on adds no
   await expect(page.getByRole("button", { name: "Open Marker" })).toHaveCount(0);
   await expect(page.locator('iframe[title="Marker"]')).toHaveCount(0);
 });
+
+test("a plugin page takes the app's theme, and follows it into dark", async ({ page, daemon }) => {
+  await setup(page, daemon);
+  await page.emulateMedia({ colorScheme: "light" });
+  await turnOnFromCard(page);
+  await (await flyout(page)).getByRole("menuitem", { name: "Echo" }).click();
+  await expect(echoFrame(page).locator("#ctx")).toHaveText("tab");
+
+  // The app's pane colour as the browser would paint it, so it compares with the plugin page's computed background.
+  const pane = () =>
+    page.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.style.background = "var(--pane)";
+      document.body.append(probe);
+      const colour = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return colour;
+    });
+  const pageStyle = () =>
+    echoFrame(page)
+      .locator("html")
+      .evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { background: s.backgroundColor, colorScheme: s.colorScheme, bg: s.getPropertyValue("--rooms-bg").trim() };
+      });
+
+  const light = await pane();
+  await expect.poll(pageStyle).toMatchObject({ background: light, colorScheme: "light" });
+
+  await page.getByRole("button", { name: /^Settings/ }).click();
+  await page.getByRole("radiogroup", { name: "Appearance" }).getByRole("radio", { name: "Dark" }).click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true);
+  const dark = await pane();
+  expect(dark).not.toBe(light);
+  await page.getByRole("tab", { name: "Echo" }).click();
+  await expect.poll(pageStyle).toMatchObject({ background: dark, colorScheme: "dark" });
+  expect((await pageStyle()).bg).not.toBe("");
+});

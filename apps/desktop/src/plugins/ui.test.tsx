@@ -790,3 +790,40 @@ describe("background frames", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("theme", () => {
+  const themeSheet = () => {
+    const style = document.createElement("style");
+    style.textContent = ":root { --pane: #f8f4ee; --ink: #27211e; } .dark { --pane: #211c19; --ink: #efe7df; }";
+    document.head.append(style);
+    return style;
+  };
+  const themes = (posted: { mock: { calls: unknown[][] } }) => posted.mock.calls.map((c) => c[0] as { type?: string }).filter((m) => m.type === "theme");
+
+  it("tells a frame the app's theme on ready and on a surface hello, and again when the appearance changes", async () => {
+    const style = themeSheet();
+    try {
+      await openArtifact();
+      const { f, posted } = await openPanel();
+      fromFrame(f, { rooms: 1, type: "ready" });
+      expect(themes(posted)).toEqual([{ rooms: 1, type: "theme", scheme: "light", tokens: { bg: "#f8f4ee", text: "#27211e" } }]);
+
+      fromFrame(f, { rooms: "surface", v: 1, api: 2, type: "hello" });
+      expect(themes(posted)).toHaveLength(2);
+
+      document.documentElement.classList.add("dark");
+      await waitFor(() => expect(themes(posted)).toHaveLength(3));
+      expect(themes(posted)[2]).toEqual({ rooms: 1, type: "theme", scheme: "dark", tokens: { bg: "#211c19", text: "#efe7df" } });
+    } finally {
+      document.documentElement.classList.remove("dark");
+      style.remove();
+    }
+  });
+
+  it("paints the pane colour behind the frame, so nothing white shows before the plugin does", async () => {
+    await openArtifact();
+    const { f } = await openPanel();
+    expect(f.className).toContain("bg-pane");
+    expect(f.className).not.toContain("bg-white");
+  });
+});

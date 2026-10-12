@@ -1,8 +1,9 @@
 /*
  * One plugin, running: a sandboxed iframe from the plugin's folder plus the
  * app side of the bridge. Trusts only messages whose source is this frame's
- * window; sends the slot's context on ready and on change; relays requests;
- * pings to notice a stuck plugin; and lets its owner ask for beforeClose.
+ * window; sends the slot's context on ready and on change, and the app's theme
+ * on ready and whenever the appearance changes; relays requests; pings to notice
+ * a stuck plugin; and lets its owner ask for beforeClose.
  */
 import type { Info } from "@alto-rooms/protocol-ts";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import { registerFrame } from "./host";
 import { pluginDataBus } from "./pluginDataBus";
 import { frameAttrs } from "./permissions";
 import type { HostPlugin } from "./pluginsStore";
+import { readTheme, watchTheme } from "./theme";
 
 export type PluginContextValue =
   | { slot: "artifact.sidePanel"; artifact: { roomId: string; artifactId: string; fileKey: string; title: string; createdAt: string } }
@@ -73,6 +75,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
   const sendContext = useCallback(() => {
     post({ type: "context", pluginId: latest.current.plugin.id, context: latest.current.context });
   }, [post]);
+  const sendTheme = useCallback(() => post({ type: "theme", ...readTheme() }), [post]);
 
   /** Posts `{type, id}` and resolves when the frame answers with `reply` for that id, or after `capMs`. */
   const ask = useCallback(
@@ -107,10 +110,18 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
       const win = frameRef.current?.contentWindow;
       if (!win || e.source !== win) return;
       const d = e.data as Inbound | null;
-      if (!d || typeof d !== "object" || d.rooms !== 1) return;
+      if (!d || typeof d !== "object") return;
+      // A background page that only connects its surfaces says hello instead of ready; it gets the theme too.
+      if (d.rooms === "surface" && d.type === "hello") {
+        sendTheme();
+        return;
+      }
+      if (d.rooms !== 1) return;
       if (d.type === "ready") {
         ready.current = true;
         setStalled(false);
+        // Theme first: connect() resolves on the context, with the page already in the app's colours.
+        sendTheme();
         sendContext();
         return;
       }
@@ -149,7 +160,10 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, viewer, rooms, asks, post, sendContext]);
+  }, [client, viewer, rooms, asks, post, sendContext, sendTheme]);
+
+  // A frame still loading misses this post and gets the theme on ready.
+  useEffect(() => watchTheme(sendTheme), [sendTheme]);
 
   // Tell the frame when its plugin's data changed: a declared tool appended to it, or another
   // frame of the same plugin (a tab, a panel, a document's content script) wrote it.
@@ -230,7 +244,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
         src={client.pluginEntryUrl(info, { ...plugin, entry: loadedAs.entry })}
         sandbox={attrs.sandbox}
         allow={attrs.allow}
-        className="absolute inset-0 size-full border-0 bg-white"
+        className="absolute inset-0 size-full border-0 bg-pane"
       />
       {stalled ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-pane/95 text-lead text-ink-2">
