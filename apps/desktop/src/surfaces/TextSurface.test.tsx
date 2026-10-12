@@ -55,10 +55,12 @@ describe("TextSurface", () => {
   });
 
   it("keeps the paint on text React re-renders into new nodes, without posting the same text again", async () => {
-    class FakeHighlight {
-      ranges: Range[];
+    class FakeHighlight extends Set<Range> {
       constructor(...ranges: Range[]) {
-        this.ranges = ranges;
+        super(ranges);
+      }
+      get ranges() {
+        return [...this];
       }
     }
     const highlights = new Map<string, FakeHighlight>();
@@ -84,7 +86,7 @@ describe("TextSurface", () => {
   });
 
   it("sends a click on a painted range to the plugin and leaves other clicks alone", async () => {
-    vi.stubGlobal("Highlight", class { constructor(..._r: Range[]) {} });
+    vi.stubGlobal("Highlight", class extends Set<Range> {});
     vi.stubGlobal("CSS", { highlights: new Map(), supports: () => true });
     const view = render(
       <TextSurface id={id}>

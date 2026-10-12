@@ -23,10 +23,13 @@ const TEXT = "first line\nthe quick brown fox";
 const tagger = plugin({ id: "tagger", name: "Tagger", slots: { artifactSidePanel: null, tab: null }, permissions: ["surfaces.text"], granted: ["surfaces.text"], background: "background.html" });
 const id = { kind: "note", date: DATE, name: "Plan.md" } as const;
 
-class FakeHighlight {
-  ranges: Range[];
+/** The Highlight API's set of ranges: the hub adds and deletes ranges in place as one surface repaints. */
+class FakeHighlight extends Set<Range> {
   constructor(...ranges: Range[]) {
-    this.ranges = ranges;
+    super(ranges);
+  }
+  get ranges() {
+    return [...this];
   }
 }
 const highlights = new Map<string, FakeHighlight>();

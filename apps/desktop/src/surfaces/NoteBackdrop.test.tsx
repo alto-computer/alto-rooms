@@ -6,10 +6,13 @@ import { surfaceHub, type SurfaceId } from "./surfaceHub";
 
 const id: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
 
-class FakeHighlight {
-  ranges: Range[];
+/** The Highlight API's set of ranges: the hub adds and deletes ranges in place as one surface repaints. */
+class FakeHighlight extends Set<Range> {
   constructor(...ranges: Range[]) {
-    this.ranges = ranges;
+    super(ranges);
+  }
+  get ranges() {
+    return [...this];
   }
 }
 const highlights = new Map<string, FakeHighlight>();

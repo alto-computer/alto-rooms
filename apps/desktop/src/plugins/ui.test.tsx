@@ -763,7 +763,7 @@ describe("background frames", () => {
   });
 
   it("takes surface messages from the background frame's window only, never from the page or another frame", async () => {
-    vi.stubGlobal("Highlight", class { constructor(..._r: Range[]) {} });
+    vi.stubGlobal("Highlight", class extends Set<Range> {});
     vi.stubGlobal("CSS", { highlights: new Map(), supports: () => true });
     await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [tagger()] });
     await act(async () => {});

@@ -3,10 +3,13 @@ import { surfaceKey as sdkSurfaceKey } from "@alto-rooms/plugin-sdk";
 import { editBetween, isPaintColor, parseSurfaceId, shiftRanges, SurfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
 
 /** A stand-in for the CSS Custom Highlight API: what the hub registered under which name. */
-class FakeHighlight {
-  ranges: Range[];
+/** The Highlight API's set of ranges: the hub adds and deletes ranges in place as one surface repaints. */
+class FakeHighlight extends Set<Range> {
   constructor(...ranges: Range[]) {
-    this.ranges = ranges;
+    super(ranges);
+  }
+  get ranges() {
+    return [...this];
   }
 }
 const highlights = new Map<string, FakeHighlight>();
@@ -463,6 +466,28 @@ describe("SurfaceHub", () => {
     hub.runAction("tagger", "tag", { key, start: 6, end: 11, text: "brown" });
     expect(tagger.types().filter((t) => t === "selection.action"), "a span whose text is not there any more is not a click").toHaveLength(1);
     vi.useRealTimers();
+  });
+
+  it("repaints only the surface whose text changed, and keeps the other surfaces' ranges as they are", () => {
+    const hub = new SurfaceHub();
+    const tagger = seat(hub);
+    const a = surface(hub, answer("t1"), "<p>the quick brown fox</p>");
+    surface(hub, answer("t2"), "<p>jumps over the lazy dog</p>");
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    tagger.say({ type: "paint", surface: answer("t2"), ranges: [{ id: "l", start: 15, end: 19, style: "amber" }, { id: "d", start: 20, end: 23, style: "blue" }] });
+    expect(painted("rooms-tagger-amber")).toEqual(["quick", "lazy"]);
+    const [, lazy] = highlights.get("rooms-tagger-amber")!.ranges;
+    const made = vi.spyOn(document, "createRange");
+    a.innerHTML = "<p>AB the quick brown fox</p>";
+    hub.open(answer("t1"), a);
+    expect(made, "one range built: the edited surface's one painted word").toHaveBeenCalledTimes(1);
+    made.mockRestore();
+    expect(painted("rooms-tagger-amber").sort()).toEqual(["lazy", "quick"]);
+    expect(highlights.get("rooms-tagger-amber")!.ranges, "the other surface's range is the one that was there").toContain(lazy);
+    expect(painted("rooms-tagger-blue")).toEqual(["dog"]);
+    hub.close(surfaceKey(answer("t2")));
+    expect(painted("rooms-tagger-amber")).toEqual(["quick"]);
+    expect(painted("rooms-tagger-blue")).toEqual([]);
   });
 
   it("gives a span of an open surface by offsets, with a range to place the bar, and nothing past the text", () => {
