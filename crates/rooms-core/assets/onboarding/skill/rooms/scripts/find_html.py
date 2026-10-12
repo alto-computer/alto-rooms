@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# rooms-onboarding v10
+# rooms-onboarding v11
 """List existing .html files that an AI agent wrote recently.
 
 Reads Claude Code, Codex and Aside session logs and <home>/.rooms/state.json
@@ -7,6 +7,10 @@ Reads Claude Code, Codex and Aside session logs and <home>/.rooms/state.json
 Python 3.9+ standard library only. This script never writes anything, except
 with --record-sources: then it writes <home>/.rooms/sources.json (which agent
 session last wrote each file) and nothing else.
+
+A page published with Claude Code's Artifact tool from a scratchpad or temp folder
+is listed through the copy the Rooms app keeps of it (in its data folder), since
+the temp file goes away. Without that copy it is skipped like other temp files.
 """
 import argparse
 import html as htmllib
@@ -53,6 +57,8 @@ JS_TEMPLATE_SPLIT_RE = re.compile(r"\$\{\s*(.*?)\s*\}")
 JS_ESCAPE_RE = re.compile(r"\\(.)")
 ASIDE_DAY_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
 WRITE_TOOL_RE = re.compile(r"write|edit", re.I)
+ARTIFACT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+SYSTEM_TMP = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
 
 
 def parse_ts(s):
@@ -336,7 +342,7 @@ class Collector:
         self.hits = {}  # abs path -> dict
         self.read_errors = 0
 
-    def add(self, path, ts, agent, session, cwd, cwd_base=None, explicit=False):
+    def add(self, path, ts, agent, session, cwd, cwd_base=None, explicit=False, published=None):
         if not path or ts is None or ts < self.cutoff:
             return
         if path.startswith("~"):
@@ -348,7 +354,7 @@ class Collector:
             path = os.path.join(base, path)
         path = os.path.normpath(path)
         h = self.hits.setdefault(path, {"writes": []})
-        h["writes"].append((ts, agent, session, cwd, explicit))
+        h["writes"].append((ts, agent, session, cwd, explicit, published))
 
 
 def safe_lines(f, col):
@@ -397,11 +403,22 @@ def claude_tool_writes(block, cwd):
             yield p, False
 
 
-def scan_claude_file(path, col):
+def artifact_publish(block):
+    """The page path of an Artifact call that publishes one (not a read, list or asset upload)."""
+    inp = block.get("input") or {}
+    if block.get("name") != "Artifact" or inp.get("action", "publish") != "publish" or inp.get("asset") is True:
+        return None
+    p = inp.get("file_path")
+    return p if is_html(p) else None
+
+
+def scan_claude_file(path, col, collect_data):
     stem = os.path.splitext(os.path.basename(path))[0]
+    publishing = {}  # tool_use id -> page path, until its result is read
     for rec in json_records(path, col, mentions_html):
         try:
-            if rec.get("type") != "assistant":
+            ty = rec.get("type")
+            if ty not in ("assistant", "user"):
                 continue
             ts = parse_ts(rec.get("timestamp"))
             cwd = rec.get("cwd")
@@ -410,12 +427,52 @@ def scan_claude_file(path, col):
             if not isinstance(content, list):
                 continue
             for it in content:
-                if not isinstance(it, dict) or it.get("type") != "tool_use":
+                if not isinstance(it, dict):
+                    continue
+                if ty == "user" and it.get("type") == "tool_result" and it.get("tool_use_id") in publishing:
+                    page = publishing.pop(it["tool_use_id"])
+                    result = rec.get("toolUseResult")
+                    url = result.get("url") if isinstance(result, dict) else None
+                    if isinstance(url, str) and it.get("is_error") is not True:
+                        add_published(col, collect_data, page, url, ts, sid, cwd)
+                    continue
+                if ty != "assistant" or it.get("type") != "tool_use":
                     continue
                 for p, explicit in claude_tool_writes(it, cwd):
                     col.add(p, ts, "claude-code", sid, cwd, explicit=explicit)
+                page = artifact_publish(it)
+                if page and it.get("id"):
+                    publishing[it["id"]] = page
         except (AttributeError, TypeError):
             col.read_errors += 1
+
+
+def published_copy(collect_data, url):
+    """The Rooms app's copy of the artifact at `url` (see crates/rooms-collect published.rs), or None."""
+    aid = url.split("?")[0].split("#")[0].rstrip("/").rsplit("/", 1)[-1]
+    if not ARTIFACT_ID_RE.match(aid):
+        return None
+    try:
+        with open(os.path.join(collect_data, "artifacts", aid + ".json"), "r", encoding="utf-8") as f:
+            page = json.load(f).get("page")
+    except (OSError, ValueError, AttributeError):
+        return None
+    copy = os.path.join(collect_data, "artifacts", aid, page) if isinstance(page, str) else None
+    return copy if copy and os.path.isfile(copy) else None
+
+
+def add_published(col, collect_data, page, url, ts, sid, cwd):
+    """A published page: a temp one counts through the app's copy; any one carries its URL."""
+    page = resolve(page, cwd)
+    if not page:
+        return
+    home_dir = os.path.realpath(os.path.expanduser("~"))
+    if is_transient(page, home_dir) or is_transient(os.path.realpath(page), home_dir):
+        copy = published_copy(collect_data, url)
+        if copy:
+            col.add(copy, ts, "claude-code", sid, cwd, explicit=True, published=(url, page))
+        return
+    col.add(page, ts, "claude-code", sid, cwd, explicit=True, published=(url, None))
 
 
 def aside_call_writes(call, syms):
@@ -617,9 +674,16 @@ def not_a_document(raw, real, home_dir, rooms_home):
     return any(_not_a_document_path(p, home_dir, rooms_home) for p in (raw, real))
 
 
+def is_transient(p, home_dir):
+    """A session scratchpad or the system temp folders: gone after the session or a restart."""
+    if "scratchpad" in p.split("/"):
+        return True
+    return not under(p, home_dir) and any(under(p, t) for t in SYSTEM_TMP)
+
+
 def _not_a_document_path(p, home_dir, rooms_home):
     segs = p.split("/")
-    if "scratchpad" in segs or "node_modules" in segs or ".superpowers/brainstorm" in p:
+    if is_transient(p, home_dir) or "node_modules" in segs or ".superpowers/brainstorm" in p:
         return True
     if under(p, os.path.join(home_dir, ".claude")) or under(p, os.path.join(home_dir, ".codex")):
         return True
@@ -628,7 +692,7 @@ def _not_a_document_path(p, home_dir, rooms_home):
     # Aside's own state (session scratch, tmp); only its artifacts are documents
     if under(p, os.path.join(home_dir, ".aside")) and "artifacts" not in segs:
         return True
-    return _is_codex_work(p, home_dir) or _is_system_tmp(p, home_dir)
+    return _is_codex_work(p, home_dir)
 
 
 def _is_codex_work(p, home_dir):
@@ -637,12 +701,6 @@ def _is_codex_work(p, home_dir):
         return False
     rest = p[len(codex_docs):].strip("/").split("/")
     return len(rest) >= 2 and rest[1] == "work"
-
-
-def _is_system_tmp(p, home_dir):
-    if under(p, home_dir):
-        return False
-    return any(under(p, t) for t in ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders"))
 
 
 def in_rooms_home(real, rooms_home):
@@ -750,11 +808,16 @@ def source_entry(path, writes):
     matches (Codex mentions, Bash copies), which may only mention or copy the path.
     """
     explicit = [w for w in writes if w[4]]
-    ts, agent, session, cwd, _ = (explicit or writes)[-1]
+    ts, agent, session, cwd, _, published = (explicit or writes)[-1]
     if not session:
         return None
-    return {"agent": agent, "session": session,
-            "cwd": cwd or os.path.dirname(path), "writtenAt": fmt(ts)}
+    entry = {"agent": agent, "session": session,
+             "cwd": cwd or os.path.dirname(path), "writtenAt": fmt(ts)}
+    if published:
+        entry["artifactUrl"] = published[0]
+        if published[1]:
+            entry["copiedFrom"] = published[1]
+    return entry
 
 
 def read_sources(target):
@@ -818,6 +881,9 @@ def main(argv=None):
     ap.add_argument("--claude-dir", default="~/.claude/projects")
     ap.add_argument("--codex-dir", default="~/.codex/sessions")
     ap.add_argument("--aside-dir", default="~/.aside/u")
+    ap.add_argument("--collect-data", default=os.environ.get("ROOMS_COLLECT_DATA")
+                    or "~/Library/Application Support/computer.alto.rooms",
+                    help="the Rooms app's data folder, which keeps copies of published temp pages")
     ap.add_argument("--include-noise", action="store_true")
     ap.add_argument("--record-sources", action="store_true",
                     help="write <home>/.rooms/sources.json: which session wrote each file")
@@ -831,7 +897,7 @@ def main(argv=None):
 
     col = Collector(cutoff)
     for p in claude_files(os.path.expanduser(a.claude_dir), cutoff_epoch):
-        scan_claude_file(p, col)
+        scan_claude_file(p, col, os.path.expanduser(a.collect_data))
     for p in codex_files(os.path.expanduser(a.codex_dir), cutoff, cutoff_epoch, col):
         scan_codex_file(p, col)
     for p, sid in aside_files(os.path.expanduser(a.aside_dir), cutoff):
@@ -865,6 +931,7 @@ def main(argv=None):
             continue
         first, last = writes[0], writes[-1]
         key, root, worktree = repo_info(real)
+        urls = [w[5][0] for w in writes if w[5]]
         sessions = []
         for w in writes:
             if w[2] and w[2] not in sessions:
@@ -883,6 +950,7 @@ def main(argv=None):
             "linked_at": links.get(real, []),
             "in_linked_room": in_linked_room(real, linked_roots),
             "in_worktree": worktree,
+            "artifact_url": urls[-1] if urls else None,
         })
     cands.sort(key=lambda c: c["last_written"], reverse=True)
     out = {

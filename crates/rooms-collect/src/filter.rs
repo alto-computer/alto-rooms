@@ -6,11 +6,18 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+/// A session scratchpad or the system's temp folders: gone after the session or a restart.
+/// Published pages there are copied before they are linked (sinks::linker).
+pub fn transient(p: &Path, user_home: &Path) -> bool {
+    if p.iter().any(|s| s == "scratchpad") { return true; }
+    !under(p, user_home) && ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].iter().any(|t| under(p, Path::new(t)))
+}
+
 /// Agent scratch, tool state and Rooms' own `.rooms`: never documents.
 pub fn not_a_document(p: &Path, user_home: &Path, rooms_home: &Path) -> bool {
     let s = p.to_string_lossy();
     let segs: Vec<&str> = s.split('/').collect();
-    if segs.contains(&"scratchpad") || segs.contains(&"node_modules") || s.contains(".superpowers/brainstorm") { return true; }
+    if transient(p, user_home) || segs.contains(&"node_modules") || s.contains(".superpowers/brainstorm") { return true; }
     if under(p, &user_home.join(".claude")) || under(p, &user_home.join(".codex")) { return true; }
     if under(p, &rooms_home.join(".rooms")) { return true; }
     if under(p, &user_home.join(".aside")) && !segs.contains(&"artifacts") { return true; }
@@ -18,11 +25,6 @@ pub fn not_a_document(p: &Path, user_home: &Path, rooms_home: &Path) -> bool {
     if let Ok(rest) = p.strip_prefix(&codex_docs) {
         let parts: Vec<_> = rest.components().collect();
         if parts.len() >= 2 && parts[1].as_os_str() == "work" { return true; }
-    }
-    if !under(p, user_home) {
-        for t in ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"] {
-            if under(p, Path::new(t)) { return true; }
-        }
     }
     false
 }
@@ -101,6 +103,12 @@ mod tests {
         }
         for p in ["/Users/me/p/a.html", "/Users/me/.aside/u/0/artifacts/a.html", "/Users/me/Documents/Codex/2026/out/a.html"] {
             assert!(!not_a_document(Path::new(p), u, r), "{p}");
+        }
+        for p in ["/tmp/a.html", "/private/tmp/claude-501/x/s/a.html", "/Users/me/p/scratchpad/a.html", "/private/var/folders/x/a.html"] {
+            assert!(transient(Path::new(p), u), "{p}");
+        }
+        for p in ["/Users/me/p/a.html", "/Users/me/.claude/x.html", "/Users/me/tmp/a.html"] {
+            assert!(!transient(Path::new(p), u), "{p}");
         }
     }
 

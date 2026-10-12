@@ -15,6 +15,10 @@ pub struct Entry {
     /// A real write (tool call, patch). A loose one (a shell line naming the path) only fills
     /// a file that has no entry yet.
     pub explicit: bool,
+    /// Where the agent published it (Claude Code's Artifact tool).
+    pub artifact_url: Option<String>,
+    /// The temp file this is a copy of.
+    pub copied_from: Option<String>,
 }
 
 /// Keeps the better of two entries for one file: explicit over loose, then the later.
@@ -45,7 +49,9 @@ pub fn merge(home: &Path, entries: &BTreeMap<String, Entry>) -> std::io::Result<
             Some(w) => e.explicit && e.written_at.as_str() >= w,
         };
         if !take { continue; }
-        let v = json!({"agent": e.agent, "session": e.session, "cwd": e.cwd, "writtenAt": e.written_at});
+        let mut v = json!({"agent": e.agent, "session": e.session, "cwd": e.cwd, "writtenAt": e.written_at});
+        if let Some(u) = &e.artifact_url { v["artifactUrl"] = json!(u); }
+        if let Some(f) = &e.copied_from { v["copiedFrom"] = json!(f); }
         if sources.get(path) != Some(&v) { sources.insert(path.clone(), v); n += 1; }
     }
     if n == 0 { return Ok(0); }
@@ -66,7 +72,7 @@ mod tests {
     use super::*;
 
     fn e(at: &str, explicit: bool, s: &str) -> Entry {
-        Entry { agent: "codex".into(), session: s.into(), cwd: "/p".into(), written_at: at.into(), explicit }
+        Entry { agent: "codex".into(), session: s.into(), cwd: "/p".into(), written_at: at.into(), explicit, artifact_url: None, copied_from: None }
     }
 
     #[test]

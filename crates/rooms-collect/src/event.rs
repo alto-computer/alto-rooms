@@ -1,12 +1,13 @@
 //! The normalized events adapters produce. Everything after the adapters works on these only.
 use chrono::{DateTime, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 pub const PREVIEW_CHARS: usize = 240;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind { SessionSeen, Message, ToolCall, FileWritten }
+pub enum Kind { SessionSeen, Message, ToolCall, FileWritten, ArtifactPublished }
 
 impl Kind {
     pub fn as_str(self) -> &'static str {
@@ -15,6 +16,7 @@ impl Kind {
             Kind::Message => "message",
             Kind::ToolCall => "tool.call",
             Kind::FileWritten => "file.written",
+            Kind::ArtifactPublished => "artifact.published",
         }
     }
 }
@@ -42,12 +44,23 @@ pub struct Event {
     pub path: Option<PathBuf>,
     pub title: Option<String>,
     pub explicit: bool,
+    /// artifact.published: where it was published; `path` is the page.
+    pub publish: Option<Publish>,
+}
+
+/// A page the agent published (Claude Code's Artifact tool), with the files published beside it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Publish {
+    pub url: String,
+    /// (path published next to the page, source file). A `None` source removes that path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<(String, Option<PathBuf>)>,
 }
 
 impl Event {
     pub fn new(kind: Kind, line_offset: u64, line_len: u64) -> Self {
         Event { kind, session: None, ts: None, cwd: None, native_id: None, line_offset, line_len, sub: 0,
-            role: None, text: None, path: None, title: None, explicit: false }
+            role: None, text: None, path: None, title: None, explicit: false, publish: None }
     }
 
     /// Deterministic id: the same line read twice (or from Codex's `.zst` copy) gives the same id.

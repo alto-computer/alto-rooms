@@ -2,7 +2,7 @@
 name: rooms
 description: "Sorts HTML artifacts into Rooms (an app that shows HTML artifacts grouped into topic room folders). Triggers: \"sort my rooms\", \"sort my rooms again\", \"sort my inbox\", reading and following \"~/rooms/ONBOARD.md\", \"put this in a room\", \"add to Rooms\", \"put this in the inbox\", \"put this in today's Journal\", making a review/Dream HTML, and sorting recent HTML into rooms. Never moves originals; only creates symlinks."
 ---
-<!-- rooms-onboarding v10 -->
+<!-- rooms-onboarding v11 -->
 
 # rooms skill
 
@@ -55,7 +55,8 @@ ln -s "<absolute path of the original>" "<home>/<slug>/<original file name>"
 
    It reads the session logs of Claude Code, Codex and Aside (read-only). This also records which session wrote each file (`<home>/.rooms/sources.json`), including files already in a room, so asking about an artifact in Rooms continues that session.
 
-   The output is one JSON object: `candidates[]` (most recently written first). Each has `path`, `title`, `agent`, `last_written`, `repo_key`, `rel_in_repo`, `linked`, `linked_at`, `in_linked_room`, `in_worktree`. `skipped` counts what was filtered out.
+   The output is one JSON object: `candidates[]` (most recently written first). Each has `path`, `title`, `agent`, `last_written`, `repo_key`, `rel_in_repo`, `linked`, `linked_at`, `in_linked_room`, `in_worktree`, `artifact_url`. `skipped` counts what was filtered out.
+   - HTML in agent scratch and temp folders is skipped. A page published with Claude Code's Artifact tool from there is listed as the copy the Rooms app keeps (its `path` is under the app's data folder, `artifact_url` is set). Link that `path` like any other. If the app has made no copy yet, the page is skipped.
    - A candidate with `linked: true` is already in a room. Skip it (also when re-sorting). It is still recorded in `sources.json`. Re-running is how existing artifacts get linked to their session; nothing is moved.
    - A candidate whose `in_linked_room` is not null is already inside a linked folder room (named there). Skip it.
    - Several candidates with the same `repo_key` + `rel_in_repo` (worktree copies) form one group. If any member is `linked: true` or has a non-null `in_linked_room`, skip the whole group. Otherwise use only the one with the latest `last_written`.
