@@ -92,7 +92,7 @@ describe("SurfaceHub", () => {
     const tagger = seat(hub);
     expect(tagger.sent).toEqual([]);
     tagger.say({ type: "ready" });
-    expect(tagger.sent).toEqual([{ rooms: "surface", v: 1, type: "surface.open", surface: answer("t1"), text: "first answer" }]);
+    expect(tagger.sent).toEqual([{ rooms: "surface", v: 1, type: "surface.open", surface: answer("t1"), text: "first answer", version: 1 }]);
     surface(hub, answer("t2"), "<p>second</p>");
     hub.close(surfaceKey(answer("t1")));
     expect(tagger.types()).toEqual(["surface.open", "surface.open", "surface.close"]);
@@ -405,6 +405,63 @@ describe("SurfaceHub", () => {
     vi.advanceTimersByTime(1000);
     expect(tagger.types().filter((t) => t === "surface.open"), "a close cancels the pending text").toHaveLength(2);
     expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.close", surface: note });
+    vi.useRealTimers();
+  });
+
+  it("lands a paint on the words the plugin named in the text it heard, after keystrokes it has not heard, and ignores a paint for an older text", () => {
+    vi.useFakeTimers();
+    const hub = new SurfaceHub();
+    const tagger = seat(hub);
+    const note: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    const root = document.createElement("div");
+    root.textContent = "the quick brown fox";
+    document.body.appendChild(root);
+    hub.open(note, root, { quietMs: 300 });
+    expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.open", text: "the quick brown fox", version: 1 });
+    root.textContent = "ABthe quick brown fox";
+    hub.open(note, root, { quietMs: 300 });
+    // The plugin read "quick" at 4..9 of the text it heard; two characters went in before it since.
+    tagger.say({ type: "paint", surface: note, version: 1, ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    expect(painted("rooms-tagger-amber")).toEqual(["quick"]);
+    tagger.say({ type: "paint", surface: note, ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    expect(painted("rooms-tagger-amber"), "a paint with no version is read against the text last told too").toEqual(["quick"]);
+    vi.advanceTimersByTime(300);
+    expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.open", text: "ABthe quick brown fox", version: 2 });
+    tagger.say({ type: "paint", surface: note, version: 1, ranges: [{ id: "q", start: 10, end: 15, style: "amber" }] });
+    expect(painted("rooms-tagger-amber"), "a paint against an older text is ignored; the plugin heard the new text and paints again").toEqual(["quick"]);
+    expect(hub.dropped).toBe(0);
+    tagger.say({ type: "paint", surface: note, version: 2, ranges: [{ id: "b", start: 12, end: 17, style: "amber" }] });
+    expect(painted("rooms-tagger-amber")).toEqual(["brown"]);
+    root.textContent = "ABthe quick brown fox and more";
+    hub.open(note, root, { quietMs: 300 });
+    tagger.say({ type: "paint", surface: note, version: 2, ranges: [{ id: "x", start: 22, end: 26, style: "amber" }] });
+    expect(painted("rooms-tagger-amber"), "a range is judged against the text the plugin heard, which ends before it").toEqual([]);
+    expect(hub.dropped).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it("tells a plugin the text it has not heard before posting a button click over it, and drops a click whose text moved", () => {
+    vi.useFakeTimers();
+    const hub = new SurfaceHub();
+    const tagger = seat(hub);
+    tagger.say({ type: "actions", items: [{ id: "tag", title: "Tag" }] });
+    const note: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    const root = document.createElement("div");
+    root.textContent = "the quick brown fox";
+    document.body.appendChild(root);
+    hub.open(note, root, { quietMs: 300 });
+    root.textContent = "ABthe quick brown fox";
+    hub.open(note, root, { quietMs: 300 });
+    const key = surfaceKey(note);
+    hub.runAction("tagger", "tag", { key, start: 6, end: 11, text: "quick" });
+    expect(tagger.sent.slice(-2)).toMatchObject([
+      { type: "surface.open", text: "ABthe quick brown fox", version: 2 },
+      { type: "selection.action", actionId: "tag", start: 6, end: 11, text: "quick" },
+    ]);
+    vi.advanceTimersByTime(300);
+    expect(tagger.types().filter((t) => t === "surface.open"), "the quiet timer had nothing left to tell").toHaveLength(2);
+    hub.runAction("tagger", "tag", { key, start: 6, end: 11, text: "brown" });
+    expect(tagger.types().filter((t) => t === "selection.action"), "a span whose text is not there any more is not a click").toHaveLength(1);
     vi.useRealTimers();
   });
 

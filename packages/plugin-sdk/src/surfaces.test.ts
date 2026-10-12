@@ -35,6 +35,16 @@ describe("connectSurfaces", () => {
     ]);
   });
 
+  it("stamps a paint with the version of the text it last heard for that surface", () => {
+    const s = connectSurfaces();
+    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "abc", version: 3 }));
+    s.paint(answer, []);
+    expect(host.sent.at(-1)).toEqual(fromApp({ type: "paint", surface: answer, ranges: [], version: 3 }));
+    host.deliver(fromApp({ type: "surface.close", surface: answer }));
+    s.paint(answer, []);
+    expect(host.sent.at(-1), "a closed surface has no text to be against").toEqual(fromApp({ type: "paint", surface: answer, ranges: [] }));
+  });
+
   it("hands each app message to its listeners, until they unsubscribe", () => {
     const s = connectSurfaces();
     const got: unknown[] = [];
