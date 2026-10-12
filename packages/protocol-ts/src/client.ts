@@ -76,14 +76,14 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     listArtifacts: (roomId: string) => get<Artifact[]>(`/v1/rooms/${encodeURIComponent(roomId)}/artifacts`),
     journalDay: (date: string) => get<JournalDay>(`/v1/journal/${date}`),
     /** The sessions added to a room, last active first; empty for the Journal. 404 `room_not_found`. */
-    listRoomSessions: (roomId: string) => get<Session[]>(`/v1/rooms/${encodeURIComponent(roomId)}/conversations`),
+    listRoomSessions: (roomId: string) => get<Session[]>(`/v1/rooms/${encodeURIComponent(roomId)}/sessions`),
     /** One session with its room, fresh from the agents' logs or as its room kept it. 404 `not_found`. */
     getSession: (sessionRef: SessionRef) =>
-      get<Session>(`/v1/conversations/${encodeURIComponent(sessionRef.agent)}/${encodeURIComponent(sessionRef.id)}`),
+      get<Session>(`/v1/sessions/${encodeURIComponent(sessionRef.agent)}/${encodeURIComponent(sessionRef.id)}`),
     /** Puts a session in a room (out of any other), or out of every room with `null`. 400 `invalid_input` for an
      *  unknown agent or a bad session id, 404 `not_found` / `room_not_found`. Emits `session.moved` when it moves. */
     setSessionRoom: (sessionRef: SessionRef, roomId: string | null) =>
-      write<Session>("PUT", `/v1/conversations/${encodeURIComponent(sessionRef.agent)}/${encodeURIComponent(sessionRef.id)}/room`, JSON.stringify(roomId)),
+      write<Session>("PUT", `/v1/sessions/${encodeURIComponent(sessionRef.agent)}/${encodeURIComponent(sessionRef.id)}/room`, JSON.stringify(roomId)),
     getNote: async (date: string, name: string): Promise<string> => {
       const r = await fetch(`${baseUrl}/v1/journal/${date}/notes/${encodeURIComponent(name)}`);
       if (!r.ok) throw await failure(r);
@@ -158,12 +158,12 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     },
     pluginEntryUrl: (info: Info, p: PluginInfo) =>
       `${info.filesOrigin}/_plugins/${encodeURIComponent(p.id)}/${p.entry.split("/").map(encodeURIComponent).join("/")}`,
-    /** Versioned by `updatedAt`: when the file changes, frames showing it get a new URL and reload. A doc tab passes
-     *  `doc` and gets the document with the content scripts of the enabled plugins spliced in; `contentKey` names
-     *  that set, so a plugin toggle changes the URL and reloads the frame too. Without `doc` (card previews) the
-     *  document carries the selection bridge alone. */
-    fileUrl: (info: Info, a: Artifact, doc?: { contentKey: string }) =>
-      `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}?v=${encodeURIComponent(a.updatedAt)}${doc ? `&doc=1&cs=${encodeURIComponent(doc.contentKey)}` : ""}`,
+    /** Versioned by `updatedAt`: when the file changes, frames showing it get a new URL and reload. An artifact tab
+     *  passes `tab` and gets the document with the content scripts of the enabled plugins spliced in; `contentKey`
+     *  names that set, so a plugin toggle changes the URL and reloads the frame too. Without `tab` (card previews)
+     *  the document carries the selection bridge alone. */
+    fileUrl: (info: Info, a: Artifact, tab?: { contentKey: string }) =>
+      `${info.filesOrigin}/${encodeURIComponent(a.roomId)}/${a.relPath.split("/").map(encodeURIComponent).join("/")}?v=${encodeURIComponent(a.updatedAt)}${tab ? `&tab=1&cs=${encodeURIComponent(tab.contentKey)}` : ""}`,
     /** Every (re)connection first delivers `resync {roomId: null}`; `onOpen` fires on each (re)open. */
     subscribe: (onEvent: (e: RoomsEvent) => void, onOpen?: () => void) => {
       const es = new EventSource(baseUrl + "/v1/events");

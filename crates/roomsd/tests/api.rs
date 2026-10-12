@@ -140,17 +140,17 @@ fn put_json(uri: &str, json: &str, token: Option<&str>) -> Request<Body> {
 }
 
 #[tokio::test]
-async fn without_collect_data_there_are_no_conversations() {
+async fn without_collect_data_there_are_no_sessions() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
-    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/sessions", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     assert!(r.headers().get("x-rooms-seq").is_some());
     assert_eq!(body_json(r).await, serde_json::json!([]));
     let r = app.clone().oneshot(get("/v1/journal/2026-10-05", API_HOST)).await.unwrap();
     assert_eq!(body_json(r).await["sessions"], serde_json::json!([]));
-    let r = app.clone().oneshot(put_json("/v1/conversations/claude-code/s1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    let r = app.clone().oneshot(put_json("/v1/sessions/claude-code/s1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
-    let r = app.oneshot(get("/v1/conversations/claude-code/s1", API_HOST)).await.unwrap();
+    let r = app.oneshot(get("/v1/sessions/claude-code/s1", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
 }
 
@@ -161,43 +161,47 @@ async fn an_unreadable_collect_db_is_500_not_404() {
     std::fs::create_dir_all(&data).unwrap();
     std::fs::write(rooms_collect::store::path_in(&data), b"this is not a database at all, not even close............................................").unwrap();
     st.core.set_collect_data(&data);
-    let r = app.clone().oneshot(get("/v1/conversations/codex/s-1", API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(get("/v1/sessions/codex/s-1", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    let r = app.oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    let r = app.oneshot(put_json("/v1/sessions/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
     assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[tokio::test]
-async fn conversations_join_and_leave_a_room() {
+async fn sessions_join_and_leave_a_room() {
     let (d, app, st) = app(false, "127.0.0.1:5000");
     let data = d.path().join("collect");
     let db = rooms_collect::store::open(&rooms_collect::store::path_in(&data)).unwrap();
     db.execute("INSERT INTO events(id, kind, agent, session, ts, role, src_path, file_key, src_offset, src_len, preview)
                 VALUES('e1', 'message', 'codex', 's-1', '2026-10-05T01:00:00Z', 'user', '/log', 'k', 0, 0, 'tidy the report')", []).unwrap();
     st.core.set_collect_data(&data);
-    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, None)).await.unwrap();
+    let r = app.clone().oneshot(put_json("/v1/sessions/codex/s-1/room", r#""inbox""#, None)).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN, "writes need the token");
-    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
+    let r = app.clone().oneshot(put_json("/v1/sessions/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     let v = body_json(r).await;
     assert_eq!((&v["roomId"], &v["title"], &v["agent"], &v["id"]), (&serde_json::json!("inbox"), &serde_json::json!("tidy the report"), &serde_json::json!("codex"), &serde_json::json!("s-1")));
-    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/sessions", API_HOST)).await.unwrap();
     assert_eq!(body_json(r).await.as_array().map(Vec::len), Some(1));
-    let r = app.clone().oneshot(get("/v1/conversations/codex/s-1", API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(get("/v1/sessions/codex/s-1", API_HOST)).await.unwrap();
     assert!(r.headers().get("x-rooms-seq").is_some());
     assert_eq!(body_json(r).await["roomId"], serde_json::json!("inbox"));
-    let r = app.clone().oneshot(get("/v1/conversations/codex/s%3B1", API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(get("/v1/sessions/codex/s%3B1", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
-    let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", "null", Some("t0k"))).await.unwrap();
+    let r = app.clone().oneshot(put_json("/v1/sessions/codex/s-1/room", "null", Some("t0k"))).await.unwrap();
     assert_eq!(body_json(r).await["roomId"], serde_json::Value::Null);
-    let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(get("/v1/rooms/inbox/sessions", API_HOST)).await.unwrap();
     assert_eq!(body_json(r).await, serde_json::json!([]));
-    for (uri, body) in [("/v1/conversations/cursor/s-1/room", r#""inbox""#), ("/v1/conversations/codex/s%3B1/room", r#""inbox""#), ("/v1/conversations/codex/s-1/room", "{}")] {
+    for (uri, body) in [("/v1/sessions/cursor/s-1/room", r#""inbox""#), ("/v1/sessions/codex/s%3B1/room", r#""inbox""#), ("/v1/sessions/codex/s-1/room", "{}")] {
         let r = app.clone().oneshot(put_json(uri, body, Some("t0k"))).await.unwrap();
         assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{uri} {body}");
     }
-    let r = app.oneshot(put_json("/v1/conversations/codex/s-1/room", r#""nope""#, Some("t0k"))).await.unwrap();
+    let r = app.clone().oneshot(put_json("/v1/sessions/codex/s-1/room", r#""nope""#, Some("t0k"))).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    for old in ["/v1/conversations/codex/s-1", "/v1/rooms/inbox/conversations"] {
+        let r = app.clone().oneshot(get(old, API_HOST)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_FOUND, "{old} is gone");
+    }
 }
 
 #[tokio::test]
@@ -317,7 +321,7 @@ async fn doc_variant_injects_bridge_then_content_scripts() {
     for id in ["marker", "alpha", "echo"] { st.core.set_plugin_enabled(id, true, None).unwrap(); }
     st.core.set_plugin_enabled("unapproved", true, Some(Vec::new())).unwrap();
     let files = build_files_router(st.clone());
-    let r = files.clone().oneshot(get(&format!("/{}/x.html?v=1&doc=1&cs=abc", room.id), FILES_HOST)).await.unwrap();
+    let r = files.clone().oneshot(get(&format!("/{}/x.html?v=1&tab=1&cs=abc", room.id), FILES_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     assert_eq!(r.headers()["content-type"], "text/html; charset=utf-8");
     let body = text(r).await;
@@ -329,7 +333,7 @@ async fn doc_variant_injects_bridge_then_content_scripts() {
     assert_eq!(std::fs::read_to_string(d.path().join("a/x.html")).unwrap(), DOC, "the file on disk is unchanged");
 
     std::fs::write(d.path().join("a/x.svg"), "<svg/>").unwrap();
-    let r = files.oneshot(get(&format!("/{}/x.svg?doc=1", room.id), FILES_HOST)).await.unwrap();
+    let r = files.oneshot(get(&format!("/{}/x.svg?tab=1", room.id), FILES_HOST)).await.unwrap();
     assert_eq!(text(r).await, "<svg/>", "a non-HTML file is served as is, whatever the query says");
 }
 
@@ -342,7 +346,7 @@ async fn a_policy_before_a_late_head_lands_after_the_block() {
     install_marker(d.path(), "marker");
     st.core.set_plugin_enabled("marker", true, None).unwrap();
     let files = build_files_router(st.clone());
-    let r = files.oneshot(get(&format!("/{}/x.html?doc=1", room.id), FILES_HOST)).await.unwrap();
+    let r = files.oneshot(get(&format!("/{}/x.html?tab=1", room.id), FILES_HOST)).await.unwrap();
     let body = text(r).await;
     let at = "<!doctype html>\n<html>".len();
     assert_eq!(&body[..at], &doc[..at]);
@@ -360,7 +364,7 @@ async fn card_variant_has_only_the_bridge() {
     install_marker(d.path(), "marker");
     st.core.set_plugin_enabled("marker", true, None).unwrap();
     let files = build_files_router(st);
-    for query in ["", "?v=1", "?doc=0", "?doc="] {
+    for query in ["", "?v=1", "?tab=0", "?tab=", "?doc=1"] {
         let r = files.clone().oneshot(get(&format!("/{}/x.html{query}", room.id), FILES_HOST)).await.unwrap();
         assert_eq!(r.status(), StatusCode::OK, "{query}");
         let body = text(r).await;
@@ -377,7 +381,7 @@ async fn doc_etag_changes_when_a_content_plugin_toggles() {
     std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
     install_marker(d.path(), "marker");
     let files = build_files_router(st.clone());
-    let uri = format!("/{}/x.html?doc=1", room.id);
+    let uri = format!("/{}/x.html?tab=1", room.id);
     let fetch = |tag: Option<String>| {
         let mut b = Request::get(&uri).header("host", FILES_HOST);
         if let Some(t) = tag { b = b.header("if-none-match", t); }
@@ -420,7 +424,7 @@ async fn big_doc_variant_streams_whole() {
     install_marker(d.path(), "marker");
     st.core.set_plugin_enabled("marker", true, None).unwrap();
     let files = build_files_router(st);
-    let r = files.oneshot(get(&format!("/{}/big.html?doc=1", room.id), FILES_HOST)).await.unwrap();
+    let r = files.oneshot(get(&format!("/{}/big.html?tab=1", room.id), FILES_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     let body = r.into_body().collect().await.unwrap().to_bytes();
     let at = b"<!doctype html>\n<html>\n<head>".len();
