@@ -115,6 +115,26 @@ describe("NoteView as a text surface", () => {
     expect(backdrop()!.textContent).toBe(TEXT);
   });
 
+  it("keeps the bar while focus moves onto its button, so Tab + Enter and an accessibility press run the action on the selection the bar was shown for", async () => {
+    sitDown();
+    await renderNote();
+    textarea().focus();
+    await select(15, 20);
+    const tag = screen.getByRole("button", { name: "Tag" });
+    // Tab lands on the button, and an accessibility press (WebKit's HTMLButtonElement::accessKeyAction) focuses it before its click.
+    act(() => tag.focus());
+    expect(screen.getByRole("button", { name: "Tag" }), "the textarea's blur into the bar keeps it").toBe(tag);
+    fireEvent.click(tag);
+    expect(sent.at(-1)).toEqual({ rooms: "surface", v: 1, type: "selection.action", surface: id, actionId: "tag", start: 15, end: 20, text: "quick" });
+    expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
+    expect(document.activeElement, "focus goes back to the text").toBe(textarea());
+    // Focus leaving the body altogether takes the bar with it.
+    await select(15, 20);
+    expect(screen.getByRole("button", { name: "Tag" })).toBeInTheDocument();
+    act(() => screen.getByRole("button", { name: "Open in another editor" }).focus());
+    expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
+  });
+
   it("typing keeps the paint on its word, saves the typed text as before, and tells the plugin after a pause", async () => {
     const frame = sitDown();
     const { client } = await renderNote();

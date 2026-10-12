@@ -366,6 +366,47 @@ async function selectInNote(page: Page, word: string) {
   await expect(noteEditor(page)).toHaveJSProperty("selectionEnd", start + word.length);
 }
 
+test("a note's bar button runs from the keyboard and from a click no pointer preceded, and is seen without an animation frame", async ({ page, daemon }) => {
+  const date = today();
+  await daemon.installPlugin("tagger");
+  await daemon.saveNote(date, "Plan.md", NOTE);
+  await page.goto("/");
+  await turnOnTagger(page);
+  await backgroundFrame(page);
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
+  await page.getByRole("region", { name: "Your day" }).getByRole("button", { name: "Plan" }).click();
+  const ta = noteEditor(page);
+  await expect(ta).toHaveValue(NOTE);
+  await ta.click();
+  // WebKit holds animations at their first frame while the window is occluded, as the verify app's is: a bar that fades in never shows there.
+  await page.evaluate(() => {
+    const held = new CSSStyleSheet();
+    held.replaceSync("* { animation-play-state: paused !important; }");
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, held];
+  });
+  await selectInNote(page, "Line 2");
+  const tag = page.getByRole("button", { name: "Tag" });
+  await expect(tag).toBeVisible();
+  expect(await tag.evaluate((el) => getComputedStyle(el).opacity), "seen with every animation held at its first frame").toBe("1");
+  // Tab from the text onto the button, then Enter: the action runs on the selection the bar was shown for.
+  // WebKit's plain Tab skips buttons unless macOS keyboard navigation is on; Option+Tab reaches them regardless.
+  await page.keyboard.press(test.info().project.name === "webkit" ? "Alt+Tab" : "Tab");
+  await expect(tag).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => painted(page)).toEqual(["Line 2"]);
+  await expect(ta, "focus goes back to the text").toBeFocused();
+  // An accessibility press (and WebKit's AXPress on a button): focus, then a click with no pointer events before it.
+  await selectInNote(page, "Line 3");
+  await expect(page.getByRole("button", { name: "Tag" })).toBeVisible();
+  await page.getByRole("button", { name: "Tag" }).evaluate((el: HTMLElement) => {
+    el.focus();
+    el.click();
+  });
+  await expect.poll(() => painted(page, GREEN)).toEqual(["Line 3"]);
+  await expect(ta).toBeFocused();
+  expect(await daemon.read(`journal/${date}/Plan.md`), "a paint never writes the note").toBe(NOTE);
+});
+
 test("tagging words in a note paints them behind the textarea, aligned through scroll, wrapping, resize and typing, and leaves the file and the textarea as they were", async ({ page, daemon }) => {
   const date = today();
   await daemon.installPlugin("tagger");
