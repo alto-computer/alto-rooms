@@ -1,8 +1,9 @@
 /*
  * The plugin list as the app sees it: roomsd's list plus whether this app
  * version can run each plugin. Lists again when roomsd says plugins changed or
- * the event stream resyncs. Also remembers which enable cards were dismissed
- * ("Not now") for the life of this app run.
+ * the event stream resyncs. Also remembers, for the life of this app run, which
+ * enable cards were dismissed ("Not now") and which plugins' pages apply the
+ * app's theme, so their next frame starts on the pane colour instead of white.
  */
 import type { PluginInfo, RoomsEvent } from "@alto-rooms/protocol-ts";
 
@@ -54,6 +55,8 @@ export function compatible(app: string, min: string): boolean {
 
 export class PluginsStore {
   private state: PluginsState = { list: [], dismissed: new Set(), loaded: false };
+  /** `id@rev` of each plugin whose page said, on ready or hello, that it applies the theme. */
+  private themed = new Set<string>();
   private listeners = new Set<() => void>();
   private stopSignals: (() => void) | null = null;
   private gen = 0;
@@ -116,6 +119,15 @@ export class PluginsStore {
   /** "Not now": stop asking about `id` until the app restarts. */
   dismiss(id: string): void {
     this.set({ dismissed: new Set([...this.state.dismissed, id]) });
+  }
+
+  /** The page of plugin `id` at `rev` applies the app's theme: its frames may start on the pane colour. */
+  markThemed(id: string, rev: string): void {
+    this.themed.add(`${id}@${rev}`);
+  }
+
+  isThemed(id: string, rev: string): boolean {
+    return this.themed.has(`${id}@${rev}`);
   }
 
   private set(p: Partial<PluginsState>) {

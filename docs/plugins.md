@@ -159,7 +159,7 @@ rooms.theme.onChange((theme) => render(<Excalidraw theme={theme.scheme} />));
 | `theme.current()` | The theme last heard, `{ scheme, tokens }`, or `null` before the app sent one. `tokens` has the names above without the `--rooms-` prefix; a token the app does not define is absent |
 | `theme.onChange(cb)` | Calls `cb(theme)` at once when a theme is known, then on every change. Returns an unsubscribe function |
 
-`connect({ theme: false })` keeps the SDK off your page's style: no variables, no `color-scheme`, no default colours. `rooms.theme` still reports the theme. A page that only calls `connectSurfaces()` gets the variables too. A plugin built on an older SDK ignores the message and keeps its own look.
+`connect({ theme: false })` keeps the SDK off your page's style: no variables, no `color-scheme`, no default colours. `rooms.theme` still reports the theme. A page that only calls `connectSurfaces()` gets the variables too, and `connectSurfaces({ theme: false })` opts out; either opt-out holds for the whole page. The frame around your page is white until the SDK tells the app, on connect, that the page applies the theme; then it takes the app's pane colour. A plugin built on an older SDK, or one that opted out, ignores the message and keeps its own look on the white frame.
 
 ## Tools for agents
 

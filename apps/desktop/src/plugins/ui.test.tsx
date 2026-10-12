@@ -820,10 +820,58 @@ describe("theme", () => {
     }
   });
 
-  it("paints the pane colour behind the frame, so nothing white shows before the plugin does", async () => {
+  /** Closes the Echo panel the way the app does, answering its beforeClose. */
+  const closePanel = async (f: HTMLIFrameElement, posted: { mock: { calls: unknown[][] } }) => {
+    fireEvent.click(screen.getByRole("button", { name: "Close Echo" }));
+    const close = posted.mock.calls.map((c) => c[0] as { type?: string; id?: string }).find((m) => m.type === "beforeClose")!;
+    fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
+    await act(async () => {});
+    expect(screen.queryByTitle("Echo")).toBeNull();
+  };
+
+  it("keeps the frame white in dark for a page on an older SDK, or one that opted out, which never says it applies the theme", async () => {
+    document.documentElement.classList.add("dark");
+    try {
+      await openArtifact();
+      const { f } = await openPanel();
+      expect(f.className).toContain("bg-white");
+      fromFrame(f, { rooms: 1, type: "ready" });
+      expect(f.className).toContain("bg-white");
+      fromFrame(f, { rooms: 1, type: "ready", theme: false });
+      expect(f.className).toContain("bg-white");
+      expect(f.className).not.toContain("bg-pane");
+    } finally {
+      document.documentElement.classList.remove("dark");
+    }
+  });
+
+  it("gives the frame the pane colour once the page says on ready that it applies the theme, and remembers that for the plugin's next frame", async () => {
     await openArtifact();
-    const { f } = await openPanel();
+    const { f, posted } = await openPanel();
+    expect(f.className).toContain("bg-white");
+    fromFrame(f, { rooms: 1, type: "ready", theme: true });
     expect(f.className).toContain("bg-pane");
     expect(f.className).not.toContain("bg-white");
+
+    await closePanel(f, posted);
+    const again = await openPanel();
+    expect(again.f.className, "a frame of a plugin known to apply the theme starts on the pane").toContain("bg-pane");
+  });
+
+  it("takes the flag on a surface hello too, and forgets it when the plugin's rev changes", async () => {
+    const h = await openArtifact();
+    const { f, posted } = await openPanel();
+    fromFrame(f, { rooms: "surface", v: 1, api: 2, type: "hello", theme: true });
+    expect(f.className).toContain("bg-pane");
+
+    fromFrame(f, { rooms: 1, type: "ready", theme: true });
+    Object.assign(h.state.plugins[0], { rev: "r2" });
+    await act(async () => {
+      h.emit({ type: "plugins.changed" });
+    });
+    const close = posted.mock.calls.map((c) => c[0] as { type?: string; id?: string }).find((m) => m.type === "beforeClose")!;
+    fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
+    await act(async () => {});
+    expect(frame("Echo").className, "a new rev may be on another SDK: white until it says").toContain("bg-white");
   });
 });
