@@ -65,7 +65,8 @@ After that, new files are linked on their own while the app is open. Ask your ag
 `rooms-collect` runs beside the app (and stops with it). It reads the logs Claude Code (`~/.claude/projects`), Codex (`~/.codex/sessions`) and Aside (`~/.aside/u`) already keep, read-only, and:
 
 - links each new `.html` an agent writes into `inbox` (and notes it in `~/rooms/.rooms/collect/linked.jsonl`). It never chooses a room, never creates rooms, and never re-adds a link you deleted;
-- records which session wrote each file in `~/rooms/.rooms/sources.json`, so asking about an artifact continues that session;
+- skips HTML in agent scratch and temp folders (a session `scratchpad`, `/tmp`, `/var/folders`), except a page the agent published with Claude Code's Artifact tool. Such a page is copied, with the files published beside it, into `~/Library/Application Support/computer.alto.rooms/artifacts/<artifact id>/`, and the copy is linked, because the temp file goes away. Publishing it again refreshes the same copy under the same link. Rooms shows only the page itself, so a page that loads images or other pages by relative path shows them only when they are inlined;
+- records which session wrote each file in `~/rooms/.rooms/sources.json`, so asking about an artifact continues that session. A published page also gets its `artifactUrl` (and, for a copy, `copiedFrom`, the temp file it came from);
 - keeps a copy of the logs in `~/Library/Application Support/computer.alto.rooms/archive` (agents delete old logs; Claude Code after 30 days);
 - indexes the last 30 days of sessions for search:
 
@@ -92,7 +93,7 @@ aside = true
 
 | Rule | Needs a key | Moves the artifact |
 |---|---|---|
-| R1 | no | to the room named like its git repo |
+| R1 | no | to the room named like its git repo (for a copy of a published page, the repo the agent worked in) |
 | R2 | no | to the room R4 once made for its repo, even after you rename it |
 | R3 | yes | to the room TypeSafe Jev picks, when it is at least 70% sure |
 | R4 | yes | nowhere yet: a vote for its repo; at 3 votes a room named after the repo is made and they move in |
