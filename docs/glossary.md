@@ -57,7 +57,7 @@ Some names keep "doc" because something outside this repository reads or writes 
 roomsd and the app move old names to new ones the first time they meet them. Each step is safe to run again, and each has a test that fails without it.
 
 - `~/rooms/.rooms/conversations.json` becomes `sessions.json` when roomsd opens the home. The old file is kept as `conversations.json.bak`, or `.bak.2` and up when a backup is already there. If `sessions.json` already exists (an older app ran again in between), the sessions only the old file has are added to it, and `sessions.json` wins for the rest.
-- Ask logs named `conversation-<agent>-<id>.jsonl` are renamed to `session-<agent>-<id>.jsonl` when the ask log opens. A log already under the new name is left alone.
+- Ask logs named `conversation-<agent>-<id>.jsonl` are renamed to `session-<agent>-<id>.jsonl` when the ask log opens. When a log is already under the new name, the old log's lines are added to its end and the old file is removed.
 - Saved tabs and tab history of kind `conversation` (id in `session`) come back as kind `session` (id in `sessionId`), and kind `doc` comes back as kind `artifact`.
 - An unsent ask draft saved under `alto-rooms.askDraft.conversation:<agent>:<id>` moves to the `session:` key the first time it is read. Artifact drafts keep their bare file key.
 - A surface a plugin names with SDK 0.5 scope kinds (`doc`, or `conversation` with `session`) still parses in `paint`, `menu` and `open` until SDK 0.7. `legacySurfacePath` in the SDK finds data a plugin saved under the 0.5 paths.

@@ -4,7 +4,7 @@ use rooms_protocol::{AskKind, AskMode, AskScope, AskStatus, AskTurn};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub(crate) struct AskLog { dir: PathBuf }
 
@@ -59,16 +59,22 @@ impl AskLog {
         log
     }
 
-    /// Renames session logs from before the rename to `session-<agent>-<id>.jsonl`. A log already
-    /// under the new name wins and the old one stays where it is, so running this again is a no-op.
+    /// Renames session logs from before the rename to `session-<agent>-<id>.jsonl`. When a log is
+    /// already under the new name, as after running an older app again, the old log's lines go on
+    /// the end of it and the old file is removed. A crash in between only repeats lines, and the
+    /// last line per id wins, so running this again is safe.
     fn migrate_legacy_names(&self) {
         let Ok(entries) = std::fs::read_dir(&self.dir) else { return };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             let Some(rest) = name.strip_prefix(LEGACY_SESSION_PREFIX).filter(|r| r.ends_with(".jsonl")) else { continue };
             let to = self.dir.join(format!("session-{rest}"));
-            if to.exists() { continue; }
-            if let Err(err) = std::fs::rename(e.path(), &to) { eprintln!("rooms-core: {name} not renamed: {err}"); }
+            let moved = if to.exists() {
+                append_lines(&e.path(), &to).and_then(|()| std::fs::remove_file(e.path()))
+            } else {
+                std::fs::rename(e.path(), &to)
+            };
+            if let Err(err) = moved { eprintln!("rooms-core: {name} not moved to {}: {err}", to.display()); }
         }
     }
 
@@ -109,6 +115,15 @@ impl AskLog {
         }
         Ok(out)
     }
+}
+
+/// Adds `from`'s lines to the end of `to`, each on a line of its own even when either file's last
+/// line was cut short.
+fn append_lines(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut lines = std::fs::read(from)?;
+    if lines.last().is_some_and(|b| *b != b'\n') { lines.push(b'\n'); }
+    if std::fs::read(to)?.last().is_some_and(|b| *b != b'\n') { lines.insert(0, b'\n'); }
+    std::fs::OpenOptions::new().append(true).open(to)?.write_all(&lines)
 }
 
 #[cfg(test)]
@@ -224,14 +239,34 @@ mod tests {
         let scope = AskScope::Session(rooms_protocol::SessionRef::parse_key("claude-code:s-1").unwrap());
         AskLog::new(dir.clone()).append(&AskTurn { scope: scope.clone(), ..t("old", AskStatus::Done, "A") }).unwrap();
         std::fs::rename(dir.join("session-claude-code-s-1.jsonl"), dir.join("conversation-claude-code-s-1.jsonl")).unwrap();
-        std::fs::write(dir.join("conversation-codex-s-2.jsonl"), "stays").unwrap();
-        std::fs::write(dir.join("session-codex-s-2.jsonl"), "").unwrap();
 
         let log = AskLog::new(dir.clone());
         assert_eq!(log.read(&scope).unwrap().iter().map(|t| (t.id.as_str(), &t.scope)).collect::<Vec<_>>(), [("old", &scope)]);
         assert!(!dir.join("conversation-claude-code-s-1.jsonl").exists());
-        assert_eq!(std::fs::read_to_string(dir.join("conversation-codex-s-2.jsonl")).unwrap(), "stays", "an existing new log wins");
         AskLog::new(dir.clone());
         assert_eq!(log.read(&scope).unwrap().len(), 1, "a second run changes nothing");
+    }
+
+    #[test]
+    fn an_old_log_written_after_the_rename_is_added_to_the_new_one() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("asks");
+        let scope = AskScope::Session(rooms_protocol::SessionRef::parse_key("claude-code:s-1").unwrap());
+        let ids = |log: &AskLog| log.read(&scope).unwrap().into_iter().map(|t| (t.id, t.answer)).collect::<Vec<_>>();
+        let log = AskLog::new(dir.clone());
+        log.append(&AskTurn { scope: scope.clone(), ..t("new", AskStatus::Done, "N") }).unwrap();
+        // An older app ran in between and kept this session's thread under the old name, its last line unterminated.
+        log.append(&AskTurn { scope: scope.clone(), ..t("old", AskStatus::Done, "O") }).unwrap();
+        let new_path = dir.join("session-claude-code-s-1.jsonl");
+        let text = std::fs::read_to_string(&new_path).unwrap();
+        let (first, second) = text.split_once('\n').unwrap();
+        std::fs::write(&new_path, format!("{first}\n")).unwrap();
+        std::fs::write(dir.join("conversation-claude-code-s-1.jsonl"), second.trim_end()).unwrap();
+
+        let log = AskLog::new(dir.clone());
+        assert_eq!(ids(&log), [("new".into(), "N".into()), ("old".into(), "O".into())]);
+        assert!(!dir.join("conversation-claude-code-s-1.jsonl").exists());
+        log.append(&AskTurn { scope: scope.clone(), ..t("next", AskStatus::Done, "X") }).unwrap();
+        assert_eq!(ids(&AskLog::new(dir.clone())).len(), 3, "the next turn starts on a line of its own, and a second run changes nothing");
     }
 }
