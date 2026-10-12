@@ -70,7 +70,7 @@ pub(crate) struct Plan {
     pub models: Vec<String>,
     pub events: Vec<EventRule>,
     /// A room or day ask whose argv carries `{scope_settings}`, so the agent itself denies reads
-    /// outside the listed files. False for a doc ask and for an agent told the list only in words.
+    /// outside the listed files. False for an artifact ask and for an agent told the list only in words.
     pub scoped: bool,
     template: Vec<String>,
 }
@@ -89,7 +89,7 @@ pub(crate) struct Vars<'a> {
     pub images: &'a [String],
     /// The folder the images are in, or "" when there are none.
     pub image_dir: &'a str,
-    /// `claude_read_scope` of a room's or day's listed files, or "" for a doc ask.
+    /// `claude_read_scope` of a room's or day's listed files, or "" for an artifact ask.
     pub scope_settings: &'a str,
     /// The Aside account a resumed session is under (`u<n>`), or "" when unknown or not Aside.
     pub account: &'a str,
@@ -437,7 +437,7 @@ new = ["codex2", "{prompt}"]
         assert_eq!(out, vec!["aside", "exec", "say {session} and {cwd} and {other}"]);
     }
 
-    /// A room or day ask: the built-in claude template carries the read scope; a doc ask drops the flag.
+    /// A room or day ask: the built-in claude template carries the read scope; an artifact ask drops the flag.
     #[test]
     fn claude_new_takes_the_read_scope_as_settings() {
         let (_d, p) = tmp(None);

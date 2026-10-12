@@ -221,7 +221,7 @@ fn write_sources(home: &std::path::Path, artifact: &std::path::Path, agent: &str
     std::fs::write(home.join(".rooms/sources.json"), body.to_string()).unwrap();
 }
 
-fn doc_path(core: &RoomsCore, room: &str) -> std::path::PathBuf {
+fn artifact_path(core: &RoomsCore, room: &str) -> std::path::PathBuf {
     core.room_root(&room.to_string()).unwrap().0.join("doc.html")
 }
 
@@ -230,7 +230,7 @@ async fn sidecar_resumes_when_doc_has_no_meta() {
     let cwd = tempfile::tempdir().unwrap();
     let real = std::fs::canonicalize(cwd.path()).unwrap();
     let (d, core, artifact, room) = setup("");
-    write_sources(d.path(), &doc_path(&core, &room), "claude-code", "S-9", &real.to_string_lossy());
+    write_sources(d.path(), &artifact_path(&core, &room), "claude-code", "S-9", &real.to_string_lossy());
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
     let t = asks.start(&artifact, "q", None).unwrap();
@@ -243,7 +243,7 @@ async fn sidecar_resumes_when_doc_has_no_meta() {
 #[tokio::test]
 async fn meta_session_wins_over_sidecar() {
     let (d, core, artifact, room) = setup(r#"<meta name="rooms:agent" content="claude-code"><meta name="rooms:session" content="S-1">"#);
-    write_sources(d.path(), &doc_path(&core, &room), "claude-code", "S-9", "/");
+    write_sources(d.path(), &artifact_path(&core, &room), "claude-code", "S-9", "/");
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
     let t = asks.start(&artifact, "q", None).unwrap();
@@ -254,7 +254,7 @@ async fn meta_session_wins_over_sidecar() {
 #[tokio::test]
 async fn sidecar_entry_is_used_whole_not_mixed_with_meta_agent() {
     let (d, core, artifact, room) = setup(r#"<meta name="rooms:agent" content="codex">"#);
-    write_sources(d.path(), &doc_path(&core, &room), "claude-code", "S-9", "/");
+    write_sources(d.path(), &artifact_path(&core, &room), "claude-code", "S-9", "/");
     let asks = Asks::new(core.clone(), None);
     let mut rx = core.subscribe();
     let t = asks.start(&artifact, "q", None).unwrap();
@@ -266,7 +266,7 @@ async fn sidecar_entry_is_used_whole_not_mixed_with_meta_agent() {
 #[tokio::test]
 async fn sidecar_values_are_still_validated() {
     let (d, core, artifact, room) = setup("");
-    write_sources(d.path(), &doc_path(&core, &room), "claude-code", "--bad", "/");
+    write_sources(d.path(), &artifact_path(&core, &room), "claude-code", "--bad", "/");
     let asks = Asks::new(core.clone(), None);
     let t = asks.start(&artifact, "q", None).unwrap();
     assert_eq!(t.mode, AskMode::New);
@@ -303,7 +303,7 @@ async fn target_matches_what_start_picks() {
     for (meta, side, models) in cases {
         let (d, core, artifact, room) = setup(meta);
         with_models(d.path());
-        if let Some((agent, session)) = side { write_sources(d.path(), &doc_path(&core, &room), agent, session, "/"); }
+        if let Some((agent, session)) = side { write_sources(d.path(), &artifact_path(&core, &room), agent, session, "/"); }
         let asks = Asks::new(core.clone(), None);
         let target = asks.target(&artifact).unwrap();
         assert_eq!(target.models, models, "{meta} {side:?}");
@@ -472,7 +472,7 @@ async fn new_starts_over_and_compact_sends_the_agents_summary_instead() {
 /// Two rooms link one original; the first room's link is gone (the index still lists it until a
 /// rescan). The ask goes through the second room's link.
 #[tokio::test]
-async fn doc_scope_skips_a_dangling_link_and_uses_the_next_room() {
+async fn artifact_scope_skips_a_dangling_link_and_uses_the_next_room() {
     let d = tempfile::tempdir().unwrap();
     let core = RoomsCore::open(d.path()).unwrap();
     let a = core.create_room("a").unwrap().id;

@@ -49,7 +49,7 @@ where
     tokio::task::spawn_blocking(move || f(&asks)).await.map_err(|e| AskError::Io(e.to_string()))?.map_err(AskErr)
 }
 
-/// `?scope=<key>`: `doc:<fileKey>`, `room:<roomId>` or `day:<YYYY-MM-DD>`.
+/// `?scope=<key>`: `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>` or `session:<agent>:<id>`.
 #[derive(Deserialize)]
 pub struct ScopeQuery { scope: String }
 

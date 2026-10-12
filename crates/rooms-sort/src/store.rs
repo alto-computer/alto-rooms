@@ -117,7 +117,7 @@ impl Store {
         self.c.execute("INSERT OR IGNORE INTO votes(repo_key, file_key) VALUES (?1, ?2)", params![repo, file_key]).map(|_| ())
     }
 
-    /// N3: votes from documents that left the inbox no longer count.
+    /// N3: votes from artifacts that left the inbox no longer count.
     pub fn drop_votes(&self, file_key: &str) -> rusqlite::Result<()> {
         self.c.execute("DELETE FROM votes WHERE file_key = ?1", [file_key]).map(|_| ())
     }

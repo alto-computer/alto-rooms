@@ -181,11 +181,11 @@ fn links_go_to_the_inbox_even_with_a_repo_named_room() {
     e.since(5.0);
     std::fs::create_dir_all(e.root.join("code/Alto Rooms/.git")).unwrap();
     std::fs::create_dir_all(e.home.join("alto rooms")).unwrap(); // a room named like the repo: rooms-sort's R1 moves it
-    let doc = e.html("code/Alto Rooms/docs/plan.html");
+    let artifact = e.html("code/Alto Rooms/docs/plan.html");
     let other = e.html("code/other/x.html");
-    e.claude_log("s1.jsonl", &[cc("Write", &doc, 1.0), cc("Write", &other, 1.0)]);
+    e.claude_log("s1.jsonl", &[cc("Write", &artifact, 1.0), cc("Write", &other, 1.0)]);
     e.collector().drain().unwrap();
-    assert_eq!(e.links(), vec![("inbox/plan.html".into(), doc), ("inbox/x.html".into(), other)]);
+    assert_eq!(e.links(), vec![("inbox/plan.html".into(), artifact), ("inbox/x.html".into(), other)]);
 }
 
 #[test]
@@ -202,9 +202,9 @@ fn rooms_files_linked_rooms_worktrees_and_noise_are_skipped() {
     let wt = e.root.join("wt/feat");
     std::fs::create_dir_all(&wt).unwrap();
     std::fs::write(wt.join(".git"), format!("gitdir: {}/.git/worktrees/feat\n", e.root.join("repo").display())).unwrap();
-    let wt_doc = e.html("wt/feat/docs/a.html");
+    let wt_artifact = e.html("wt/feat/docs/a.html");
     e.claude_log("s1.jsonl", &[cc("Write", &inside, 1.0), cc("Write", &in_linked, 1.0), cc("Write", &scratch, 1.0),
-        cc("Write", &main, 1.0), cc("Write", &wt_doc, 1.0)]);
+        cc("Write", &main, 1.0), cc("Write", &wt_artifact, 1.0)]);
     e.collector().drain().unwrap();
     assert_eq!(e.links(), vec![("inbox/a.html".into(), main)]);
     let s = e.sources();

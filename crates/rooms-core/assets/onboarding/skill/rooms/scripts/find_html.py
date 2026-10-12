@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-# rooms-onboarding v9
+# rooms-onboarding v10
 """List existing .html files that an AI agent wrote recently.
 
 Reads Claude Code, Codex and Aside session logs and <home>/.rooms/state.json
 (all read-only), prints JSON to stdout.
 Python 3.9+ standard library only. This script never writes anything, except
 with --record-sources: then it writes <home>/.rooms/sources.json (which agent
-conversation last wrote each file) and nothing else.
+session last wrote each file) and nothing else.
 """
 import argparse
 import html as htmllib
@@ -820,7 +820,7 @@ def main(argv=None):
     ap.add_argument("--aside-dir", default="~/.aside/u")
     ap.add_argument("--include-noise", action="store_true")
     ap.add_argument("--record-sources", action="store_true",
-                    help="write <home>/.rooms/sources.json: which conversation wrote each file")
+                    help="write <home>/.rooms/sources.json: which session wrote each file")
     a = ap.parse_args(argv)
 
     now = datetime.now(timezone.utc)

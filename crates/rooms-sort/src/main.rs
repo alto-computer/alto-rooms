@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage:
   rooms-sort [run] [--dry-run]   sort the inbox once (dry-run: decide and print, move nothing)
-  rooms-sort undo [--run ID]     move the last run's documents back to the inbox
+  rooms-sort undo [--run ID]     move the last run's artifacts back to the inbox
   rooms-sort log [-n 20]         recent decisions and the rule behind each
   rooms-sort check-key           exit 0 if TypeSafe accepts $TYPESAFE_API_KEY, 3 if it refuses it
 options: --home DIR (Rooms home, default $ROOMS_HOME or ~/rooms), --data DIR (default $ROOMS_SORT_DATA
@@ -63,7 +63,7 @@ fn real_main(args: Vec<String>) -> Result<ExitCode, Box<dyn std::error::Error>> 
             // One tiny Choice call: exit 0 when TypeSafe takes the key, 3 when it refuses it.
             let key = std::env::var(jev::KEY_ENV).ok().filter(|k| !k.trim().is_empty()).ok_or("TYPESAFE_API_KEY is not set")?;
             let j = jev::Jev::new(key.trim().to_string(), Config::load(&home).model);
-            let opts = [("a".to_string(), "rooms".to_string()), (rooms_sort::doc::NONE_KEY.to_string(), rooms_sort::doc::NONE_TEXT.to_string())];
+            let opts = [("a".to_string(), "rooms".to_string()), (rooms_sort::prompt::NONE_KEY.to_string(), rooms_sort::prompt::NONE_TEXT.to_string())];
             match jev::Classifier::ask(&j, "key check", &opts) {
                 Ok(_) => { println!("key ok"); Ok(ExitCode::SUCCESS) }
                 Err(jev::JevError::Unauthorized) => { println!("key rejected"); Ok(ExitCode::from(3)) }
@@ -79,7 +79,7 @@ fn real_main(args: Vec<String>) -> Result<ExitCode, Box<dyn std::error::Error>> 
             let n: u32 = flags.get("-n").map(|s| s.parse()).transpose()?.unwrap_or(20);
             for r in store.recent(n)? {
                 let local = chrono::DateTime::parse_from_rfc3339(&r.at).map(|t| t.with_timezone(&chrono::Local).format("%m-%d %H:%M").to_string()).unwrap_or(r.at.clone());
-                println!("{local}  {:<6} {}  {} {}", r.action, rooms_sort::doc::cut(&r.title, 40), r.rule, r.why);
+                println!("{local}  {:<6} {}  {} {}", r.action, rooms_sort::prompt::cut(&r.title, 40), r.rule, r.why);
             }
             Ok(ExitCode::SUCCESS)
         }

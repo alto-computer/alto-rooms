@@ -9,15 +9,15 @@ pub const GENERIC_NAMES: &[&str] = &[
     "build", "untitled",
 ];
 
-/// One inbox document as the rules see it.
+/// One inbox artifact as the rules see it.
 #[derive(Debug, Clone)]
-pub struct Doc {
+pub struct Candidate {
     pub file_key: String,
     /// N1: the git repo the original lives in, if any.
     pub repo: Option<String>,
 }
 
-/// An owned room a document may move to (never the inbox).
+/// An owned room an artifact may move to (never the inbox).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Room {
     pub id: String,
@@ -31,7 +31,7 @@ pub struct Memory {
     pub repo_rooms: HashMap<String, String>,
     /// N4: repos whose R4 room the user deleted (or a run that created it was undone).
     pub forgotten: HashSet<String>,
-    /// N3: votes per repo from other documents still in the inbox.
+    /// N3: votes per repo from other artifacts still in the inbox.
     pub votes: HashMap<String, HashSet<String>>,
 }
 
@@ -81,13 +81,13 @@ pub struct Decision {
 }
 
 impl Decision {
-    /// R5 because there is no key: not recorded, so a key added later sorts the document (N5).
+    /// R5 because there is no key: not recorded, so a key added later sorts the artifact (N5).
     pub fn is_no_key(&self) -> bool { self.rule == Rule::R5 && self.why == "no_key" }
 }
 
 /// R1 and R2: the rules that need no model. `Some` means Jev is not asked.
-pub fn deterministic(doc: &Doc, rooms: &[Room], mem: &Memory) -> Option<Decision> {
-    let repo = doc.repo.as_deref()?;
+pub fn deterministic(candidate: &Candidate, rooms: &[Room], mem: &Memory) -> Option<Decision> {
+    let repo = candidate.repo.as_deref()?;
     let want = slug_key(&room_slug(repo));
     if !want.is_empty() {
         if let Some(r) = rooms.iter().find(|r| slug_key(&room_slug(&r.name)) == want) {
@@ -104,8 +104,8 @@ pub fn deterministic(doc: &Doc, rooms: &[Room], mem: &Memory) -> Option<Decision
 }
 
 /// The whole table: R1, R2, then R3 and R4 from Jev's answer (`None` = no key), else R5.
-pub fn decide(doc: &Doc, rooms: &[Room], mem: &Memory, jev: Option<&Answer>, cfg: &Config) -> Decision {
-    if let Some(d) = deterministic(doc, rooms, mem) { return d; }
+pub fn decide(candidate: &Candidate, rooms: &[Room], mem: &Memory, jev: Option<&Answer>, cfg: &Config) -> Decision {
+    if let Some(d) = deterministic(candidate, rooms, mem) { return d; }
     let Some(a) = jev else { return keep("no_key".into()) };
     let picked = a.choice.as_ref().and_then(|id| rooms.iter().find(|r| &r.id == id));
     if let Some(r) = picked {
@@ -117,8 +117,8 @@ pub fn decide(doc: &Doc, rooms: &[Room], mem: &Memory, jev: Option<&Answer>, cfg
             };
         }
     }
-    if let Some(repo) = doc.repo.as_deref().filter(|r| votable(r, mem, cfg)) {
-        let others = mem.votes.get(repo).map(|v| v.iter().filter(|k| *k != &doc.file_key).count()).unwrap_or(0);
+    if let Some(repo) = candidate.repo.as_deref().filter(|r| votable(r, mem, cfg)) {
+        let others = mem.votes.get(repo).map(|v| v.iter().filter(|k| *k != &candidate.file_key).count()).unwrap_or(0);
         let votes = others + 1;
         let create = votes >= cfg.new_room_min_artifacts;
         let why = if create { format!("created room \"{repo}\" ({votes} votes)") } else { format!("vote \"{repo}\" {votes}/{}", cfg.new_room_min_artifacts) };
@@ -147,20 +147,20 @@ mod tests {
     fn rooms() -> Vec<Room> {
         vec![Room { id: "r_alto".into(), name: "alto rooms".into() }, Room { id: "r_design".into(), name: "디자인 리서치".into() }]
     }
-    fn doc(repo: Option<&str>) -> Doc { Doc { file_key: "k1".into(), repo: repo.map(Into::into) } }
+    fn candidate(repo: Option<&str>) -> Candidate { Candidate { file_key: "k1".into(), repo: repo.map(Into::into) } }
     fn ans(choice: Option<&str>, confidence: f64) -> Answer { Answer { choice: choice.map(Into::into), confidence } }
-    fn go(d: &Doc, mem: &Memory, a: Option<&Answer>) -> Decision { decide(d, &rooms(), mem, a, &Config::default()) }
+    fn go(d: &Candidate, mem: &Memory, a: Option<&Answer>) -> Decision { decide(d, &rooms(), mem, a, &Config::default()) }
 
     #[test]
     fn r1_name_match_moves_without_jev() {
-        let d = go(&doc(Some("alto-rooms")), &Memory::default(), None);
+        let d = go(&candidate(Some("alto-rooms")), &Memory::default(), None);
         assert_eq!((d.rule, d.action), (Rule::R1, Action::Move { room_id: "r_alto".into() }));
         assert_eq!(d.why, "repo \"alto-rooms\" = room \"alto rooms\"");
     }
 
     #[test]
     fn r1_comes_before_a_confident_jev_answer() {
-        let d = go(&doc(Some("Alto-Rooms")), &Memory::default(), Some(&ans(Some("r_design"), 0.99)));
+        let d = go(&candidate(Some("Alto-Rooms")), &Memory::default(), Some(&ans(Some("r_design"), 0.99)));
         assert_eq!(d.rule, Rule::R1);
     }
 
@@ -168,7 +168,7 @@ mod tests {
     fn r2_remembered_room_survives_a_rename() {
         let mut mem = Memory::default();
         mem.repo_rooms.insert("rooms-plugin-excalidraw".into(), "r_design".into());
-        let d = go(&doc(Some("rooms-plugin-excalidraw")), &mem, None);
+        let d = go(&candidate(Some("rooms-plugin-excalidraw")), &mem, None);
         assert_eq!((d.rule, d.action), (Rule::R2, Action::Move { room_id: "r_design".into() }));
     }
 
@@ -176,26 +176,26 @@ mod tests {
     fn r2_skips_a_room_that_is_gone() {
         let mut mem = Memory::default();
         mem.repo_rooms.insert("x".into(), "r_gone".into());
-        assert!(deterministic(&doc(Some("x")), &rooms(), &mem).is_none());
+        assert!(deterministic(&candidate(Some("x")), &rooms(), &mem).is_none());
     }
 
     #[test]
     fn r3_moves_at_or_above_the_threshold() {
-        let d = go(&doc(None), &Memory::default(), Some(&ans(Some("r_design"), 0.7)));
+        let d = go(&candidate(None), &Memory::default(), Some(&ans(Some("r_design"), 0.7)));
         assert_eq!((d.rule, d.action), (Rule::R3, Action::Move { room_id: "r_design".into() }));
         assert_eq!(d.why, "jev \"디자인 리서치\" 0.70 ≥ 0.7");
     }
 
     #[test]
     fn r3_ignores_a_choice_that_is_not_a_room() {
-        let d = go(&doc(None), &Memory::default(), Some(&ans(Some("r_unknown"), 0.99)));
+        let d = go(&candidate(None), &Memory::default(), Some(&ans(Some("r_unknown"), 0.99)));
         assert_eq!(d.rule, Rule::R5);
     }
 
     #[test]
     fn r4_votes_on_none_and_on_low_confidence() {
         for a in [ans(None, 0.9), ans(Some("r_alto"), 0.5)] {
-            let d = go(&doc(Some("excalidraw")), &Memory::default(), Some(&a));
+            let d = go(&candidate(Some("excalidraw")), &Memory::default(), Some(&a));
             assert_eq!(d.rule, Rule::R4);
             assert_eq!(d.action, Action::Vote { repo: "excalidraw".into(), votes: 1, create: false });
             assert_eq!(d.why, "vote \"excalidraw\" 1/3");
@@ -206,7 +206,7 @@ mod tests {
     fn r4_third_vote_creates_room() {
         let mut mem = Memory::default();
         mem.votes.insert("excalidraw".into(), ["a".to_string(), "b".to_string(), "k1".to_string()].into());
-        let d = go(&doc(Some("excalidraw")), &mem, Some(&ans(None, 0.9)));
+        let d = go(&candidate(Some("excalidraw")), &mem, Some(&ans(None, 0.9)));
         assert_eq!(d.action, Action::Vote { repo: "excalidraw".into(), votes: 3, create: true });
         assert_eq!(d.why, "created room \"excalidraw\" (3 votes)");
     }
@@ -217,16 +217,16 @@ mod tests {
         mem.forgotten.insert("old".into());
         let cfg = Config { ignore_names: vec!["Sandbox".into()], ..Config::default() };
         for repo in ["Downloads", "notes", "sandbox", "old"] {
-            let d = decide(&doc(Some(repo)), &rooms(), &mem, Some(&ans(None, 0.9)), &cfg);
+            let d = decide(&candidate(Some(repo)), &rooms(), &mem, Some(&ans(None, 0.9)), &cfg);
             assert_eq!((d.rule, d.why.as_str()), (Rule::R5, "jev_none"), "{repo}");
         }
     }
 
     #[test]
     fn r5_keeps_and_says_why() {
-        let d = go(&doc(None), &Memory::default(), Some(&ans(Some("r_alto"), 0.52)));
+        let d = go(&candidate(None), &Memory::default(), Some(&ans(Some("r_alto"), 0.52)));
         assert_eq!((d.rule, d.action, d.why.as_str()), (Rule::R5, Action::Keep, "jev_low \"alto rooms\" 0.52 < 0.7"));
-        let d = go(&doc(None), &Memory::default(), None);
+        let d = go(&candidate(None), &Memory::default(), None);
         assert!(d.is_no_key());
     }
 }

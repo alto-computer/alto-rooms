@@ -50,8 +50,8 @@ mod tests {
 
     #[test]
     fn key_in_other_case_matches_on_case_insensitive_fs() {
-        let docs = tempfile::tempdir().unwrap();
-        let real = std::fs::canonicalize(docs.path()).unwrap().join("Doc.html");
+        let dir = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(dir.path()).unwrap().join("Doc.html");
         std::fs::write(&real, "").unwrap();
         let typed = real.with_file_name("DOC.html");
         if std::fs::canonicalize(&typed).ok().as_ref() != Some(&real) {

@@ -1,9 +1,9 @@
-//! One run (spec §5): pick the documents (T1–T3), decide with `rules::decide`, apply through
+//! One run (spec §5): pick the artifacts (T1–T3), decide with `rules::decide`, apply through
 //! roomsd, record. Also `undo` and the status file the app reads.
 use crate::api::Rooms;
-use crate::doc;
+use crate::prompt;
 use crate::jev::{Classifier, JevError, Reply};
-use crate::rules::{self, Action, Decision, Doc, Room};
+use crate::rules::{self, Action, Decision, Candidate, Room};
 use crate::store::{Move, Record, Store};
 use chrono::{DateTime, SecondsFormat, Utc};
 use rooms_protocol::{Artifact, RoomKind, RoomStatus, INBOX_ROOM_ID};
@@ -36,10 +36,10 @@ pub struct Summary {
     pub lines: Vec<String>,
 }
 
-/// A document that passed T1–T3.
+/// An artifact that passed T1–T3.
 struct Target {
     artifact: Artifact,
-    doc: Doc,
+    candidate: Candidate,
     real: PathBuf,
     repo: Option<(String, PathBuf)>,
 }
@@ -54,13 +54,13 @@ pub fn collected(home: &Path) -> HashMap<String, DateTime<Utc>> {
     }).collect()
 }
 
-/// The rooms a document may move to: owned, available, not the inbox.
+/// The rooms an artifact may move to: owned, available, not the inbox.
 pub fn choices(rooms: &[rooms_protocol::Room]) -> Vec<Room> {
     rooms.iter().filter(|r| r.kind == RoomKind::Owned && r.status == RoomStatus::Ok && r.id != INBOX_ROOM_ID)
         .map(|r| Room { id: r.id.clone(), name: r.name.clone() }).collect()
 }
 
-/// T2: a kept document is asked again once this changes.
+/// T2: a kept artifact is asked again once this changes.
 pub fn rooms_hash(rooms: &[Room]) -> String {
     let mut ids: Vec<&str> = rooms.iter().map(|r| r.id.as_str()).collect();
     ids.sort();
@@ -84,7 +84,7 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
     let hash = rooms_hash(&rooms);
     let rcfg = o.cfg.rules();
 
-    // Memory, with N3 (only votes from documents still in the inbox count) and N4 (a created room that is gone).
+    // Memory, with N3 (only votes from artifacts still in the inbox count) and N4 (a created room that is gone).
     let mut mem = store.load_memory().map_err(db)?;
     let in_inbox: HashSet<&str> = inbox.iter().map(|a| a.file_key.as_str()).collect();
     for v in mem.votes.values_mut() { v.retain(|k| in_inbox.contains(k.as_str())); }
@@ -106,9 +106,9 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
             Some(r) if !(r.action == "kept" && r.rooms_hash != hash) => continue,
             _ => {}
         }
-        let repo = doc::repo_of(&real);
-        let d = Doc { file_key: a.file_key.clone(), repo: repo.as_ref().map(|r| r.0.clone()) };
-        targets.push((*at, Target { artifact: a.clone(), doc: d, real, repo }));
+        let repo = prompt::repo_of(&real);
+        let d = Candidate { file_key: a.file_key.clone(), repo: repo.as_ref().map(|r| r.0.clone()) };
+        targets.push((*at, Target { artifact: a.clone(), candidate: d, real, repo }));
     }
     targets.sort_by_key(|(at, _)| *at);
     targets.truncate(o.cfg.max_artifacts_per_run);
@@ -116,11 +116,11 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
     s.considered = targets.len() as u32;
     if targets.is_empty() { return Ok(()); }
 
-    // Ask Jev only for documents R1 and R2 leave open.
-    let need: Vec<usize> = (0..targets.len()).filter(|&i| rules::deterministic(&targets[i].doc, &rooms, &mem).is_none()).collect();
+    // Ask Jev only for artifacts R1 and R2 leave open.
+    let need: Vec<usize> = (0..targets.len()).filter(|&i| rules::deterministic(&targets[i].candidate, &rooms, &mem).is_none()).collect();
     let mut replies: HashMap<usize, Reply> = HashMap::new();
     if let (Some(j), false) = (jev, need.is_empty()) {
-        let options = doc::options(&room_options(api, &all_rooms, &rooms)?);
+        let options = prompt::options(&room_options(api, &all_rooms, &rooms)?);
         let states: Vec<(usize, String)> = need.iter().map(|&i| (i, state_of(&targets[i]))).collect();
         let (got, err) = ask_all(j, &states, &options);
         replies = got;
@@ -133,15 +133,15 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
     let at = ts(o.now);
     let run_id = format!("{}-{}", o.now.format("%Y%m%dT%H%M%S"), store.run_count().map_err(db)? + 1);
     if !o.dry_run { store.start_run(&run_id, &at).map_err(db)?; }
-    let by_key: HashMap<&str, &Target> = targets.iter().map(|t| (t.doc.file_key.as_str(), t)).collect();
+    let by_key: HashMap<&str, &Target> = targets.iter().map(|t| (t.candidate.file_key.as_str(), t)).collect();
     let model = jev.map(|j| j.model().to_string());
     let mut kept_now: HashSet<String> = HashSet::new();
 
     for (i, t) in targets.iter().enumerate() {
         let reply = replies.get(&i);
-        // A document Jev was meant to answer but did not (an error): leave it for the next run.
+        // An artifact Jev was meant to answer but did not (an error): leave it for the next run.
         if jev.is_some() && need.contains(&i) && reply.is_none() { continue; }
-        let d = rules::decide(&t.doc, &rooms, &mem, reply.map(|r| &r.answer), &rcfg);
+        let d = rules::decide(&t.candidate, &rooms, &mem, reply.map(|r| &r.answer), &rcfg);
         let rec = |d: &Decision, action: &str, to: Option<&str>, file_key: &str, title: &str, repo: Option<&str>, reply: Option<&Reply>| {
             if o.dry_run { return Ok(()); }
             store.record(&Record { file_key, title, repo, run_id: &run_id, at: &at, decision: d, action, to_room: to, jev: reply,
@@ -156,18 +156,18 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
                         s.lines.push(format!("skipped {}: {e}", t.artifact.rel_path));
                         continue;
                     }
-                    store.add_move(&run_id, &Move { file_key: t.doc.file_key.clone(), to_room: room_id.clone(), created_room: false }).map_err(db)?;
-                    store.drop_votes(&t.doc.file_key).map_err(db)?;
+                    store.add_move(&run_id, &Move { file_key: t.candidate.file_key.clone(), to_room: room_id.clone(), created_room: false }).map_err(db)?;
+                    store.drop_votes(&t.candidate.file_key).map_err(db)?;
                 }
-                rec(&d, "moved", Some(room_id), &t.doc.file_key, &t.artifact.title, t.doc.repo.as_deref(), reply).map_err(db)?;
+                rec(&d, "moved", Some(room_id), &t.candidate.file_key, &t.artifact.title, t.candidate.repo.as_deref(), reply).map_err(db)?;
                 s.moved += 1;
                 s.lines.push(format!("moved  {} → {}  {} {}", t.artifact.rel_path, to, d.rule.id(), d.why));
             }
             Action::Vote { repo, create: false, .. } => {
-                if !o.dry_run { store.vote(repo, &t.doc.file_key).map_err(db)?; }
-                mem.votes.entry(repo.clone()).or_default().insert(t.doc.file_key.clone());
-                kept_now.insert(t.doc.file_key.clone());
-                rec(&d, "kept", None, &t.doc.file_key, &t.artifact.title, Some(repo), reply).map_err(db)?;
+                if !o.dry_run { store.vote(repo, &t.candidate.file_key).map_err(db)?; }
+                mem.votes.entry(repo.clone()).or_default().insert(t.candidate.file_key.clone());
+                kept_now.insert(t.candidate.file_key.clone());
+                rec(&d, "kept", None, &t.candidate.file_key, &t.artifact.title, Some(repo), reply).map_err(db)?;
                 s.kept += 1;
                 s.lines.push(format!("kept   {}  {} {}", t.artifact.rel_path, d.rule.id(), d.why));
             }
@@ -175,10 +175,10 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
                 let voters: Vec<String> = mem.votes.get(repo).map(|v| v.iter().cloned().collect()).unwrap_or_default();
                 if o.dry_run {
                     s.rooms_created += 1;
-                    let others = voters.iter().filter(|k| **k != t.doc.file_key).count() as u32;
+                    let others = voters.iter().filter(|k| **k != t.candidate.file_key).count() as u32;
                     s.moved += 1 + others;
                     s.kept -= voters.iter().filter(|k| kept_now.contains(*k)).count() as u32;
-                    s.lines.push(format!("create room \"{repo}\" and move {} documents  R4 {}", others + 1, d.why));
+                    s.lines.push(format!("create room \"{repo}\" and move {} artifacts  R4 {}", others + 1, d.why));
                     mem.repo_rooms.insert(repo.clone(), format!("dry-run:{repo}"));
                     rooms.push(Room { id: format!("dry-run:{repo}"), name: repo.clone() });
                     continue;
@@ -186,8 +186,8 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
                 let room = match api.create_room(repo) {
                     Ok(r) => r,
                     Err(e) => {
-                        store.vote(repo, &t.doc.file_key).map_err(db)?;
-                        rec(&Decision { why: format!("{} (could not create: {e})", d.why), ..d.clone() }, "kept", None, &t.doc.file_key, &t.artifact.title, Some(repo), reply).map_err(db)?;
+                        store.vote(repo, &t.candidate.file_key).map_err(db)?;
+                        rec(&Decision { why: format!("{} (could not create: {e})", d.why), ..d.clone() }, "kept", None, &t.candidate.file_key, &t.artifact.title, Some(repo), reply).map_err(db)?;
                         s.kept += 1;
                         s.lines.push(format!("kept   {}  R4 could not create room \"{repo}\": {e}", t.artifact.rel_path));
                         continue;
@@ -199,8 +199,8 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
                 mem.votes.remove(repo);
                 rooms.push(Room { id: room.id.clone(), name: room.name.clone() });
                 s.rooms_created += 1;
-                let mut keys: Vec<String> = voters.into_iter().filter(|k| *k != t.doc.file_key).collect();
-                keys.push(t.doc.file_key.clone());
+                let mut keys: Vec<String> = voters.into_iter().filter(|k| *k != t.candidate.file_key).collect();
+                keys.push(t.candidate.file_key.clone());
                 for key in &keys {
                     let Some(a) = inbox.iter().find(|a| &a.file_key == key) else { continue };
                     if let Err(e) = api.move_artifact(INBOX_ROOM_ID, &a.id, &room.id) {
@@ -208,7 +208,7 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
                         continue;
                     }
                     store.add_move(&run_id, &Move { file_key: key.clone(), to_room: room.id.clone(), created_room: true }).map_err(db)?;
-                    let (repo_s, own_reply) = if key == &t.doc.file_key { (t.doc.repo.as_deref(), reply) } else { (by_key.get(key.as_str()).and_then(|x| x.doc.repo.as_deref()).or(Some(repo)), None) };
+                    let (repo_s, own_reply) = if key == &t.candidate.file_key { (t.candidate.repo.as_deref(), reply) } else { (by_key.get(key.as_str()).and_then(|x| x.candidate.repo.as_deref()).or(Some(repo)), None) };
                     rec(&d, "moved", Some(&room.id), key, &a.title, repo_s, own_reply).map_err(db)?;
                     s.moved += 1;
                     if kept_now.remove(key) { s.kept -= 1; } // voted earlier in this run, moved now
@@ -217,7 +217,7 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
             }
             Action::Keep => {
                 if d.is_no_key() { continue; } // N5: not recorded
-                rec(&d, "kept", None, &t.doc.file_key, &t.artifact.title, t.doc.repo.as_deref(), reply).map_err(db)?;
+                rec(&d, "kept", None, &t.candidate.file_key, &t.artifact.title, t.candidate.repo.as_deref(), reply).map_err(db)?;
                 s.kept += 1;
                 s.lines.push(format!("kept   {}  {} {}", t.artifact.rel_path, d.rule.id(), d.why));
             }
@@ -232,20 +232,20 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
 fn room_options(api: &dyn Rooms, all: &[rooms_protocol::Room], rooms: &[Room]) -> Result<Vec<(String, String)>, String> {
     let mut ordered: Vec<&rooms_protocol::Room> = all.iter().filter(|r| rooms.iter().any(|c| c.id == r.id)).collect();
     ordered.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    ordered.truncate(doc::MAX_ROOMS);
+    ordered.truncate(prompt::MAX_ROOMS);
     let mut out = Vec::new();
     for r in ordered {
         let mut arts = api.artifacts(&r.id).unwrap_or_default();
         arts.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         let titles: Vec<String> = arts.into_iter().map(|a| a.title).filter(|t| !t.trim().is_empty()).collect();
-        out.push((r.id.clone(), doc::room_option(&r.name, &titles)));
+        out.push((r.id.clone(), prompt::room_option(&r.name, &titles)));
     }
     Ok(out)
 }
 
 fn state_of(t: &Target) -> String {
     let html = std::fs::read(&t.real).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
-    doc::state(&t.artifact.title, &doc::location(&t.real, t.repo.as_ref()), &doc::visible_text(&html, doc::EXCERPT_CHARS))
+    prompt::state(&t.artifact.title, &prompt::location(&t.real, t.repo.as_ref()), &prompt::visible_text(&html, prompt::EXCERPT_CHARS))
 }
 
 /// Asks Jev for each state, JEV_THREADS at a time. A 401 stops the rest.
@@ -268,7 +268,7 @@ fn ask_all(j: &dyn Classifier, states: &[(usize, String)], options: &[(String, S
     (got, err)
 }
 
-/// Puts the given run's documents (default: the last run that moved any) back in the inbox if
+/// Puts the given run's artifacts (default: the last run that moved any) back in the inbox if
 /// they are still where it put them; they are never sorted again. roomsd does not move into the
 /// inbox, so the link itself is renamed back (its fileKey, from the original's path, stays the
 /// same). A room that run created is removed once empty, and its repo is forgotten (N4).

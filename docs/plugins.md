@@ -1,6 +1,6 @@
 # Writing a Rooms plugin
 
-A plugin adds UI to Rooms: a panel beside documents, or a tab of its own (opened from the sidebar's **Plugins** flyout). It runs in a sandboxed iframe and talks to the app only through `@alto-rooms/plugin-sdk`. Rooms never imports plugin code.
+A plugin adds UI to Rooms: a panel beside artifacts, or a tab of its own (opened from the sidebar's **Plugins** flyout). It runs in a sandboxed iframe and talks to the app only through `@alto-rooms/plugin-sdk`. Rooms never imports plugin code.
 
 Plugins change what you **see**. To change what gets **made** (reports, reviews), use your agent and its skills; their output lands in Rooms as files.
 
@@ -26,7 +26,7 @@ Install a plugin by copying its built folder there. Rooms notices it and asks th
   "name": "Excalidraw notes",
   "version": "0.1.0",
   "minAppVersion": "0.3.0",
-  "description": "Sketch next to any document.",
+  "description": "Sketch next to any artifact.",
   "permissions": ["clipboard", "downloads"],
   "slots": {
     "artifact.sidePanel": { "title": "Notes" },
@@ -49,7 +49,7 @@ Install a plugin by copying its built folder there. Rooms notices it and asks th
 
 Slots:
 
-- `artifact.sidePanel` `{ title, icon? }`: a panel beside an open document. The user opens it from an icon button on the document, `icon` or else `pencil`, with `title` as its tooltip.
+- `artifact.sidePanel` `{ title, icon? }`: a panel beside an open artifact. The user opens it from an icon button on the artifact, `icon` or else `pencil`, with `title` as its tooltip.
 - `tab` `{ title, icon?, sidebar? }`: a tab of its own, opened from the sidebar's **Plugins** flyout. `icon` or else `puzzle` marks the tab.
 
 An `icon` is one of `target`, `pencil`, `list-checks`, `calendar`, `star`, `book`, `flag`, `layout-grid`, `sparkles`, `notebook`, `lightbulb`, `puzzle`, `palette`.
@@ -62,10 +62,10 @@ Storing your own files is always allowed. Everything else is declared, and the u
 
 | Permission | The user sees | You get |
 | --- | --- | --- |
-| `rooms.read` | Can see your rooms and documents | `rooms.list()`, `artifacts.list()` |
+| `rooms.read` | Can see your rooms and artifacts | `rooms.list()`, `artifacts.list()` |
 | `clipboard` | Can copy and paste | clipboard access in the frame |
 | `downloads` | Can save files you export | file downloads from the frame |
-| `artifact.content` | Can read the text of documents and use the network inside them | your `contentScripts` run inside documents |
+| `artifact.content` | Can read the text of artifacts and use the network inside them | your `contentScripts` run inside artifacts |
 | `surfaces.text` | Can read and mark chat answers | your `background` page hears the text of chat answers and paints them |
 
 If a new version asks for more permissions, Rooms asks the user again.
@@ -101,7 +101,7 @@ rooms.onBeforeClose(async () => {
 | Call | What it does |
 | --- | --- |
 | `connect({ timeoutMs? })` | Connects; resolves once the app sends the first context |
-| `onContext(cb)` | Called at once and whenever the context changes (another document in the same panel) |
+| `onContext(cb)` | Called at once and whenever the context changes (another artifact in the same panel) |
 | `onBeforeClose(cb)` | Runs before your frame closes: panel closed, app quitting, plugin updated or re-permissioned |
 | `storage.read(path)` | Text of a file in your `data/`, or `null` |
 | `storage.write(path, text)` | Writes atomically; up to 10 MB |
@@ -109,12 +109,12 @@ rooms.onBeforeClose(async () => {
 | `storage.delete(path)` | Removes a file; a missing file is fine |
 | `storage.onChange(cb)` | Calls `cb(path)` when one of your files changes from outside the frame: an agent called one of your tools, or another frame of your plugin (a tab, a panel, a content script) wrote it. Never for this frame's own writes. Returns an unsubscribe function |
 | `rooms.list()` | Rooms in sidebar order (`rooms.read`) |
-| `artifacts.list(roomId)` | Documents in a room, newest first (`rooms.read`) |
-| `open({ roomId } \| { fileKey, anchor? })` | Opens a room or document. From a tab, a document opens in a tab next to yours, or its open tab comes forward. A room, or anything opened from a side panel, replaces the current tab. `anchor` is any JSON value up to 4 KiB; your content script gets it in that document through `onReveal` (SDK 0.4.0) |
+| `artifacts.list(roomId)` | Artifacts in a room, newest first (`rooms.read`) |
+| `open({ roomId } \| { fileKey, anchor? })` | Opens a room or artifact. From a tab, an artifact opens in a tab next to yours, or its open tab comes forward. A room, or anything opened from a side panel, replaces the current tab. `anchor` is any JSON value up to 4 KiB; your content script gets it in that artifact through `onReveal` (SDK 0.4.0) |
 
 Errors are `PluginError` with a `code`: `permission_denied`, `invalid_path`, `too_large`, `not_found`, `write_failed`, `unknown_method`, `rate_limited`, `bad_request` (an anchor over 4 KiB or not JSON), `timeout`.
 
-The context is `{ slot: "artifact.sidePanel", artifact }` or `{ slot: "tab" }`. `artifact.fileKey` identifies the original file: it stays the same when Rooms moves the document, and every room that links the same original gets the same key. Key your per-document data by it.
+The context is `{ slot: "artifact.sidePanel", artifact }` or `{ slot: "tab" }`. `artifact.fileKey` identifies the original file: it stays the same when Rooms moves the artifact, and every room that links the same original gets the same key. Key your per-artifact data by it.
 
 ## Tools for agents
 
@@ -123,7 +123,7 @@ A plugin can let agents write into its data by declaring tools in `manifest.json
 ```json
 "tools": {
   "draw": {
-    "description": "Add shapes to this doc's notes. Call several times to draw step by step.",
+    "description": "Add shapes to this artifact's notes. Call several times to draw step by step.",
     "input": { "type": "object", "required": ["doc", "ops"], "properties": { "doc": { "type": "string" }, "ops": { "type": "array" } } },
     "appendTo": "notes/{doc}.ops.jsonl"
   }
@@ -131,7 +131,7 @@ A plugin can let agents write into its data by declaring tools in `manifest.json
 ```
 
 - `name` is `[a-z][a-z0-9_]{0,39}`; at most 16 tools; `description` 1–500 characters; `input` is a JSON Schema object (`"type": "object"`, up to 16 KB) shown to the agent.
-- Every call must include `doc`: a document's `fileKey` or the absolute path of its original. Rooms appends one line, `{"at", "tool", "input"}`, to the `appendTo` file (`{doc}` becomes the fileKey) and your frame hears it through `storage.onChange`. Rooms never checks `input` against the schema: validate it when you read the lines.
+- Every call must include `doc`: an artifact's `fileKey` or the absolute path of its original. The field and the `{doc}` placeholder keep the name they had before artifacts were called that, because published plugins and the agents calling them use it. Rooms appends one line, `{"at", "tool", "input"}`, to the `appendTo` file (`{doc}` becomes the fileKey) and your frame hears it through `storage.onChange`. Rooms never checks `input` against the schema: validate it when you read the lines.
 - Treat `appendTo` files as append-only from your side: rewriting them can race with an agent's call. Each file is capped at 10 MB.
 - Rooms itself never interprets your tools. What a line means is up to your plugin. [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw) is a complete example (`draw`).
 
@@ -144,9 +144,9 @@ A plugin that declares `artifact.content` can list scripts under `contentScripts
 "contentScripts": ["content.js"]
 ```
 
-Scripts load in the listed order, so each path may appear once; a repeated path makes the manifest invalid. A plugin with content scripts needs no slot. The user sees "Can read the text of documents and use the network inside them" before it runs, and a changed content script changes the plugin's `rev`.
+Scripts load in the listed order, so each path may appear once; a repeated path makes the manifest invalid. A plugin with content scripts needs no slot. The user sees "Can read the text of artifacts and use the network inside them" before it runs, and a changed content script changes the plugin's `rev`.
 
-Rooms loads content scripts into the document a doc tab shows, as `<script src>` tags after its own selection bridge. The block is spliced in where the HTML parser opens the head. That is right after `<head>`, or, when the document has no `<head>` before its first other tag or text, before that tag or text. So the scripts run before any `<meta http-equiv="Content-Security-Policy">` the document declares in its head, including a policy of `script-src 'none'`. A UTF-16 document gets no scripts. Card previews in a room grid get no content scripts. Turning the plugin on or off reloads open doc tabs. A changed script loads the next time a doc tab loads, since its URL carries the plugin's `rev`.
+Rooms loads content scripts into the document an artifact tab shows, as `<script src>` tags after its own selection bridge. The block is spliced in where the HTML parser opens the head. That is right after `<head>`, or, when the document has no `<head>` before its first other tag or text, before that tag or text. So the scripts run before any `<meta http-equiv="Content-Security-Policy">` the document declares in its head, including a policy of `script-src 'none'`. A UTF-16 document gets no scripts. Card previews in a room grid get no content scripts. Turning the plugin on or off reloads open artifact tabs. A changed script loads the next time an artifact tab loads, since its URL carries the plugin's `rev`.
 
 A content script runs inside the document's sandbox with the document's own powers, not the plugin frame's:
 
@@ -174,20 +174,20 @@ rooms.ready();
 
 | Call | What it does |
 | --- | --- |
-| `storage.read/write/list/delete` | Your data for this document only. Paths are relative to `docs/<fileKey>/` in your `data/`, so your tab or panel finds them there. Up to 1 MiB a write, 20 writes or deletes a second, and 100 reads or lists a second for the document |
+| `storage.read/write/list/delete` | Your data for this artifact only. Paths are relative to `docs/<fileKey>/` in your `data/` (the folder keeps its pre-0.6 name so existing data stays where it is), so your tab or panel finds them there. Up to 1 MiB a write, 20 writes or deletes a second, and 100 reads or lists a second for the document |
 | `setActions(items)` | Replaces your buttons in the selection bar, shown after Ask: up to 6 `{ id, title, color? }`, titles cut to 24 characters with control and bidi formatting characters removed, `color` any CSS color |
 | `onAction(cb)` | Calls `cb(id, selection)` when one of your buttons is clicked. `selection` is the last `{ text, range }` selected in the document, since the click can clear the live selection |
-| `onDataChanged(cb)` | Calls `cb(path)` when another frame of your plugin changed a file in this document's folder |
-| `onReveal(cb)` | Calls `cb(anchor)` with the anchor your plugin passed to `open({ fileKey, anchor })` for this document, once per open, after `ready()` (SDK 0.4.0). When a second `open` for the same document arrives before your script is ready, the script gets only the later anchor. The document can read it and post a fake one, so treat it as untrusted |
+| `onDataChanged(cb)` | Calls `cb(path)` when another frame of your plugin changed a file in this artifact's folder |
+| `onReveal(cb)` | Calls `cb(anchor)` with the anchor your plugin passed to `open({ fileKey, anchor })` for this artifact, once per open, after `ready()` (SDK 0.4.0). When a second `open` for the same artifact arrives before your script is ready, the script gets only the later anchor. The document can read it and post a fake one, so treat it as untrusted |
 | `ready()` | Tells the app the script is listening |
 
 Messages are `{ rooms: "content", v: 1, plugin, type, … }` posted to `window.parent`, and the SDK trusts only messages whose source is `window.parent`.
 
-The app can stop listening while your script keeps running, for example while the document's tab is in the background. When it listens again, it posts `sync`, and SDK 0.4.0 answers by repeating your last `setActions` and `ready()`. A script built with SDK 0.3 ignores `sync`, so after such a gap its buttons stay missing and anchors wait until the document reloads.
+The app can stop listening while your script keeps running, for example while the artifact's tab is in the background. When it listens again, it posts `sync`, and SDK 0.4.0 answers by repeating your last `setActions` and `ready()`. A script built with SDK 0.3 ignores `sync`, so after such a gap its buttons stay missing and anchors wait until the document reloads.
 
 ### What a hostile document can do
 
-The document's own script shares the window with your content script and can post the same messages. Rooms takes the document's `fileKey` from the tab, never from a message, and accepts only plugin ids that are on and declare `artifact.content`. So a hostile document can read, forge, or delete your files under `docs/<its fileKey>/`, and nothing else: not another document's folder, not the rest of your `data/`, not another plugin's data, and not the token. Two content plugins in one document share the window too, so each can reach the other's folder for that document. Treat every file under `docs/` as untrusted input, and render its text as text.
+The document's own script shares the window with your content script and can post the same messages. Rooms takes the document's `fileKey` from the tab, never from a message, and accepts only plugin ids that are on and declare `artifact.content`. So a hostile document can read, forge, or delete your files under `docs/<its fileKey>/`, and nothing else: not another artifact's folder, not the rest of your `data/`, not another plugin's data, and not the token. Two content plugins in one document share the window too, so each can reach the other's folder for that document. Treat every file under `docs/` as untrusted input, and render its text as text.
 
 ## Host text surfaces
 

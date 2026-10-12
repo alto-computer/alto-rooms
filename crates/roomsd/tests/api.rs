@@ -309,7 +309,7 @@ fn rev_of(st: &AppState, id: &str) -> String {
 }
 
 #[tokio::test]
-async fn doc_variant_injects_bridge_then_content_scripts() {
+async fn artifact_tab_variant_injects_bridge_then_content_scripts() {
     let (d, _app, st) = app(false, "127.0.0.1:5000");
     let room = st.core.create_room("a").unwrap();
     std::fs::write(d.path().join("a/x.html"), DOC).unwrap();
@@ -375,7 +375,7 @@ async fn card_variant_has_only_the_bridge() {
 }
 
 #[tokio::test]
-async fn doc_etag_changes_when_a_content_plugin_toggles() {
+async fn artifact_tab_etag_changes_when_a_content_plugin_toggles() {
     let (d, _app, st) = app(false, "127.0.0.1:5000");
     let room = st.core.create_room("a").unwrap();
     std::fs::write(d.path().join("a/x.html"), DOC).unwrap();

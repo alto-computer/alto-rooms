@@ -65,9 +65,9 @@ After that, new files are linked on their own while the app is open. Ask your ag
 `rooms-collect` runs beside the app (and stops with it). It reads the logs Claude Code (`~/.claude/projects`), Codex (`~/.codex/sessions`) and Aside (`~/.aside/u`) already keep, read-only, and:
 
 - links each new `.html` an agent writes into `inbox` (and notes it in `~/rooms/.rooms/collect/linked.jsonl`). It never chooses a room, never creates rooms, and never re-adds a link you deleted;
-- records which conversation wrote each file in `~/rooms/.rooms/sources.json`, so asking about a document continues that conversation;
+- records which session wrote each file in `~/rooms/.rooms/sources.json`, so asking about an artifact continues that session;
 - keeps a copy of the logs in `~/Library/Application Support/computer.alto.rooms/archive` (agents delete old logs; Claude Code after 30 days);
-- indexes the last 30 days of conversations for search:
+- indexes the last 30 days of sessions for search:
 
 ```sh
 rooms-collect search "pricing page" --since 7d
@@ -90,7 +90,7 @@ aside = true
 
 `rooms-sort` runs every minute while the app is open. It only moves links `rooms-collect` put in `inbox`, never ones you or your agent put there, and the first rule that matches decides:
 
-| Rule | Needs a key | Moves the doc |
+| Rule | Needs a key | Moves the artifact |
 |---|---|---|
 | R1 | no | to the room named like its git repo |
 | R2 | no | to the room R4 once made for its repo, even after you rename it |
@@ -98,12 +98,12 @@ aside = true
 | R4 | yes | nowhere yet: a vote for its repo; at 3 votes a room named after the repo is made and they move in |
 | R5 | | stays in `inbox` |
 
-To turn on R3 and R4, paste a [TypeSafe key](https://console.typesafe.ai/keys) into **Settings › Auto-sort** (`⌘,`), which also shows the last run and undoes it. The key is kept in the macOS Keychain; `TYPESAFE_API_KEY` in the app's environment wins over it. For each doc, Jev gets its title, its path inside the repo and its first 2,000 characters, plus each room's name and five recent titles.
+To turn on R3 and R4, paste a [TypeSafe key](https://console.typesafe.ai/keys) into **Settings › Auto-sort** (`⌘,`), which also shows the last run and undoes it. The key is kept in the macOS Keychain; `TYPESAFE_API_KEY` in the app's environment wins over it. For each artifact, Jev gets its title, its path inside the repo and its first 2,000 characters, plus each room's name and five recent titles.
 
 ```sh
 rooms-sort log            # every decision with its rule and reason
 rooms-sort run --dry-run  # what would move now
-rooms-sort undo           # put the last run's docs back in the inbox
+rooms-sort undo           # put the last run's artifacts back in the inbox
 ```
 
 Settings live in `~/rooms/.rooms/sort.toml` (all optional): `enabled`, `min_confidence` (0.7), `new_room_min_artifacts` (3), `model`, `max_artifacts_per_run` (50), `ignore_names`. The older names `new_room_min_docs` and `max_docs_per_run` still work.
@@ -124,12 +124,12 @@ Rooms ignores hidden files, `node_modules`, `dist`, `build`, and anything listed
 
 ## Plugins
 
-Plugins add UI: a panel beside documents or a tab of their own. They run sandboxed and keep their data as files.
+Plugins add UI: a panel beside artifacts or a tab of their own. They run sandboxed and keep their data as files.
 
 Two come with the app, on by default:
 
-- [Goals](https://github.com/alto-computer/rooms-plugin-goals): long-, mid- and short-term goals and a TODO list, with documents linked to each.
-- [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw): sketch beside any document; export as PNG.
+- [Goals](https://github.com/alto-computer/rooms-plugin-goals): long-, mid- and short-term goals and a TODO list, with artifacts linked to each.
+- [Excalidraw notes](https://github.com/alto-computer/rooms-plugin-excalidraw): sketch beside any artifact; export as PNG.
 
 Open a plugin's tab from **Plugins** at the bottom of the sidebar. Turn plugins on or off, and see what each one may do, in **Settings › Plugins**. To add another, copy its folder into `~/rooms/.rooms/plugins/`; Rooms asks before it runs. To write one, see [docs/plugins.md](docs/plugins.md).
 
@@ -138,7 +138,7 @@ Open a plugin's tab from **Plugins** at the bottom of the sidebar. Turn plugins 
 | Key | Action |
 | --- | --- |
 | `⌘T` / `⌘W` | New tab (today's Journal) / close tab |
-| `⌘K` | Find a room or document |
+| `⌘K` | Find a room or artifact |
 | `⌘B` | Toggle the sidebar |
 | `⌘,` | Settings |
 | `⌘[` / `⌘]`, `⌘←` / `⌘→` | Back / forward |
