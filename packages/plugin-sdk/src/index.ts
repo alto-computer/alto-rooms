@@ -8,6 +8,7 @@
  */
 import { PluginError, type PluginErrorCode } from "./errors";
 import type { SurfaceId } from "./surfaces";
+import { pageTheme, type RoomsThemeApi } from "./theme";
 
 /** Where this frame runs: beside a document, as a tab, or as the hidden background page of a plugin with `surfaces.text`. */
 export type PluginContext = { slot: "artifact.sidePanel"; artifact: PluginArtifact } | { slot: "tab" } | { slot: "background" };
@@ -58,6 +59,11 @@ export interface RoomsPlugin {
    * and flashes your range `rangeId` there once the answer is on screen.
    */
   open(target: { roomId: string } | { fileKey: string; anchor?: unknown } | { surface: SurfaceId; rangeId: string }): Promise<void>;
+  /**
+   * The app's theme (SDK 0.7.0). The SDK already applies it to your page as `--rooms-*` variables
+   * and `color-scheme`; read it here when a component takes the scheme as a prop.
+   */
+  theme: RoomsThemeApi;
 }
 
 type Inbound =
@@ -69,14 +75,22 @@ type Inbound =
 
 export { connectContent, type ContentAction, type ContentSelection, type RoomsContent } from "./content";
 export { connectSurfaces, legacySurfacePath, surfaceKey, surfacePath, type AnswerScope, type RoomsSurfaces, type SurfaceId, type SurfaceRange, type SurfaceSelection, type SurfaceStyles } from "./surfaces";
+export { THEME_TOKENS, type RoomsTheme, type RoomsThemeApi, type ThemeScheme, type ThemeToken } from "./theme";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-/** Connects to the app: posts `ready` and resolves once the app sends the first context. */
-export function connect(opts: { timeoutMs?: number } = {}): Promise<RoomsPlugin> {
+/**
+ * Connects to the app: posts `ready` and resolves once the app sends the first context. With
+ * `theme: false` the SDK leaves your page's style alone: no `--rooms-*` variables, no
+ * `color-scheme`, no default colours; `rooms.theme` still reports the theme. `ready` says
+ * `theme: true` when the page applies the theme, and the app paints the frame's backdrop in its
+ * pane colour only then; a page that does not say so keeps a white one.
+ */
+export function connect(opts: { timeoutMs?: number; theme?: boolean } = {}): Promise<RoomsPlugin> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const parent = window.parent;
   const post = (m: Record<string, unknown>) => parent.postMessage({ rooms: 1, ...m }, "*");
+  const theme = pageTheme(opts.theme ?? true);
 
   let pluginId = "";
   let current: PluginContext | null = null;
@@ -156,6 +170,7 @@ export function connect(opts: { timeoutMs?: number } = {}): Promise<RoomsPlugin>
     rooms: { list: () => request<PluginRoom[]>("rooms.list", {}) },
     artifacts: { list: (roomId) => request<PluginArtifact[]>("artifacts.list", { roomId }) },
     open: (target) => request<void>("open", target),
+    theme: theme.api,
   };
 
   return new Promise<RoomsPlugin>((resolve, reject) => {
@@ -165,6 +180,6 @@ export function connect(opts: { timeoutMs?: number } = {}): Promise<RoomsPlugin>
       clearTimeout(timer);
       resolve(api);
     };
-    post({ type: "ready" });
+    post({ type: "ready", ...(theme.applies ? { theme: true } : {}) });
   });
 }

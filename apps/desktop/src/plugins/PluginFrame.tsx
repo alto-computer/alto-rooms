@@ -1,18 +1,28 @@
 /*
  * One plugin, running: a sandboxed iframe from the plugin's folder plus the
  * app side of the bridge. Trusts only messages whose source is this frame's
- * window; sends the slot's context on ready and on change; relays requests;
- * pings to notice a stuck plugin; and lets its owner ask for beforeClose.
+ * window; sends the slot's context on ready and on change, and the app's theme
+ * on ready and whenever the appearance changes; relays requests; pings to notice
+ * a stuck plugin; and lets its owner ask for beforeClose.
+ *
+ * The iframe is white until the page says, on `ready` or a surface `hello`, that it applies the
+ * theme (`theme: true`, SDK 0.7 unless opted out); then it takes the pane colour. A page on an
+ * older SDK, or one that opted out, keeps its own look on white: in WKWebView the frame is
+ * transparent, so its default black text would otherwise sit on the dark pane. The flag is what
+ * the page last said: a `ready` or `hello` without it puts the frame back on white. The store
+ * remembers it per page (plugin, rev and entry), so a later frame of that page starts on the pane
+ * while a background page's hello says nothing about the plugin's panel or tab.
  */
 import type { Info } from "@alto-rooms/protocol-ts";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { useAsksStore, useClient, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { useAsksStore, useClient, usePluginsStore, useRoomsStore, useViewerStore } from "@/data/hooks";
 import { surfaceHub } from "@/surfaces/surfaceHub";
 import { BridgeError, handleBridgeCall } from "./bridge";
 import { registerFrame } from "./host";
 import { pluginDataBus } from "./pluginDataBus";
 import { frameAttrs } from "./permissions";
-import type { HostPlugin } from "./pluginsStore";
+import type { HostPlugin, PluginPage } from "./pluginsStore";
+import { readTheme, watchTheme } from "./theme";
 
 export type PluginContextValue =
   | { slot: "artifact.sidePanel"; artifact: { roomId: string; artifactId: string; fileKey: string; title: string; createdAt: string } }
@@ -31,8 +41,9 @@ export const CLOSE_CAP_MS = 1500;
 
 /** The parts of a plugin a running frame keeps from the moment it loaded. */
 const snapshot = (p: HostPlugin) => ({ rev: p.rev, entry: p.entry, permissions: p.permissions });
+const pageOf = (p: HostPlugin, loaded: ReturnType<typeof snapshot>): PluginPage => ({ id: p.id, rev: loaded.rev, entry: loaded.entry });
 
-type Inbound = { rooms?: unknown; type?: unknown; id?: unknown; method?: unknown; params?: unknown };
+type Inbound = { rooms?: unknown; type?: unknown; id?: unknown; method?: unknown; params?: unknown; theme?: unknown };
 
 type Props = {
   plugin: HostPlugin;
@@ -51,6 +62,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
   const viewer = useViewerStore();
   const rooms = useRoomsStore();
   const asks = useAsksStore();
+  const plugins = usePluginsStore();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [reload, setReload] = useState(0);
   // The rev the frame was loaded at: an update reloads only after beforeClose.
@@ -58,6 +70,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
   // permission checks use this, never the live manifest: a closing plugin keeps what was approved.
   const [loadedAs, setLoadedAs] = useState(() => snapshot(plugin));
   const shownRev = loadedAs.rev;
+  const [themed, setThemed] = useState(() => plugins.isThemed(pageOf(plugin, loadedAs)));
   const [stalled, setStalled] = useState(false);
   const ready = useRef(false);
   const latest = useRef({ plugin, context });
@@ -73,6 +86,15 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
   const sendContext = useCallback(() => {
     post({ type: "context", pluginId: latest.current.plugin.id, context: latest.current.context });
   }, [post]);
+  const sendTheme = useCallback(() => post({ type: "theme", ...readTheme() }), [post]);
+  const pageSaidTheme = useCallback(
+    (m: Inbound) => {
+      const applies = m.theme === true;
+      plugins.setThemed(pageOf(latest.current.plugin, loadedAsRef.current), applies);
+      setThemed(applies);
+    },
+    [plugins],
+  );
 
   /** Posts `{type, id}` and resolves when the frame answers with `reply` for that id, or after `capMs`. */
   const ask = useCallback(
@@ -107,10 +129,20 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
       const win = frameRef.current?.contentWindow;
       if (!win || e.source !== win) return;
       const d = e.data as Inbound | null;
-      if (!d || typeof d !== "object" || d.rooms !== 1) return;
+      if (!d || typeof d !== "object") return;
+      // A background page that only connects its surfaces says hello instead of ready; it gets the theme too.
+      if (d.rooms === "surface" && d.type === "hello") {
+        pageSaidTheme(d);
+        sendTheme();
+        return;
+      }
+      if (d.rooms !== 1) return;
       if (d.type === "ready") {
         ready.current = true;
         setStalled(false);
+        pageSaidTheme(d);
+        // Theme first: connect() resolves on the context, with the page already in the app's colours.
+        sendTheme();
         sendContext();
         return;
       }
@@ -149,7 +181,10 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, viewer, rooms, asks, post, sendContext]);
+  }, [client, viewer, rooms, asks, post, sendContext, sendTheme, pageSaidTheme]);
+
+  // A frame still loading misses this post and gets the theme on ready.
+  useEffect(() => watchTheme(sendTheme), [sendTheme]);
 
   // Tell the frame when its plugin's data changed: a declared tool appended to it, or another
   // frame of the same plugin (a tab, a panel, a document's content script) wrote it.
@@ -175,12 +210,14 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
     void beforeClose(CLOSE_CAP_MS).then(() => {
       if (!live) return;
       ready.current = false;
-      setLoadedAs(snapshot(latest.current.plugin));
+      const next = snapshot(latest.current.plugin);
+      setLoadedAs(next);
+      setThemed(plugins.isThemed(pageOf(latest.current.plugin, next)));
     });
     return () => {
       live = false;
     };
-  }, [active, plugin.rev, shownRev, beforeClose]);
+  }, [active, plugin.rev, shownRev, beforeClose, plugins]);
 
   const closedRef = useRef(onClosed);
   closedRef.current = onClosed;
@@ -230,7 +267,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
         src={client.pluginEntryUrl(info, { ...plugin, entry: loadedAs.entry })}
         sandbox={attrs.sandbox}
         allow={attrs.allow}
-        className="absolute inset-0 size-full border-0 bg-white"
+        className={`absolute inset-0 size-full border-0 ${themed ? "bg-pane" : "bg-white"}`}
       />
       {stalled ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-pane/95 text-lead text-ink-2">

@@ -167,3 +167,95 @@ test("a content-script plugin says it reads documents, and turning it on adds no
   await expect(page.getByRole("button", { name: "Open Marker" })).toHaveCount(0);
   await expect(page.locator('iframe[title="Marker"]')).toHaveCount(0);
 });
+
+test("a plugin page takes the app's theme, and follows it into dark", async ({ page, daemon }) => {
+  await setup(page, daemon);
+  await page.emulateMedia({ colorScheme: "light" });
+  await turnOnFromCard(page);
+  await (await flyout(page)).getByRole("menuitem", { name: "Echo" }).click();
+  await expect(echoFrame(page).locator("#ctx")).toHaveText("tab");
+
+  // The app's pane colour as the browser would paint it, so it compares with the plugin page's computed background.
+  const pane = () =>
+    page.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.style.background = "var(--pane)";
+      document.body.append(probe);
+      const colour = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return colour;
+    });
+  const pageStyle = () =>
+    echoFrame(page)
+      .locator("html")
+      .evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { background: s.backgroundColor, colorScheme: s.colorScheme, bg: s.getPropertyValue("--rooms-bg").trim() };
+      });
+
+  const light = await pane();
+  await expect.poll(pageStyle).toMatchObject({ background: light, colorScheme: "light" });
+
+  await page.getByRole("button", { name: /^Settings/ }).click();
+  await page.getByRole("radiogroup", { name: "Appearance" }).getByRole("radio", { name: "Dark" }).click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true);
+  const dark = await pane();
+  expect(dark).not.toBe(light);
+  await page.getByRole("tab", { name: "Echo" }).click();
+  await expect.poll(pageStyle).toMatchObject({ background: dark, colorScheme: "dark" });
+  expect((await pageStyle()).bg).not.toBe("");
+});
+
+test("a plugin on an older SDK keeps a white frame in dark, while one on this SDK gets the pane colour", async ({ page, daemon }) => {
+  // Relic: a tab plugin shaped like a plugin on SDK 0.6: it says ready without a theme flag and never styles itself.
+  await daemon.write(
+    ".rooms/plugins/relic/manifest.json",
+    JSON.stringify({ id: "relic", name: "Relic", version: "0.1.0", minAppVersion: "0.1.0", permissions: [], slots: { tab: { title: "Relic", icon: "puzzle", sidebar: true } } }),
+  );
+  await daemon.write(".rooms/plugins/relic/index.html", '<!doctype html><html><head><meta charset="utf-8"><title>Relic</title></head><body><p id="ctx">connecting</p><script src="main.js"></script></body></html>');
+  await daemon.write(
+    ".rooms/plugins/relic/main.js",
+    [
+      'window.addEventListener("message", (e) => {',
+      '  if (e.source !== window.parent || !e.data || e.data.rooms !== 1) return;',
+      '  if (e.data.type === "context") document.getElementById("ctx").textContent = e.data.context.slot;',
+      '  if (e.data.type === "ping") window.parent.postMessage({ rooms: 1, type: "pong", id: e.data.id }, "*");',
+      "});",
+      'window.parent.postMessage({ rooms: 1, type: "ready" }, "*");',
+    ].join("\n"),
+  );
+  await setup(page, daemon);
+  await turnOnFromCard(page);
+  const relicCard = page.getByRole("dialog", { name: "New plugin: Relic" });
+  await expect(relicCard).toBeVisible({ timeout: 5000 });
+  await relicCard.getByRole("button", { name: "Turn on" }).click();
+  await expect(relicCard).toBeHidden();
+
+  await page.getByRole("button", { name: /^Settings/ }).click();
+  await page.getByRole("radiogroup", { name: "Appearance" }).getByRole("radio", { name: "Dark" }).click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true);
+
+  const frameBackground = (title: string) => page.locator(`iframe[title="${title}"]`).evaluate((el) => getComputedStyle(el).backgroundColor);
+  await (await flyout(page)).getByRole("menuitem", { name: "Relic" }).click();
+  const relic = page.frameLocator('iframe[title="Relic"]');
+  await expect(relic.locator("#ctx")).toHaveText("tab");
+  expect(await frameBackground("Relic"), "a page that never said it applies the theme sits on white").toBe("rgb(255, 255, 255)");
+  // In WKWebView the page itself is transparent, so the white frame is what keeps its default black text readable.
+  expect(await relic.locator("body").evaluate((el) => ({ color: getComputedStyle(el).color, background: getComputedStyle(el.ownerDocument.documentElement).backgroundColor }))).toEqual({
+    color: "rgb(0, 0, 0)",
+    background: "rgba(0, 0, 0, 0)",
+  });
+
+  await (await flyout(page)).getByRole("menuitem", { name: "Echo" }).click();
+  await expect(echoFrame(page).locator("#ctx")).toHaveText("tab");
+  const pane = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.background = "var(--pane)";
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return colour;
+  });
+  await expect.poll(() => frameBackground("Echo"), "a page on this SDK said so on ready, and its frame took the pane colour").toBe(pane);
+  expect(pane).not.toBe("rgb(255, 255, 255)");
+});

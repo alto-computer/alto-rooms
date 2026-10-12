@@ -26,7 +26,7 @@ afterEach(() => {
 
 async function ready() {
   const p = connect();
-  expect(host.sent[0]).toEqual({ rooms: 1, type: "ready" });
+  expect(host.sent[0]).toEqual({ rooms: 1, type: "ready", theme: true });
   host.deliver({ rooms: 1, type: "context", pluginId: "echo", context: sidePanel });
   return p;
 }

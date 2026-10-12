@@ -28,7 +28,7 @@ describe("connectSurfaces", () => {
     s.paint(answer, [{ id: "a", start: 0, end: 3, style: "mustard" }]);
     s.menu(answer, "a", [{ id: "untag", title: "Untag" }]);
     expect(host.sent).toEqual([
-      toApp({ type: "hello" }),
+      toApp({ type: "hello", theme: true }),
       toApp({ type: "ready" }),
       toApp({ type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] }),
       toApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }], styles: { mustard: "rgba(199,154,62,0.28)" } }),
