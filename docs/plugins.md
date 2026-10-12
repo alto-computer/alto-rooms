@@ -4,6 +4,8 @@ A plugin adds UI to Rooms: a panel beside documents, or a tab of its own (opened
 
 Plugins change what you **see**. To change what gets **made** (reports, reviews), use your agent and its skills; their output lands in Rooms as files.
 
+This guide uses the words in [glossary.md](glossary.md): an **artifact** is one HTML file in a room, and a **session** is one agent run.
+
 ## Layout
 
 ```text

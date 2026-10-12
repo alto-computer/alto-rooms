@@ -18,6 +18,9 @@ Agents like Claude Code and Codex write specs, reports, and reviews as HTML. The
 - **Room**: a topic. One folder in `~/rooms`, or an existing folder you link.
 - **Artifact**: one HTML file in a room. It can be a symlink to a file that lives elsewhere.
 - **Journal**: one page per day. It shows the artifacts created that day, next to your own notes. Today's page is home: a new tab opens on it.
+- **Session**: one agent run (a Claude Code, Codex or Aside log). The Journal lists each day's sessions, and you can add a session to a room.
+
+The same words are used in code, the API and file names. See [docs/glossary.md](docs/glossary.md).
 
 ## How it works
 
