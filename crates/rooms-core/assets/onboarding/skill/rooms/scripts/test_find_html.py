@@ -65,9 +65,11 @@ class Env:
 
     def run(self, *extra):
         env = dict(os.environ, HOME=self.root)
+        env.pop("ROOMS_COLLECT_DATA", None)
         r = subprocess.run(
             [sys.executable, SCRIPT, "--home", self.home, "--claude-dir", self.claude,
-             "--codex-dir", self.codex, "--aside-dir", self.aside, *extra],
+             "--codex-dir", self.codex, "--aside-dir", self.aside,
+             "--collect-data", os.path.join(self.root, "data"), *extra],
             capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
         return json.loads(r.stdout)
@@ -77,6 +79,19 @@ def cc(name, path, days_ago=1, cwd="/x", sid="sess-cc", block_type="tool_use"):
     return {"type": "assistant", "timestamp": iso(days_ago), "cwd": cwd, "sessionId": sid,
             "message": {"content": [{"type": block_type, "name": name,
                                      "input": {"file_path": path}}]}}
+
+
+def cc_publish(tool_id, page, url, days_ago=1, cwd="/work/alto-rooms", sid="sess-pub", is_error=False, **extra):
+    """An Artifact publish call and its result line (a string result when it failed)."""
+    result = "Error: denied" if is_error else {"url": url, "path": page, "updated": False}
+    return [
+        {"type": "assistant", "timestamp": iso(days_ago), "cwd": cwd, "sessionId": sid,
+         "message": {"content": [{"type": "tool_use", "id": tool_id, "name": "Artifact",
+                                  "input": dict({"file_path": page}, **extra)}]}},
+        {"type": "user", "timestamp": iso(days_ago), "cwd": cwd, "sessionId": sid, "toolUseResult": result,
+         "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": is_error,
+                                  "content": "Published " + page}]}},
+    ]
 
 
 def cc_bash(command, days_ago=1, cwd="/x", sid="sess-cc"):
@@ -108,6 +123,44 @@ class FindHtmlTest(unittest.TestCase):
 
     def paths(self, out):
         return sorted(c["path"] for c in out["candidates"])
+
+    def keep_copy(self, aid, page_name, body="<title>copy</title>"):
+        """What the Rooms app's collector keeps for a published temp page."""
+        d = os.path.join(self.e.root, "data", "artifacts")
+        os.makedirs(os.path.join(d, aid))
+        with open(os.path.join(d, aid, page_name), "w") as f:
+            f.write(body)
+        with open(os.path.join(d, aid + ".json"), "w") as f:
+            json.dump({"url": "u", "page": page_name, "source": "/tmp/x"}, f)
+        return os.path.join(d, aid, page_name)
+
+    def test_published_temp_page_is_listed_through_the_apps_copy(self):
+        url = "https://claude.ai/artifact/DU8TsWQvmd23"
+        page = self.e.html("tmp/s/scratchpad/cmp.html")
+        draft = self.e.html("tmp/s/scratchpad/draft.html")
+        denied = self.e.html("tmp/s/scratchpad/denied.html")
+        self.e.claude_log([cc("Write", draft), cc("Write", page)] + cc_publish("t1", page, url)
+                          + cc_publish("t2", denied, url, is_error=True))
+        self.assertEqual(self.e.run()["candidates"], [], "no copy yet: skipped like other temp files")
+        copy = self.keep_copy("DU8TsWQvmd23", "cmp.html")
+        os.makedirs(os.path.join(self.e.home, ".rooms"))
+        out = self.e.run("--record-sources")
+        self.assertEqual(self.paths(out), [copy])
+        c = out["candidates"][0]
+        self.assertEqual((c["artifact_url"], c["sessions"], c["title"]), (url, ["sess-pub"], "copy"))
+        with open(os.path.join(self.e.home, ".rooms", "sources.json")) as f:
+            src = json.load(f)["sources"][copy]
+        self.assertEqual((src["artifactUrl"], src["copiedFrom"], src["session"]), (url, page, "sess-pub"))
+        os.makedirs(os.path.join(self.e.home, "inbox"))
+        os.symlink(copy, os.path.join(self.e.home, "inbox", "cmp.html"))
+        self.assertTrue(self.e.run()["candidates"][0]["linked"], "the collector's link counts")
+
+    def test_published_durable_page_keeps_its_path_and_gains_the_url(self):
+        page = self.e.html("proj/docs/spec.html")
+        self.e.claude_log(cc_publish("t1", page, "https://claude.ai/artifact/A1"))
+        out = self.e.run()
+        self.assertEqual(self.paths(out), [page])
+        self.assertEqual(out["candidates"][0]["artifact_url"], "https://claude.ai/artifact/A1")
 
     def test_claude_write_edit_artifact_counted_read_not(self):
         w = self.e.html("proj/w.html")
@@ -483,7 +536,7 @@ class FindHtmlTest(unittest.TestCase):
         t = datetime.now(timezone.utc)
         a = self.e.html("proj/rn.html")
         self.dot_rooms()
-        r = find_html.record_sources(self.e.home, {a: [(t, "codex", "", None, True)]})
+        r = find_html.record_sources(self.e.home, {a: [(t, "codex", "", None, True, None)]})
         self.assertEqual(r, {"recorded": 0})
         self.assertEqual(self.sources()["sources"], {})
 
