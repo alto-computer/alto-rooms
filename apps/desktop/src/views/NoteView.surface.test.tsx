@@ -139,6 +139,27 @@ describe("NoteView as a text surface", () => {
     expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
   });
 
+  it("Escape takes the bar away and puts the caret back in the text, from the text and from the bar's button, and leaves the selection", async () => {
+    sitDown();
+    await renderNote();
+    textarea().focus();
+    await select(15, 20);
+    expect(screen.getByRole("button", { name: "Tag" })).toBeInTheDocument();
+    fireEvent.keyDown(textarea(), { key: "Escape" });
+    fireEvent.keyUp(textarea(), { key: "Escape" });
+    await advance(0);
+    expect(screen.queryByRole("button", { name: "Tag" }), "gone, and not back on the key's way up").toBeNull();
+    expect(document.activeElement).toBe(textarea());
+    expect([textarea().selectionStart, textarea().selectionEnd]).toEqual([15, 20]);
+    await select(15, 20);
+    const tag = screen.getByRole("button", { name: "Tag" });
+    act(() => tag.focus());
+    fireEvent.keyDown(tag, { key: "Escape" });
+    await advance(0);
+    expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
+    expect(document.activeElement, "the text takes the focus the button held").toBe(textarea());
+  });
+
   it("typing keeps the paint on its word, saves the typed text as before, and tells the plugin after a pause", async () => {
     const frame = sitDown();
     const { client } = await renderNote();
