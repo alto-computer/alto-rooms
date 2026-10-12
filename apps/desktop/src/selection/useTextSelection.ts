@@ -19,11 +19,34 @@ export type PickedText = { text: string; rect: SelectionRect; span: SurfaceSpan 
 const nowhere = () => null;
 
 /**
- * Text selected inside `scope`, with where it is relative to `box`; null when nothing is. A
- * selection with one end outside the scope counts for the part inside it. Read on release, not
- * while dragging, so a bar over it doesn't chase the pointer. `locate` names the host text surface
- * the selection lies in, when it lies in one, and then the text is that surface's slice: a
- * triple-click on an answer runs into the row under it, and the quote must not.
+ * The text selected inside `scope` right now, with where it is relative to `box`; null when
+ * nothing is. A selection with one end outside the scope counts for the part inside it. `locate`
+ * names the host text surface the selection lies in, when it lies in one, and then the text is
+ * that surface's slice: a triple-click on an answer runs into the row under it, and the quote must not.
+ */
+export function pickNow(el: HTMLElement | null, box: HTMLElement | null, locate: (range: Range) => SurfaceSpan | null): PickedText | null {
+  const s = document.getSelection();
+  const b = box?.getBoundingClientRect();
+  if (!s || s.isCollapsed || s.rangeCount === 0 || !el || !b) return null;
+  // A triple-click or a drag can run past the scope (into a live region or the composer); what counts is the part inside it.
+  const range = s.getRangeAt(0).cloneRange();
+  const startIn = el.contains(range.startContainer);
+  const endIn = el.contains(range.endContainer);
+  if (!startIn && !endIn) return null;
+  if (!startIn) range.setStart(el, 0);
+  if (!endIn) range.setEnd(el, el.childNodes.length);
+  const span = locate(range);
+  const text = (span ? span.text : range.toString()).trim();
+  if (!text) return null;
+  const r = range.getBoundingClientRect();
+  return { text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height }, span };
+}
+
+/**
+ * The bar's place over text selected inside `scope`: `picked` is read once the pointer or key is
+ * up, not while dragging, so a bar over it doesn't chase the pointer. An action reads `live()`
+ * when it runs, since the bar may still show an earlier pick: the deferred read runs after the
+ * click or key that activated the button when the main thread is busy.
  */
 export function useTextSelection(
   scope: RefObject<HTMLElement | null>,
@@ -34,24 +57,7 @@ export function useTextSelection(
   const [picked, setPicked] = useState<PickedText | null>(null);
   useEffect(() => {
     if (!enabled) return;
-    const read = () => {
-      const s = document.getSelection();
-      const el = scope.current;
-      const b = box.current?.getBoundingClientRect();
-      if (!s || s.isCollapsed || s.rangeCount === 0 || !el || !b) return setPicked(null);
-      // A triple-click or a drag can run past the scope (into a live region or the composer); what counts is the part inside it.
-      const range = s.getRangeAt(0).cloneRange();
-      const startIn = el.contains(range.startContainer);
-      const endIn = el.contains(range.endContainer);
-      if (!startIn && !endIn) return setPicked(null);
-      if (!startIn) range.setStart(el, 0);
-      if (!endIn) range.setEnd(el, el.childNodes.length);
-      const span = locate(range);
-      const text = (span ? span.text : range.toString()).trim();
-      if (!text) return setPicked(null);
-      const r = range.getBoundingClientRect();
-      setPicked({ text, rect: { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height }, span });
-    };
+    const read = () => setPicked(pickNow(scope.current, box.current, locate));
     const onUp = () => setTimeout(read, 0);
     const onChange = () => {
       if (document.getSelection()?.isCollapsed) setPicked(null);
@@ -65,5 +71,5 @@ export function useTextSelection(
       document.removeEventListener("selectionchange", onChange);
     };
   }, [scope, box, enabled, locate]);
-  return { picked, dismiss: () => setPicked(null) };
+  return { picked, live: () => pickNow(scope.current, box.current, locate), dismiss: () => setPicked(null) };
 }

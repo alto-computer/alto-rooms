@@ -6,7 +6,7 @@ import { surfacePlugins } from "@/plugins/pluginsStore";
 import { SelectionBar, type SelectionAction } from "@/selection/SelectionBar";
 import type { SelectionRect } from "@/selection/useTextSelection";
 import { NoteBackdrop } from "@/surfaces/NoteBackdrop";
-import { surfaceHub, surfaceKey, type SurfaceSpan } from "@/surfaces/surfaceHub";
+import { surfaceHub, surfaceKey } from "@/surfaces/surfaceHub";
 import { menuRect, useRangeMenu } from "@/surfaces/useRangeMenu";
 import { GENERIC_ERROR, noteNameErrorCopy, SAVE_FAILED } from "@/lib/errors";
 import { checkNoteDraft, clearNoteDraft, type NoteDraft } from "@/lib/drafts";
@@ -45,9 +45,6 @@ const warn = (...args: unknown[]) => console.warn(...args);
 
 /** The body's type, on the textarea and on the backdrop that mirrors it: both must wrap alike. */
 const BODY_TYPE = "font-serif text-lead leading-[1.7]";
-
-/** Selected text in the note, as a span of its surface and where it is relative to the body box. */
-type NotePick = { span: SurfaceSpan; rect: SelectionRect };
 
 /**
  * A note tab: the note's markdown in a plain textarea with autosave (see
@@ -220,22 +217,25 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const key = surfaceKey(surface);
   const box = useRef<HTMLDivElement>(null);
   const { actions: surfaceActions } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
-  const [picked, setPicked] = useState<NotePick | null>(null);
+  // Where the bar sits: over the selection as it was once the pointer or key was up, as `useTextSelection` reads DOM text.
+  const [picked, setPicked] = useState<SelectionRect | null>(null);
   const menu = useRangeMenu(box);
-  // The textarea's selection, read once the pointer or key is up, as `useTextSelection` does for DOM text.
+  // The textarea's selection as it is now, as a span of the note's surface; null when nothing is selected.
+  const liveSpan = () => {
+    const ta = textareaRef.current;
+    return ta && ta.selectionStart !== ta.selectionEnd ? surfaceHub.span(key, ta.selectionStart, ta.selectionEnd) : null;
+  };
   const readSelection = () => {
     if (!surfaced) return;
     setTimeout(() => {
-      const ta = textareaRef.current;
+      const span = liveSpan();
       const b = box.current;
-      if (!ta || !b || ta.selectionStart === ta.selectionEnd) return setPicked(null);
-      const span = surfaceHub.span(key, ta.selectionStart, ta.selectionEnd);
-      if (!span) return setPicked(null);
+      if (!span || !b) return setPicked(null);
       const r = span.range.getBoundingClientRect();
       const bb = b.getBoundingClientRect();
       // Scrolled out of the box, the selection has no place for a bar.
       if (r.bottom < bb.top || r.top > bb.bottom) return setPicked(null);
-      setPicked({ span, rect: { x: r.left - bb.left, y: r.top - bb.top, w: r.width, h: r.height } });
+      setPicked({ x: r.left - bb.left, y: r.top - bb.top, w: r.width, h: r.height });
     }, 0);
   };
   const dismiss = () => {
@@ -252,8 +252,12 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
     setPicked(null);
     textareaRef.current?.focus();
   };
-  const runPicked = (pick: NotePick, plugin: string, actionId: string) => {
-    surfaceHub.runAction(plugin, actionId, pick.span);
+  // A button runs on the selection as it is now, not the one the bar was shown for: the deferred read
+  // runs after the click or key that activated the button when the main thread is busy, and a user who
+  // extends the selection with Shift+Arrow and presses Enter at once means the selection they see.
+  const runPicked = (plugin: string, actionId: string) => {
+    const span = liveSpan();
+    if (span) surfaceHub.runAction(plugin, actionId, span);
     setPicked(null);
     // A button that was activated from the keyboard held the focus; the text takes it back.
     if (document.activeElement !== textareaRef.current) textareaRef.current?.focus();
@@ -386,15 +390,8 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
         />
         {picked && surfaceActions.length > 0 ? (
           <SelectionBar
-            rect={picked.rect}
-            actions={surfaceActions.map(
-              (a): SelectionAction => ({
-                key: `${a.plugin}:${a.id}`,
-                title: a.title,
-                color: a.color,
-                run: () => runPicked(picked, a.plugin, a.id),
-              }),
-            )}
+            rect={picked}
+            actions={surfaceActions.map((a): SelectionAction => ({ key: `${a.plugin}:${a.id}`, title: a.title, color: a.color, run: () => runPicked(a.plugin, a.id) }))}
           />
         ) : null}
         {menu && box.current ? (

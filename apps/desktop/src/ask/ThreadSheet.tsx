@@ -110,8 +110,10 @@ export function ThreadSheet({ turns, scope, header, noteTarget, live, loadError,
         <SelectionBar
           rect={selection.picked.rect}
           actions={[
+            // Each action reads the selection as it is when the button runs, not the pick the bar was shown for: see useTextSelection.
             askAction(() => {
-              onQuote(selection.picked!.text);
+              const pick = selection.live();
+              if (pick) onQuote(pick.text);
               document.getSelection()?.removeAllRanges();
               selection.dismiss();
             }),
@@ -122,7 +124,8 @@ export function ThreadSheet({ turns, scope, header, noteTarget, live, loadError,
                     title: a.title,
                     color: a.color,
                     run: () => {
-                      surfaceHub.runAction(a.plugin, a.id, selection.picked!.span!);
+                      const span = selection.live()?.span;
+                      if (span) surfaceHub.runAction(a.plugin, a.id, span);
                       document.getSelection()?.removeAllRanges();
                       selection.dismiss();
                     },
