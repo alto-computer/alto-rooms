@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
-import { useClient, useJournalDay, useReadOnly, useInfo, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { useClient, useJournalDay, usePlugins, useReadOnly, useInfo, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { surfacePlugins } from "@/plugins/pluginsStore";
+import { SelectionBar, type SelectionAction } from "@/selection/SelectionBar";
+import type { SelectionRect } from "@/selection/useTextSelection";
+import { NoteBackdrop } from "@/surfaces/NoteBackdrop";
+import { surfaceHub, surfaceKey, type SurfaceSpan } from "@/surfaces/surfaceHub";
+import { menuRect, useRangeMenu } from "@/surfaces/useRangeMenu";
 import { GENERIC_ERROR, noteNameErrorCopy, SAVE_FAILED } from "@/lib/errors";
 import { checkNoteDraft, clearNoteDraft, type NoteDraft } from "@/lib/drafts";
 import { useBriefError } from "./briefError";
@@ -37,6 +43,12 @@ function useSaverState(saver: NoteSaver | null): NoteSaverState {
 
 const warn = (...args: unknown[]) => console.warn(...args);
 
+/** The body's type, on the textarea and on the backdrop that mirrors it: both must wrap alike. */
+const BODY_TYPE = "font-serif text-lead leading-[1.7]";
+
+/** Selected text in the note, as a span of its surface and where it is relative to the body box. */
+type NotePick = { span: SurfaceSpan; rect: SelectionRect };
+
 /**
  * A note tab: the note's markdown in a plain textarea with autosave (see
  * `noteSaver`). The textarea stays disabled until the body has loaded, so
@@ -47,6 +59,11 @@ const warn = (...args: unknown[]) => console.warn(...args);
  * The heading renames the note in place: the body is saved first (so nothing
  * typed is lost), then the file is renamed, then the live saver and the tab
  * move to the new name. The view re-renders with that name and keeps the saver.
+ *
+ * While a plugin that marks host text is on, the body is also a text surface:
+ * `NoteBackdrop` paints the plugin's ranges behind the textarea, a selection
+ * shows the plugin's buttons (notes have no Ask), and a click on a painted
+ * range asks the plugin for its menu. None of that touches the textarea.
  */
 export function NoteView({ tabId, date, name }: { tabId?: string; date: string; name: string }) {
   // `name` is the on-disk file name (e.g. `Plan.md`, `x.md.md`): the API gets it
@@ -190,6 +207,34 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   };
 
   const editable = load === "ready" && !readOnly && !renaming;
+
+  // Plugins that mark host text: the body is a surface only while one is on.
+  const surfaced = surfacePlugins(usePlugins().list).length > 0;
+  const surface = { kind: "note", date, name: fileName } as const;
+  const key = surfaceKey(surface);
+  const box = useRef<HTMLDivElement>(null);
+  const { actions: surfaceActions } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
+  const [picked, setPicked] = useState<NotePick | null>(null);
+  const menu = useRangeMenu(box);
+  // The textarea's selection, read once the pointer or key is up, as `useTextSelection` does for DOM text.
+  const readSelection = () => {
+    if (!surfaced) return;
+    setTimeout(() => {
+      const ta = textareaRef.current;
+      const b = box.current;
+      if (!ta || !b || ta.selectionStart === ta.selectionEnd) return setPicked(null);
+      const span = surfaceHub.span(key, ta.selectionStart, ta.selectionEnd);
+      if (!span) return setPicked(null);
+      const r = span.range.getBoundingClientRect();
+      const bb = b.getBoundingClientRect();
+      // Scrolled out of the box, the selection has no place for a bar.
+      if (r.bottom < bb.top || r.top > bb.bottom) return setPicked(null);
+      setPicked({ span, rect: { x: r.left - bb.left, y: r.top - bb.top, w: r.width, h: r.height } });
+    }, 0);
+  };
+  const dismiss = () => {
+    if (surfaced) setPicked(null);
+  };
   const openFailed = useBriefError();
   const openElsewhere = (absPath: string) => {
     openInEditor(absPath).then(openFailed.clear, (err) => {
@@ -275,27 +320,67 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
           {SAVE_FAILED}
         </p>
       ) : null}
-      <textarea
-        aria-label="Note"
-        data-note-editor=""
-        ref={textareaRef}
-        value={st.text}
-        disabled={load !== "ready"}
-        readOnly={readOnly || renaming}
-        onChange={(e) => {
-          if (editable) saver?.edit(e.target.value);
-        }}
-        onFocus={() => {
-          focusedRef.current = true;
-          setFocused(true);
-        }}
-        onBlur={() => {
-          focusedRef.current = false;
-          setFocused(false);
-          if (editable) saver?.blur();
-        }}
-        className="min-h-0 flex-1 resize-none border-0 bg-transparent font-serif text-lead leading-[1.7] text-ink outline-none disabled:bg-transparent"
-      />
+      <div ref={box} className="relative min-h-0 flex-1">
+        {surfaced ? <NoteBackdrop id={surface} text={st.text} textarea={textareaRef} className={BODY_TYPE} /> : null}
+        <textarea
+          aria-label="Note"
+          data-note-editor=""
+          ref={textareaRef}
+          value={st.text}
+          disabled={load !== "ready"}
+          readOnly={readOnly || renaming}
+          onChange={(e) => {
+            if (editable) saver?.edit(e.target.value);
+            dismiss();
+          }}
+          onFocus={() => {
+            focusedRef.current = true;
+            setFocused(true);
+          }}
+          onBlur={() => {
+            focusedRef.current = false;
+            setFocused(false);
+            if (editable) saver?.blur();
+            dismiss();
+          }}
+          onMouseUp={(e) => {
+            if (!surfaced) return;
+            const ta = e.currentTarget;
+            // A click with no selection on a painted range is the plugin's; the caret still lands.
+            if (ta.selectionStart === ta.selectionEnd) surfaceHub.clickAt(key, ta.selectionStart);
+            readSelection();
+          }}
+          onKeyUp={readSelection}
+          onScroll={() => {
+            // The bar follows the selection as the note scrolls; a menu sits on nodes that moved and closes.
+            readSelection();
+            if (surfaced) surfaceHub.closeMenu();
+          }}
+          className={`absolute inset-0 resize-none border-0 bg-transparent ${BODY_TYPE} text-ink outline-none disabled:bg-transparent`}
+        />
+        {picked && surfaceActions.length > 0 ? (
+          <SelectionBar
+            rect={picked.rect}
+            actions={surfaceActions.map(
+              (a): SelectionAction => ({
+                key: `${a.plugin}:${a.id}`,
+                title: a.title,
+                color: a.color,
+                run: () => {
+                  surfaceHub.runAction(a.plugin, a.id, picked.span);
+                  setPicked(null);
+                },
+              }),
+            )}
+          />
+        ) : null}
+        {menu && box.current ? (
+          <SelectionBar
+            rect={menuRect(menu, box.current)}
+            actions={menu.items.map((a): SelectionAction => ({ key: `${menu.plugin}:${a.id}`, title: a.title, color: a.color, run: () => surfaceHub.runMenu(a.id) }))}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }
