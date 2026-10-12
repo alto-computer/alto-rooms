@@ -87,7 +87,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const [attached, setAttached] = useState<{ key: string; saver: NoteSaver } | null>(null);
   const saver = attached?.key === saverKey ? attached.saver : null;
   useEffect(() => {
-    const key = noteSaverKey(date, fileName);
+    const key = saverKey;
     const { saver: s } = attachNoteSaver(key, () => createNoteSaver({ save: (text) => client.saveNote(date, name, text), warn }), {
       date,
       name,
@@ -96,7 +96,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
     // Detached a microtask later: on a rename the re-render attaches under the
     // new key first, so the live saver is kept rather than released and reloaded.
     return () => queueMicrotask(() => detachNoteSaver(key, s));
-  }, [client, date, name, fileName]);
+  }, [client, date, name, saverKey]);
   const st = useSaverState(saver);
 
   // Initial load (and "Try again"). `ready` is the body's state to show and edit: this file's saver
