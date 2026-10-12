@@ -45,15 +45,33 @@ describe("connectSurfaces", () => {
     expect(host.sent.at(-1), "a closed surface has no text to be against").toEqual(fromApp({ type: "paint", surface: answer, ranges: [] }));
   });
 
+  it("lets a plugin that paints after an await name the text its offsets came from, instead of the one that arrived meanwhile", async () => {
+    const s = connectSurfaces();
+    const paints: Promise<void>[] = [];
+    s.onOpen((surface, text, version) => {
+      // Like a plugin that reads its storage first: by the time it paints, the next text has been heard.
+      paints.push(Promise.resolve().then(() => s.paint(surface, [{ id: "all", start: 0, end: text.length, style: "m" }], undefined, version)));
+    });
+    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "abc", version: 1 }));
+    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "abcd", version: 2 }));
+    await Promise.all(paints);
+    expect(host.sent.filter((m) => m.type === "paint")).toEqual([
+      fromApp({ type: "paint", surface: answer, ranges: [{ id: "all", start: 0, end: 3, style: "m" }], version: 1 }),
+      fromApp({ type: "paint", surface: answer, ranges: [{ id: "all", start: 0, end: 4, style: "m" }], version: 2 }),
+    ]);
+    s.paint(answer, []);
+    expect(host.sent.at(-1), "a paint that names no text is read against the last heard").toEqual(fromApp({ type: "paint", surface: answer, ranges: [], version: 2 }));
+  });
+
   it("hands each app message to its listeners, until they unsubscribe", () => {
     const s = connectSurfaces();
     const got: unknown[] = [];
-    const offOpen = s.onOpen((surface, text) => got.push(["open", surface, text]));
+    const offOpen = s.onOpen((surface, text, version) => got.push(["open", surface, text, version]));
     s.onClose((surface) => got.push(["close", surface]));
     s.onAction((id, sel) => got.push(["action", id, sel]));
     s.onRangeClick((surface, rangeId) => got.push(["click", surface, rangeId]));
     s.onRangeAction((surface, rangeId, actionId) => got.push(["rangeAction", surface, rangeId, actionId]));
-    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "the quick fox" }));
+    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "the quick fox", version: 7 }));
     host.deliver(fromApp({ type: "selection.action", surface: answer, actionId: "tag", start: 4, end: 9, text: "quick" }));
     host.deliver(fromApp({ type: "range.click", surface: answer, rangeId: "a" }));
     host.deliver(fromApp({ type: "range.action", surface: answer, rangeId: "a", actionId: "untag" }));
@@ -61,7 +79,7 @@ describe("connectSurfaces", () => {
     offOpen();
     host.deliver(fromApp({ type: "surface.open", surface: answer, text: "again" }));
     expect(got).toEqual([
-      ["open", answer, "the quick fox"],
+      ["open", answer, "the quick fox", 7],
       ["action", "tag", { surface: answer, start: 4, end: 9, text: "quick" }],
       ["click", answer, "a"],
       ["rangeAction", answer, "a", "untag"],

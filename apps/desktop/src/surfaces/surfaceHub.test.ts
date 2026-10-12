@@ -443,6 +443,28 @@ describe("SurfaceHub", () => {
     vi.useRealTimers();
   });
 
+  it("numbers told texts across the hub, so a surface opened again after a close is never matched by a paint from its earlier life", () => {
+    const hub = new SurfaceHub();
+    const tagger = seat(hub);
+    const note: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    const root = document.createElement("div");
+    root.textContent = "the quick brown fox";
+    document.body.appendChild(root);
+    hub.open(note, root);
+    expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.open", text: "the quick brown fox", version: 1 });
+    hub.close(surfaceKey(note));
+    // The tab comes back with the note changed on disk; the plugin's paint for the old text is still on its way.
+    root.textContent = "a different note";
+    hub.open(note, root);
+    expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.open", text: "a different note", version: 2 });
+    tagger.say({ type: "paint", surface: note, version: 1, ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    expect(painted("rooms-tagger-amber"), "the paint read against the earlier text is ignored").toEqual([]);
+    tagger.say({ type: "paint", surface: note, version: 2, ranges: [{ id: "d", start: 2, end: 11, style: "amber" }] });
+    expect(painted("rooms-tagger-amber")).toEqual(["different"]);
+    surface(hub, answer("t1"), "<p>hello</p>");
+    expect(tagger.sent.at(-1), "another surface continues the count").toMatchObject({ type: "surface.open", text: "hello", version: 3 });
+  });
+
   it("tells a plugin the text it has not heard before posting a button click over it, and drops a click whose text moved", () => {
     vi.useFakeTimers();
     const hub = new SurfaceHub();
