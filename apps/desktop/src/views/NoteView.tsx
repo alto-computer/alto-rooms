@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type FocusEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FocusEvent, type KeyboardEvent } from "react";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
 import { useClient, useJournalDay, usePlugins, useReadOnly, useInfo, useRoomsStore, useViewerStore } from "@/data/hooks";
@@ -246,6 +246,12 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const onBodyBlur = (e: FocusEvent<HTMLDivElement>) => {
     if (!e.currentTarget.contains(e.relatedTarget)) dismiss();
   };
+  // Escape takes the bar away and puts the caret back in the text, from the text or from a button Tab reached; the selection stays.
+  const onBodyKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Escape" || !picked) return;
+    setPicked(null);
+    textareaRef.current?.focus();
+  };
   const runPicked = (pick: NotePick, plugin: string, actionId: string) => {
     surfaceHub.runAction(plugin, actionId, pick.span);
     setPicked(null);
@@ -337,7 +343,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
           {SAVE_FAILED}
         </p>
       ) : null}
-      <div ref={box} onBlur={onBodyBlur} className="relative min-h-0 flex-1">
+      <div ref={box} onBlur={onBodyBlur} onKeyDown={onBodyKeyDown} className="relative min-h-0 flex-1">
         {/* Mounted once the text is this file's, keyed by file: plugins hear a note's own text first, never an empty one or another note's. */}
         {surfaced && ready ? <NoteBackdrop key={key} id={surface} text={st.text} textarea={textareaRef} className={BODY_TYPE} /> : null}
         <textarea
@@ -367,7 +373,10 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             if (ta.selectionStart === ta.selectionEnd) surfaceHub.clickAt(key, ta.selectionStart);
             readSelection();
           }}
-          onKeyUp={readSelection}
+          onKeyUp={(e) => {
+            // The key that dismissed the bar must not bring it back on its way up.
+            if (e.key !== "Escape") readSelection();
+          }}
           onScroll={() => {
             // The bar follows the selection as the note scrolls; a menu sits on nodes that moved and closes.
             readSelection();
