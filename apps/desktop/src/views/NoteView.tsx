@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FocusEvent } from "react";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
 import { useClient, useJournalDay, usePlugins, useReadOnly, useInfo, useRoomsStore, useViewerStore } from "@/data/hooks";
@@ -235,6 +235,17 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const dismiss = () => {
     if (surfaced) setPicked(null);
   };
+  // Focus may move from the text onto the bar (Tab, or an accessibility press, which focuses the
+  // button before its click) and must keep the bar; focus leaving the body altogether takes it.
+  const onBodyBlur = (e: FocusEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget)) dismiss();
+  };
+  const runPicked = (pick: NotePick, plugin: string, actionId: string) => {
+    surfaceHub.runAction(plugin, actionId, pick.span);
+    setPicked(null);
+    // A button that was activated from the keyboard held the focus; the text takes it back.
+    if (document.activeElement !== textareaRef.current) textareaRef.current?.focus();
+  };
   const openFailed = useBriefError();
   const openElsewhere = (absPath: string) => {
     openInEditor(absPath).then(openFailed.clear, (err) => {
@@ -320,7 +331,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
           {SAVE_FAILED}
         </p>
       ) : null}
-      <div ref={box} className="relative min-h-0 flex-1">
+      <div ref={box} onBlur={onBodyBlur} className="relative min-h-0 flex-1">
         {surfaced ? <NoteBackdrop id={surface} text={st.text} textarea={textareaRef} className={BODY_TYPE} /> : null}
         <textarea
           aria-label="Note"
@@ -341,7 +352,6 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
             focusedRef.current = false;
             setFocused(false);
             if (editable) saver?.blur();
-            dismiss();
           }}
           onMouseUp={(e) => {
             if (!surfaced) return;
@@ -366,10 +376,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
                 key: `${a.plugin}:${a.id}`,
                 title: a.title,
                 color: a.color,
-                run: () => {
-                  surfaceHub.runAction(a.plugin, a.id, picked.span);
-                  setPicked(null);
-                },
+                run: () => runPicked(picked, a.plugin, a.id),
               }),
             )}
           />

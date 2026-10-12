@@ -17,7 +17,11 @@ export const askAction = (run: () => void): SelectionAction => ({
   run,
 });
 
-const PILL = "pointer-events-auto absolute z-20 flex h-8 -translate-x-1/2 items-center rounded-full border border-hairline bg-sheet text-small font-medium text-ink shadow-float motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95";
+/*
+ * No enter animation: WebKit holds animations at their first frame while the window is occluded
+ * (where it also stops requestAnimationFrame), and the first frame of a fade is invisible.
+ */
+const PILL = "pointer-events-auto absolute z-20 flex h-8 -translate-x-1/2 items-center rounded-full border border-hairline bg-sheet text-small font-medium text-ink shadow-float";
 const ITEM = "flex items-center gap-1.5 hover:bg-surface focus-visible:outline-2 focus-visible:outline-ink";
 
 function Label({ action }: { action: SelectionAction }) {
