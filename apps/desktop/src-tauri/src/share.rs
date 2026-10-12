@@ -1,4 +1,4 @@
-//! The doc tab's Share menu: the original file behind a doc's room link, copied, revealed in
+//! The artifact tab's Share menu: the original file behind an artifact's room link, copied, revealed in
 //! Finder, or opened in the default app. These run here, not through the opener plugin's JS
 //! API, because its open-path scope resolves symlinks and originals usually live outside
 //! `~/rooms`. In exchange, only HTML files qualify, so the webview can't open anything else.
@@ -19,17 +19,17 @@ fn original(link: &Path) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn doc_original(link: PathBuf) -> Result<String, String> {
+pub fn artifact_original(link: PathBuf) -> Result<String, String> {
     original(&link).map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
-pub fn reveal_doc(link: PathBuf) -> Result<(), String> {
+pub fn reveal_artifact(link: PathBuf) -> Result<(), String> {
     tauri_plugin_opener::reveal_item_in_dir(original(&link)?).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn open_doc(app: AppHandle, link: PathBuf) -> Result<(), String> {
+pub fn open_artifact(app: AppHandle, link: PathBuf) -> Result<(), String> {
     app.opener().open_path(original(&link)?.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -49,13 +49,13 @@ mod tests {
     #[test]
     fn a_room_link_resolves_to_its_original() {
         let d = temp_dir("link");
-        let doc = d.join("project/report.HTML");
-        fs::create_dir_all(doc.parent().unwrap()).unwrap();
-        fs::write(&doc, "<p>hi</p>").unwrap();
+        let original_file = d.join("project/report.HTML");
+        fs::create_dir_all(original_file.parent().unwrap()).unwrap();
+        fs::write(&original_file, "<p>hi</p>").unwrap();
         fs::create_dir_all(d.join("rooms/room")).unwrap();
-        symlink(&doc, d.join("rooms/room/report.HTML")).unwrap();
-        assert_eq!(original(&d.join("rooms/room/report.HTML")).unwrap(), doc);
-        assert_eq!(original(&doc).unwrap(), doc);
+        symlink(&original_file, d.join("rooms/room/report.HTML")).unwrap();
+        assert_eq!(original(&d.join("rooms/room/report.HTML")).unwrap(), original_file);
+        assert_eq!(original(&original_file).unwrap(), original_file);
     }
 
     #[test]
