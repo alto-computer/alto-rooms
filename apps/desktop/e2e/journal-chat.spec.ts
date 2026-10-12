@@ -56,6 +56,7 @@ test("ask about the viewed day, and keep each day's thread and draft across day 
 
   // Back on today, the day's thread waits behind the bar until the bar is used.
   await showDay(page, new Date());
+  await expect(page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact")).toHaveCount(2);
   await expect(input).toHaveValue("");
   await expect(answer).toHaveCount(0);
   await input.click();

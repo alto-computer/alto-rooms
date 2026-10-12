@@ -17,7 +17,8 @@ const PART_OF_THE_BAR = "[data-slot=dropdown-menu-content], [data-slot=dialog-co
 
 /**
  * The ask bar at the bottom of an artifact, room or Journal tab (⌘J): the subject's thread, and the input that
- * asks about it. The thread folds on Esc or a click elsewhere, and unfolds when the input is focused.
+ * asks about it. A tab opens with the bar alone; the thread unfolds when the input is focused, when a question
+ * goes out or an answer is running, and folds on Esc or a click elsewhere.
  */
 export function AskBar({ subject }: { subject: AskSubject }) {
   const framing = frameSubject(subject);
@@ -39,7 +40,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const { target, model, pick, modelFor } = useAskTarget(scope, shown);
   const note = framing.note?.(target);
   const composer = useComposer(scope, model);
-  const [unfolded, setUnfolded] = useState(true);
+  const [unfolded, setUnfolded] = useState(false);
   const [dragging, setDragging] = useState(false);
   /** What the live region says once an answer ends. */
   const [announce, setAnnounce] = useState("");
@@ -52,6 +53,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   useLoadThread(scope, shown && !(thread?.loaded ?? false));
   useFocusRules({ open, shown, quoteCount: composer.quotes.length, runningId: running?.id, input, container, setUnfolded, setAnnounce });
   useFoldOnOutsideClick(container, shown, () => setUnfolded(false));
+  useUnfoldForActivity(!!composer.pending || !!running, setUnfolded);
   useUnfoldForReveal(key, setUnfolded);
 
   // Stable for the memoized turns.
@@ -172,6 +174,13 @@ function useFocusRules({ open, shown, quoteCount, runningId, input, container, s
     }
     wasRunning.current = runningId;
   }, [runningId, shown, input, container, setAnnounce]);
+}
+
+/** A question on its way or an answer running, from here or found so on mount: the thread unfolds so it can be watched. */
+function useUnfoldForActivity(active: boolean, setUnfolded: (v: boolean) => void) {
+  useEffect(() => {
+    if (active) setUnfolded(true);
+  }, [active, setUnfolded]);
 }
 
 /** A plugin opened this thread at one of its ranges: the thread unfolds so the answer can show it. */

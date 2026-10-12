@@ -131,11 +131,14 @@ test("tagging words in a room answer and an artifact answer paints them in their
   await expect.poll(() => painted(page)).toEqual([artifactText]);
   await expect(page.getByText(roomText)).toHaveCount(0);
 
+  // After the reload each tab shows its bar alone; the thread unfolds from the bar.
   await page.reload();
   await expect(page.getByRole("tab", { name: "Alpha", selected: true })).toBeVisible();
+  await page.getByPlaceholder("Ask about this artifact…").click();
   await expect(page.getByText(artifactText)).toBeVisible();
   await expect.poll(() => painted(page), "the plugin repaints from its storage").toEqual([artifactText]);
   await page.getByRole("tab", { name: "harness", exact: true }).click();
+  await page.getByPlaceholder("Ask about this room…").click();
   await expect(page.getByText(roomText)).toBeVisible();
   await expect.poll(() => painted(page)).toEqual([roomText]);
 });
@@ -200,7 +203,9 @@ test("open({ surface, rangeId }) from the background is refused unless the user 
   expect(await open(), "no click on the plugin in the last 2 s").toBe("permission_denied");
   await expect(page.getByRole("tab", { name: "Alpha", selected: true })).toBeVisible();
 
+  // Back on the room, the thread waits behind the bar; the caret in the bar brings it and its paint back.
   await page.getByRole("tab", { name: "harness", exact: true }).click();
+  await page.getByPlaceholder("Ask about this room…").click();
   await expect.poll(() => painted(page)).toEqual([text]);
   await clickPainted(page);
   await expect(bar(page).getByRole("button")).toHaveText(["Untag", "Open"]);
@@ -212,6 +217,7 @@ test("open({ surface, rangeId }) from the background is refused unless the user 
 
   // A menu item is the other gesture: the previous test's Open item is a background open on its heels.
   await page.getByRole("tab", { name: "harness", exact: true }).click();
+  await page.getByPlaceholder("Ask about this room…").click();
   await expect.poll(() => painted(page)).toEqual([text]);
   await tag(page, answer);
   await page.getByRole("tab", { name: "Alpha", exact: true }).click();
