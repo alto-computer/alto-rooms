@@ -333,7 +333,7 @@ const paintedAt = (page: Page) =>
       // Chromium reports a textarea's caret as the element with an offset into its value: the painted word is where the textarea's own text is.
       const caret = typeof document.caretPositionFromPoint === "function" ? document.caretPositionFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
       // A range's rect is the glyph box, centred in its line box: the centre names the row, the top does not.
-      return { text: r.toString(), centre: rect.top + rect.height / 2 - box.top + ta.scrollTop, left: rect.left - box.left, caretOffset: caret?.offsetNode === ta ? caret.offset : null };
+      return { text: r.toString(), centre: rect.top + rect.height / 2 - box.top + ta.scrollTop, left: rect.left - box.left, width: rect.width, caretOffset: caret?.offsetNode === ta ? caret.offset : null };
     });
     return { ranges, lineHeight, scrollHeight: ta.scrollHeight, scrollTop: ta.scrollTop };
   }, { first: AMBER, second: GREEN });
@@ -508,4 +508,114 @@ test("tagging words in a note paints them behind the textarea, aligned through s
   await expect(ta).toHaveValue(`Intro\n${NOTE}`);
   await selectInNote(page, "marker");
   await expect(page.getByRole("button", { name: "Tag" })).toHaveCount(0);
+});
+
+/*
+ * A short note with no trailing newline, tagged from its first word with the keyboard. A Range in
+ * the registry can say "Plums are tart" while the engine paints something else: WebKit moves each
+ * highlight range to its visible positions, which skip unselectable text, so a mirror under
+ * `user-select: none` had both ends land on its neighbours and every line painted. So this reads
+ * the pixels, not the Range.
+ */
+const PLUMS = "Plums are tart and pears are soft.\nSecond line about apples.\nThird line closes the note.";
+
+/**
+ * Per text row of the note, [x, width] in textarea coordinates of the pixels `name`'s highlight
+ * changes, from a screenshot with its ranges against one without; null for a row it leaves alone.
+ */
+async function paintedPixels(page: Page, name = AMBER): Promise<(number[] | null)[]> {
+  const settle = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  // The caret blinks between two screenshots; it is not paint.
+  await noteEditor(page).evaluate((el: HTMLElement) => void (el.style.caretColor = "transparent"));
+  await settle();
+  const withPaint = await page.screenshot();
+  await page.evaluate((n) => {
+    const h = CSS.highlights.get(n)!;
+    (window as unknown as { heldRanges: Range[] }).heldRanges = Array.from(h as unknown as Iterable<Range>);
+    h.clear();
+  }, name);
+  await settle();
+  const without = await page.screenshot();
+  await page.evaluate((n) => {
+    const h = CSS.highlights.get(n)!;
+    for (const r of (window as unknown as { heldRanges: Range[] }).heldRanges) h.add(r);
+  }, name);
+  await noteEditor(page).evaluate((el: HTMLElement) => void (el.style.caretColor = ""));
+  await settle();
+  return page.evaluate(
+    async ([a, b]) => {
+      const ta = document.querySelector("textarea[data-note-editor]") as HTMLTextAreaElement;
+      const box = ta.getBoundingClientRect();
+      const lineHeight = parseFloat(getComputedStyle(ta).lineHeight);
+      const pixels = async (b64: string) => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${b64}`;
+        await img.decode();
+        const c = document.createElement("canvas");
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext("2d")!;
+        ctx.drawImage(img, 0, 0);
+        return { d: ctx.getImageData(0, 0, c.width, c.height).data, w: c.width, scale: img.width / window.innerWidth };
+      };
+      const p = await pixels(a);
+      const q = await pixels(b);
+      const rows: (number[] | null)[] = [];
+      for (let row = 0; row < 3; row++) {
+        const y = Math.round((box.top + lineHeight * (row + 0.5)) * p.scale);
+        let min = -1;
+        let max = -1;
+        for (let x = Math.round(box.left * p.scale); x < Math.round(box.right * p.scale); x++) {
+          const i = (y * p.w + x) * 4;
+          if (Math.abs(p.d[i] - q.d[i]) + Math.abs(p.d[i + 1] - q.d[i + 1]) + Math.abs(p.d[i + 2] - q.d[i + 2]) > 6) {
+            if (min < 0) min = x;
+            max = x;
+          }
+        }
+        rows.push(min < 0 ? null : [Math.round(min / p.scale - box.left), Math.round((max - min + 1) / p.scale)]);
+      }
+      return rows;
+    },
+    [withPaint.toString("base64"), without.toString("base64")],
+  );
+}
+
+test("tagging a note's first words from the keyboard paints those words and nothing else, in pixels, on both engines", async ({ page, daemon }) => {
+  const date = today();
+  await daemon.installPlugin("tagger");
+  await daemon.saveNote(date, "Plums.md", PLUMS);
+  await page.goto("/");
+  await turnOnTagger(page);
+  await backgroundFrame(page);
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
+  await page.getByRole("region", { name: "Your day" }).getByRole("button", { name: "Plums" }).click();
+  const ta = noteEditor(page);
+  await expect(ta).toHaveValue(PLUMS);
+  await ta.click();
+  await page.keyboard.press("Meta+ArrowUp");
+  for (let i = 0; i < 3; i++) await page.keyboard.press("Shift+Alt+ArrowRight");
+  await expect(ta).toHaveJSProperty("selectionStart", 0);
+  await expect(ta).toHaveJSProperty("selectionEnd", 14);
+  await expect(page.getByRole("button", { name: "Tag" })).toBeVisible();
+  await page.getByRole("button", { name: "Tag" }).evaluate((el: HTMLElement) => {
+    el.focus();
+    el.click();
+  });
+  await expect.poll(() => painted(page)).toEqual(["Plums are tart"]);
+  const onlyTheQuote = async () => {
+    const { ranges } = await paintedAt(page);
+    expect(ranges.map((r) => r.text)).toEqual(["Plums are tart"]);
+    const [quote] = ranges;
+    expect(quote.left).toBeCloseTo(0, 0);
+    const rows = await paintedPixels(page);
+    expect(rows[0], "the first line's paint starts where the quote does").not.toBeNull();
+    expect(rows[0]![0]).toBeLessThanOrEqual(1);
+    expect(Math.abs(rows[0]![1] - quote.width), "and is as wide as the quote").toBeLessThanOrEqual(2);
+    expect(rows.slice(1), "the other lines are untouched").toEqual([null, null]);
+  };
+  await onlyTheQuote();
+  await page.keyboard.press("Meta+ArrowDown");
+  await expect(ta).toHaveJSProperty("selectionStart", PLUMS.length);
+  await onlyTheQuote();
+  expect(await daemon.read(`journal/${date}/Plums.md`), "a paint never writes the note").toBe(PLUMS);
 });
