@@ -4,6 +4,12 @@
  * with the same font, wrapping, size and scroll, and plugin ranges are painted there with
  * CSS.highlights. The textarea's value, keys and autosave are untouched. Mounted only while a
  * plugin with `surfaces.text` is on; without one the note is the textarea alone, as before.
+ *
+ * The mirror stays selectable. WebKit moves each highlight range to its visible positions
+ * (Document::updateHighlightPositions), which skip `user-select: none` text, so under that
+ * style both ends landed on the mirror's neighbours and the paint covered the whole note. The
+ * textarea over it takes every pointer and key, so the mirror is only reachable by a page-wide
+ * Select All.
  */
 import { useEffect, useRef, type RefObject } from "react";
 import { surfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
@@ -57,7 +63,7 @@ export function NoteBackdrop({ id, text, textarea, className }: {
     };
   }, [key, textarea]);
   return (
-    <div ref={root} data-note-backdrop={key} aria-hidden className={`pointer-events-none absolute left-0 top-0 select-none overflow-hidden whitespace-pre-wrap break-words text-transparent ${className}`}>
+    <div ref={root} data-note-backdrop={key} aria-hidden className={`pointer-events-none absolute left-0 top-0 overflow-hidden whitespace-pre-wrap break-words text-transparent ${className}`}>
       {/* The textarea's value has its line breaks normalized; offsets into it mean the same here only if this text does too. */}
       {text.replace(/\r\n?/g, "\n")}
       {/* A trailing newline in the text ends a line only when something follows it, as it does in the textarea. */}
