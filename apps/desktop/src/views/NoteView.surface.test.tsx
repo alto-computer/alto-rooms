@@ -7,6 +7,7 @@ import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetNoteSavers } from "@/lib/noteSaverRegistry";
 import { surfaceHub, surfaceKey } from "@/surfaces/surfaceHub";
+import { StoresProvider } from "@/data/hooks";
 import { plugin } from "@/test/plugins";
 import { renderWithStores } from "@/test/fakes";
 import { NoteView } from "./NoteView";
@@ -57,10 +58,10 @@ const advance = (ms: number) =>
     await vi.advanceTimersByTimeAsync(ms);
   });
 
-async function renderNote(plugins = [tagger]) {
+async function renderNote(plugins = [tagger], otherNotes: Record<string, string> = {}) {
   const r = await renderWithStores(<NoteView date={DATE} name="Plan.md" />, {
     plugins,
-    notes: { [`${DATE}/Plan.md`]: TEXT },
+    notes: { [`${DATE}/Plan.md`]: TEXT, ...otherNotes },
     days: { [DATE]: { notes: [{ date: DATE, name: "Plan.md", relPath: `${DATE}/Plan.md`, updatedAt: "2026-10-05T01:00:00Z", author: "me" }] } },
   });
   await advance(0);
@@ -183,6 +184,25 @@ describe("NoteView as a text surface", () => {
     expect(painted()).toEqual([]);
     expect(textarea()).toHaveValue(TEXT);
     expect(textarea().getAttribute("data-note-editor")).toBe("");
+  });
+
+  it("shown another note, tells plugins that note's text once it has loaded, and never the first note's text or an empty one under its id", async () => {
+    sitDown();
+    const fake = await renderNote([tagger], { [`${DATE}/Other.md`]: "other note" });
+    const opens = (name: string) => sent.filter((m) => m.type === "surface.open" && (m.surface as { name: string }).name === name).map((m) => m.text);
+    expect(opens("Plan.md")).toEqual([TEXT]);
+    await act(async () => {
+      fake.rerender(
+        <StoresProvider rooms={fake.rooms} viewer={fake.viewer} client={fake.client}>
+          <NoteView date={DATE} name="Other.md" />
+        </StoresProvider>,
+      );
+    });
+    await advance(0);
+    expect(textarea()).toHaveValue("other note");
+    expect(opens("Other.md"), "the first text plugins hear for the note is the note's").toEqual(["other note"]);
+    expect(opens("Plan.md"), "the first note heard nothing more").toEqual([TEXT]);
+    expect(sent.filter((m) => m.type === "surface.close")).toEqual([{ rooms: "surface", v: 1, type: "surface.close", surface: id }]);
   });
 
   it("names the surface by the folded file name, so a rename changes it and a case change does not", async () => {
