@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "alto-rooms-desktop"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "ctrlc",
  "keyring",
@@ -2974,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-protocol"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dirs 5.0.1",
  "schemars 0.8.22",

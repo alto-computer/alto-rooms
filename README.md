@@ -174,7 +174,7 @@ cargo test             # Rust tests (from the repo root)
 
 ## Status
 
-This is an early version (0.6). It has been tested on macOS only.
+This is an early version (0.7). It has been tested on macOS only.
 
 ## License
 
