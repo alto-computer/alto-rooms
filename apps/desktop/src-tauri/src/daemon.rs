@@ -137,10 +137,10 @@ struct Info {
     home: String,
 }
 
-/// Returns the daemon home if the body is a `/v1/info` response with version "1".
+/// Returns the daemon home if the body is a `/v1/info` response with this build's protocol version.
 pub fn parse_info(body: &str) -> Option<String> {
     let info: Info = serde_json::from_str(body).ok()?;
-    (info.version == "1").then_some(info.home)
+    (info.version == rooms_protocol::PROTOCOL_VERSION).then_some(info.home)
 }
 
 /// Blocking probe; returns the daemon home when a compatible roomsd answers.
@@ -365,7 +365,7 @@ async fn ensure(app: &AppHandle) -> Result<Connection, String> {
     if cfg!(debug_assertions) {
         cmd = cmd.env("ROOMS_DEV_ORIGIN", "http://localhost:1420");
     }
-    // Where rooms-collect keeps collect.db (collector.rs passes the same folder), for conversations.
+    // Where rooms-collect keeps collect.db (collector.rs passes the same folder), for sessions.
     if let Ok(dir) = app.path().app_data_dir() {
         cmd = cmd.env("ROOMS_COLLECT_DATA", dir);
     }
@@ -666,19 +666,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_info_accepts_version_1() {
-        let body = r#"{"version":"1","readOnly":false,"home":"/Users/x/rooms","journalRoomId":"j","filesOrigin":"http://127.0.0.1:4318"}"#;
+    fn parse_info_accepts_version_2() {
+        let body = r#"{"version":"2","readOnly":false,"home":"/Users/x/rooms","journalRoomId":"j","filesOrigin":"http://127.0.0.1:4318"}"#;
         assert_eq!(parse_info(body), Some("/Users/x/rooms".to_string()));
     }
 
     #[test]
     fn parse_info_rejects_wrong_version() {
-        assert_eq!(parse_info(r#"{"version":"2","home":"/h"}"#), None);
+        assert_eq!(parse_info(r#"{"version":"1","home":"/h"}"#), None, "a roomsd from before sessions and artifacts were named");
+        assert_eq!(parse_info(r#"{"version":"3","home":"/h"}"#), None);
     }
 
     #[test]
     fn parse_info_rejects_garbage() {
         assert_eq!(parse_info("not json"), None);
-        assert_eq!(parse_info(r#"{"version":"1"}"#), None);
+        assert_eq!(parse_info(r#"{"version":"2"}"#), None);
     }
 }

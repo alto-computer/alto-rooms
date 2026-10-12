@@ -40,7 +40,7 @@ const keyOn = (el: EventTarget, k: string) => {
   return ev;
 };
 
-const doc: Artifact = {
+const artifact: Artifact = {
   id: "a1", roomId: "r1", relPath: "doc.html", title: "Doc", createdAt: "2026-10-06T09:00:00+09:00",
   updatedAt: "2026-10-06T09:00:00+09:00", author: "agent", fileKey: "k1",
   source: { agent: "claude-code", session: "S1", cwd: null, machine: null },
@@ -162,16 +162,16 @@ describe("AppShell in Tauri", () => {
     expect(screen.getByLabelText("New room name")).toBeInTheDocument();
   });
 
-  it("menu://toggle-ask shows and hides the ask bar on a doc or room tab, and is ignored on other tabs", async () => {
+  it("menu://toggle-ask shows and hides the ask bar on an artifact or room tab, and is ignored on other tabs", async () => {
     const h = await renderWithStores(
       <>
         <Grab />
         <AppShell />
       </>,
-      { rooms, artifacts: { r1: [doc] } },
+      { rooms, artifacts: { r1: [artifact] } },
     );
     act(() => {
-      h.viewer.open({ kind: "doc", roomId: "r1", artifactId: "a1" });
+      h.viewer.open({ kind: "artifact", roomId: "r1", artifactId: "a1" });
     });
     await act(async () => {}); // listeners register asynchronously
     // open by default

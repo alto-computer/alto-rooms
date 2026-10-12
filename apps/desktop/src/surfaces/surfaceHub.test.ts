@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { surfaceKey as sdkSurfaceKey } from "@alto-rooms/plugin-sdk";
+import { connectSurfaces, surfaceKey as sdkSurfaceKey, surfacePath } from "@alto-rooms/plugin-sdk";
 import { editBetween, isPaintColor, parseSurfaceId, shiftRanges, SurfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
 
 /** A stand-in for the CSS Custom Highlight API: what the hub registered under which name. */
@@ -589,13 +589,76 @@ describe("SurfaceHub", () => {
   });
 });
 
+describe("surface shapes per plugin SDK", () => {
+  const inArtifact: SurfaceId = { kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t1" };
+  const inSession: SurfaceId = { kind: "answer", scope: { kind: "session", agent: "claude-code", id: "s-1" }, turnId: "t2" };
+
+  /** The surface in every message one plugin hears about `id`: open, the open `ready` repeats, a button, a range click, a menu pick, close. */
+  function heard(id: SurfaceId, envelope: Record<string, unknown> = {}): unknown[] {
+    const hub = new SurfaceHub();
+    const plugin = seat(hub);
+    const say = (m: Record<string, unknown>) => plugin.say({ ...envelope, ...m });
+    if (envelope.api) say({ type: "hello" });
+    const root = surface(hub, id, "<p>the quick brown fox</p>");
+    const key = surfaceKey(id);
+    say({ type: "ready" });
+    say({ type: "actions", items: [{ id: "tag", title: "Tag" }] });
+    hub.runAction("tagger", "tag", { key, start: 0, end: 3, text: "the" });
+    const asHeard = plugin.sent[0].surface;
+    say({ type: "paint", surface: asHeard, ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    const textNode = root.querySelector("p")!.firstChild!;
+    (document as unknown as { caretPositionFromPoint: unknown }).caretPositionFromPoint = (x: number) => ({ offsetNode: textNode, offset: x });
+    hub.click(key, 6, 0);
+    delete (document as unknown as { caretPositionFromPoint?: unknown }).caretPositionFromPoint;
+    say({ type: "menu", surface: asHeard, rangeId: "q", items: [{ id: "untag", title: "Untag" }] });
+    hub.runMenu("untag");
+    hub.close(key);
+    expect(plugin.types()).toEqual(["surface.open", "surface.open", "selection.action", "range.click", "range.action", "surface.close"]);
+    return plugin.sent.map((m) => m.surface);
+  }
+
+  it("names artifact and session scopes the SDK 0.5 way to a plugin that never says which SDK it has", () => {
+    expect(heard(inArtifact)).toEqual(Array(6).fill({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" }));
+    expect(heard(inSession)).toEqual(Array(6).fill({ kind: "answer", scope: { kind: "conversation", agent: "claude-code", session: "s-1" }, turnId: "t2" }));
+  });
+
+  it("names them the SDK 0.6 way to a plugin that says it reads API 2", () => {
+    expect(heard(inArtifact, { api: 2 })).toEqual(Array(6).fill(inArtifact));
+    expect(heard(inSession, { api: 2 })).toEqual(Array(6).fill(inSession));
+  });
+
+  it("names a note the one way it has, whichever SDK the plugin says", () => {
+    const note: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    expect(heard(note)).toEqual(Array(6).fill(note));
+    expect(heard(note, { api: 2 })).toEqual(Array(6).fill(note));
+  });
+
+  it("gives a plugin built on SDK 0.6 surfaces its own surfacePath reads", () => {
+    const hub = new SurfaceHub();
+    const parent = Object.getOwnPropertyDescriptor(window, "parent");
+    const app = { postMessage: (m: unknown) => frame.receive(m) } as unknown as Window;
+    Object.defineProperty(window, "parent", { value: app, configurable: true });
+    const frame = hub.register("tagger", (m) => window.dispatchEvent(new MessageEvent("message", { data: m, source: app as unknown as MessageEventSource })));
+    try {
+      const paths: string[] = [];
+      connectSurfaces().onOpen((id) => paths.push(surfacePath(id)));
+      surface(hub, inArtifact, "<p>an answer</p>");
+      surface(hub, inSession, "<p>another</p>");
+      expect(paths).toEqual(["answer/artifact/0123456789abcdef/t1", "answer/session/claude-code/s-1/t2"]);
+    } finally {
+      frame.dispose();
+      if (parent) Object.defineProperty(window, "parent", parent);
+    }
+  });
+});
+
 describe("surfaceKey", () => {
   it("is the name the SDK gives the same surface", () => {
     for (const id of [
       answer("t1"),
-      { kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" } as SurfaceId,
+      { kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t1" } as SurfaceId,
       { kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" } as SurfaceId,
-      { kind: "answer", scope: { kind: "conversation", agent: "claude-code", session: "abc-123" }, turnId: "t1" } as SurfaceId,
+      { kind: "answer", scope: { kind: "session", agent: "claude-code", id: "abc-123" }, turnId: "t1" } as SurfaceId,
       { kind: "note", date: "2026-10-10", name: "Plan.md" } as SurfaceId,
       { kind: "note", date: "2026-10-10", name: "계획.md".normalize("NFD") } as SurfaceId,
     ]) {
@@ -628,14 +691,22 @@ describe("parseSurfaceId", () => {
     }
   });
 
-  it("accepts an answer in a doc, room, day or conversation thread and nothing else", () => {
-    expect(parseSurfaceId({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" })).toEqual({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" });
+  it("reads a scope a plugin saved under SDK 0.5 names as the scope it is now", () => {
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" })).toMatchObject({ scope: { kind: "artifact", fileKey: "0123456789abcdef" } });
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })).toMatchObject({ scope: { kind: "session", agent: "codex", id: "s_1-2" } });
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "-x" }, turnId: "t1" })).toBeNull();
+  });
+
+  it("accepts an answer in an artifact, room, day or session thread and nothing else", () => {
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t_1-2" })).toEqual({ kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t_1-2" });
     expect(parseSurfaceId({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" })).toMatchObject({ scope: { kind: "day", date: "2026-10-10" } });
-    expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })).toMatchObject({ scope: { kind: "conversation", agent: "codex", session: "s_1-2" } });
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "session", agent: "codex", id: "s_1-2" }, turnId: "t1" })).toMatchObject({ scope: { kind: "session", agent: "codex", id: "s_1-2" } });
     for (const bad of [
-      { kind: "answer", scope: { kind: "conversation", agent: "cursor", session: "s1" }, turnId: "t1" },
-      { kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s 1" }, turnId: "t1" },
-      { kind: "answer", scope: { kind: "conversation", agent: "codex", session: "x".repeat(129) }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "cursor", id: "s1" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "codex", id: "s 1" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "codex", id: "-x" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "codex", session: "s1" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "codex", id: "x".repeat(129) }, turnId: "t1" },
       null,
       "answer:room:r1/t1",
       { kind: "note", scope: { kind: "room", roomId: "r1" }, turnId: "t1" },

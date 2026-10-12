@@ -1,18 +1,18 @@
-//! Conversations as the Journal and rooms show them: the `message` events of one (agent,
-//! session), summarized. Times are the store's UTC `YYYY-MM-DDTHH:MM:SSZ`, so string order is
+//! Sessions as the Journal and rooms show them: the `message` events of one (agent, session id),
+//! summarized. Times are the store's UTC `YYYY-MM-DDTHH:MM:SSZ`, so string order is
 //! time order.
 use crate::event::PREVIEW_CHARS;
-use rooms_protocol::{Agent, Conversation, ConversationId, SessionId};
+use rooms_protocol::{Agent, Session, SessionId, SessionRef};
 use rusqlite::{params, Connection, OptionalExtension};
 
-/// How many of a conversation's first prompts are tried for a title.
+/// How many of a session's first prompts are tried for a title.
 const TITLE_PROMPTS: i64 = 10;
-/// Codex automations open every run with this block; such runs are not conversations to show.
+/// Codex automations open every run with this block; such runs are not sessions to show.
 const HEARTBEAT: &str = "<heartbeat>";
 
-/// Conversations with a message in `[from, to)`, each with the time of its first message in that
+/// Sessions with a message in `[from, to)`, each with the time of its first message in that
 /// range, earliest first. Codex automation runs are left out.
-pub fn on_day(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<(String, Conversation)>> {
+pub fn on_day(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<(String, Session)>> {
     let rows: Vec<(String, String, String)> = {
         let mut st = c.prepare_cached(
             "SELECT agent, session, min(ts) AS at FROM events
@@ -22,76 +22,77 @@ pub fn on_day(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<(Str
         it.collect::<rusqlite::Result<_>>()?
     };
     let mut out = Vec::new();
-    for (agent, session, at) in rows {
-        let (Some(agent), Some(session)) = (Agent::parse(&agent), SessionId::parse(&session)) else { continue };
-        let id = ConversationId { agent, session };
-        let prompts = prompts_of(c, agent.as_str(), id.session.as_str())?;
+    for (agent, id, at) in rows {
+        let (Some(agent), Some(id)) = (Agent::parse(&agent), SessionId::parse(&id)) else { continue };
+        let session_ref = SessionRef { agent, id };
+        let prompts = prompts_of(c, agent.as_str(), session_ref.id.as_str())?;
         if prompts.first().is_some_and(|p| p.starts_with(HEARTBEAT)) { continue; }
-        if let Some(conv) = summarize(c, id, &prompts)? { out.push((at, conv)); }
+        if let Some(session) = summarize(c, session_ref, &prompts)? { out.push((at, session)); }
     }
     Ok(out)
 }
 
-/// One conversation, or `None` when the store has no message of it.
-pub fn get(c: &Connection, id: &ConversationId) -> rusqlite::Result<Option<Conversation>> {
-    let prompts = prompts_of(c, id.agent.as_str(), id.session.as_str())?;
-    summarize(c, id.clone(), &prompts)
+/// One session, or `None` when the store has no message of it.
+pub fn get(c: &Connection, session_ref: &SessionRef) -> rusqlite::Result<Option<Session>> {
+    let prompts = prompts_of(c, session_ref.agent.as_str(), session_ref.id.as_str())?;
+    summarize(c, session_ref.clone(), &prompts)
 }
 
-/// The Aside account `session` was recorded under, from where its log is.
-pub fn aside_account(c: &Connection, session: &SessionId) -> rusqlite::Result<Option<String>> {
+/// The Aside account session `id` was recorded under, from where its log is.
+pub fn aside_account(c: &Connection, id: &SessionId) -> rusqlite::Result<Option<String>> {
     let log: Option<String> = c.query_row(
         "SELECT src_path FROM events WHERE agent='aside' AND session=?1 LIMIT 1",
-        [session.as_str()], |r| r.get(0)).optional()?;
+        [id.as_str()], |r| r.get(0)).optional()?;
     Ok(log.and_then(|p| crate::adapters::aside::account_of(std::path::Path::new(&p))))
 }
 
 /// A session's title: one the user gave it, else the agent's latest (Claude Code's AI title or
 /// summary, Codex's thread name), else its first prompt with the agents' wrapper blocks removed.
-pub fn title(c: &Connection, agent: &str, session: &str) -> rusqlite::Result<Option<String>> {
-    title_with(c, agent, session, &prompts_of(c, agent, session)?)
+pub fn title(c: &Connection, agent: &str, session_id: &str) -> rusqlite::Result<Option<String>> {
+    title_with(c, agent, session_id, &prompts_of(c, agent, session_id)?)
 }
 
-fn title_with(c: &Connection, agent: &str, session: &str, prompts: &[String]) -> rusqlite::Result<Option<String>> {
+fn title_with(c: &Connection, agent: &str, session_id: &str, prompts: &[String]) -> rusqlite::Result<Option<String>> {
     let named: Option<String> = c.query_row(
         "SELECT preview FROM events WHERE agent=?1 AND session=?2 AND kind='session.seen' AND preview IS NOT NULL
          ORDER BY coalesce(role='user', 0) DESC, rowid DESC LIMIT 1",
-        params![agent, session], |r| r.get(0)).optional()?;
+        params![agent, session_id], |r| r.get(0)).optional()?;
     Ok(named.or_else(|| prompts.iter().find_map(|p| clean_prompt(p))))
 }
 
-fn summarize(c: &Connection, id: ConversationId, prompts: &[String]) -> rusqlite::Result<Option<Conversation>> {
-    let (agent, session) = (id.agent.as_str(), id.session.as_str());
+fn summarize(c: &Connection, session_ref: SessionRef, prompts: &[String]) -> rusqlite::Result<Option<Session>> {
+    let (agent, session_id) = (session_ref.agent.as_str(), session_ref.id.as_str());
     let (started, ended, messages): (Option<String>, Option<String>, i64) = c.query_row(
         "SELECT min(ts), max(ts), count(*) FROM events WHERE agent=?1 AND session=?2 AND kind='message'",
-        params![agent, session], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        params![agent, session_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
     let (Some(started_at), Some(ended_at)) = (started, ended) else { return Ok(None) };
     let cwd: Option<String> = c.query_row(
         "SELECT cwd FROM events WHERE agent=?1 AND session=?2 AND cwd IS NOT NULL ORDER BY rowid LIMIT 1",
-        params![agent, session], |r| r.get(0)).optional()?;
+        params![agent, session_id], |r| r.get(0)).optional()?;
     let last_reply: Option<String> = c.query_row(
         "SELECT preview FROM events WHERE agent=?1 AND session=?2 AND kind='message' AND role='assistant'
          ORDER BY ts DESC, rowid DESC LIMIT 1",
-        params![agent, session], |r| r.get(0)).optional()?.flatten();
+        params![agent, session_id], |r| r.get(0)).optional()?.flatten();
     let artifacts_written: Vec<String> = {
         let mut st = c.prepare_cached(
             "SELECT path FROM events WHERE agent=?1 AND session=?2 AND kind='file.written' AND path IS NOT NULL
              GROUP BY path ORDER BY min(rowid)")?;
-        let it = st.query_map(params![agent, session], |r| r.get(0))?;
+        let it = st.query_map(params![agent, session_id], |r| r.get(0))?;
         it.collect::<rusqlite::Result<_>>()?
     };
-    let title = title_with(c, agent, session, prompts)?;
-    Ok(Some(Conversation {
-        id, title, cwd, started_at, ended_at, messages: messages as u32, last_reply, artifacts_written, room_id: None,
+    let title = title_with(c, agent, session_id, prompts)?;
+    let SessionRef { agent, id } = session_ref;
+    Ok(Some(Session {
+        agent, id, title, cwd, started_at, ended_at, messages: messages as u32, last_reply, artifacts_written, room_id: None,
     }))
 }
 
 /// The previews of a session's first user messages, in log order.
-fn prompts_of(c: &Connection, agent: &str, session: &str) -> rusqlite::Result<Vec<String>> {
+fn prompts_of(c: &Connection, agent: &str, session_id: &str) -> rusqlite::Result<Vec<String>> {
     let mut st = c.prepare_cached(
         "SELECT preview FROM events WHERE agent=?1 AND session=?2 AND kind='message' AND role='user' AND preview IS NOT NULL
          ORDER BY rowid LIMIT ?3")?;
-    let it = st.query_map(params![agent, session, TITLE_PROMPTS], |r| r.get(0))?;
+    let it = st.query_map(params![agent, session_id, TITLE_PROMPTS], |r| r.get(0))?;
     it.collect()
 }
 

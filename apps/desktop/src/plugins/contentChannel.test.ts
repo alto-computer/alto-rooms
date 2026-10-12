@@ -4,14 +4,14 @@ import { pluginDataBus } from "./pluginDataBus";
 
 const FILE_KEY = "00000000000000aa";
 
-/** A doc frame window stand-in: records what the host posts to it. */
+/** An artifact frame window stand-in: records what the host posts to it. */
 function fakeWindow() {
   const got: Record<string, unknown>[] = [];
   return { got, win: { postMessage: (m: Record<string, unknown>) => void got.push(m) } as unknown as Window };
 }
 
 function setup(over: Partial<ContentChannelDeps> = {}) {
-  const doc = fakeWindow();
+  const frame = fakeWindow();
   let t = 0;
   const client = {
     getPluginData: vi.fn(async (_id: string, _p: string): Promise<string | null> => "stored"),
@@ -23,7 +23,7 @@ function setup(over: Partial<ContentChannelDeps> = {}) {
   const ch = createContentChannel({
     fileKey: FILE_KEY,
     plugins: new Set(["marker", "second"]),
-    frame: () => doc.win,
+    frame: () => frame.win,
     client,
     onActions: (a) => actions.push(a),
     onReady: () => {},
@@ -31,11 +31,11 @@ function setup(over: Partial<ContentChannelDeps> = {}) {
     validColor: (v) => /^#[0-9a-f]{3,8}$|^[a-z]+$/i.test(v),
     ...over,
   });
-  const send = (data: Record<string, unknown>, source: unknown = doc.win) =>
+  const send = (data: Record<string, unknown>, source: unknown = frame.win) =>
     ch.receive(new MessageEvent("message", { data: { rooms: "content", v: 1, ...data }, source: source as MessageEventSource }));
-  const replies = () => doc.got.filter((m) => m.type === "reply");
+  const replies = () => frame.got.filter((m) => m.type === "reply");
   const flush = () => new Promise((r) => setTimeout(r, 0));
-  return { ch, doc, client, actions, send, replies, flush, tick: (ms: number) => void (t += ms) };
+  return { ch, frame, client, actions, send, replies, flush, tick: (ms: number) => void (t += ms) };
 }
 
 let open: { dispose(): void }[] = [];
@@ -65,13 +65,13 @@ describe("contentChannel", () => {
     ]);
   });
 
-  it("ignores every window but the doc frame", async () => {
+  it("ignores every window but the artifact frame", async () => {
     const s = track(setup());
     s.send({ plugin: "marker", type: "storage.write", id: "1", path: "a", text: "x" }, fakeWindow().win);
     s.send({ plugin: "marker", type: "storage.write", id: "1", path: "a", text: "x" }, window);
     await s.flush();
     expect(s.client.putPluginData).not.toHaveBeenCalled();
-    expect(s.doc.got).toEqual([]);
+    expect(s.frame.got).toEqual([]);
   });
 
   it("drops and counts a plugin outside the frame's set, or a malformed message", async () => {
@@ -82,7 +82,7 @@ describe("contentChannel", () => {
     s.send({ plugin: 7, type: "ready" });
     await s.flush();
     expect(s.client.putPluginData).not.toHaveBeenCalled();
-    expect(s.doc.got).toEqual([]);
+    expect(s.frame.got).toEqual([]);
     expect(s.ch.dropped).toBe(4);
   });
 
@@ -186,7 +186,7 @@ describe("contentChannel", () => {
     pluginDataBus.publish({ pluginId: "marker", path: "tab.json", from: other.win });
     s.send({ plugin: "marker", type: "storage.write", id: "1", path: "own.json", text: "x" });
     await s.flush();
-    expect(s.doc.got.filter((m) => m.type === "dataChanged")).toEqual([{ rooms: "content", v: 1, type: "dataChanged", plugin: "marker", path: "marks.json" }]);
+    expect(s.frame.got.filter((m) => m.type === "dataChanged")).toEqual([{ rooms: "content", v: 1, type: "dataChanged", plugin: "marker", path: "marks.json" }]);
   });
 
   it("publishes its writes so the plugin's other frames hear of them", async () => {
@@ -199,8 +199,8 @@ describe("contentChannel", () => {
     await s.flush();
     off();
     expect(heard).toEqual([
-      { pluginId: "marker", path: `docs/${FILE_KEY}/marks.json`, from: s.doc.win },
-      { pluginId: "marker", path: `docs/${FILE_KEY}/marks.json`, from: s.doc.win },
+      { pluginId: "marker", path: `docs/${FILE_KEY}/marks.json`, from: s.frame.win },
+      { pluginId: "marker", path: `docs/${FILE_KEY}/marks.json`, from: s.frame.win },
     ]);
   });
 
@@ -244,7 +244,7 @@ describe("contentChannel", () => {
     s.ch.runAction("second", "mark");
     s.ch.runAction("marker", "other");
     s.ch.runAction("marker", "mark");
-    expect(s.doc.got).toEqual([{ rooms: "content", v: 1, type: "selection.action", plugin: "marker", actionId: "mark" }]);
+    expect(s.frame.got).toEqual([{ rooms: "content", v: 1, type: "selection.action", plugin: "marker", actionId: "mark" }]);
   });
 });
 
@@ -254,7 +254,7 @@ describe("contentChannel reveal", () => {
   it("asks each plugin's script in the frame to repeat itself", () => {
     const s = track(setup());
     s.ch.sync();
-    expect(s.doc.got).toEqual([
+    expect(s.frame.got).toEqual([
       { rooms: "content", v: 1, type: "sync", plugin: "marker" },
       { rooms: "content", v: 1, type: "sync", plugin: "second" },
     ]);
@@ -269,7 +269,7 @@ describe("contentChannel reveal", () => {
     s.send({ plugin: "marker", type: "ready" });
     expect(onReady).toHaveBeenCalledTimes(2);
     expect(s.ch.reveal("marker", { mark: "x" })).toBe(true);
-    expect(reveals(s.doc.got)).toEqual([{ rooms: "content", v: 1, type: "reveal", plugin: "marker", anchor: { mark: "x" } }]);
+    expect(reveals(s.frame.got)).toEqual([{ rooms: "content", v: 1, type: "reveal", plugin: "marker", anchor: { mark: "x" } }]);
   });
 
   it("uses up an anchor for a plugin outside the set at once, and posts nothing", () => {
@@ -277,6 +277,6 @@ describe("contentChannel reveal", () => {
     expect(s.ch.reveal("goals", 2)).toBe(true);
     s.send({ plugin: "goals", type: "ready" });
     expect(s.ch.reveal("goals", 2)).toBe(true);
-    expect(reveals(s.doc.got)).toEqual([]);
+    expect(reveals(s.frame.got)).toEqual([]);
   });
 });

@@ -216,7 +216,7 @@ impl RoomsCore {
     }
 
     /// Appends the call's input, as one envelope line, to the plugin's data file the tool declares
-    /// for the resolved document, then emits `plugin.data.changed`. See `crate::tools`.
+    /// for the resolved artifact, then emits `plugin.data.changed`. See `crate::tools`.
     pub fn call_tool(&self, call: &ToolCall) -> Result<ToolResult, CoreError> {
         let (dir, m) = self.usable_plugin(&call.plugin_id)?;
         let tool = m.tools.into_iter().find(|t| t.name == call.name).ok_or(CoreError::NotFound)?;

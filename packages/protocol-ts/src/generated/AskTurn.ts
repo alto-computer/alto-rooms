@@ -5,8 +5,8 @@ import type { AskScope } from "./AskScope";
 import type { AskStatus } from "./AskStatus";
 
 /**
- * One question and its answer in a scope's thread (spec v2 ask). A doc's go to the agent that
- * made it.
+ * One question and its answer in a scope's thread (spec v2 ask). An artifact's go to the agent
+ * that made it.
  */
 export type AskTurn = { id: string, scope: AskScope, question: string, 
 /**
@@ -23,7 +23,7 @@ model: string | null, mode: AskMode, status: AskStatus, error: string | null, st
  */
 images: Array<string>, kind: AskKind, 
 /**
- * Earlier answers in this conversation that were too many or too long to send along.
+ * Earlier answers in this thread that were too many or too long to send along.
  */
 leftOut: number, 
 /**

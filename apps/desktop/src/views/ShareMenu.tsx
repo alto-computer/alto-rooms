@@ -7,13 +7,13 @@ import { toolbarButton } from "@/components/ToolbarGroup";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useInfo, useRoomList } from "@/data/hooks";
 import { copyText } from "@/lib/clipboard";
-import { docOriginal, openDoc, revealDoc } from "@/lib/native";
+import { artifactOriginal, openArtifact, revealArtifact } from "@/lib/native";
 import { isTauri } from "@/lib/tauri";
 
 /** One toast slot, so repeated picks replace it instead of stacking. */
-const TOAST_ID = "doc-share";
+const TOAST_ID = "artifact-share";
 
-/** Where the doc sits in its room: a link to the original for an agent-written doc. */
+/** Where the artifact sits in its room: a link to the original for an agent-written artifact. */
 function roomLinkPath(info: Info, rooms: Room[], artifact: Artifact): string | null {
   const root = artifact.roomId === info.journalRoomId ? `${info.home}/journal` : rooms.find((r) => r.id === artifact.roomId)?.path;
   return root ? `${root}/${artifact.relPath}` : null;
@@ -23,7 +23,7 @@ function roomLinkPath(info: Info, rooms: Room[], artifact: Artifact): string | n
 const groupEndGap = (trigger: HTMLElement) => trigger.parentElement!.getBoundingClientRect().right - trigger.getBoundingClientRect().right;
 
 /**
- * The doc tab's Share menu, all local: copy the original file's path, reveal it
+ * The artifact tab's Share menu, all local: copy the original file's path, reveal it
  * in Finder, or open it in the default browser. The last two need the app.
  */
 export function ShareMenu({ artifact }: { artifact: Artifact }) {
@@ -42,7 +42,7 @@ export function ShareMenu({ artifact }: { artifact: Artifact }) {
   };
   const copyPath = () =>
     run("Couldn't copy the path", async () => {
-      await copyText(docOriginal(link));
+      await copyText(artifactOriginal(link));
       toast("Copied file path", { id: TOAST_ID });
     });
 
@@ -60,11 +60,11 @@ export function ShareMenu({ artifact }: { artifact: Artifact }) {
         </DropdownMenuItem>
         {isTauri() ? (
           <>
-            <DropdownMenuItem onSelect={() => run("Couldn't reveal the file", () => revealDoc(link))}>
+            <DropdownMenuItem onSelect={() => run("Couldn't reveal the file", () => revealArtifact(link))}>
               <FolderSearch aria-hidden />
               Reveal in Finder
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => run("Couldn't open the file", () => openDoc(link))}>
+            <DropdownMenuItem onSelect={() => run("Couldn't open the file", () => openArtifact(link))}>
               <AppWindow aria-hidden />
               Open in browser
             </DropdownMenuItem>

@@ -6,6 +6,7 @@
 import type { Artifact, PluginInfo, Room } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import type { TabInput, ViewerStore } from "@/data/viewerStore";
+import { sessionTab } from "@/lib/sessions";
 import { parseSurfaceId, type SurfaceId } from "@/surfaces/surfaceHub";
 
 export type BridgeErrorCode = "permission_denied" | "invalid_path" | "too_large" | "not_found" | "write_failed" | "unknown_method" | "rate_limited" | "bad_request";
@@ -32,7 +33,7 @@ export type BridgeDeps = {
   };
   /** A write or delete of `path` in the plugin's data went through. */
   changed(path: string): void;
-  /** The slot the calling frame fills: a tab opens docs in a tab of their own, a side panel or a background frame in the current tab. */
+  /** The slot the calling frame fills: a tab opens artifacts in a tab of their own, a side panel or a background frame in the current tab. */
   slot: "tab" | "artifact.sidePanel" | "background";
   viewer: Pick<ViewerStore, "navigate" | "open" | "reveal">;
   /** The rooms in sidebar order. */
@@ -114,18 +115,18 @@ async function surfaceTab(surface: SurfaceId, deps: BridgeDeps): Promise<TabInpu
   }
   const { scope } = surface;
   switch (scope.kind) {
-    case "doc": {
+    case "artifact": {
       const a = await relay(deps.client.findArtifactByFileKey(scope.fileKey));
       if (!a) throw new BridgeError("not_found");
-      return { kind: "doc", roomId: a.roomId, artifactId: a.id };
+      return { kind: "artifact", roomId: a.roomId, artifactId: a.id };
     }
     case "room":
       if (!deps.rooms().some((r) => r.id === scope.roomId)) throw new BridgeError("not_found");
       return { kind: "room", roomId: scope.roomId };
     case "day":
       return { kind: "journal", date: scope.date };
-    case "conversation":
-      return { kind: "conversation", agent: scope.agent, session: scope.session };
+    case "session":
+      return sessionTab(scope);
   }
 }
 
@@ -197,8 +198,8 @@ export async function handleBridgeCall(p: PluginInfo, call: BridgeCall, deps: Br
       if (typeof fileKey === "string") {
         const a = await relay(client.findArtifactByFileKey(fileKey));
         if (!a) throw new BridgeError("not_found");
-        const doc = { kind: "doc", roomId: a.roomId, artifactId: a.id } as const;
-        const tabId = deps.slot === "tab" ? viewer.open(doc, { nextToActive: true }) : viewer.navigate(doc);
+        const tab = { kind: "artifact", roomId: a.roomId, artifactId: a.id } as const;
+        const tabId = deps.slot === "tab" ? viewer.open(tab, { nextToActive: true }) : viewer.navigate(tab);
         if (anchor !== undefined) viewer.reveal(tabId, { pluginId: p.id, anchor });
         return null;
       }

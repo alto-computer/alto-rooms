@@ -23,7 +23,7 @@ test("save a room answer into today's Journal twice, then open the note", async 
 
   await page.goto("/");
   await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "harness", exact: true }).click();
-  const answer = "Room answer to What is in here? (1 docs)";
+  const answer = "Room answer to What is in here? (1 artifacts)";
   await ask(page, "Ask about this room…", "What is in here?", answer);
 
   await page.getByRole("button", { name: "Save as note" }).click();
@@ -63,7 +63,7 @@ test("save a day answer into the viewed day, not today", async ({ page, daemon }
   const strip = `${other.toLocaleString("en-US", { month: "short" })} ${other.getDate()}`;
   await page.getByRole("button", { name: strip, exact: true }).click();
   await expect(page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact")).toHaveCount(1);
-  const answer = "Day answer to What happened? (1 docs)";
+  const answer = "Day answer to What happened? (1 artifacts)";
   await ask(page, "Ask about this day…", "What happened?", answer);
   await saveAsNote(page);
 

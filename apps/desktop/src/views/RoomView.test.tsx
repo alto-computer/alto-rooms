@@ -88,7 +88,7 @@ describe("RoomView", () => {
     expect(within(fresh).getByText("12 min")).toBeInTheDocument();
   });
 
-  it("the expand button opens a doc tab, and so does Enter on the card", async () => {
+  it("the expand button opens an artifact tab, and so does Enter on the card", async () => {
     const h = await renderWithStores(<RoomView roomId="r1" />, {
       rooms: [room("r1", "벤치마크")],
       artifacts: { r1: [artifact("a", "첫 문서", longAgo), artifact("b", "둘째", longAgo)] },
@@ -96,12 +96,12 @@ describe("RoomView", () => {
     const [second, first] = cards();
     fireEvent.click(within(first).getByRole("button", { name: "Open in new tab" }));
     let active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
-    expect(active).toEqual(expect.objectContaining({ kind: "doc", roomId: "r1", artifactId: "a" }));
+    expect(active).toEqual(expect.objectContaining({ kind: "artifact", roomId: "r1", artifactId: "a" }));
 
     const body = within(second).getByRole("button", { name: "둘째" });
     fireEvent.keyDown(body, { key: "Enter" });
     active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
-    expect(active).toEqual(expect.objectContaining({ kind: "doc", roomId: "r1", artifactId: "b" }));
+    expect(active).toEqual(expect.objectContaining({ kind: "artifact", roomId: "r1", artifactId: "b" }));
   });
 
   it("a card opens in the current tab; ⌘-click opens it in a new tab", async () => {
@@ -116,17 +116,17 @@ describe("RoomView", () => {
     expect(h.viewer.getState().tabs).toHaveLength(before + 1);
   });
 
-  it("clicking the card body opens the doc tab", async () => {
+  it("clicking the card body opens the artifact tab", async () => {
     const h = await renderWithStores(<RoomView roomId="r1" />, {
       rooms: [room("r1", "벤치마크")],
       artifacts: { r1: [artifact("a", "첫 문서", longAgo)] },
     });
     fireEvent.click(screen.getByRole("button", { name: "첫 문서" }));
     const active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
-    expect(active).toEqual(expect.objectContaining({ kind: "doc", artifactId: "a" }));
+    expect(active).toEqual(expect.objectContaining({ kind: "artifact", artifactId: "a" }));
   });
 
-  it("shows the new-doc dot for artifacts created after the last visit", async () => {
+  it("shows the new-artifact dot for artifacts created after the last visit", async () => {
     const viewer = viewerFor("2026-05-01T00:00:00Z");
     await renderWithStores(<RoomView roomId="r1" />, {
       rooms: [room("r1", "벤치마크")],
@@ -223,10 +223,10 @@ describe("RoomView", () => {
       artifacts: { r1: [artifact("a", "첫 문서", longAgo)] },
     });
     const iframe = screen.getByTitle("첫 문서");
-    expect(screen.getByTestId("doc-skeleton")).toBeInTheDocument();
+    expect(screen.getByTestId("artifact-skeleton")).toBeInTheDocument();
     expect(iframe).toHaveClass("opacity-0");
     fireEvent.load(iframe);
-    expect(screen.queryByTestId("doc-skeleton")).toBeNull();
+    expect(screen.queryByTestId("artifact-skeleton")).toBeNull();
     expect(iframe).toHaveClass("opacity-100");
   });
 
@@ -363,7 +363,7 @@ describe("EmptyRoom", () => {
 });
 
 describe("RoomView: drag from the inbox", () => {
-  it("inbox cards are draggable with the artifact payload; the expand button and click still open the doc", async () => {
+  it("inbox cards are draggable with the artifact payload; the expand button and click still open the artifact", async () => {
     const v = new ViewerStore(memoryStorage());
     v.open({ kind: "room", roomId: "inbox" });
     await renderWithStores(<RoomView roomId="inbox" />, {
@@ -377,7 +377,7 @@ describe("RoomView: drag from the inbox", () => {
     fireEvent.dragStart(card, { dataTransfer: { setData: (t: string, d: string) => data.set(t, d), effectAllowed: "all" } });
     expect(JSON.parse(data.get("application/x-rooms-artifact")!)).toEqual({ roomId: "inbox", artifactId: "x1" });
     fireEvent.click(within(card).getByRole("button", { name: "떠도는 문서" }));
-    expect(v.getState().tabs).toContainEqual(expect.objectContaining({ kind: "doc", artifactId: "x1" }));
+    expect(v.getState().tabs).toContainEqual(expect.objectContaining({ kind: "artifact", artifactId: "x1" }));
   });
 
   it("cards in other rooms, or in a read-only inbox, are not draggable", async () => {

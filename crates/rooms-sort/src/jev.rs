@@ -1,4 +1,4 @@
-//! TypeSafe Jev: one Choice question per document (spec §3). The only file that talks to TypeSafe.
+//! TypeSafe Jev: one Choice question per artifact (spec §3). The only file that talks to TypeSafe.
 use crate::rules::Answer;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -57,7 +57,7 @@ pub fn body(model: &str, state: &str, options: &[(String, String)]) -> Value {
     json!({
         "model": model,
         "state": state,
-        "questions": { QUESTION: { "type": "choice", "instructions": crate::doc::INSTRUCTIONS, "criteria": criteria } }
+        "questions": { QUESTION: { "type": "choice", "instructions": crate::prompt::INSTRUCTIONS, "criteria": criteria } }
     })
 }
 
@@ -67,7 +67,7 @@ pub fn parse(v: &Value, options: &[(String, String)]) -> Result<Reply, JevError>
     let choice = a["choice"].as_str().ok_or_else(|| JevError::Other(format!("no choice in answer: {v}")))?;
     let confidence = a["confidence"].as_f64().ok_or_else(|| JevError::Other("no confidence in answer".into()))?;
     let offered = options.iter().any(|(k, _)| k == choice);
-    let choice = (offered && choice != crate::doc::NONE_KEY).then(|| choice.to_string());
+    let choice = (offered && choice != crate::prompt::NONE_KEY).then(|| choice.to_string());
     let mut top: Vec<(String, f64)> = a["probabilities"].as_object().map(|m| m.iter().filter_map(|(k, p)| Some((k.clone(), p.as_f64()?))).collect()).unwrap_or_default();
     top.sort_by(|x, y| y.1.total_cmp(&x.1));
     top.truncate(3);

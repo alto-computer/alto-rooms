@@ -1,5 +1,5 @@
 import type { RoomsEvent } from "@alto-rooms/protocol-ts";
-import { sameConversation } from "@/lib/conversations";
+import { sameSession } from "@/lib/sessions";
 import { patch, sortArtifacts, syncCount, withArtifacts, type RoomsState } from "./roomsState";
 
 /** What the reducer may read about the store's scopes. */
@@ -70,11 +70,11 @@ export function applyEvent(s: RoomsState, e: RoomsEvent, view: ScopeView): Appli
       return dayChanged(s, e.date, view);
     case "note.saved":
       return dayChanged(s, e.note.date, view);
-    case "conversation.moved": {
+    case "session.moved": {
       // Its room chip changed on every watched day that lists it.
-      const id = e.conversation.id;
+      const moved = e.session;
       const dates = Object.entries(s.days)
-        .filter(([date, day]) => view.isWatchedDay(date) && day?.conversations.some((c) => sameConversation(c.conversation.id, id)))
+        .filter(([date, day]) => view.isWatchedDay(date) && day?.sessions.some((j) => sameSession(j.session, moved)))
         .map(([date]) => date);
       return { state: s, intents: dates.map((date) => ({ type: "dayChanged", date })) };
     }

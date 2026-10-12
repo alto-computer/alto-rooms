@@ -13,7 +13,7 @@ test("a Journal session opens in its own tab, asks in its own session, and goes 
   await daemon.createRoom("Research");
   const at = new Date();
   at.setHours(9, 0, 0, 0);
-  await daemon.addConversation({
+  await daemon.addSession({
     agent: "claude-code",
     session: "e2e-s1",
     cwd: daemon.home,
@@ -23,7 +23,7 @@ test("a Journal session opens in its own tab, asks in its own session, and goes 
 
   await page.goto("/");
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  const row = page.getByTestId("day-conversation").filter({ hasText: "Why is cold start slow?" });
+  const row = page.getByTestId("day-session").filter({ hasText: "Why is cold start slow?" });
   await row.hover();
   await expect(row.getByRole("button", { name: "More for Why is cold start slow?" })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Continue in/ })).toHaveCount(0);
@@ -68,11 +68,11 @@ test("a Journal row's ⋯ menu adds the session to a room through its submenu", 
   await daemon.createRoom("Benchmarks");
   const at = new Date();
   at.setHours(9, 0, 0, 0);
-  await daemon.addConversation({ agent: "claude-code", session: "e2e-s2", cwd: daemon.home, at, messages: ["Why is cold start slow?", "Looking."] });
+  await daemon.addSession({ agent: "claude-code", session: "e2e-s2", cwd: daemon.home, at, messages: ["Why is cold start slow?", "Looking."] });
 
   await page.goto("/");
   await page.getByRole("button", { name: "Journal", exact: true }).click();
-  const row = page.getByTestId("day-conversation").filter({ hasText: "Why is cold start slow?" });
+  const row = page.getByTestId("day-session").filter({ hasText: "Why is cold start slow?" });
   await row.hover();
   await row.getByRole("button", { name: "More for Why is cold start slow?" }).click();
   await page.getByRole("menuitem", { name: "Add to Room" }).click();

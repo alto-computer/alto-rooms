@@ -8,7 +8,7 @@ import { ViewerStore } from "@/data/viewerStore";
 import { addDays, clockTime, isoWeek, localDate } from "@/lib/dates";
 import { takeNoteBodyFocus } from "@/lib/notes";
 import { AppShell } from "@/shell/AppShell";
-import { conversation, fakeClient, memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { session, fakeClient, memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { JournalView } from "./JournalView";
 
 vi.mock("@/lib/native", () => ({
@@ -125,7 +125,7 @@ describe("JournalView: the daybook", () => {
     expect(within(daybook()).queryAllByLabelText(/more lines/)).toEqual([]);
   });
 
-  it("opens another room's artifact as a doc tab, from a sandboxed preview of it", async () => {
+  it("opens another room's artifact as an artifact tab, from a sandboxed preview of it", async () => {
     const { viewer } = await renderJournal({
       viewer: journalViewer(),
       rooms: [room("r9", "다른 방")],
@@ -138,7 +138,7 @@ describe("JournalView: the daybook", () => {
     expect(frame.getAttribute("src")).toBe("http://files.test/r9/x.html");
     fireEvent.click(row);
     const active = viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId);
-    expect(active).toMatchObject({ kind: "doc", roomId: "r9", artifactId: "a1" });
+    expect(active).toMatchObject({ kind: "artifact", roomId: "r9", artifactId: "a1" });
   });
 
   it("labels an artifact whose room isn't listed Room, and a dream.html outside the Journal is no Review", async () => {
@@ -189,7 +189,7 @@ describe("JournalView: an empty day", () => {
     const at = `${addDays(day, -1)}T03:00:00Z`;
     await renderJournal({
       viewer: journalViewer(day),
-      days: { [addDays(day, -1)]: { conversations: [{ at, conversation: conversation("s1") }, { at, conversation: conversation("s2") }] } },
+      days: { [addDays(day, -1)]: { sessions: [{ at, session: session("s1") }, { at, session: session("s2") }] } },
     });
     const nearest = await screen.findByRole("region", { name: "Nearest days" });
     expect(within(nearest).getByRole("button")).toHaveTextContent("2 sessions");
@@ -225,7 +225,7 @@ describe("JournalView: the day's tally", () => {
   });
   const tally = () => screen.getByRole("region", { name: "Today" });
 
-  it("counts the day's conversations, its artifacts across rooms and its notes, and has nothing else beside the day", async () => {
+  it("counts the day's sessions, its artifacts across rooms and its notes, and has nothing else beside the day", async () => {
     await renderJournal(busyDay());
     expect(within(tally()).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["0 sessions", "3 artifacts", "1 note"]);
     // The tile names its metric in the plural, even for one; the accessible name stays a phrase.
@@ -244,7 +244,7 @@ describe("JournalView: the day's tally", () => {
       `${clockTime(`${today}T00:10:00Z`)}아침 보고서벤치마크`,
     ]);
     fireEvent.click(rows[1]);
-    expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "doc", roomId: "r1", artifactId: "a2" });
+    expect(viewer.getState().tabs.find((t) => t.id === viewer.getState().activeId)).toMatchObject({ kind: "artifact", roomId: "r1", artifactId: "a2" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -266,7 +266,7 @@ describe("JournalView: the day's tally", () => {
     const list = await screen.findByRole("dialog", { name: "3 artifacts" });
     const journal = viewer.getState().activeId;
     fireEvent(within(list).getAllByRole("button")[0], new MouseEvent("auxclick", { bubbles: true, button: 1 }));
-    expect(viewer.getState().tabs.find((t) => t.kind === "doc")).toMatchObject({ roomId: "r2", artifactId: "a3" });
+    expect(viewer.getState().tabs.find((t) => t.kind === "artifact")).toMatchObject({ roomId: "r2", artifactId: "a3" });
     expect(viewer.getState().tabs.find((t) => t.id === journal)).toMatchObject({ kind: "journal" });
   });
 

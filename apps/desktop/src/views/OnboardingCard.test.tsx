@@ -25,7 +25,7 @@ describe("OnboardingCard full (welcome page)", () => {
   const EXAMPLES = [
     "Turn this result into an HTML report and put it in the right room",
     "Sort my rooms again, going back 30 days",
-    "Turn today's conversation into an HTML review and put it in today's Journal",
+    "Turn today's session into an HTML review and put it in today's Journal",
   ];
   const render = (opts: { home?: string; readOnly?: boolean } = {}) =>
     renderWithStores(<OnboardingCard />, { home: opts.home ?? "/Users/me/rooms", readOnly: opts.readOnly, rooms: [room("inbox", "Inbox")] });

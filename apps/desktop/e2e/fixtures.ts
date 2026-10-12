@@ -45,8 +45,8 @@ export type Daemon = {
   read(rel: string): Promise<string>;
   /** Copies a built fixture plugin (see buildFixturePlugin) into <home>/.rooms/plugins/<id>/. */
   installPlugin(id: string): Promise<void>;
-  /** Adds a conversation's messages, alternating user and agent from the first, to this daemon's own collect.db. */
-  addConversation(c: { agent: string; session: string; cwd: string; at: Date; messages: string[] }): Promise<void>;
+  /** Adds a session's messages, alternating user and agent from the first, to this daemon's own collect.db. */
+  addSession(c: { agent: string; session: string; cwd: string; at: Date; messages: string[] }): Promise<void>;
 };
 
 /** collect.db's schema, as rooms-collect creates it. */
@@ -216,7 +216,7 @@ export const test = base.extend<{ daemon: Daemon; bundledPlugins: string | undef
           );
         },
         read: (rel) => fs.readFile(abs(rel), "utf8"),
-        async addConversation({ agent, session, cwd, at, messages }) {
+        async addSession({ agent, session, cwd, at, messages }) {
           const q = (v: string) => `'${v.replace(/'/g, "''")}'`;
           const rows = messages.map((text, i) => {
             const ts = new Date(at.getTime() + i * 60_000).toISOString().replace(/\.\d{3}Z$/, "Z");

@@ -1,16 +1,16 @@
-import type { Artifact, AskScope, AskTarget, AskTurn, Conversation, Room } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTarget, AskTurn, Room, Session } from "@alto-rooms/protocol-ts";
 import { AGENT_NAMES } from "@/lib/agents";
-import { conversationTitle } from "@/lib/conversations";
+import { sessionTitle } from "@/lib/sessions";
 import { localDate } from "@/lib/dates";
 import { modelLabel } from "./askModel";
 
 /**
- * What an ask bar asks about: the doc in a doc tab, the session in a conversation tab, the room in a
- * room tab, the viewed day in the Journal tab.
+ * What an ask bar asks about: the artifact in an artifact tab, the session in a session tab, the
+ * room in a room tab, the viewed day in the Journal tab.
  */
 export type AskSubject =
-  | { kind: "doc"; artifact: Artifact }
-  | { kind: "conversation"; conversation: Conversation }
+  | { kind: "artifact"; artifact: Artifact }
+  | { kind: "session"; session: Session }
   | { kind: "room"; roomId: string }
   | { kind: "day"; date: string };
 
@@ -41,9 +41,9 @@ const agentHeader = (t: AskTurn): TurnHeader => ({ text: agentAndModel(t).filter
 
 export function frameSubject(subject: AskSubject): SubjectFraming {
   switch (subject.kind) {
-    case "doc":
+    case "artifact":
       return {
-        scope: { kind: "doc", fileKey: subject.artifact.fileKey },
+        scope: { kind: "artifact", fileKey: subject.artifact.fileKey },
         placeholder: "Ask about this artifact…",
         header: (t) => {
           const how = { resume: "continuing the thread that made it", continue: "continuing this conversation", new: "New conversation" }[t.mode];
@@ -53,20 +53,20 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         agent: subject.artifact.source.agent ?? "Default agent",
         noteTarget: null,
       };
-    case "conversation": {
-      const { id } = subject.conversation;
+    case "session": {
+      const { agent, id } = subject.session;
       return {
-        scope: { kind: "conversation", agent: id.agent, session: id.session },
+        scope: { kind: "session", agent, id },
         placeholder: "Ask about this session…",
         header: (t) => {
           const how = { resume: "continuing this session", continue: "continuing this conversation", new: "New session" }[t.mode];
           const text = [...agentAndModel(t), how].filter(Boolean).join(" · ");
           return t.mode === "new" ? { text, title: "Couldn't resume this session" } : { text };
         },
-        agent: AGENT_NAMES[id.agent],
+        agent: AGENT_NAMES[agent],
         // Aside asks append to the real session (roomsd resumes it); Claude Code and Codex fork it.
-        note: (target) => (id.agent === "aside" && target?.mode !== "new" ? "Asks continue this Aside session; it can use the browser." : null),
-        noteTarget: (now) => ({ date: localDate(now), source: `Session: ${conversationTitle(subject.conversation)}` }),
+        note: (target) => (agent === "aside" && target?.mode !== "new" ? "Asks continue this Aside session; it can use the browser." : null),
+        noteTarget: (now) => ({ date: localDate(now), source: `Session: ${sessionTitle(subject.session)}` }),
       };
     }
     case "room":

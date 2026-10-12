@@ -16,7 +16,7 @@ fn install(home: &Path, id: &str, manifest: &str) {
     fs::write(dir.join("index.html"), "<p>x</p>").unwrap();
 }
 
-/// Home with the enabled plugin `pen` and a room `a` holding doc.html; returns the doc's fileKey.
+/// Home with the enabled plugin `pen` and a room `a` holding doc.html; returns the artifact's fileKey.
 fn setup() -> (tempfile::TempDir, RoomsCore, String) {
     let d = tempfile::tempdir().unwrap();
     let core = RoomsCore::open(d.path()).unwrap();

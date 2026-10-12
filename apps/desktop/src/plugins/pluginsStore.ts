@@ -30,7 +30,7 @@ export const surfacePlugins = (list: HostPlugin[]): HostPlugin[] =>
 
 /**
  * A short key for the usable plugins that run content scripts inside documents, with their revs.
- * Part of a doc frame's URL, so the frame reloads when a plugin is turned on or off or its script
+ * Part of an artifact frame's URL, so the frame reloads when a plugin is turned on or off or its script
  * changes. The hash (FNV-1a) keeps the URL short; roomsd decides the actual set itself.
  */
 export function contentKey(list: HostPlugin[]): string {

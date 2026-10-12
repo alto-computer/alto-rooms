@@ -45,7 +45,7 @@ test("ask about the viewed day, and keep each day's thread and draft across day 
   await expect(page.getByText(/^Read · (dream|report)\.html$|^Read · plan\.md$/)).toBeVisible({ timeout: 10_000 });
 
   const question = page.getByText("What did I do today?", { exact: true });
-  const answer = page.getByText("Day answer to What did I do today? (3 docs)");
+  const answer = page.getByText("Day answer to What did I do today? (3 artifacts)");
   const other = otherDay();
   await showDay(page, other);
   // The bar moves to the other day once that day has loaded.

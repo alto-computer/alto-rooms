@@ -10,7 +10,7 @@ const MARKS: Record<Agent, string[]> = {
 };
 
 /**
- * A small stroked mark for the agent a conversation ran in; ink is `currentColor`. Hidden from
+ * A small stroked mark for the agent a session ran in; ink is `currentColor`. Hidden from
  * screen readers unless `labelled`, where nothing beside it names the agent.
  */
 export function AgentMark({ agent, labelled = false, className }: { agent: Agent; labelled?: boolean; className?: string }) {

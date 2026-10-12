@@ -67,7 +67,7 @@ async fn run() -> Result<i32, StartupError> {
             eprintln!("roomsd: bundled plugins: {e}");
         }
     }
-    // Conversations come from rooms-collect's store; the desktop app passes its folder.
+    // Sessions come from rooms-collect's store; the desktop app passes its folder.
     if let Ok(dir) = std::env::var("ROOMS_COLLECT_DATA") {
         core.set_collect_data(std::path::Path::new(&dir));
     }

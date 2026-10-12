@@ -6,7 +6,7 @@ import { AppShell } from "@/shell/AppShell";
 import { surfaceHub, surfaceKey } from "@/surfaces/surfaceHub";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { plugin } from "@/test/plugins";
-import { DocView } from "@/views/DocView";
+import { ArtifactView } from "@/views/ArtifactView";
 import { EnableCard } from "./EnableCard";
 import { flushAllPlugins } from "./host";
 import { pluginDataBus, type PluginDataChange } from "./pluginDataBus";
@@ -16,7 +16,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const doc: Artifact = {
+const artifact: Artifact = {
   id: "a1",
   roomId: "r1",
   relPath: "a1.html",
@@ -31,10 +31,10 @@ const doc: Artifact = {
 const echoTab = (extra: Partial<PluginInfo> = {}) =>
   plugin({ slots: { artifactSidePanel: null, tab: { title: "Echo", icon: "puzzle", sidebar: true } }, ...extra });
 
-async function openDoc(plugins: PluginInfo[] = [plugin()], pluginData: Record<string, string> = {}) {
-  const h = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+async function openArtifact(plugins: PluginInfo[] = [plugin()], pluginData: Record<string, string> = {}) {
+  const h = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
     rooms: [room("r1", "Bench")],
-    artifacts: { r1: [doc] },
+    artifacts: { r1: [artifact] },
     plugins,
     pluginData,
   });
@@ -60,7 +60,7 @@ async function openPanel(name = "Echo") {
 
 describe("artifact side panel", () => {
   it("previews drag width without persisting until release and stops after cancellation", async () => {
-    const h = await openDoc();
+    const h = await openArtifact();
     await openPanel();
     const handle = screen.getByRole("separator", { name: "Resize panel" });
     handle.setPointerCapture = vi.fn();
@@ -89,7 +89,7 @@ describe("artifact side panel", () => {
   });
 
   it.each(["lostpointercapture", "blur", "unmount"])("cleans up a resize on %s", async (reason) => {
-    const h = await openDoc();
+    const h = await openArtifact();
     await openPanel();
     const handle = screen.getByRole("separator", { name: "Resize panel" });
     handle.setPointerCapture = vi.fn();
@@ -113,33 +113,33 @@ describe("artifact side panel", () => {
   });
 
   it("shows nothing without an enabled side-panel plugin", async () => {
-    await openDoc([plugin({ enabled: false, needsApproval: true }), echoTab()]);
+    await openArtifact([plugin({ enabled: false, needsApproval: true }), echoTab()]);
     expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
     const group = screen.getByRole("group", { name: "Artifact actions" });
     expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share"]);
   });
 
   it("opens from an icon beside Share, drawn from the manifest's icon, else a pencil", async () => {
-    await openDoc([plugin({ slots: { artifactSidePanel: { title: "Echo", icon: "palette" }, tab: null } })]);
+    await openArtifact([plugin({ slots: { artifactSidePanel: { title: "Echo", icon: "palette" }, tab: null } })]);
     const group = screen.getByRole("group", { name: "Artifact actions" });
     expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share", "Open Echo"]);
     const opener = within(group).getByRole("button", { name: "Open Echo" });
     expect(opener).toHaveTextContent("");
     expect(opener.querySelector("svg.lucide-palette")).not.toBeNull();
     cleanup();
-    await openDoc();
+    await openArtifact();
     expect(screen.getByRole("button", { name: "Open Echo" }).querySelector("svg.lucide-pencil")).not.toBeNull();
   });
 
   it("an open panel leaves Share alone in the group", async () => {
-    await openDoc();
+    await openArtifact();
     await openPanel();
     const group = screen.getByRole("group", { name: "Artifact actions" });
     expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Share"]);
   });
 
   it("opens a sandboxed frame from the plugin's folder and remembers it is open", async () => {
-    const h = await openDoc();
+    const h = await openArtifact();
     const { f } = await openPanel();
     expect(f.getAttribute("src")).toBe("http://files.test/_plugins/echo/index.html");
     expect(f.getAttribute("sandbox")).toBe("allow-scripts");
@@ -148,7 +148,7 @@ describe("artifact side panel", () => {
   });
 
   it("answers ready with the open document's context", async () => {
-    await openDoc();
+    await openArtifact();
     const { f, posted } = await openPanel();
     fromFrame(f, { rooms: 1, type: "ready" });
     expect(posted).toHaveBeenLastCalledWith(
@@ -172,7 +172,7 @@ describe("artifact side panel", () => {
   });
 
   it("relays requests to the plugin's data and replies to the same frame", async () => {
-    const h = await openDoc();
+    const h = await openArtifact();
     const { f, posted } = await openPanel();
     fromFrame(f, { rooms: 1, id: "r1", method: "storage.write", params: { path: "notes/9f2c.txt", text: "hi" } });
     await act(async () => {});
@@ -187,7 +187,7 @@ describe("artifact side panel", () => {
   });
 
   it("tells the frame when its own plugin's data changes, and no other plugin's", async () => {
-    const h = await openDoc();
+    const h = await openArtifact();
     const { posted } = await openPanel();
     h.emit({ type: "plugin.data.changed", pluginId: "other", path: "drawings/a.jsonl" });
     expect(posted).not.toHaveBeenCalled();
@@ -196,7 +196,7 @@ describe("artifact side panel", () => {
   });
 
   it("a bridge write tells the plugin's other frames, not the frame that wrote it", async () => {
-    await openDoc();
+    await openArtifact();
     const { f, posted } = await openPanel();
     const heard: PluginDataChange[] = [];
     const off = pluginDataBus.subscribe((c) => heard.push(c));
@@ -212,7 +212,7 @@ describe("artifact side panel", () => {
   });
 
   it("stops relaying data changes once the frame is gone", async () => {
-    const h = await openDoc();
+    const h = await openArtifact();
     let listeners = 0;
     const onSignal = h.rooms.onSignal.bind(h.rooms);
     vi.spyOn(h.rooms, "onSignal").mockImplementation((fn) => {
@@ -232,7 +232,7 @@ describe("artifact side panel", () => {
   });
 
   it("ignores messages from any other window", async () => {
-    const h = await openDoc();
+    const h = await openArtifact();
     const { posted } = await openPanel();
     act(() => {
       window.dispatchEvent(
@@ -248,7 +248,7 @@ describe("artifact side panel", () => {
   });
 
   it("closing waits for the plugin's beforeClose ack", async () => {
-    const h = await openDoc();
+    const h = await openArtifact();
     const { f, posted } = await openPanel();
     fromFrame(f, { rooms: 1, type: "ready" });
     fireEvent.click(screen.getByRole("button", { name: "Close Echo" }));
@@ -263,7 +263,7 @@ describe("artifact side panel", () => {
 
   it("closing gives up waiting after 1.5 s", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    await openDoc();
+    await openArtifact();
     const { f } = await openPanel();
     fromFrame(f, { rooms: 1, type: "ready" });
     fireEvent.click(screen.getByRole("button", { name: "Close Echo" }));
@@ -275,7 +275,7 @@ describe("artifact side panel", () => {
 
   it("shows a stopped overlay when pings go unanswered, and Reload brings the frame back", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    await openDoc();
+    await openArtifact();
     const { f, posted } = await openPanel();
     fromFrame(f, { rooms: 1, type: "ready" });
     await act(async () => {
@@ -294,7 +294,7 @@ describe("artifact side panel", () => {
   });
 
   it("several side-panel plugins share the panel with a switcher", async () => {
-    await openDoc([plugin(), plugin({ id: "notes", name: "Notes", slots: { artifactSidePanel: { title: "Notes", icon: null }, tab: null } })]);
+    await openArtifact([plugin(), plugin({ id: "notes", name: "Notes", slots: { artifactSidePanel: { title: "Notes", icon: null }, tab: null } })]);
     await openPanel();
     fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
     expect(screen.getByTitle("Notes")).toBeInTheDocument();
@@ -479,7 +479,7 @@ describe("plugin tabs, the sidebar flyout, and the enable card", () => {
 
   it("an enabled content-only plugin adds no panel opener beside documents", async () => {
     const marker = plugin({ id: "marker", name: "Marker", slots: { artifactSidePanel: null, tab: null }, permissions: ["artifact.content"], granted: ["artifact.content"] });
-    await openDoc([marker]);
+    await openArtifact([marker]);
     expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
   });
 
@@ -536,13 +536,13 @@ describe("plugin tabs, the sidebar flyout, and the enable card", () => {
 });
 
 describe("an open plugin when the plugin changes", () => {
-  async function openEcho(h: Awaited<ReturnType<typeof openDoc>>) {
+  async function openEcho(h: Awaited<ReturnType<typeof openArtifact>>) {
     const { f, posted } = await openPanel();
     fromFrame(f, { rooms: 1, type: "ready" });
     return { f, posted, h };
   }
 
-  async function change(h: Awaited<ReturnType<typeof openDoc>>, patch: Partial<PluginInfo> | null) {
+  async function change(h: Awaited<ReturnType<typeof openArtifact>>, patch: Partial<PluginInfo> | null) {
     if (patch === null) h.state.plugins.splice(0, 1);
     else Object.assign(h.state.plugins[0], patch);
     await act(async () => {
@@ -555,7 +555,7 @@ describe("an open plugin when the plugin changes", () => {
     posted.mock.calls.map((c) => c[0] as { type?: string; id?: string }).find((m) => m.type === "beforeClose");
 
   it("an update (new rev) asks beforeClose, then reloads the frame", async () => {
-    const { f, posted, h } = await openEcho(await openDoc());
+    const { f, posted, h } = await openEcho(await openArtifact());
     await change(h, { rev: "r2" });
     const close = closeMessage(posted)!;
     expect(close).toBeTruthy();
@@ -568,10 +568,10 @@ describe("an open plugin when the plugin changes", () => {
   it("new permissions close it after beforeClose and the enable card asks again", async () => {
     const h = await renderWithStores(
       <>
-        <DocView roomId="r1" artifactId="a1" />
+        <ArtifactView roomId="r1" artifactId="a1" />
         <EnableCard />
       </>,
-      { rooms: [room("r1", "Bench")], artifacts: { r1: [doc] }, plugins: [plugin()] },
+      { rooms: [room("r1", "Bench")], artifacts: { r1: [artifact] }, plugins: [plugin()] },
     );
     await act(async () => {});
     const { f, posted } = await openEcho(h);
@@ -600,7 +600,7 @@ describe("an open plugin when the plugin changes", () => {
   });
 
   it("while closing for new permissions it keeps what was approved: same src, same sandbox, no new methods, no reload", async () => {
-    const { f, posted, h } = await openEcho(await openDoc());
+    const { f, posted, h } = await openEcho(await openArtifact());
     // A real permission bump also changes the manifest bytes, so rev changes too.
     await change(h, { rev: "r2", permissions: ["rooms.read", "downloads"], needsApproval: true });
     expect(frame("Echo")).toBe(f);
@@ -631,7 +631,7 @@ describe("an open plugin when the plugin changes", () => {
   });
 
   it("after the panel was closed, turning the plugin off leaves no toggle and opens no frame", async () => {
-    const { f, posted, h } = await openEcho(await openDoc());
+    const { f, posted, h } = await openEcho(await openArtifact());
     fireEvent.click(screen.getByRole("button", { name: "Close Echo" }));
     const close = closeMessage(posted)!;
     fromFrame(f, { rooms: 1, type: "beforeClose.done", id: close.id });
@@ -642,13 +642,13 @@ describe("an open plugin when the plugin changes", () => {
   });
 
   it("a deleted plugin's frame goes away at once", async () => {
-    const { h } = await openEcho(await openDoc());
+    const { h } = await openEcho(await openArtifact());
     await change(h, null);
     expect(screen.queryByTitle("Echo")).toBeNull();
   });
 
   it("quitting asks every open frame to save", async () => {
-    const { f, posted } = await openEcho(await openDoc());
+    const { f, posted } = await openEcho(await openArtifact());
     const flushing = flushAllPlugins(1500);
     const close = closeMessage(posted)!;
     expect(close).toBeTruthy();

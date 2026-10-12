@@ -47,7 +47,7 @@ async function turnOnFromCard(page: Page, asks: string[] = ["Can see your rooms 
   await expect(card).toBeHidden();
 }
 
-async function openDoc(page: Page, roomName: string) {
+async function openArtifact(page: Page, roomName: string) {
   await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: roomName }).click();
   await page.getByTestId("artifact-card").filter({ hasText: "Latency report" }).getByRole("button", { name: "Latency report" }).click();
   await expect(page.getByRole("tab", { name: "Latency report", selected: true })).toBeVisible();
@@ -60,21 +60,21 @@ test("a plugin is asked about, runs beside a document, keeps its notes across a 
   await expect((await flyout(page)).getByRole("menuitem", { name: "Echo" })).toBeVisible();
   await page.keyboard.press("Escape");
 
-  type Doc = { id: string; fileKey: string };
-  await expect.poll(async () => ((await api(daemon, "GET", `/v1/rooms/${bench.id}/artifacts`)) as Doc[]).length).toBe(1);
-  const [doc] = (await api(daemon, "GET", `/v1/rooms/${bench.id}/artifacts`)) as Doc[];
-  await openDoc(page, "Bench");
+  type Artifact = { id: string; fileKey: string };
+  await expect.poll(async () => ((await api(daemon, "GET", `/v1/rooms/${bench.id}/artifacts`)) as Artifact[]).length).toBe(1);
+  const [artifact] = (await api(daemon, "GET", `/v1/rooms/${bench.id}/artifacts`)) as Artifact[];
+  await openArtifact(page, "Bench");
   await expect(page.getByRole("button", { name: "Open Echo" }).locator("svg.lucide-palette")).toBeVisible();
   await page.getByRole("button", { name: "Open Echo" }).click();
-  await expect(echoFrame(page).locator("#ctx")).toHaveText(`doc ${doc.fileKey}`);
+  await expect(echoFrame(page).locator("#ctx")).toHaveText(`artifact ${artifact.fileKey}`);
   await echoFrame(page).getByRole("button", { name: "Save" }).click();
-  await expect(echoFrame(page).locator("#out")).toHaveText(`saved ${doc.fileKey}`);
-  expect(await daemon.read(".rooms/plugins/echo/data/echo.txt")).toBe(doc.fileKey);
+  await expect(echoFrame(page).locator("#out")).toHaveText(`saved ${artifact.fileKey}`);
+  expect(await daemon.read(".rooms/plugins/echo/data/echo.txt")).toBe(artifact.fileKey);
 
-  // Rooms moves the (plain-file) doc to another room: same original, same fileKey, same notes.
-  await api(daemon, "POST", "/v1/artifacts/move", { roomId: bench.id, artifactId: doc.id, toRoomId: other.id });
-  await openDoc(page, "Other");
-  await expect(echoFrame(page).locator("#ctx")).toHaveText(`doc ${doc.fileKey}`);
+  // Rooms moves the (plain-file) artifact to another room: same original, same fileKey, same notes.
+  await api(daemon, "POST", "/v1/artifacts/move", { roomId: bench.id, artifactId: artifact.id, toRoomId: other.id });
+  await openArtifact(page, "Other");
+  await expect(echoFrame(page).locator("#ctx")).toHaveText(`artifact ${artifact.fileKey}`);
 
   // The flyout opens the plugin as a tab; it can list rooms (rooms.read).
   await (await flyout(page)).getByRole("menuitem", { name: "Echo" }).click();
@@ -112,15 +112,15 @@ test("Settings turns a plugin off and on; new permissions close it after it save
   await expect(pluginSwitch(page, "Echo")).not.toBeChecked();
   // Off is the user's choice: no card, and nothing beside documents.
   await expect(page.getByRole("dialog", { name: /Echo/ })).toHaveCount(0);
-  await openDoc(page, "Bench");
+  await openArtifact(page, "Bench");
   await expect(page.getByRole("button", { name: "Open Echo" })).toHaveCount(0);
   await page.getByRole("button", { name: /^Settings/ }).click();
   await pluginSwitch(page, "Echo").click();
   await expect(pluginSwitch(page, "Echo")).toBeChecked();
 
-  await openDoc(page, "Bench");
+  await openArtifact(page, "Bench");
   await page.getByRole("button", { name: "Open Echo" }).click();
-  await expect(echoFrame(page).locator("#ctx")).toContainText("doc ");
+  await expect(echoFrame(page).locator("#ctx")).toContainText("artifact ");
 
   await setPermissions(daemon, ["rooms.read", "clipboard"]);
 
@@ -133,7 +133,7 @@ test("Settings turns a plugin off and on; new permissions close it after it save
 
   await card.getByRole("button", { name: "Turn on" }).click();
   await expect(card).toBeHidden();
-  await expect(echoFrame(page).locator("#ctx")).toContainText("doc ");
+  await expect(echoFrame(page).locator("#ctx")).toContainText("artifact ");
 });
 
 test("a content-script plugin says it reads documents, and turning it on adds no tab or panel", async ({ page, daemon }) => {
@@ -163,7 +163,7 @@ test("a content-script plugin says it reads documents, and turning it on adds no
   await expect((await flyout(page)).getByRole("menuitem")).toHaveText(["Plugin settings…"]);
   await page.getByRole("menuitem", { name: "Plugin settings…" }).click();
   await expect(pluginSwitch(page, "Marker")).toBeChecked();
-  await openDoc(page, "Bench");
+  await openArtifact(page, "Bench");
   await expect(page.getByRole("button", { name: "Open Marker" })).toHaveCount(0);
   await expect(page.locator('iframe[title="Marker"]')).toHaveCount(0);
 });

@@ -52,11 +52,11 @@ describe("ViewerStore", () => {
   it("open de-duplicates equal tabs and re-activates the existing one", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const a = st.open({ kind: "room", roomId: "r1" });
-    const b = st.open({ kind: "doc", roomId: "r1", artifactId: "x" });
+    const b = st.open({ kind: "artifact", roomId: "r1", artifactId: "x" });
     expect(st.getState().activeId).toBe(b);
     expect(st.open({ kind: "room", roomId: "r1" })).toBe(a);
     expect(st.getState().activeId).toBe(a);
-    expect(st.open({ kind: "doc", roomId: "r1", artifactId: "y" })).not.toBe(b);
+    expect(st.open({ kind: "artifact", roomId: "r1", artifactId: "y" })).not.toBe(b);
     expect(st.open({ kind: "note", date: "2026-10-05", name: "n" })).toBe(st.open({ kind: "note", date: "2026-10-05", name: "n" }));
     expect(st.getState().tabs).toHaveLength(5);
   });
@@ -108,10 +108,10 @@ describe("ViewerStore", () => {
     const home = st.getState().tabs[0].id;
     st.open({ kind: "room", roomId: "end" });
     st.activate(home);
-    st.go({ kind: "doc", roomId: "r", artifactId: "a" }, true);
+    st.go({ kind: "artifact", roomId: "r", artifactId: "a" }, true);
     st.activate(home);
-    st.go({ kind: "doc", roomId: "r", artifactId: "b" }, true);
-    const order = () => st.getState().tabs.map((t) => (t.kind === "doc" ? t.artifactId : t.kind === "room" ? t.roomId : t.kind));
+    st.go({ kind: "artifact", roomId: "r", artifactId: "b" }, true);
+    const order = () => st.getState().tabs.map((t) => (t.kind === "artifact" ? t.artifactId : t.kind === "room" ? t.roomId : t.kind));
     expect(order()).toEqual(["journal", "a", "b", "end"]);
     st.open({ kind: "note", date: "2026-10-07", name: "n" }); // ⌘T-style opens still go last
     expect(order()).toEqual(["journal", "a", "b", "end", "note"]);
@@ -231,7 +231,7 @@ describe("ViewerStore", () => {
     const st = new ViewerStore(memoryStorage(), c.now);
     const r = st.open({ kind: "room", roomId: "r1" });
     c.set("2026-10-05T01:00:00Z");
-    st.open({ kind: "doc", roomId: "r1", artifactId: "x" });
+    st.open({ kind: "artifact", roomId: "r1", artifactId: "x" });
     expect(st.getState().lastVisit).toEqual({ r1: "2026-10-05T01:00:00.000Z" });
     c.set("2026-10-05T02:00:00Z");
     st.activate(r);
@@ -366,16 +366,16 @@ describe("ViewerStore", () => {
 
 describe("ViewerStore: in-tab history", () => {
   const room = (roomId: string) => ({ kind: "room", roomId }) as const;
-  const doc = (artifactId: string) => ({ kind: "doc", roomId: "r1", artifactId }) as const;
+  const artifactTab = (artifactId: string) => ({ kind: "artifact", roomId: "r1", artifactId }) as const;
   const activeTab = (st: ViewerStore) => st.getState().tabs.find((t) => t.id === st.getState().activeId)!;
 
   it("navigate changes the active tab in place and back/forward walk its history", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const id = st.getState().activeId!;
     st.navigate(room("r1"));
-    st.navigate(doc("x"));
+    st.navigate(artifactTab("x"));
     expect(st.getState().tabs).toHaveLength(1);
-    expect(activeTab(st)).toEqual({ id, ...doc("x") });
+    expect(activeTab(st)).toEqual({ id, ...artifactTab("x") });
     expect(st.canGoBack()).toBe(true);
     expect(st.canGoForward()).toBe(false);
 
@@ -390,15 +390,15 @@ describe("ViewerStore: in-tab history", () => {
 
     st.forward();
     st.forward();
-    expect(activeTab(st)).toEqual({ id, ...doc("x") });
+    expect(activeTab(st)).toEqual({ id, ...artifactTab("x") });
   });
 
   it("navigating after going back drops the forward entries", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     st.navigate(room("r1"));
-    st.navigate(doc("x"));
+    st.navigate(artifactTab("x"));
     st.back();
-    st.navigate(doc("y"));
+    st.navigate(artifactTab("y"));
     expect(st.canGoForward()).toBe(false);
     st.back();
     expect(activeTab(st).kind).toBe("room");
@@ -428,7 +428,7 @@ describe("ViewerStore: in-tab history", () => {
     const st = new ViewerStore(memoryStorage(), c.now);
     st.navigate(room("r1"));
     c.set("2026-10-05T02:00:00Z");
-    st.navigate(doc("x"));
+    st.navigate(artifactTab("x"));
     expect(st.getState().lastVisit.r1).toBe("2026-10-05T02:00:00.000Z");
     st.back();
     c.set("2026-10-05T03:00:00Z");
@@ -451,7 +451,7 @@ describe("ViewerStore: in-tab history", () => {
     const storage = memoryStorage();
     const st = new ViewerStore(storage, clock().now);
     st.navigate(room("r1"));
-    st.navigate(doc("x"));
+    st.navigate(artifactTab("x"));
     st.flush();
     const again = new ViewerStore(storage, clock().now);
     expect(again.canGoBack()).toBe(true);
@@ -511,30 +511,56 @@ describe("ViewerStore: plugins", () => {
   });
 });
 
-describe("ViewerStore: conversations", () => {
-  it("a conversation tab is keyed by agent and session, persists, and comes back", () => {
+describe("ViewerStore: sessions", () => {
+  it("a session tab is keyed by agent and session id, persists, and comes back", () => {
     const storage = memoryStorage();
     const st = new ViewerStore(storage, clock().now);
-    const id = st.open({ kind: "conversation", agent: "codex", session: "s-1" });
-    expect(st.open({ kind: "conversation", agent: "codex", session: "s-1" })).toBe(id);
-    expect(st.open({ kind: "conversation", agent: "claude-code", session: "s-1" })).not.toBe(id);
+    const id = st.open({ kind: "session", agent: "codex", sessionId: "s-1" });
+    expect(st.open({ kind: "session", agent: "codex", sessionId: "s-1" })).toBe(id);
+    expect(st.open({ kind: "session", agent: "claude-code", sessionId: "s-1" })).not.toBe(id);
     st.flush();
     const again = new ViewerStore(storage, clock().now);
-    expect(again.getState().tabs.filter((t) => t.kind === "conversation")).toEqual([
-      { id, kind: "conversation", agent: "codex", session: "s-1" },
-      expect.objectContaining({ agent: "claude-code", session: "s-1" }),
+    expect(again.getState().tabs.filter((t) => t.kind === "session")).toEqual([
+      { id, kind: "session", agent: "codex", sessionId: "s-1" },
+      expect.objectContaining({ agent: "claude-code", sessionId: "s-1" }),
     ]);
   });
 
-  it("drops a saved conversation tab with an unknown agent or a session id roomsd would refuse", () => {
+  it("drops a saved session tab with an unknown agent or a session id roomsd would refuse", () => {
     const tabs = [
-      { id: "ok", kind: "conversation", agent: "aside", session: "ses_01HQ" },
-      { id: "agent", kind: "conversation", agent: "cursor", session: "s1" },
-      { id: "flag", kind: "conversation", agent: "codex", session: "s;rm" },
-      { id: "none", kind: "conversation", agent: "codex" },
+      { id: "ok", kind: "session", agent: "aside", sessionId: "ses_01HQ" },
+      { id: "agent", kind: "session", agent: "cursor", sessionId: "s1" },
+      { id: "bad", kind: "session", agent: "codex", sessionId: "s;rm" },
+      { id: "flag", kind: "session", agent: "codex", sessionId: "-x" },
+      { id: "none", kind: "session", agent: "codex" },
+      { id: "old-flag", kind: "conversation", agent: "codex", session: "--yolo" },
     ];
     const storage = memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify({ tabs, activeId: "ok", firstRunAt: "2026-10-01T00:00:00Z" }) });
     expect(new ViewerStore(storage, clock().now).getState().tabs.map((t) => t.id)).toEqual(["ok"]);
+  });
+
+  it("brings back tabs and history saved under the old names as artifact and session tabs, and saves them that way", () => {
+    const tabs = [
+      { id: "a", kind: "doc", roomId: "r1", artifactId: "x" },
+      { id: "s", kind: "conversation", agent: "codex", session: "s-1" },
+    ];
+    const history = { a: { back: [{ kind: "conversation", agent: "aside", session: "A1" }], forward: [{ kind: "doc", roomId: "r1", artifactId: "y" }] } };
+    const storage = memoryStorage({ [VIEWER_STORAGE_KEY]: JSON.stringify({ tabs, history, activeId: "s", firstRunAt: "2026-10-01T00:00:00Z" }) });
+    const st = new ViewerStore(storage, clock().now);
+    expect(st.getState().tabs).toEqual([
+      { id: "a", kind: "artifact", roomId: "r1", artifactId: "x" },
+      { id: "s", kind: "session", agent: "codex", sessionId: "s-1" },
+    ]);
+    expect(st.getState().activeId).toBe("s");
+    expect(st.getState().history.a).toEqual({
+      back: [{ kind: "session", agent: "aside", sessionId: "A1" }],
+      forward: [{ kind: "artifact", roomId: "r1", artifactId: "y" }],
+    });
+    st.setSidebarOpen(false);
+    st.flush();
+    const saved = JSON.parse(storage.map.get(VIEWER_STORAGE_KEY)!) as { tabs: { kind: string }[] };
+    expect(saved.tabs.map((t) => t.kind)).toEqual(["artifact", "session"]);
+    expect(new ViewerStore(storage, clock().now).getState().tabs).toEqual(st.getState().tabs);
   });
 });
 
@@ -566,7 +592,7 @@ describe("ViewerStore: settings", () => {
 });
 
 describe("ViewerStore: reveals", () => {
-  const doc = { kind: "doc", roomId: "r1", artifactId: "a" } as const;
+  const artifactTab = { kind: "artifact", roomId: "r1", artifactId: "a" } as const;
   /** What `takeReveal` offers, accepted or not. */
   const offered = (st: ViewerStore, id: string, accept = true) => {
     const got: unknown[] = [];
@@ -574,9 +600,9 @@ describe("ViewerStore: reveals", () => {
     return got;
   };
 
-  it("holds an anchor for a doc tab until the doc accepts it, and tells subscribers", () => {
+  it("holds an anchor for an artifact tab until the artifact accepts it, and tells subscribers", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
-    const id = st.open(doc);
+    const id = st.open(artifactTab);
     const heard = vi.fn();
     st.subscribe(heard);
     st.reveal(id, { pluginId: "marker", anchor: { mark: "x" } });
@@ -588,7 +614,7 @@ describe("ViewerStore: reveals", () => {
 
   it("keeps only the last of two quick anchors for one tab", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
-    const id = st.open(doc);
+    const id = st.open(artifactTab);
     st.reveal(id, { pluginId: "marker", anchor: 1 });
     st.reveal(id, { pluginId: "marker", anchor: 2 });
     expect(offered(st, id)).toEqual([{ pluginId: "marker", anchor: 2 }]);
@@ -596,7 +622,7 @@ describe("ViewerStore: reveals", () => {
 
   it("drops a waiting anchor when its tab closes or shows something else, so a reopened doc gets none", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
-    const id = st.open(doc);
+    const id = st.open(artifactTab);
     st.reveal(id, { pluginId: "marker", anchor: 1 });
     st.close(id);
     st.reopen();
@@ -604,11 +630,11 @@ describe("ViewerStore: reveals", () => {
     expect(offered(st, id)).toEqual([]);
     expect(offered(st, back)).toEqual([]);
     st.reveal(back, { pluginId: "marker", anchor: 2 });
-    st.navigate({ kind: "doc", roomId: "r1", artifactId: "b" });
+    st.navigate({ kind: "artifact", roomId: "r1", artifactId: "b" });
     expect(offered(st, back)).toEqual([]);
   });
 
-  it("only queues for a doc tab that exists", () => {
+  it("only queues for an artifact tab that exists", () => {
     const st = new ViewerStore(memoryStorage(), clock().now);
     const room = st.open({ kind: "room", roomId: "r1" });
     st.reveal(room, { pluginId: "marker", anchor: 1 });
@@ -620,7 +646,7 @@ describe("ViewerStore: reveals", () => {
   it("never writes an anchor to storage", () => {
     const storage = memoryStorage();
     const st = new ViewerStore(storage, clock().now);
-    const id = st.open(doc);
+    const id = st.open(artifactTab);
     st.reveal(id, { pluginId: "marker", anchor: { mark: "secret-anchor" } });
     st.setSidebarOpen(false);
     st.flush();

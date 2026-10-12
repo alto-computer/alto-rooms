@@ -4,20 +4,20 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ViewerStore } from "@/data/viewerStore";
 import { addDays, localDate, monthDay } from "@/lib/dates";
-import { continueConversation } from "@/lib/native";
+import { continueSession } from "@/lib/native";
 import { TabLabel } from "@/shell/TabLabel";
-import { conversation, memoryStorage, renderWithStores, room } from "@/test/fakes";
-import { ConversationView } from "./ConversationView";
+import { session, memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { SessionView } from "./SessionView";
 
 vi.mock("@/lib/native", () => ({
   pickFolder: vi.fn(async () => null),
   openInEditor: vi.fn(async () => {}),
   viewerInitial: vi.fn(async () => "J"),
-  continueConversation: vi.fn(async () => true),
+  continueSession: vi.fn(async () => true),
 }));
 
 beforeEach(() => {
-  vi.mocked(continueConversation).mockClear();
+  vi.mocked(continueSession).mockClear();
 });
 
 afterEach(() => {
@@ -26,9 +26,10 @@ afterEach(() => {
 
 const today = localDate();
 const ROOMS = [room("inbox", "Inbox"), room("p", "벤치마크", { color: "clay" }), room("r", "리서치")];
-const ID = { agent: "claude-code", session: "s7" } as const;
+const REF = { agent: "claude-code", id: "s7" } as const;
+const TAB = { kind: "session", agent: "claude-code", sessionId: "s7" } as const;
 
-const artifact = (id: string, session: string | null): Artifact => ({
+const artifact = (id: string, sessionId: string | null): Artifact => ({
   id,
   roomId: "p",
   relPath: `${id}.html`,
@@ -36,12 +37,12 @@ const artifact = (id: string, session: string | null): Artifact => ({
   createdAt: `${today}T03:00:00Z`,
   updatedAt: `${today}T03:00:00Z`,
   author: "agent",
-  source: { agent: session ? "claude-code" : null, session, cwd: null, machine: null },
+  source: { agent: sessionId ? "claude-code" : null, session: sessionId, cwd: null, machine: null },
   fileKey: `${id}000000000000`.slice(0, 16),
 });
 
-function setup(extra: Partial<Parameters<typeof conversation>[1]> = {}, artifacts: Artifact[] = []) {
-  const c = conversation("s7", {
+function setup(extra: Partial<Parameters<typeof session>[1]> = {}, artifacts: Artifact[] = []) {
+  const c = session("s7", {
     title: "Why is cold start 1.4 s on the M1 Air?",
     cwd: "/Users/me/code/alto-rooms",
     startedAt: `${today}T01:00:00Z`,
@@ -51,15 +52,15 @@ function setup(extra: Partial<Parameters<typeof conversation>[1]> = {}, artifact
     ...extra,
   });
   const viewer = new ViewerStore(memoryStorage());
-  viewer.open({ kind: "conversation", ...ID });
+  viewer.open(TAB);
   return {
     c,
     render: () =>
-      renderWithStores(<ConversationView id={ID} />, {
+      renderWithStores(<SessionView sessionRef={REF} />, {
         viewer,
         home: "/Users/me/rooms",
         rooms: ROOMS,
-        conversations: [c],
+        sessions: [c],
         days: { [today]: { artifacts } },
       }),
   };
@@ -82,8 +83,8 @@ describe("Session view", () => {
   });
 
   it("wraps a long unbroken title or reply anywhere, keeping Hangul words whole", async () => {
-    await setup({ title: "https://example.com/a/very/long/path/without/any/breaks", lastReply: "/Users/me/code/alto-rooms/apps/desktop/src/views/ConversationView.tsx" }).render();
-    for (const el of [await screen.findByRole("heading", { level: 1 }), screen.getByText(/ConversationView\.tsx/)]) {
+    await setup({ title: "https://example.com/a/very/long/path/without/any/breaks", lastReply: "/Users/me/code/alto-rooms/apps/desktop/src/views/SessionView.tsx" }).render();
+    for (const el of [await screen.findByRole("heading", { level: 1 }), screen.getByText(/SessionView\.tsx/)]) {
       expect(el).toHaveClass("[overflow-wrap:anywhere]", "break-keep");
     }
   });
@@ -117,7 +118,7 @@ describe("Session view", () => {
     const s = setup();
     await s.render();
     fireEvent.click(await screen.findByRole("button", { name: "Continue in Claude Code" }));
-    expect(continueConversation).toHaveBeenCalledWith(s.c);
+    expect(continueSession).toHaveBeenCalledWith(s.c);
   });
 
   it("the room chip opens the room list in one click, pinned first and never the inbox, and adds it to the pick", async () => {
@@ -130,7 +131,7 @@ describe("Session view", () => {
       ["리서치", "false"],
     ]);
     await act(async () => void fireEvent.click(menu.getByRole("menuitemradio", { name: "리서치" })));
-    expect(h.client.setConversationRoom).toHaveBeenCalledWith(ID, "r");
+    expect(h.client.setSessionRoom).toHaveBeenCalledWith(REF, "r");
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
@@ -147,11 +148,11 @@ describe("Session view", () => {
       ["리서치", "true"],
     ]);
     await act(async () => void fireEvent.click(menu.getByRole("menuitemradio", { name: "벤치마크" })));
-    expect(h.client.setConversationRoom).toHaveBeenLastCalledWith(ID, "p");
+    expect(h.client.setSessionRoom).toHaveBeenLastCalledWith(REF, "p");
 
     menu = await openChip();
     await act(async () => void fireEvent.click(menu.getByRole("menuitem", { name: "Remove from Room" })));
-    expect(h.client.setConversationRoom).toHaveBeenLastCalledWith(ID, null);
+    expect(h.client.setSessionRoom).toHaveBeenLastCalledWith(REF, null);
 
     menu = await openChip();
     fireEvent.click(menu.getByRole("menuitem", { name: "Open 리서치" }));
@@ -159,8 +160,8 @@ describe("Session view", () => {
   });
 
   it("read-only, the chip in a room only opens it", async () => {
-    const c = conversation("s7", { roomId: "r" });
-    await renderWithStores(<ConversationView id={ID} />, { rooms: ROOMS, conversations: [c], readOnly: true });
+    const c = session("s7", { roomId: "r" });
+    await renderWithStores(<SessionView sessionRef={REF} />, { rooms: ROOMS, sessions: [c], readOnly: true });
     fireEvent.pointerDown(await screen.findByRole("button", { name: "Room: 리서치" }), { button: 0, ctrlKey: false });
     const menu = within(await screen.findByRole("menu"));
     expect(menu.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Open 리서치"]);
@@ -173,7 +174,7 @@ describe("Session view", () => {
     fireEvent.change(input, { target: { value: "세 줄로 요약해줘" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() =>
-      expect(h.client.startAsk).toHaveBeenCalledWith({ scope: { kind: "conversation", ...ID }, question: "세 줄로 요약해줘", model: null }),
+      expect(h.client.startAsk).toHaveBeenCalledWith({ scope: { kind: "session", ...REF }, question: "세 줄로 요약해줘", model: null }),
     );
     await act(async () => h.emit({ type: "ask.started", turn: { ...(await h.client.startAsk.mock.results[0].value), mode: "resume" } }));
     expect(await screen.findByText("claude-code · continuing this session")).toBeInTheDocument();
@@ -184,7 +185,7 @@ describe("Session view", () => {
     const written = within(await screen.findByRole("region", { name: "Artifacts it wrote" }));
     expect(written.getAllByTestId("card-title").map((t) => t.textContent)).toEqual(["Artifact a1"]);
     fireEvent.click(written.getByRole("button", { name: "Artifact a1" }));
-    expect(activeTab(h.viewer)).toMatchObject({ kind: "doc", roomId: "p", artifactId: "a1" });
+    expect(activeTab(h.viewer)).toMatchObject({ kind: "artifact", roomId: "p", artifactId: "a1" });
   });
 
   it("lists what it wrote on a day between the one it started and the one it ended", async () => {
@@ -192,31 +193,31 @@ describe("Session view", () => {
     const yesterday = addDays(today, -1);
     const { c } = setup({ startedAt: `${twoDaysAgo}T12:00:00`, endedAt: `${today}T12:00:00` });
     const mid = { ...artifact("m1", "s7"), createdAt: `${yesterday}T12:00:00`, updatedAt: `${yesterday}T12:00:00` };
-    await renderWithStores(<ConversationView id={ID} />, { rooms: ROOMS, conversations: [c], days: { [yesterday]: { artifacts: [mid] } } });
+    await renderWithStores(<SessionView sessionRef={REF} />, { rooms: ROOMS, sessions: [c], days: { [yesterday]: { artifacts: [mid] } } });
     const written = within(await screen.findByRole("region", { name: "Artifacts it wrote" }));
     expect(written.getAllByTestId("card-title").map((t) => t.textContent)).toEqual(["Artifact m1"]);
   });
 
   it("says when roomsd no longer knows the session", async () => {
-    await renderWithStores(<ConversationView id={{ agent: "codex", session: "gone" }} />, { rooms: ROOMS });
+    await renderWithStores(<SessionView sessionRef={{ agent: "codex", id: "gone" }} />, { rooms: ROOMS });
     expect(await screen.findByText("This session is gone")).toBeInTheDocument();
   });
 
   it("its tab label and its view load the session once per focus between them", async () => {
-    const c = conversation("s7", { title: "Weekly report W41" });
-    const h = await renderWithStores(<><TabLabel tab={{ id: "t", kind: "conversation", ...ID }} /><ConversationView id={ID} /></>, { rooms: ROOMS, conversations: [c] });
+    const c = session("s7", { title: "Weekly report W41" });
+    const h = await renderWithStores(<><TabLabel tab={{ id: "t", ...TAB }} /><SessionView sessionRef={REF} /></>, { rooms: ROOMS, sessions: [c] });
     expect(await screen.findAllByText("Weekly report W41")).not.toHaveLength(0);
-    const before = h.client.getConversation.mock.calls.length;
+    const before = h.client.getSession.mock.calls.length;
     await act(async () => void window.dispatchEvent(new Event("focus")));
-    expect(h.client.getConversation.mock.calls.length - before).toBe(1);
+    expect(h.client.getSession.mock.calls.length - before).toBe(1);
   });
 
   it("keeps showing the session when a refetch fails or answers 404", async () => {
-    const h = await renderWithStores(<ConversationView id={ID} />, { rooms: ROOMS, conversations: [conversation("s7", { title: "Weekly report W41" })] });
+    const h = await renderWithStores(<SessionView sessionRef={REF} />, { rooms: ROOMS, sessions: [session("s7", { title: "Weekly report W41" })] });
     await screen.findByRole("heading", { name: "Weekly report W41" });
     vi.spyOn(console, "warn").mockImplementation(() => {});
     for (const e of [new RoomsApiError(404, "not found", "not_found"), new RoomsApiError(500, "collect.db: busy", "internal")]) {
-      h.client.getConversation.mockRejectedValueOnce(e);
+      h.client.getSession.mockRejectedValueOnce(e);
       await act(async () => void window.dispatchEvent(new Event("focus")));
       expect(screen.getByRole("heading", { name: "Weekly report W41" })).toBeInTheDocument();
       expect(screen.queryByText("This session is gone")).toBeNull();
@@ -224,7 +225,7 @@ describe("Session view", () => {
   });
 
   it("its tab is labelled with the title", async () => {
-    await renderWithStores(<TabLabel tab={{ id: "t", kind: "conversation", ...ID }} />, { rooms: ROOMS, conversations: [conversation("s7", { title: "Weekly report W41" })] });
+    await renderWithStores(<TabLabel tab={{ id: "t", ...TAB }} />, { rooms: ROOMS, sessions: [session("s7", { title: "Weekly report W41" })] });
     expect(await screen.findByText("Weekly report W41")).toBeInTheDocument();
   });
 });

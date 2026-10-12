@@ -1,7 +1,7 @@
-//! Searching the indexed conversations: matches grouped by session, best first, each with an
+//! Searching the indexed sessions: matches grouped by session, best first, each with an
 //! excerpt read back from the log (or its archived copy) and the command that resumes it.
 use crate::archive;
-use crate::conversations::title;
+use crate::sessions::title;
 use crate::reader::read_chunk;
 use rooms_protocol::{Agent, SessionId};
 use rusqlite::{params_from_iter, types::Value as Sql, Connection};
@@ -37,12 +37,12 @@ pub fn fts_query(text: &str) -> Option<String> {
     (n > 0).then(|| words.into_iter().enumerate().map(|(i, w)| if i + 1 == n { format!("{w}*") } else { w }).collect::<Vec<_>>().join(" "))
 }
 
-/// The command that resumes a session, or just its id when none is safe to print: the id is the only
-/// argument after `--resume`/`resume`, and a leading dash would read as a flag.
-pub fn resume_command(agent: &str, session: &str) -> String {
-    match (Agent::parse(agent), SessionId::parse(session)) {
-        (Some(a), Some(s)) if !session.starts_with('-') => a.resume_argv(&s).join(" "),
-        _ => session.to_string(),
+/// The command that resumes a session, or just its id when none is safe to print (`SessionId`
+/// refuses an id that would read as a flag after `--resume`/`resume`).
+pub fn resume_command(agent: &str, session_id: &str) -> String {
+    match (Agent::parse(agent), SessionId::parse(session_id)) {
+        (Some(a), Some(id)) => a.resume_argv(&id).join(" "),
+        _ => session_id.to_string(),
     }
 }
 

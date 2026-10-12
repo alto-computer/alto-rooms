@@ -14,7 +14,7 @@ vi.mock("./ArtifactCard", () => ({
 
 afterEach(cleanup);
 
-const docs: Artifact[] = Array.from({ length: 40 }, (_, i) => ({
+const list: Artifact[] = Array.from({ length: 40 }, (_, i) => ({
   id: `a${i}`, roomId: "r1", relPath: `d${i}.html`, title: `Doc ${i}`, createdAt: "2026-10-06T09:00:00+09:00",
   updatedAt: "2026-10-06T09:00:00+09:00", author: "agent", fileKey: `k${i}`,
   source: { agent: null, session: null, cwd: null, machine: null },
@@ -26,7 +26,7 @@ const running: AskTurn = {
 };
 
 it("never re-renders the card grid while a room answer streams", async () => {
-  const { emit } = await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "R", { artifactCount: 40 })], artifacts: { r1: docs } });
+  const { emit } = await renderWithStores(<RoomView roomId="r1" />, { rooms: [room("r1", "R", { artifactCount: 40 })], artifacts: { r1: list } });
   expect(await screen.findAllByTestId("artifact-card")).toHaveLength(40);
   await screen.findByPlaceholderText("Ask about this room…");
   act(() => emit({ type: "ask.started", turn: running }));

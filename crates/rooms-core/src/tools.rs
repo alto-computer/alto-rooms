@@ -1,4 +1,4 @@
-//! Helpers for `RoomsCore::call_tool`: input checks, document resolution and the data-file line.
+//! Helpers for `RoomsCore::call_tool`: input checks, artifact resolution and the data-file line.
 //! Generic: nothing here knows what any plugin's tool means.
 
 use crate::core::RoomsCore;
@@ -23,7 +23,7 @@ pub(crate) fn doc_of(input: &Value) -> Result<&str, CoreError> {
 
 fn is_file_key(s: &str) -> bool { s.len() == 16 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) }
 
-/// A document reference to its fileKey: a fileKey must be indexed; an absolute path is compared by
+/// An artifact reference to its fileKey: a fileKey must be indexed; an absolute path is compared by
 /// realpath with the original file of every indexed artifact (a linear scan over all rooms, fine
 /// for now; an index lookup by resolved path would replace it if rooms get large).
 pub(crate) fn resolve_doc(core: &RoomsCore, doc: &str) -> Result<String, CoreError> {

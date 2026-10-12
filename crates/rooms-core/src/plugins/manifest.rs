@@ -25,7 +25,7 @@ pub struct Manifest {
 }
 
 /// A tool declared in `manifest.json`: `input` is a JSON Schema for the agent (stored, not enforced);
-/// `append_to` is a data path template where `{doc}` stands for a document's fileKey.
+/// `append_to` is a data path template where `{doc}` stands for an artifact's fileKey (the name plugins already use).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ManifestTool {
     pub name: String,

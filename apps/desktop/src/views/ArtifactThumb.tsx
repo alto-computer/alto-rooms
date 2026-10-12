@@ -6,7 +6,7 @@ import { useLiveFrame } from "@/lib/liveFrames";
 import { useLoadSlot } from "@/lib/loadSlots";
 import { useLingering } from "@/lib/useLingering";
 import { cn } from "@/lib/utils";
-import { DocSkeleton } from "./DocSkeleton";
+import { ArtifactSkeleton } from "./ArtifactSkeleton";
 
 /** Previews are laid out at this width, then scaled down to the box. */
 const LAYOUT_WIDTH = 1280;
@@ -112,7 +112,7 @@ export function ArtifactThumb({ artifact, info, variant, className }: { artifact
           }}
         />
       ) : null}
-      {loaded && live ? null : <DocSkeleton compact />}
+      {loaded && live ? null : <ArtifactSkeleton compact />}
     </div>
   );
 }

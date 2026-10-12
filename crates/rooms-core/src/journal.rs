@@ -48,14 +48,14 @@ impl RoomsCore {
             }
         }
         notes.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(JournalDay { date: date.clone(), artifacts, notes, conversations: self.day_conversations(date) })
+        Ok(JournalDay { date: date.clone(), artifacts, notes, sessions: self.day_sessions(date) })
     }
 
     /// What a day ask lists: every file `journal_day` shows, in its order, as realpaths, and its
     /// sessions newest first. Each item kind maps here and nowhere else, so a new `JournalDay` field
     /// stops compiling until it does.
     pub(crate) fn day_context(&self, day: &IsoDate) -> Result<(Vec<ContextEntry>, Vec<SessionEntry>), CoreError> {
-        let JournalDay { date, artifacts, notes, conversations } = self.journal_day(day)?;
+        let JournalDay { date, artifacts, notes, sessions } = self.journal_day(day)?;
         let names: HashMap<RoomId, String> = lock(&self.inner).state.rooms.iter().map(|r| (r.id.clone(), r.name.clone())).collect();
         let label = |a: &Artifact| match a.room_id.as_str() {
             JOURNAL_ROOM_ID if Path::new(&a.rel_path).file_name().is_some_and(|n| n == "dream.html") => "Review".to_string(),
@@ -72,12 +72,12 @@ impl RoomsCore {
         });
         // A session is named by what collect.db summarized, never by its log: the listing's paths
         // are the files the agent may read, and a session's log is not one of them.
-        let sessions = conversations.into_iter().rev().map(|JournalConversation { conversation: c, .. }| SessionEntry {
-            title: c.title.clone().or_else(|| c.last_reply.clone()).unwrap_or_else(|| "Untitled session".into()),
-            agent: c.id.agent,
-            span: local_span(&date, &c.started_at, &c.ended_at),
-            room: c.room_id.as_ref().map(|id| names.get(id).cloned().unwrap_or_else(|| id.to_string())),
-            last_reply: c.last_reply,
+        let sessions = sessions.into_iter().rev().map(|JournalSession { session, .. }| SessionEntry {
+            title: session.title.clone().or_else(|| session.last_reply.clone()).unwrap_or_else(|| "Untitled session".into()),
+            agent: session.agent,
+            span: local_span(&date, &session.started_at, &session.ended_at),
+            room: session.room_id.as_ref().map(|id| names.get(id).cloned().unwrap_or_else(|| id.to_string())),
+            last_reply: session.last_reply,
         });
         Ok((artifacts.chain(notes).collect(), sessions.collect()))
     }

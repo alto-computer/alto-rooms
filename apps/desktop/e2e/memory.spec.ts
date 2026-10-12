@@ -18,13 +18,13 @@ test.use({ actionTimeout: 30_000, trace: "off" });
 const log = (...a: unknown[]) => console.log(`[memory ${new Date().toISOString().slice(11, 19)}]`, ...a);
 
 const CYCLES = Number(process.env.PROFILE_CYCLES ?? 3);
-const DOCS = 80;
+const ARTIFACTS = 80;
 const OPEN_CLOSE = 50;
 
 type Sample = { phase: string; heapMB: number; nodes: number; attached: number; listeners: number; frames: number; documents: number; iframeTargets: number };
 
-/** A doc: some run timers and keep a little state, like real agent output. */
-function docHtml(i: number): string {
+/** An artifact: some run timers and keep a little state, like real agent output. */
+function artifactHtml(i: number): string {
   const script =
     i % 3 === 0
       ? `<script>let n=0;const keep=new Array(2000).fill(0).map((_, k)=>({k,s:"x"+k}));setInterval(()=>{n++;document.getElementById("c").textContent=n+" "+keep.length},100);
@@ -39,11 +39,11 @@ requestAnimationFrame(function f(){document.body.style.setProperty("--t",String(
 async function seed(daemon: Daemon) {
   await daemon.createRoom("Alpha");
   await daemon.createRoom("Beta");
-  for (let i = 0; i < DOCS; i++) await daemon.write(`Alpha/doc-${String(i).padStart(2, "0")}.html`, docHtml(i));
-  for (let i = 0; i < 20; i++) await daemon.write(`Beta/b-${i}.html`, docHtml(i));
+  for (let i = 0; i < ARTIFACTS; i++) await daemon.write(`Alpha/doc-${String(i).padStart(2, "0")}.html`, artifactHtml(i));
+  for (let i = 0; i < 20; i++) await daemon.write(`Beta/b-${i}.html`, artifactHtml(i));
   await expect
     .poll(async () => (await daemon.listRooms()).filter((r) => r.name !== "inbox").map((r) => `${r.name}:${r.artifactCount}`).sort(), { timeout: 60_000 })
-    .toEqual([`Alpha:${DOCS}`, "Beta:20"]);
+    .toEqual([`Alpha:${ARTIFACTS}`, "Beta:20"]);
 }
 
 /** With PROFILE_SNAPSHOT=<prefix>, writes <prefix>-<phase>.heapsnapshot, for finding what grows or holds detached nodes. */
@@ -94,7 +94,7 @@ async function scrollGrid(page: Page) {
 }
 
 /** Opens card `i` of the active room in a new (active) tab and waits for its frame. */
-async function openDoc(page: Page, i: number) {
+async function openArtifact(page: Page, i: number) {
   const card = cards(page).nth(i);
   await card.scrollIntoViewIfNeeded();
   await card.hover();
@@ -118,18 +118,18 @@ async function cycle(page: Page, daemon: Daemon, c: number) {
   await roomButton(page, "Beta").click();
   await expect(cards(page)).toHaveCount(20);
   await roomButton(page, "Alpha").click();
-  await expect(cards(page)).toHaveCount(DOCS);
+  await expect(cards(page)).toHaveCount(ARTIFACTS);
   await scrollGrid(page);
 
   log("edits");
-  // Docs changing while shown: artifact events, new preview URLs, reloaded frames.
-  for (let i = 0; i < 10; i++) await daemon.write(`Alpha/doc-${String(70 + i).padStart(2, "0")}.html`, docHtml(1000 * c + i));
+  // Artifacts changing while shown: artifact events, new preview URLs, reloaded frames.
+  for (let i = 0; i < 10; i++) await daemon.write(`Alpha/doc-${String(70 + i).padStart(2, "0")}.html`, artifactHtml(1000 * c + i));
   await expect(cards(page).filter({ hasText: `Doc ${1000 * c + 9}` })).toHaveCount(1, { timeout: 30_000 });
   await page.waitForTimeout(1000);
 
-  log("open/close docs");
+  log("open/close artifacts");
   for (let i = 0; i < OPEN_CLOSE; i++) {
-    await openDoc(page, i % DOCS);
+    await openArtifact(page, i % ARTIFACTS);
     if (i % 5 === 0) {
       await page.keyboard.press(`${MOD}+j`);
       await page.keyboard.press(`${MOD}+j`);
@@ -140,7 +140,7 @@ async function cycle(page: Page, daemon: Daemon, c: number) {
 
   log("switch tabs");
   for (let i = 0; i < 9; i++) {
-    await openDoc(page, 10 + i);
+    await openArtifact(page, 10 + i);
     await page.keyboard.press(`${MOD}+1`);
   }
   await expect(tabs(page)).toHaveCount(10);
@@ -152,7 +152,7 @@ async function cycle(page: Page, daemon: Daemon, c: number) {
     await page.keyboard.press(`${MOD}+Shift+BracketRight`);
     await page.waitForTimeout(50);
   }
-  // Ask bar on a doc tab.
+  // Ask bar on an artifact tab.
   await page.keyboard.press(`${MOD}+2`);
   for (let k = 0; k < 6; k++) await page.keyboard.press(`${MOD}+j`);
 
@@ -184,7 +184,7 @@ test("memory stays flat across repeated workloads", async ({ page, daemon, brows
   await seed(daemon);
   await page.goto("/");
   await roomButton(page, "Alpha").click();
-  await expect(cards(page)).toHaveCount(DOCS, { timeout: 30_000 });
+  await expect(cards(page)).toHaveCount(ARTIFACTS, { timeout: 30_000 });
 
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Performance.enable");
