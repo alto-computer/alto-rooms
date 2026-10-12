@@ -47,6 +47,21 @@ describe("AskBar", () => {
     expect(document.activeElement).toBe(input);
   });
 
+  it("opens with a finished thread folded behind the bar; the caret in the bar unfolds it", async () => {
+    await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(screen.queryByText("답"), "the thread covers the page until the user asks for it").toBeNull();
+    fireEvent.focus(input);
+    expect(screen.getByText("답")).toBeTruthy();
+  });
+
+  it("opens unfolded over an answer that is still running", async () => {
+    await setup({ k1: [turn({})] });
+    expect(await screen.findByText("Thinking")).toBeTruthy();
+    expect(document.activeElement).not.toBe(screen.getByPlaceholderText("Ask about this artifact…"));
+  });
+
   it("renders nothing in read-only", async () => {
     await setup({}, true);
     expect(screen.queryByPlaceholderText("Ask about this artifact…")).toBeNull();
@@ -704,6 +719,15 @@ describe("AskBar for a room", () => {
     expect(await screen.findByText("세 개")).toBeTruthy();
     const head = screen.getByText("claude-code · Haiku", { exact: true });
     expect(head.getAttribute("title")).toBeNull();
+  });
+
+  it("opens a room with a thread showing the bar alone; a click in the bar unfolds the thread", async () => {
+    await setupRoom({ asks: { "room:r1": [roomTurn({ question: "room question", status: "done", answer: "room answer", endedAt: "2026-10-06T10:00:02+09:00" })] } });
+    const input = await screen.findByPlaceholderText("Ask about this room…");
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(screen.queryByText("room answer")).toBeNull();
+    fireEvent.focus(input);
+    expect(screen.getByText("room answer")).toBeTruthy();
   });
 
   it("shows only the room's thread, never the artifact's", async () => {

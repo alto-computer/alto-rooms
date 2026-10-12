@@ -33,9 +33,13 @@ test("ask a room, keep its thread across a reload, and keep it out of the artifa
   await expect(page.getByText(/^Read · /)).toHaveCount(0);
   await expect(page.getByText("fake-stream", { exact: true }).first()).toBeVisible();
 
-  // The room tab comes back on its own; a click elsewhere would fold the thread.
+  // The room tab comes back on its own with just the bar over the cards; the thread unfolds from the bar.
   await page.reload();
   await expect(page.getByRole("tab", { name: "harness", exact: true, selected: true })).toBeVisible();
+  await expect(input).toBeVisible();
+  await expect(page.getByTestId("artifact-card")).toHaveCount(2);
+  await expect(page.getByText("Room answer to Which artifact is first?")).toHaveCount(0);
+  await input.click();
   await expect(page.getByText("Room answer to Which artifact is first?")).toBeVisible();
 
   const card = page.getByTestId("artifact-card").filter({ hasText: "Alpha" });
