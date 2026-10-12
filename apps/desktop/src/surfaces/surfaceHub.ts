@@ -125,12 +125,17 @@ export function shiftRanges(ranges: readonly SurfaceRange[], edit: TextEdit): Su
   }
   return out;
 }
+/** A range in one of a plugin's highlights, and the style it is under. */
+type Drawn = { range: Range; style: string };
+
 type Seat = {
   id: string;
   post: (m: HostMessage) => void;
   actions: ContentAction[];
   styles: Styles;
   paints: Map<string, SurfaceRange[]>;
+  /** The live ranges this plugin's highlights hold, per surface, so one surface repaints without the others. */
+  drawn: Map<string, Drawn[]>;
   /** This plugin's `::highlight` rules, one per style; null without a DOM. */
   sheet: CSSStyleSheet | null;
   /**
@@ -257,6 +262,17 @@ const registry = (): HighlightRegistry | null =>
 
 const highlightName = (plugin: string, style: string) => `rooms-${plugin}-${style}`;
 
+/** The highlight `plugin` paints `style` into, registered on first use. */
+function highlightFor(reg: HighlightRegistry, plugin: string, style: string): Highlight {
+  const name = highlightName(plugin, style);
+  let h = reg.get(name);
+  if (!h) {
+    h = new Highlight();
+    reg.set(name, h);
+  }
+  return h;
+}
+
 /** The caret at a point, in whichever form the engine offers. */
 function caretAt(doc: Document, x: number, y: number): { node: Node; offset: number } | null {
   if (typeof doc.caretPositionFromPoint === "function") {
@@ -306,7 +322,7 @@ export class SurfaceHub {
         if (ranges) seat.paints.set(key, shiftRanges(ranges, edit));
       }
     }
-    if (was) this.repaintAll();
+    if (was) for (const seat of this.seats.values()) this.repaint(seat, key);
     this.tell(s);
   }
 
@@ -335,9 +351,9 @@ export class SurfaceHub {
     this.surfaces.delete(key);
     for (const seat of this.seats.values()) {
       seat.paints.delete(key);
+      this.repaint(seat, key);
       seat.post({ type: "surface.close", surface: s.id });
     }
-    this.repaintAll();
     if (this.snapshot.menu?.key === key) this.set({ menu: null });
   }
 
@@ -365,7 +381,7 @@ export class SurfaceHub {
   /** One plugin's background frame: `receive` takes its messages, `dispose` forgets its paint and buttons. */
   register(plugin: string, post: (m: Record<string, unknown>) => void): { receive(data: unknown): void; dispose(): void } {
     if (!/^[a-z0-9-]{2,40}$/.test(plugin)) throw new Error(`not a plugin id: ${plugin}`);
-    const seat: Seat = { id: plugin, post: (m) => post({ rooms: "surface", v: 1, ...m }), actions: [], styles: new Map(), paints: new Map(), sheet: adoptSheet(), gestureAt: null };
+    const seat: Seat = { id: plugin, post: (m) => post({ rooms: "surface", v: 1, ...m }), actions: [], styles: new Map(), paints: new Map(), drawn: new Map(), sheet: adoptSheet(), gestureAt: null };
     this.seats.set(plugin, seat);
     return {
       receive: (data) => {
@@ -394,7 +410,7 @@ export class SurfaceHub {
             // Read against the text the plugin heard; keystrokes since then move it, as they move every paint.
             const s = this.surfaces.get(m.key)!;
             seat.paints.set(m.key, s.told !== null && s.told !== s.index.text ? shiftRanges(m.ranges, editBetween(s.told, s.index.text)) : m.ranges);
-            this.repaint(seat);
+            this.repaint(seat, m.key);
             const r = this.snapshot.reveal;
             if (r && surfaceKey(r.id) === m.key && m.ranges.some((x) => x.id === r.rangeId)) {
               this.set({ reveal: null });
@@ -533,30 +549,35 @@ export class SurfaceHub {
     return [...this.seats.values()].sort((a, b) => (a.id < b.id ? -1 : 1)).flatMap((seat) => seat.actions.map((a) => ({ plugin: seat.id, ...a })));
   }
 
-  private repaintAll(): void {
-    for (const seat of this.seats.values()) this.repaint(seat);
-  }
-
-  private repaint(seat: Seat): void {
+  /**
+   * Redraws `seat`'s paint on surface `key` from its offsets: the ranges it drew there leave the
+   * highlights and new ones go in, while every other surface's ranges stay as they are. A
+   * keystroke in a note costs its own ranges, not every open answer's.
+   */
+  private repaint(seat: Seat, key: string): void {
     const reg = registry();
     if (!reg) return;
-    const byStyle = new Map<string, Range[]>([...seat.styles.keys()].map((s) => [s, []]));
-    for (const [key, ranges] of seat.paints) {
-      const s = this.surfaces.get(key);
-      if (!s) continue;
-      for (const r of ranges) {
-        const range = rangeAt(s.index, r.start, r.end);
-        if (range) byStyle.get(r.style)!.push(range);
-      }
+    for (const d of seat.drawn.get(key) ?? []) reg.get(highlightName(seat.id, d.style))?.delete(d.range);
+    const s = this.surfaces.get(key);
+    const drawn: Drawn[] = [];
+    for (const r of (s && seat.paints.get(key)) ?? []) {
+      const range = s && rangeAt(s.index, r.start, r.end);
+      if (!range) continue;
+      highlightFor(reg, seat.id, r.style).add(range);
+      drawn.push({ range, style: r.style });
     }
-    for (const [style, ranges] of byStyle) reg.set(highlightName(seat.id, style), new Highlight(...ranges));
+    if (drawn.length) seat.drawn.set(key, drawn);
+    else seat.drawn.delete(key);
   }
 
   /**
    * Rewrites `seat`'s sheet: one rule per style, each inserted on its own, so a rule the engine
    * rejects is the only one lost. The name is an identifier and the color passed `isPaintColor`.
+   * Each style also gets its highlight in the registry, so the rule has something to paint.
    */
   private restyle(seat: Seat): void {
+    const reg = registry();
+    if (reg) for (const style of seat.styles.keys()) highlightFor(reg, seat.id, style);
     const sheet = seat.sheet;
     if (!sheet) return;
     sheet.replaceSync("");
