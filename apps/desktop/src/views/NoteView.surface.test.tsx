@@ -139,6 +139,30 @@ describe("NoteView as a text surface", () => {
     expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
   });
 
+  it("runs a button on the selection as it is when the button runs, not the one the bar was shown for, and on no selection does nothing", async () => {
+    sitDown();
+    await renderNote();
+    textarea().focus();
+    await select(15, 20);
+    const tag = screen.getByRole("button", { name: "Tag" });
+    // Shift+Arrow grew the selection and its deferred read is still queued (a busy main thread held it) when the button runs.
+    textarea().setSelectionRange(15, 26);
+    fireEvent.keyUp(textarea(), { key: "ArrowRight", shiftKey: true });
+    act(() => tag.focus());
+    fireEvent.click(tag);
+    expect(sent.at(-1)).toEqual({ rooms: "surface", v: 1, type: "selection.action", surface: id, actionId: "tag", start: 15, end: 26, text: "quick brown" });
+    expect(document.activeElement).toBe(textarea());
+    await advance(0);
+    // A bar shown for a selection that is gone by the time its button runs sends nothing.
+    await select(15, 20);
+    const posted = sent.length;
+    textarea().setSelectionRange(3, 3);
+    fireEvent.click(screen.getByRole("button", { name: "Tag" }));
+    expect(sent.length, "no action for an empty selection").toBe(posted);
+    expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
+    expect(document.activeElement).toBe(textarea());
+  });
+
   it("Escape takes the bar away and puts the caret back in the text, from the text and from the bar's button, and leaves the selection", async () => {
     sitDown();
     await renderNote();

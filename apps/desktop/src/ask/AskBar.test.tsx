@@ -252,6 +252,32 @@ describe("AskBar", () => {
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.not.objectContaining({ images: expect.anything() })));
   });
 
+  it("Ask over an answer quotes the text selected when the button runs, not the selection the bar was shown for", async () => {
+    Range.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 10, height: 10 }) as DOMRect;
+    await setup({ k1: [turn({ status: "done", answer: "the quick brown fox", endedAt: "2026-10-06T10:00:05+09:00" })] });
+    const text = (await screen.findByText("the quick brown fox")).firstChild!;
+    const select = (start: number, end: number) => {
+      const r = document.createRange();
+      r.setStart(text, start);
+      r.setEnd(text, end);
+      const s = document.getSelection()!;
+      s.removeAllRanges();
+      s.addRange(r);
+    };
+    select(4, 9);
+    await act(async () => {
+      document.dispatchEvent(new Event("mouseup"));
+      await new Promise((r) => setTimeout(r, 1));
+    });
+    const ask = await screen.findByRole("button", { name: "Ask" });
+    // Shift+Arrow grew the selection; its deferred read is still queued when the button runs.
+    select(4, 15);
+    fireEvent.click(ask);
+    const chips = await screen.findByRole("list", { name: "Quoted text" });
+    expect(chips.textContent).toContain("quick brown");
+    expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+  });
+
   it("shows quotes waiting above the input and on the asked question", async () => {
     const { emit } = await setup();
     act(() => store.addQuote({ kind: "artifact", fileKey: "k1" }, "첫 인용\n둘째 줄"));

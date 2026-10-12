@@ -358,15 +358,21 @@ async function showMarker(page: Page) {
   await scrolled(page);
 }
 
-/** Selects `word` in the note the way a keyboard does: the caret before it, then Shift+Right over it, so the bar reads the selection on key up. */
-async function selectInNote(page: Page, word: string) {
+/** Selects the first `chars` of `word` in the note the way a keyboard does: the caret before it, then Shift+Right over them, so the bar reads the selection on key up. */
+async function selectInNote(page: Page, word: string, chars = word.length) {
   const start = (await noteEditor(page).inputValue()).indexOf(word);
   await noteEditor(page).evaluate((el: HTMLTextAreaElement, s) => el.setSelectionRange(s, s), start);
-  for (let i = 0; i < word.length; i++) await page.keyboard.press("Shift+ArrowRight");
-  await expect(noteEditor(page)).toHaveJSProperty("selectionEnd", start + word.length);
+  for (let i = 0; i < chars; i++) await page.keyboard.press("Shift+ArrowRight");
+  await expect(noteEditor(page)).toHaveJSProperty("selectionEnd", start + chars);
 }
 
-test("a note's bar button runs from the keyboard and from a click no pointer preceded, and is seen without an animation frame", async ({ page, daemon }) => {
+/** Where `word` is in the note, for the page side. */
+async function offsetsOf(page: Page, word: string): Promise<[number, number]> {
+  const start = (await noteEditor(page).inputValue()).indexOf(word);
+  return [start, start + word.length];
+}
+
+test("a note's bar button runs on the selection as it is from the keyboard and from a click no pointer preceded, and is seen without an animation frame", async ({ page, daemon }) => {
   const date = today();
   await daemon.installPlugin("tagger");
   await daemon.saveNote(date, "Plan.md", NOTE);
@@ -384,24 +390,37 @@ test("a note's bar button runs from the keyboard and from a click no pointer pre
     held.replaceSync("* { animation-play-state: paused !important; }");
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, held];
   });
-  await selectInNote(page, "Line 2");
+  await selectInNote(page, "Line 2", 4);
   const tag = page.getByRole("button", { name: "Tag" });
   await expect(tag).toBeVisible();
   expect(await tag.evaluate((el) => getComputedStyle(el).opacity), "seen with every animation held at its first frame").toBe("1");
-  // Tab from the text onto the button, then Enter: the action runs on the selection the bar was shown for.
+  // Tab from the text onto the button, then Enter. Enter lands with the selection grown to "Line 2", as one more
+  // Shift+Right leaves it, and the bar's deferred read of it still queued: that is what a busy main thread does when it
+  // lets a key run ahead of queued timers (the previous tag's paint did, and the action ran on the stale "Line").
   // WebKit's plain Tab skips buttons unless macOS keyboard navigation is on; Option+Tab reaches them regardless.
   await page.keyboard.press(test.info().project.name === "webkit" ? "Alt+Tab" : "Tab");
   await expect(tag).toBeFocused();
+  await noteEditor(page).evaluate((el: HTMLTextAreaElement, [s, e]) => {
+    const grow = () => {
+      el.setSelectionRange(s, e);
+      el.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowRight", shiftKey: true, bubbles: true }));
+    };
+    document.addEventListener("keydown", grow, { capture: true, once: true });
+  }, await offsetsOf(page, "Line 2"));
   await page.keyboard.press("Enter");
   await expect.poll(() => painted(page)).toEqual(["Line 2"]);
   await expect(ta, "focus goes back to the text").toBeFocused();
-  // An accessibility press (and WebKit's AXPress on a button): focus, then a click with no pointer events before it.
-  await selectInNote(page, "Line 3");
+  // An accessibility press (and WebKit's AXPress on a button): focus, then a click with no pointer events before it,
+  // again with the selection grown and its read queued.
+  await selectInNote(page, "Line 3", 4);
   await expect(page.getByRole("button", { name: "Tag" })).toBeVisible();
-  await page.getByRole("button", { name: "Tag" }).evaluate((el: HTMLElement) => {
+  await page.getByRole("button", { name: "Tag" }).evaluate((el: HTMLElement, [s, e]) => {
+    const ta = document.querySelector("textarea[data-note-editor]") as HTMLTextAreaElement;
+    ta.setSelectionRange(s, e);
+    ta.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowRight", shiftKey: true, bubbles: true }));
     el.focus();
     el.click();
-  });
+  }, await offsetsOf(page, "Line 3"));
   await expect.poll(() => painted(page, GREEN)).toEqual(["Line 3"]);
   await expect(ta).toBeFocused();
   expect(await daemon.read(`journal/${date}/Plan.md`), "a paint never writes the note").toBe(NOTE);
