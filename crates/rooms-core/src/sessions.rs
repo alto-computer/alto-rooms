@@ -61,24 +61,40 @@ fn store_path(home: &Path) -> PathBuf { home.join(".rooms/sessions.json") }
 /// Where the store was before sessions had their name. Same shape, with the map under `conversations`.
 fn legacy_store_path(home: &Path) -> PathBuf { home.join(".rooms/conversations.json") }
 
-/// Moves a store from before the rename to `sessions.json` and keeps the old file as
-/// `conversations.json.bak`. Safe to run again after a crash at any step: an existing
-/// `sessions.json` always wins, and the old file is only ever renamed.
+/// Moves a store from before the rename into `sessions.json` and keeps the old file as
+/// `conversations.json.bak` (or `.bak.2`, `.bak.3`, ... when an older backup is there). When
+/// `sessions.json` already exists, as after running an older app again, the sessions only the old
+/// file has are added to it and `sessions.json` wins for the rest. Safe to run again after a crash
+/// at any step: the merge only ever adds what is missing, and the old file is only ever renamed.
 pub(crate) fn migrate_legacy_store(home: &Path) {
     #[derive(Deserialize)]
-    struct LegacyDisk { version: u32, conversations: BTreeMap<String, Membership> }
+    struct LegacyDisk { conversations: BTreeMap<String, Membership> }
     let old = legacy_store_path(home);
     let Ok(bytes) = std::fs::read(&old) else { return };
-    if !store_path(home).exists() {
-        match serde_json::from_slice::<LegacyDisk>(&bytes) {
-            Ok(d) => if let Err(e) = write(home, &Disk { version: d.version, sessions: d.conversations }) {
-                eprintln!("rooms-core: {} not moved to sessions.json: {e}", old.display());
-                return;
-            },
-            Err(e) => eprintln!("rooms-core: {}: {e}; kept as conversations.json.bak", old.display()),
+    match serde_json::from_slice::<LegacyDisk>(&bytes) {
+        Ok(legacy) => {
+            let current = match std::fs::read(store_path(home)) {
+                Ok(b) => match serde_json::from_slice::<Disk>(&b) {
+                    Ok(d) => d.sessions,
+                    Err(e) => return eprintln!("rooms-core: sessions.json: {e}; {} not merged yet", old.display()),
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+                Err(e) => return eprintln!("rooms-core: sessions.json: {e}; {} not merged yet", old.display()),
+            };
+            let mut sessions = legacy.conversations;
+            sessions.extend(current);
+            if let Err(e) = write(home, &Disk { version: 1, sessions }) {
+                return eprintln!("rooms-core: {} not moved to sessions.json: {e}", old.display());
+            }
         }
+        Err(e) => eprintln!("rooms-core: {}: {e}; kept as a .bak", old.display()),
     }
-    if let Err(e) = std::fs::rename(&old, old.with_extension("json.bak")) {
+    let mut bak = old.with_extension("json.bak");
+    for n in 2.. {
+        if !bak.exists() { break }
+        bak = old.with_extension(format!("json.bak.{n}"));
+    }
+    if let Err(e) = std::fs::rename(&old, &bak) {
         eprintln!("rooms-core: {} not renamed: {e}", old.display());
     }
 }
@@ -377,6 +393,36 @@ mod tests {
         let after_crash = RoomsCore::open(f.core.home()).unwrap();
         assert_eq!(after_crash.room_sessions(&room).unwrap(), seen);
         assert!(!dot.join("conversations.json").exists());
+    }
+
+    #[test]
+    fn sessions_filed_by_a_downgraded_app_survive_the_next_upgrade() {
+        let f = fixture();
+        let (a, b) = (f.core.create_room("A").unwrap().id, f.core.create_room("B").unwrap().id);
+        let dot = f.core.home().join(".rooms");
+        let entry = |room: &RoomId, title: &str| serde_json::json!({"roomId": room, "addedAt": "2026-10-01T10:00:00+09:00",
+            "snapshot": {"title": title, "cwd": null, "startedAt": "2026-10-01T01:00:00Z", "endedAt": "2026-10-01T02:00:00Z", "messages": 1, "lastReply": null, "artifactsWritten": []}});
+        let first = serde_json::json!({"version": 1, "conversations": {"claude-code:s1": entry(&a, "one")}});
+        std::fs::write(dot.join("conversations.json"), first.to_string()).unwrap();
+        RoomsCore::open(f.core.home()).unwrap();
+
+        // The older app runs once more: it sees no conversations.json, starts one, and files s2. It also files s1 elsewhere.
+        let downgraded = serde_json::json!({"version": 1, "conversations": {"claude-code:s1": entry(&b, "one moved"), "claude-code:s2": entry(&b, "two")}});
+        std::fs::write(dot.join("conversations.json"), downgraded.to_string()).unwrap();
+        let upgraded = RoomsCore::open(f.core.home()).unwrap();
+        let titles = |room: &RoomId| upgraded.room_sessions(room).unwrap().into_iter().map(|s| (s.session_ref(), s.title)).collect::<Vec<_>>();
+        assert_eq!(titles(&a), [(sref("s1"), Some("one".into()))], "sessions.json wins where both name a session");
+        assert_eq!(titles(&b), [(sref("s2"), Some("two".into()))], "a session only the older app filed is kept");
+        assert!(!dot.join("conversations.json").exists());
+        let json = |p: PathBuf| serde_json::from_slice::<serde_json::Value>(&std::fs::read(p).unwrap()).unwrap();
+        assert_eq!(json(dot.join("conversations.json.bak")), first, "the first backup is not overwritten");
+        let backups: Vec<_> = std::fs::read_dir(&dot).unwrap().map(|e| e.unwrap().path())
+            .filter(|p| p.file_name().unwrap().to_str().unwrap().starts_with("conversations.json.bak")).collect();
+        assert_eq!(backups.len(), 2, "{backups:?}");
+        assert!(backups.into_iter().any(|p| json(p) == downgraded), "the second old file is kept too");
+
+        let again = RoomsCore::open(f.core.home()).unwrap();
+        assert_eq!(again.room_sessions(&b).unwrap().len(), 1, "a second run changes nothing");
     }
 
     #[test]
