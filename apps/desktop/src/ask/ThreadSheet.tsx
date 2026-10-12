@@ -52,7 +52,9 @@ function useFollow(sheet: RefObject<HTMLDivElement | null>, turns: AskTurn[], li
  * A thread above the ask bar: its turns, a question on its way, and a bar over text selected in
  * an answer: "Ask" (it becomes a quote), then the buttons of the plugins that mark answers.
  */
-export function ThreadSheet({ turns, scope, header, noteTarget, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
+export function ThreadSheet({ id, turns, scope, header, noteTarget, live, loadError, pending, onRetry, onCompact, onReload, onQuote }: {
+  /** For the input's aria-controls. */
+  id: string;
   turns: AskTurn[];
   /** The thread's scope. Keep it stable: turns are memoized. */
   scope: AskScope;
@@ -78,7 +80,7 @@ export function ThreadSheet({ turns, scope, header, noteTarget, live, loadError,
   const leftOut = last && (last.kind ?? "question") === "question" ? last.leftOut : 0;
 
   return (
-    <div ref={box} className="pointer-events-auto relative w-full max-w-[720px]">
+    <div ref={box} id={id} className="pointer-events-auto relative w-full max-w-[720px]">
       <div ref={sheet} className="max-h-[50vh] overflow-y-auto rounded-xl border border-hairline bg-sheet px-4 py-3 text-body shadow-float">
         {head ? <div className="mb-2 text-small text-ink-2" title={head.title}>{head.text}</div> : null}
         {loadError ? (

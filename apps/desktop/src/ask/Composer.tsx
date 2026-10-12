@@ -124,9 +124,11 @@ function SendButton({ running, hasDraft, busy, onSend, onStop }: { running: bool
  * answer and sends now, Tab queues, Esc stops the answer (or folds the thread), ↑ in an empty
  * input recalls the last queued or asked question.
  */
-export function Composer({ composer: c, inputRef, placeholder, turns, running, dragging, model, onStop, onFold, onFocus }: {
+export function Composer({ composer: c, inputRef, sheetId, placeholder, turns, running, dragging, model, onStop, onFold, onFocus }: {
   composer: ComposerState;
   inputRef: RefObject<HTMLTextAreaElement | null>;
+  /** The thread sheet the input unfolds, while it shows; undefined when folded (a textbox can't say "collapsed" in ARIA). */
+  sheetId: string | undefined;
   placeholder: string;
   turns: AskTurn[];
   running: AskTurn | undefined;
@@ -212,6 +214,7 @@ export function Composer({ composer: c, inputRef, placeholder, turns, running, d
         <textarea
           ref={inputRef}
           rows={1}
+          aria-controls={sheetId}
           value={c.draft}
           placeholder={placeholder}
           onChange={(e) => c.setDraft(e.target.value)}

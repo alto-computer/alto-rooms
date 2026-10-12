@@ -54,9 +54,13 @@ test("ask about the viewed day, and keep each day's thread and draft across day 
   await expect(page.getByText(/^Read · /)).toHaveCount(0);
   await input.fill("A draft for the other day");
 
+  // Back on today, the day's thread waits behind the bar until the bar is used.
   await showDay(page, new Date());
-  await expect(answer).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact")).toHaveCount(2);
   await expect(input).toHaveValue("");
+  await expect(answer).toHaveCount(0);
+  await input.click();
+  await expect(answer).toBeVisible({ timeout: 10_000 });
 
   await showDay(page, other);
   await expect(question).toHaveCount(0);
@@ -66,5 +70,9 @@ test("ask about the viewed day, and keep each day's thread and draft across day 
   await showDay(page, new Date());
   await page.reload();
   await expect(page.getByRole("tab", { name: /^Journal · /, selected: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Your day" }).getByTestId("day-artifact")).toHaveCount(2);
+  await expect(input).toBeVisible();
+  await expect(answer).toHaveCount(0);
+  await input.click();
   await expect(answer).toBeVisible();
 });

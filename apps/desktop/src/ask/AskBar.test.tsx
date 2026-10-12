@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
+import { Profiler, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Artifact, AskScope, AskTarget, AskTurn, Session } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
@@ -29,6 +29,13 @@ async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false, tar
 
 const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"], scoped: false };
 
+/** Unfolds a finished thread the way the user does: the caret goes into the bar. */
+async function unfold(placeholder = "Ask about this artifact…") {
+  const input = (await screen.findByPlaceholderText(placeholder)) as HTMLTextAreaElement;
+  fireEvent.focus(input);
+  return input;
+}
+
 describe("AskBar", () => {
   afterEach(() => {
     cleanup();
@@ -45,6 +52,21 @@ describe("AskBar", () => {
     act(() => store.toggle());
     const input = await screen.findByPlaceholderText("Ask about this artifact…");
     expect(document.activeElement).toBe(input);
+  });
+
+  it("opens with a finished thread folded behind the bar; the caret in the bar unfolds it", async () => {
+    await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(screen.queryByText("답"), "the thread covers the page until the user asks for it").toBeNull();
+    fireEvent.focus(input);
+    expect(screen.getByText("답")).toBeTruthy();
+  });
+
+  it("opens unfolded over an answer that is still running", async () => {
+    await setup({ k1: [turn({})] });
+    expect(await screen.findByText("Thinking")).toBeTruthy();
+    expect(document.activeElement).not.toBe(screen.getByPlaceholderText("Ask about this artifact…"));
   });
 
   it("renders nothing in read-only", async () => {
@@ -77,18 +99,21 @@ describe("AskBar", () => {
 
   it("says so when a new conversation was started because the thread couldn't be found", async () => {
     await setup({ k1: [turn({ mode: "new", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+    await unfold();
     const head = await screen.findByText("claude-code · New conversation");
     expect(head.getAttribute("title")).toBe("Couldn't find the thread that made this artifact");
   });
 
   it("says when a question went on in the conversation the thread started", async () => {
     await setup({ k1: [turn({ mode: "continue", session: "S1", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+    await unfold();
     const head = await screen.findByText("claude-code · continuing this conversation");
     expect(head.getAttribute("title")).toBeNull();
   });
 
   it("puts a copy button under each finished answer", async () => {
     await setup({ k1: [turn({ status: "done", answer: "the answer", endedAt: "2026-10-06T10:00:05+09:00" })] });
+    await unfold();
     expect(await screen.findByRole("button", { name: "Copy answer" })).toBeTruthy();
   });
 
@@ -97,6 +122,7 @@ describe("AskBar", () => {
     vi.spyOn(Element.prototype, "scrollTo").mockImplementation(scrollTo);
     try {
       const { emit } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+      await unfold();
       await screen.findByText("a");
       await waitFor(() => expect(scrollTo).toHaveBeenCalled());
       scrollTo.mockClear();
@@ -138,6 +164,7 @@ describe("AskBar", () => {
     vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(scrollIntoView);
     try {
       const { emit } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+      await unfold();
       await screen.findByText("a");
       act(() => emit({ type: "ask.started", turn: turn({ id: "t2", question: "q2" }) }));
       await screen.findByText("Thinking");
@@ -273,6 +300,7 @@ describe("AskBar", () => {
   it("Ask over an answer quotes the text selected when the button runs, not the selection the bar was shown for; with the selection gone it quotes nothing", async () => {
     Range.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 10, height: 10 }) as DOMRect;
     await setup({ k1: [turn({ status: "done", answer: "the quick brown fox", endedAt: "2026-10-06T10:00:05+09:00" })] });
+    await unfold();
     const text = (await screen.findByText("the quick brown fox")).firstChild!;
     select(text, 4, 9);
     await release();
@@ -300,6 +328,7 @@ describe("AskBar", () => {
     seat.receive({ rooms: "surface", v: 1, api: 2, type: "actions", items: [{ id: "tag", title: "Tag" }] });
     try {
       await setup({ k1: [turn({ status: "done", answer: "the quick brown fox", endedAt: "2026-10-06T10:00:05+09:00" })] });
+      await unfold();
       const text = (await screen.findByText("the quick brown fox")).firstChild!;
       select(text, 4, 9);
       await release();
@@ -416,11 +445,30 @@ describe("AskBar", () => {
     expect(client.askThread).toHaveBeenCalledWith(scope);
   });
 
+  it("a thread that fails to load unfolds the sheet with the error without being asked; Esc folds it and it stays folded", async () => {
+    const { client } = await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
+    const input = await screen.findByPlaceholderText("Ask about this artifact…");
+    expect(screen.queryByText("답")).toBeNull();
+    client.askThread.mockRejectedValueOnce(new Error("roomsd down"));
+    await act(() => store.load(scope));
+    expect(screen.getByText("Couldn't load the conversation")).toBeTruthy();
+    expect(document.activeElement).not.toBe(input);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByText("Couldn't load the conversation")).toBeNull();
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(screen.queryByText("Couldn't load the conversation"), "the fold holds while the same error lasts").toBeNull();
+    fireEvent.focus(input);
+    fireEvent.click(screen.getByText("Try again"));
+    await waitFor(() => expect(screen.queryByText("Couldn't load the conversation")).toBeNull());
+    expect(screen.getByText("답")).toBeTruthy();
+  });
+
   it("shows a loaded thread, failed turns with retry, and cancelled turns", async () => {
     const { client } = await setup({ k1: [
       turn({ id: "t0", question: "q0", status: "failed", error: "claude-code exited with an error (code 1)", endedAt: "2026-10-06T10:00:01+09:00" }),
       turn({ id: "t1", question: "q1", status: "cancelled", answer: "부분", endedAt: "2026-10-06T10:00:02+09:00" }),
     ] });
+    await unfold();
     const error = await screen.findByText("claude-code exited with an error (code 1)");
     expect(error.closest("p")).toHaveClass("text-error");
     expect(error.closest("p")!.querySelector("svg")).not.toBeNull();
@@ -466,17 +514,22 @@ describe("AskBar", () => {
 
   it("Escape folds the sheet, focusing the input unfolds it", async () => {
     await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    const input = await screen.findByPlaceholderText("Ask about this artifact…");
+    const input = await unfold();
     expect(await screen.findByText("답")).toBeTruthy();
+    const sheetId = input.getAttribute("aria-controls");
+    expect(sheetId, "the input names the sheet it unfolds for assistive tech").toBeTruthy();
+    expect(document.getElementById(sheetId!)).toContainElement(screen.getByText("답"));
     fireEvent.keyDown(input, { key: "Escape" });
     expect(screen.queryByText("답")).toBeNull();
+    expect(input.getAttribute("aria-controls"), "a textbox can't say collapsed, so it names nothing while folded").toBeNull();
     fireEvent.focus(input);
     expect(screen.getByText("답")).toBeTruthy();
+    expect(input.getAttribute("aria-controls")).toBe(sheetId);
   });
 
   it("floats over the page: an outside pointerdown or a click into the artifact iframe folds the sheet; inside does not", async () => {
     const { container } = await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
-    const input = await screen.findByPlaceholderText("Ask about this artifact…");
+    const input = await unfold();
     fireEvent.pointerDown(await screen.findByText("답"));
     expect(screen.getByText("답")).toBeTruthy();
     expect(container.querySelector(".absolute")).toContainElement(screen.getByText("답"));
@@ -536,6 +589,7 @@ describe("AskBar", () => {
 
   it("a pointerdown in the model menu keeps the sheet open", async () => {
     await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] }, false, claude);
+    await unfold();
     expect(await screen.findByText("답")).toBeTruthy();
     fireEvent.keyDown(await screen.findByLabelText(/^Model:/), { key: "Enter" });
     fireEvent.pointerDown((await screen.findAllByRole("menuitemradio"))[1]);
@@ -562,6 +616,7 @@ describe("AskBar", () => {
     const failed = (id: string, model: string) =>
       turn({ id, question: id, model, status: "failed", error: `err ${id}`, endedAt: "2026-10-06T10:00:01+09:00" });
     const { client, emit } = await setup({ k1: [failed("q-opus", "opus"), failed("q-gone", "retired")] }, false, claude);
+    await unfold();
     await screen.findByLabelText("Model: claude-code · Haiku");
     fireEvent.click((await screen.findAllByText("Retry"))[0]);
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope, question: "q-opus", model: "opus" }));
@@ -573,6 +628,7 @@ describe("AskBar", () => {
 
   it("shows the turn's model in the sheet header", async () => {
     await setup({ k1: [turn({ model: "sonnet", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
+    await unfold();
     expect(await screen.findByText("claude-code · Sonnet · continuing the thread that made it")).toBeTruthy();
   });
 
@@ -597,7 +653,7 @@ describe("AskBar", () => {
 
     it("/new sent as text starts over with a divider; Escape closes the menu", async () => {
       const { client } = await setup({ k1: [turn({ status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" })] });
-      const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
+      const input = await unfold();
       fireEvent.change(input, { target: { value: "/ne" } });
       fireEvent.keyDown(input, { key: "Escape" });
       expect(input.value).toBe("");
@@ -617,6 +673,7 @@ describe("AskBar", () => {
         turn({ id: "a", status: "done", answer: "a", endedAt: "2026-10-06T10:00:01+09:00" }),
         turn({ id: "c", kind: "compact", question: "/compact", status: "done", answer: "**요약** 내용", endedAt: "2026-10-06T10:00:02+09:00" }),
       ] });
+      await unfold();
       expect(await screen.findByRole("separator", { name: "Conversation summarized" })).toBeTruthy();
       expect(screen.queryByText("요약")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Show summary" }));
@@ -626,6 +683,7 @@ describe("AskBar", () => {
 
     it("says when earlier answers were left out, and offers to summarize", async () => {
       const { client } = await setup({ k1: [turn({ status: "done", answer: "a", leftOut: 3, endedAt: "2026-10-06T10:00:01+09:00" })] });
+      await unfold();
       expect(await screen.findByText(/3 earlier answers weren't sent along/)).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Summarize it" }));
       await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith(expect.objectContaining({ kind: "compact" })));
@@ -678,6 +736,23 @@ describe("AskBar", () => {
     expect(screen.queryByText("Thinking")).toBeNull();
     expect(input.value).toBe("바로 보여?");
   });
+
+  it("Esc while the question is on its way folds the sheet, and the turn arriving does not unfold it again", async () => {
+    const { client } = await setup();
+    let accept: (t: AskTurn) => void = () => {};
+    client.startAsk.mockImplementationOnce(() => new Promise((resolve) => (accept = resolve)));
+    const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "접어도 돼?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("접어도 돼?")).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByText("접어도 돼?")).toBeNull();
+    expect(client.cancelAsk).not.toHaveBeenCalled();
+    await act(async () => accept(turn({ id: "t9", question: "접어도 돼?" })));
+    expect(store.getState().threads["artifact:k1"]?.turns.map((t) => t.status)).toEqual(["running"]);
+    expect(screen.queryByText("접어도 돼?"), "the user folded it; the same ask arriving as a turn is not a new reason").toBeNull();
+    expect(screen.getByLabelText("Stop")).toBeTruthy();
+  });
 });
 
 describe("AskBar for a room", () => {
@@ -706,6 +781,15 @@ describe("AskBar for a room", () => {
     expect(head.getAttribute("title")).toBeNull();
   });
 
+  it("opens a room with a thread showing the bar alone; a click in the bar unfolds the thread", async () => {
+    await setupRoom({ asks: { "room:r1": [roomTurn({ question: "room question", status: "done", answer: "room answer", endedAt: "2026-10-06T10:00:02+09:00" })] } });
+    const input = await screen.findByPlaceholderText("Ask about this room…");
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(screen.queryByText("room answer")).toBeNull();
+    fireEvent.focus(input);
+    expect(screen.getByText("room answer")).toBeTruthy();
+  });
+
   it("shows only the room's thread, never the artifact's", async () => {
     await setupRoom({
       asks: {
@@ -713,6 +797,7 @@ describe("AskBar for a room", () => {
         "room:r1": [roomTurn({ question: "room question", status: "done", answer: "room answer", endedAt: "2026-10-06T10:00:02+09:00" })],
       },
     });
+    await unfold("Ask about this room…");
     expect(await screen.findByText("room answer")).toBeTruthy();
     expect(screen.queryByText("doc answer")).toBeNull();
   });
@@ -734,8 +819,35 @@ describe("AskBar for a room", () => {
     act(() => emit({ type: "ask.progress", id: "ask-길게?", scope: roomScope, answer: "절반", activity: null }));
     act(() => emit({ type: "ask.done", turn: roomTurn({ id: "ask-길게?", question: "길게?", status: "done", answer: "끝까지 답함", endedAt: "2026-10-06T10:00:09+09:00" }) }));
     act(() => show("r1"));
+    // The room's bar is mounted anew for the room it came back to, so its finished thread waits behind the bar.
+    await unfold("Ask about this room…");
     expect(await screen.findByText("끝까지 답함")).toBeTruthy();
     expect(client.cancelAsk).not.toHaveBeenCalled();
+  });
+
+  it("coming back to a room whose answer is still running shows the thread from the first frame, with no folded flash", async () => {
+    let show: (roomId: string) => void = () => {};
+    const frames: boolean[] = [];
+    function Switch() {
+      const [roomId, setRoomId] = useState("r1");
+      show = setRoomId;
+      return (
+        <Profiler id="bar" onRender={() => frames.push(screen.queryByText("아직?") !== null)}>
+          <AskBar key={roomId} subject={{ kind: "room", roomId }} />
+        </Profiler>
+      );
+    }
+    const { client } = await renderWithStores(<Switch />, { rooms: [room("r1", "A"), room("r2", "B")], artifacts: { r1: [artifact], r2: [] } });
+    const input = await screen.findByPlaceholderText("Ask about this room…");
+    fireEvent.change(input, { target: { value: "아직?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope: roomScope, question: "아직?", model: null }));
+    act(() => show("r2"));
+    expect(screen.queryByText("아직?")).toBeNull();
+    frames.length = 0;
+    act(() => show("r1"));
+    expect(frames[0], "the first commit of the returned bar already shows the running question").toBe(true);
+    expect(frames).not.toContain(false);
   });
 
   it("renders nothing in read-only", async () => {
@@ -769,6 +881,7 @@ describe("AskBar for a day", () => {
     });
     fireEvent.change(await screen.findByPlaceholderText("Ask about this day…"), { target: { value: "월요일 초안" } });
     act(() => show("2026-10-06"));
+    await unfold("Ask about this day…");
     expect(await screen.findByText("화요일 답")).toBeTruthy();
     expect(input().value).toBe("");
     fireEvent.change(input(), { target: { value: "화요일 초안" } });
@@ -794,6 +907,7 @@ describe("AskBar for a day", () => {
     expect(screen.queryByText("절반")).toBeNull();
     act(() => emit({ type: "ask.done", turn: dayTurn({ id: "ask-월요일?", question: "월요일?", status: "done", answer: "월요일 답", endedAt: "2026-10-06T10:00:09+09:00" }) }));
     act(() => show("2026-10-05"));
+    await unfold("Ask about this day…");
     expect(await screen.findByText("월요일 답")).toBeTruthy();
     expect(client.startAsk).toHaveBeenCalledWith({ scope: monday, question: "월요일?", model: null });
     expect(client.cancelAsk).not.toHaveBeenCalled();

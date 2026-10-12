@@ -44,9 +44,12 @@ test("a Journal session opens in its own tab, asks in its own session, and goes 
   await page.keyboard.press(`${MOD}+j`);
   await expect(input).toBeFocused();
 
-  // The tab and its thread come back after a reload.
+  // The tab comes back after a reload with the bar alone; its thread unfolds from the bar.
   await page.reload();
   await expect(page.getByRole("tab", { name: "Why is cold start slow?", selected: true })).toBeVisible();
+  await expect(input).toBeVisible();
+  await expect(page.getByText("Resumed e2e-s1, Question: 세 줄로 요약해줘")).toHaveCount(0);
+  await input.click();
   await expect(page.getByText("Resumed e2e-s1, Question: 세 줄로 요약해줘")).toBeVisible();
 
   // The room chip opens the room list itself, with no submenu, and the pick moves the session.

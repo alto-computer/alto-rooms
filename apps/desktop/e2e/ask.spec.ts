@@ -41,9 +41,12 @@ test("ask an artifact and get the fake agent's answer", async ({ page, daemon })
   await expect(head).toBeVisible();
   await expect(head).toHaveAttribute("title", "Couldn't find the thread that made this artifact");
 
-  // Survives a reload: the thread comes back from roomsd.
+  // Survives a reload: the thread comes back from roomsd, behind the bar until the bar is used.
   await page.reload();
   await openArtifactTab(page, "harness", "Doc");
+  await expect(input).toBeVisible();
+  await expect(page.getByText("Question: 왜 이렇게 했어?")).toHaveCount(0);
+  await input.click();
   await expect(page.getByText("Question: 왜 이렇게 했어?")).toBeVisible();
 
   const [art] = (await (await fetch(`${daemon.baseUrl}/v1/rooms/${harness.id}/artifacts`)).json()) as { fileKey: string }[];

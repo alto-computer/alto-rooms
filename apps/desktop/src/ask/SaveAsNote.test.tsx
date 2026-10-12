@@ -23,10 +23,13 @@ const ROOM_NOTE = `Room: Planning\n\n## ${NAME}\n\n- 금요일 배포\n- 리뷰�
 /** Doc threads are keyed by file key, the others by scope key. */
 const threadKey = (scope: AskScope) => (scope.kind === "artifact" ? scope.fileKey : scopeKey(scope));
 
-function setup(subject: AskSubject, t: AskTurn, notes: Record<string, string | Error> = {}) {
-  return renderWithStores(<AskBar subject={subject} />, {
+/** Renders the bar over a finished thread and unfolds it, as the caret in the bar does. */
+async function setup(subject: AskSubject, t: AskTurn, notes: Record<string, string | Error> = {}) {
+  const rendered = await renderWithStores(<AskBar subject={subject} />, {
     rooms: [room("r1", "Planning")], artifacts: { r1: [artifact] }, asks: { [threadKey(t.scope)]: [t] }, notes,
   });
+  fireEvent.focus(await screen.findByRole("textbox"));
+  return rendered;
 }
 
 async function openNameInput() {
