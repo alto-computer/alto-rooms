@@ -7,6 +7,7 @@ import { surfaceHub, surfaceKey } from "@/surfaces/surfaceHub";
 import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { plugin } from "@/test/plugins";
 import { ArtifactView } from "@/views/ArtifactView";
+import { BackgroundFrames } from "./BackgroundFrame";
 import { EnableCard } from "./EnableCard";
 import { flushAllPlugins } from "./host";
 import { pluginDataBus, type PluginDataChange } from "./pluginDataBus";
@@ -856,6 +857,50 @@ describe("theme", () => {
     await closePanel(f, posted);
     const again = await openPanel();
     expect(again.f.className, "a frame of a plugin known to apply the theme starts on the pane").toContain("bg-pane");
+  });
+
+  it("puts a frame back on white when the page's later connect opts out, and forgets the flag for its next frame", async () => {
+    await openArtifact();
+    const { f, posted } = await openPanel();
+    fromFrame(f, { rooms: "surface", v: 1, api: 2, type: "hello", theme: true });
+    expect(f.className).toContain("bg-pane");
+    fromFrame(f, { rooms: 1, type: "ready" });
+    expect(f.className, "connectSurfaces() then connect({ theme: false }): the page no longer applies the theme").toContain("bg-white");
+    expect(f.className).not.toContain("bg-pane");
+
+    await closePanel(f, posted);
+    const again = await openPanel();
+    expect(again.f.className).toContain("bg-white");
+  });
+
+  it("keeps a background page's hello to that page: the plugin's panel stays white until it says so itself", async () => {
+    document.documentElement.classList.add("dark");
+    try {
+      const withBackground = plugin({ permissions: ["surfaces.text"], granted: ["surfaces.text"], background: "background.html" });
+      await renderWithStores(
+        <>
+          <BackgroundFrames />
+          <ArtifactView roomId="r1" artifactId="a1" />
+        </>,
+        { rooms: [room("r1", "Bench")], artifacts: { r1: [artifact] }, plugins: [withBackground] },
+      );
+      await act(async () => {});
+      const frames = () => screen.getAllByTitle("Echo") as HTMLIFrameElement[];
+      const background = frames().find((f) => f.src.endsWith("/background.html"))!;
+      fromFrame(background, { rooms: "surface", v: 1, api: 2, type: "hello", theme: true });
+      expect(background.className).toContain("bg-pane");
+
+      fireEvent.click(screen.getByRole("button", { name: "Open Echo" }));
+      await act(async () => {});
+      const panel = frames().find((f) => f.src.endsWith("/index.html"))!;
+      expect(panel.className, "another page of the same plugin and rev").toContain("bg-white");
+      fromFrame(panel, { rooms: 1, type: "ready" });
+      expect(panel.className).toContain("bg-white");
+      fromFrame(panel, { rooms: 1, type: "ready", theme: true });
+      expect(panel.className).toContain("bg-pane");
+    } finally {
+      document.documentElement.classList.remove("dark");
+    }
   });
 
   it("takes the flag on a surface hello too, and forgets it when the plugin's rev changes", async () => {

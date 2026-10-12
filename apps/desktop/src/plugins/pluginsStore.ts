@@ -2,7 +2,7 @@
  * The plugin list as the app sees it: roomsd's list plus whether this app
  * version can run each plugin. Lists again when roomsd says plugins changed or
  * the event stream resyncs. Also remembers, for the life of this app run, which
- * enable cards were dismissed ("Not now") and which plugins' pages apply the
+ * enable cards were dismissed ("Not now") and which plugin pages apply the
  * app's theme, so their next frame starts on the pane colour instead of white.
  */
 import type { PluginInfo, RoomsEvent } from "@alto-rooms/protocol-ts";
@@ -53,9 +53,19 @@ export function compatible(app: string, min: string): boolean {
   return true;
 }
 
+/**
+ * One page of a plugin as the app frames it. Panel and tab frames load the same entry, so they are
+ * one page; the background page is another. The rev covers the manifest, the entry, the content
+ * scripts and the background page, not a bundle the entry loads: a rebuilt bundle behind an
+ * unchanged index.html keeps its page's flag until its first ready or hello replaces it.
+ */
+export type PluginPage = { id: string; rev: string; entry: string };
+
+const pageKey = (p: PluginPage) => `${p.id}@${p.rev}:${p.entry}`;
+
 export class PluginsStore {
   private state: PluginsState = { list: [], dismissed: new Set(), loaded: false };
-  /** `id@rev` of each plugin whose page said, on ready or hello, that it applies the theme. */
+  /** Each page whose last ready or hello said it applies the theme. */
   private themed = new Set<string>();
   private listeners = new Set<() => void>();
   private stopSignals: (() => void) | null = null;
@@ -121,13 +131,14 @@ export class PluginsStore {
     this.set({ dismissed: new Set([...this.state.dismissed, id]) });
   }
 
-  /** The page of plugin `id` at `rev` applies the app's theme: its frames may start on the pane colour. */
-  markThemed(id: string, rev: string): void {
-    this.themed.add(`${id}@${rev}`);
+  /** What `page` last said on ready or hello: whether it applies the app's theme, so its frames may start on the pane colour. */
+  setThemed(page: PluginPage, themed: boolean): void {
+    if (themed) this.themed.add(pageKey(page));
+    else this.themed.delete(pageKey(page));
   }
 
-  isThemed(id: string, rev: string): boolean {
-    return this.themed.has(`${id}@${rev}`);
+  isThemed(page: PluginPage): boolean {
+    return this.themed.has(pageKey(page));
   }
 
   private set(p: Partial<PluginsState>) {
