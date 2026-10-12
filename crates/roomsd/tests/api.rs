@@ -39,7 +39,7 @@ async fn info_and_rooms_with_seq_header() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
     let r = app.clone().oneshot(get("/v1/info", API_HOST)).await.unwrap();
     let v = body_json(r).await;
-    assert_eq!(v["version"], "1");
+    assert_eq!(v["version"], "2");
     assert_eq!(v["journalRoomId"], "journal");
     let r = app.oneshot(get("/v1/rooms", "localhost:4317")).await.unwrap();
     assert!(r.headers().get("x-rooms-seq").is_some());

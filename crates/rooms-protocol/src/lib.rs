@@ -1,11 +1,13 @@
-//! Rooms Protocol v1 — the single definition of every wire type.
+//! Rooms Protocol — the single definition of every wire type.
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use ts_rs::TS;
 
 pub mod layout;
 
-pub const PROTOCOL_VERSION: &str = "1";
+/// `/v1/info` reports it; the app only uses a roomsd that reports its own. 2: sessions and
+/// artifacts got their names (routes, events, ask scopes).
+pub const PROTOCOL_VERSION: &str = "2";
 pub const JOURNAL_ROOM_ID: &str = "journal";
 /// Every permission a plugin manifest may declare. The app's enable card has copy for each.
 pub const PERMISSIONS: [&str; 5] = ["rooms.read", "clipboard", "downloads", "artifact.content", "surfaces.text"];
