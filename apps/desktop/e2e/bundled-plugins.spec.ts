@@ -1,11 +1,11 @@
 /*
- * The plugins the desktop app ships (Goals, Excalidraw notes), from their real builds.
+ * The plugins the desktop app ships (Goals, Excalidraw notes, Highlights), from their real builds.
  * Fill src-tauri/resources/plugins first: `bun run plugins` (or with ROOMS_PLUGIN_<ID> for local builds).
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { Page } from "@playwright/test";
-import { expect, test, type Daemon } from "./fixtures";
+import type { Locator, Page } from "@playwright/test";
+import { APP_ORIGIN, expect, test, type Daemon } from "./fixtures";
 
 const BUNDLED = path.resolve(import.meta.dirname, "../src-tauri/resources/plugins");
 test.skip(!existsSync(path.join(BUNDLED, "goals", "manifest.json")), "bundled plugins missing: run `bun run plugins`");
@@ -17,11 +17,20 @@ async function setup(page: Page, daemon: Daemon) {
   const bench = await daemon.createRoom("Bench");
   await daemon.write("Bench/latency.html", "<title>Latency report</title><p>p95 118 ms</p>");
   const csp: string[] = [];
-  page.on("console", (m) => /Content Security Policy|Refused to/.test(m.text()) && csp.push(m.text()));
+  // The app's own page breaks its CSP with inline styles (since the e2e serves that CSP, 75ac1d5); only plugin frames count here.
+  page.on("console", (m) => /Content Security Policy|Refused to/.test(m.text()) && !m.location().url.startsWith(APP_ORIGIN) && csp.push(m.text()));
   await page.goto("/");
   await expect.poll(async () => ((await (await fetch(`${daemon.baseUrl}/v1/rooms/${bench.id}/artifacts`)).json()) as Artifact[]).length).toBe(1);
   const [artifact] = (await (await fetch(`${daemon.baseUrl}/v1/rooms/${bench.id}/artifacts`)).json()) as Artifact[];
-  return { artifact, csp };
+  // Bundled plugins get every permission but reading artifacts, which the user approves once on Highlights' card.
+  const highlightsCard = page.getByRole("dialog", { name: "Updated plugin: Highlights" });
+  await expect(highlightsCard).toContainText("Can read the text of artifacts");
+  return { artifact, csp, highlightsCard };
+}
+
+async function notNow(card: Locator) {
+  await card.getByRole("button", { name: "Not now" }).click();
+  await expect(card).toBeHidden();
 }
 
 async function openArtifact(page: Page) {
@@ -31,7 +40,8 @@ async function openArtifact(page: Page) {
 }
 
 test("Goals comes with the app: no card, a goal links a document and opens it", async ({ page, daemon }) => {
-  const { artifact, csp } = await setup(page, daemon);
+  const { artifact, csp, highlightsCard } = await setup(page, daemon);
+  await notNow(highlightsCard);
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await page.getByRole("menu", { name: "Plugins" }).getByRole("menuitem", { name: "Goals" }).click();
   await expect(page.getByRole("dialog", { name: /plugin/i })).toHaveCount(0);
@@ -57,7 +67,8 @@ test("Goals comes with the app: no card, a goal links a document and opens it", 
 });
 
 test("Excalidraw notes come with the app: a drawing is saved per document and exports as PNG", async ({ page, daemon }) => {
-  const { artifact, csp } = await setup(page, daemon);
+  const { artifact, csp, highlightsCard } = await setup(page, daemon);
+  await notNow(highlightsCard);
   await openArtifact(page);
   await page.getByRole("button", { name: "Open Notes" }).click();
 
@@ -94,8 +105,37 @@ test("Excalidraw notes come with the app: a drawing is saved per document and ex
 });
 
 
+test("Highlights comes with the app: a highlight in a document is saved, listed in its tab and opens back", async ({ page, daemon }) => {
+  const { artifact, csp, highlightsCard } = await setup(page, daemon);
+  await highlightsCard.getByRole("button", { name: "Turn on" }).click();
+  await expect(highlightsCard).toBeHidden();
+
+  await openArtifact(page);
+  const report = page.frameLocator('iframe[title="Latency report"]:not([aria-hidden])');
+  await expect(report.locator("rooms-highlight-ui"), "the content script ran").toBeAttached();
+  await report.locator("p").click({ clickCount: 3 });
+  const bar = page.getByRole("toolbar", { name: "Selection actions" });
+  await bar.getByRole("button", { name: "Agree", exact: true }).click();
+  await expect(bar).toBeHidden();
+  const stored = () =>
+    daemon
+      .read(`.rooms/plugins/highlight/data/docs/${artifact.fileKey}/highlights.json`)
+      .then((t) => (JSON.parse(t) as { highlights: { color: string; text: string }[] }).highlights.map((h) => [h.color, h.text.trim()]))
+      .catch(() => []);
+  await expect.poll(stored).toEqual([["agree", "p95 118 ms"]]);
+
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page.getByRole("menu", { name: "Plugins" }).getByRole("menuitem", { name: "Highlights" }).click();
+  const tab = page.frameLocator('xpath=//iframe[@title="Highlights"][not(ancestor::*[@data-background-frames])]');
+  await expect(tab.locator(".quote")).toHaveText(["p95 118 ms"]);
+  await tab.getByRole("button", { name: /p95 118 ms/ }).click();
+  await expect(page.getByRole("tab", { name: "Latency report", selected: true })).toBeVisible();
+  expect(csp).toEqual([]);
+});
+
 test("Notes resize follows across both frames, persists once per drag and cancels cleanly", async ({ page, daemon }, testInfo) => {
-  const { csp } = await setup(page, daemon);
+  const { csp, highlightsCard } = await setup(page, daemon);
+  await notNow(highlightsCard);
   await openArtifact(page);
   await page.getByRole("button", { name: "Open Notes" }).click();
   await expect(page.frameLocator('iframe[title="Excalidraw notes"]').locator("canvas.interactive")).toBeVisible();
