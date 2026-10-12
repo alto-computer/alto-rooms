@@ -198,7 +198,7 @@ Text the app itself shows, like a chat answer, is host DOM: no plugin code runs 
 "background": "background.html"
 ```
 
-The page uses `connect()` for storage and `open`, and `connectSurfaces` from SDK 0.5.0 for the surfaces.
+The page uses `connect()` for storage and `open`, and `connectSurfaces` (SDK 0.5.0, scope names as below since 0.6.0) for the surfaces.
 
 ```ts
 import { connect, connectSurfaces, surfacePath } from "@alto-rooms/plugin-sdk";
@@ -218,7 +218,7 @@ surfaces.ready();
 
 | Call | What it does |
 | --- | --- |
-| `onOpen(cb)` | Calls `cb(surface, text)` when an answer is on screen, for every open answer right after `ready()`, and again when an answer's text changes. `surface` is `{ kind: "answer", scope, turnId }`, `scope` one of `{ kind: "doc", fileKey }`, `{ kind: "room", roomId }`, `{ kind: "day", date }`, `{ kind: "conversation", agent, session }`. `text` is the answer's text content, so offsets you store point into it; keep the quote and some context too, and re-anchor on each open |
+| `onOpen(cb)` | Calls `cb(surface, text)` when an answer is on screen, for every open answer right after `ready()`, and again when an answer's text changes. `surface` is `{ kind: "answer", scope, turnId }`, `scope` one of `{ kind: "artifact", fileKey }`, `{ kind: "room", roomId }`, `{ kind: "day", date }`, `{ kind: "session", agent, id }`. `text` is the answer's text content, so offsets you store point into it; keep the quote and some context too, and re-anchor on each open |
 | `onClose(cb)` | The answer left the screen. Its paint went with it |
 | `setActions(items)` | Replaces your buttons in the selection bar over answers, shown after Ask: up to 6 `{ id, title, color? }`, as for content scripts |
 | `onAction(cb)` | Calls `cb(id, { surface, start, end, text })` when one of your buttons is clicked over a selection in an answer |
@@ -226,7 +226,10 @@ surfaces.ready();
 | `onRangeClick(cb)` | The user clicked one of your painted ranges. Answer with `menu(surface, rangeId, items)` to show up to 6 buttons there, or do nothing |
 | `onRangeAction(cb)` | Calls `cb(surface, rangeId, actionId)` when the user picks from that menu |
 | `rooms.open({ surface, rangeId })` | Opens the thread that holds the answer, unfolds it, and flashes your range once you have painted it |
-| `surfaceKey(surface)`, `surfacePath(surface)` | The answer's name, `answer:doc:<fileKey>/<turnId>`, and the same as a storage path, `answer/doc/<fileKey>/<turnId>` |
+| `surfaceKey(surface)`, `surfacePath(surface)` | The answer's name, `answer:artifact:<fileKey>/<turnId>`, and the same as a storage path, `answer/artifact/<fileKey>/<turnId>` |
+| `legacySurfacePath(surface)` | Deprecated, goes in 0.7.0. The path SDK 0.5 gave the same answer (`answer/doc/…`, `answer/conversation/<agent>/<id>/…`). Read it when `surfacePath` finds nothing, and move what you find |
+
+SDK 0.6.0 renamed two scope kinds to the words in the [glossary](glossary.md): `doc` is now `artifact`, and `conversation` is now `session`, with the id in `id` instead of `session`. The app sends only the new names. It still accepts the old ones in `paint`, `menu` and `open` until 0.7.0, so surfaces a plugin saved under 0.5 keep working.
 
 Messages are `{ rooms: "surface", v: 1, type, … }` posted to `window.parent`, and the SDK trusts only messages whose source is `window.parent`. The background frame has no network and no token, like every plugin frame, so what it reads stays in your `data/`. Notes become a surface in a later release; the `surface.kind` tells them apart.
 
