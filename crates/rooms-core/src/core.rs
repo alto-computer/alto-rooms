@@ -24,7 +24,7 @@ pub(crate) struct Inner {
     /// Rooms whose root was missing/unreadable at the last rescan (drives one room.updated per transition).
     pub(crate) unavailable: HashSet<RoomId>,
     pub(crate) dangling: DanglingLinks,
-    /// rooms-collect's store, read for conversations; `None` unless roomsd was given its folder.
+    /// rooms-collect's store, read for sessions; `None` unless roomsd was given its folder.
     pub(crate) collect_db: Option<PathBuf>,
 }
 

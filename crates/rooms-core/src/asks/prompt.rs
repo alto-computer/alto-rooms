@@ -1,6 +1,6 @@
-//! The only text Rooms writes into a question (spec §6.3), plus the R0 checks on doc meta.
-use super::agents::{CONVERSATION_PREAMBLE, SCOPE_PREAMBLE};
-use rooms_protocol::{Agent, AskKind, AskMode, AskStatus, AskTurn, Conversation, IsoDate};
+//! The only text Rooms writes into a question (spec §6.3), plus the R0 checks on artifact meta.
+use super::agents::{SCOPE_PREAMBLE, SESSION_PREAMBLE};
+use rooms_protocol::{Agent, AskKind, AskMode, AskStatus, AskTurn, IsoDate, Session};
 use std::path::PathBuf;
 
 /// How much earlier Q&A goes along with a question, in characters, summary included. A prompt on
@@ -9,7 +9,7 @@ use std::path::PathBuf;
 pub(crate) const PRIOR_CHARS_STDIN: usize = 100_000;
 pub(crate) const PRIOR_CHARS_ARGV: usize = 24_000;
 
-/// R0: meta from a doc is untrusted. A leading '-' would read as a CLI flag.
+/// R0: meta from an artifact is untrusted. A leading '-' would read as a CLI flag.
 pub(crate) fn valid_ident(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
@@ -42,11 +42,11 @@ impl Context<'_> {
     pub fn is_empty(&self) -> bool { self.summary.is_none() && self.turns.is_empty() && self.left_out == 0 }
 }
 
-/// Where a conversation starts over: `/new`, or a `/compact` that produced its summary.
+/// Where a thread starts over: `/new`, or a `/compact` that produced its summary.
 fn starts_over(t: &AskTurn) -> bool { t.kind == AskKind::Clear || (t.kind == AskKind::Compact && t.status == AskStatus::Done) }
 
 /// The agent session the next question to `agent` continues: the latest one a turn since the
-/// conversation last started over ran in, whatever became of that turn (a stopped question
+/// thread last started over ran in, whatever became of that turn (a stopped question
 /// stays in the session, as it would in the agent's own CLI).
 pub(crate) fn chain_head<'a>(prior: &'a [AskTurn], agent: &str) -> Option<&'a str> {
     let since = prior.iter().rposition(starts_over).map_or(prior, |i| &prior[i + 1..]);
@@ -86,13 +86,13 @@ pub(crate) fn build_prompt(preamble: &str, mode: AskMode, file: &str, file_key: 
     out
 }
 
-/// A conversation ask. Resumed, the agent has the conversation itself; in a new session these
-/// lines are all it knows of it.
-pub(crate) fn build_conversation_prompt(c: &Conversation, ctx: &Context, question: &str) -> String {
-    let mut out = format!("{CONVERSATION_PREAMBLE}\n\n");
-    if let Some(t) = &c.title { out.push_str(&format!("Conversation: {t}\n")); }
-    out.push_str(&format!("Agent: {}, session {}\n", c.id.agent.as_str(), c.id.session));
-    if let Some(cwd) = &c.cwd { out.push_str(&format!("Folder: {cwd}\n")); }
+/// A session ask. Resumed, the agent has the session itself; in a new session these lines are all
+/// it knows of it.
+pub(crate) fn build_session_prompt(session: &Session, ctx: &Context, question: &str) -> String {
+    let mut out = format!("{SESSION_PREAMBLE}\n\n");
+    if let Some(t) = &session.title { out.push_str(&format!("Session: {t}\n")); }
+    out.push_str(&format!("Agent: {}, session {}\n", session.agent.as_str(), session.id));
+    if let Some(cwd) = &session.cwd { out.push_str(&format!("Folder: {cwd}\n")); }
     push_thread(&mut out, ctx, question);
     out
 }
@@ -137,7 +137,7 @@ pub(crate) const MAX_LISTED: usize = 400;
 /// alone; a template with both `{prompt}` and `{scope_settings}` passes 1 MiB only when most listed
 /// path bytes are those four characters. The built-in claude-code template sends the prompt on stdin.
 pub(crate) const MAX_LISTING_BYTES: usize = 256 * 1024;
-/// A title is the doc's own `<title>`, which an agent or a web page wrote.
+/// A title is the artifact's own `<title>`, which an agent or a web page wrote.
 const MAX_TITLE_CHARS: usize = 120;
 /// collect.db keeps this much of a last reply; the listing never quotes more.
 const MAX_REPLY_CHARS: usize = 240;
@@ -209,7 +209,7 @@ mod tests {
     use rooms_protocol::{AskScope, AskStatus};
 
     fn turn(q: &str, a: &str, status: AskStatus) -> AskTurn {
-        AskTurn { id: q.into(), scope: AskScope::Doc { file_key: "k".into() }, question: q.into(), answer: a.into(), agent: "x".into(), model: None,
+        AskTurn { id: q.into(), scope: AskScope::Artifact { file_key: "k".into() }, question: q.into(), answer: a.into(), agent: "x".into(), model: None,
             mode: AskMode::New, status, error: None, started_at: "t".into(), ended_at: None, images: vec![], kind: AskKind::Question, left_out: 0, session: None }
     }
 
@@ -379,14 +379,14 @@ mod tests {
     }
 
     #[test]
-    fn a_conversation_ask_names_the_conversation() {
-        let c = Conversation { id: rooms_protocol::ConversationId::parse_key("codex:s-1").unwrap(), title: Some("Fix the build".into()),
+    fn a_session_ask_names_the_session() {
+        let session = Session { agent: Agent::Codex, id: rooms_protocol::SessionId::parse("s-1").unwrap(), title: Some("Fix the build".into()),
             cwd: Some("/w".into()), started_at: "a".into(), ended_at: "b".into(), messages: 3, last_reply: None, artifacts_written: vec![], room_id: None };
-        assert_eq!(build_conversation_prompt(&c, &context(&[], PRIOR_CHARS_ARGV), "summary?"),
-            format!("{CONVERSATION_PREAMBLE}\n\nConversation: Fix the build\nAgent: codex, session s-1\nFolder: /w\n\nQuestion: summary?"));
-        let bare = Conversation { title: None, cwd: None, ..c };
-        assert_eq!(build_conversation_prompt(&bare, &context(&[], PRIOR_CHARS_ARGV), "q"),
-            format!("{CONVERSATION_PREAMBLE}\n\nAgent: codex, session s-1\n\nQuestion: q"));
+        assert_eq!(build_session_prompt(&session, &context(&[], PRIOR_CHARS_ARGV), "summary?"),
+            format!("{SESSION_PREAMBLE}\n\nSession: Fix the build\nAgent: codex, session s-1\nFolder: /w\n\nQuestion: summary?"));
+        let bare = Session { title: None, cwd: None, ..session };
+        assert_eq!(build_session_prompt(&bare, &context(&[], PRIOR_CHARS_ARGV), "q"),
+            format!("{SESSION_PREAMBLE}\n\nAgent: codex, session s-1\n\nQuestion: q"));
     }
 
     fn ran(agent: &str, session: Option<&str>, status: AskStatus) -> AskTurn {

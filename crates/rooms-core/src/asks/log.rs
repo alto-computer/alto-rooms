@@ -9,7 +9,7 @@ use std::path::PathBuf;
 pub(crate) struct AskLog { dir: PathBuf }
 
 /// A line of the file: the turn as the API shows it, less the scope the file name already says,
-/// plus `fileKey` on doc lines so a roomsd from before scopes reads them. Lines from before scopes
+/// plus `fileKey` on artifact lines so a roomsd from before scopes reads them. Lines from before scopes
 /// have exactly this shape.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,7 +39,7 @@ struct Stored {
 impl Stored {
     fn of(turn: &AskTurn) -> Self {
         let AskTurn { id, scope, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out, session } = turn.clone();
-        let file_key = match scope { AskScope::Doc { file_key } => Some(file_key), AskScope::Room { .. } | AskScope::Day { .. } | AskScope::Conversation { .. } => None };
+        let file_key = match scope { AskScope::Artifact { file_key } => Some(file_key), AskScope::Room { .. } | AskScope::Day { .. } | AskScope::Session(_) => None };
         Self { id, file_key, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out, session }
     }
 
@@ -55,10 +55,10 @@ impl AskLog {
     /// File keys are 16 alphanumerics, so a `room-`, `day-` or `conversation-` name never names a doc file.
     fn path(&self, scope: &AskScope) -> PathBuf {
         let name = match scope {
-            AskScope::Doc { file_key } => format!("{file_key}.jsonl"),
+            AskScope::Artifact { file_key } => format!("{file_key}.jsonl"),
             AskScope::Room { room_id } => format!("room-{room_id}.jsonl"),
             AskScope::Day { date } => format!("day-{date}.jsonl"),
-            AskScope::Conversation { agent, session } => format!("conversation-{}-{session}.jsonl", agent.as_str()),
+            AskScope::Session(r) => format!("conversation-{}-{}.jsonl", r.agent.as_str(), r.id),
         };
         self.dir.join(name)
     }
@@ -98,17 +98,17 @@ mod tests {
 
     const K1: &str = "0123456789abcdef";
 
-    fn doc() -> AskScope { AskScope::Doc { file_key: K1.into() } }
+    fn artifact() -> AskScope { AskScope::Artifact { file_key: K1.into() } }
 
     fn t(id: &str, status: AskStatus, answer: &str) -> AskTurn {
-        AskTurn { id: id.into(), scope: doc(), question: "q".into(), answer: answer.into(), agent: "a".into(), model: None,
+        AskTurn { id: id.into(), scope: artifact(), question: "q".into(), answer: answer.into(), agent: "a".into(), model: None,
             mode: AskMode::New, status, error: None, started_at: "s".into(), ended_at: None, images: vec![], kind: Default::default(), left_out: 0, session: None }
     }
 
     #[test]
     fn missing_file_is_empty() {
         let d = tempfile::tempdir().unwrap();
-        assert!(AskLog::new(d.path().join("asks")).read(&doc()).unwrap().is_empty());
+        assert!(AskLog::new(d.path().join("asks")).read(&artifact()).unwrap().is_empty());
     }
 
     #[test]
@@ -120,7 +120,7 @@ mod tests {
         log.append(&t("a", AskStatus::Done, "A")).unwrap();
         std::fs::OpenOptions::new().append(true).open(d.path().join(format!("asks/{K1}.jsonl"))).unwrap()
             .write_all(b"{not json\n").unwrap();
-        let got = log.read(&doc()).unwrap();
+        let got = log.read(&artifact()).unwrap();
         assert_eq!(got.iter().map(|x| (x.id.as_str(), x.status)).collect::<Vec<_>>(),
             vec![("a", AskStatus::Done), ("b", AskStatus::Running)]);
         assert_eq!(got[0].answer, "A");
@@ -136,7 +136,7 @@ mod tests {
         std::fs::OpenOptions::new().append(true).open(d.path().join(format!("asks/{K1}.jsonl"))).unwrap()
             .write_all(b"{\"id\":\"x\xff\xfe torn\n").unwrap();
         log.append(&t("b", AskStatus::Done, "B")).unwrap();
-        let got = log.read(&doc()).unwrap();
+        let got = log.read(&artifact()).unwrap();
         assert_eq!(got.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
     }
 
@@ -157,9 +157,9 @@ mod tests {
         let log = AskLog::new(d.path().join("asks"));
         std::fs::create_dir_all(d.path().join("asks")).unwrap();
         std::fs::write(d.path().join(format!("asks/{K1}.jsonl")), LEGACY).unwrap();
-        let got = log.read(&doc()).unwrap();
+        let got = log.read(&artifact()).unwrap();
         assert_eq!(got.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["q1", "n1", "c1", "q2"]);
-        assert!(got.iter().all(|t| t.scope == doc()));
+        assert!(got.iter().all(|t| t.scope == artifact()));
         let q1 = &got[0];
         assert_eq!((q1.status, q1.answer.as_str(), q1.model.as_deref(), q1.mode), (AskStatus::Done, "**표**예요", Some("opus"), AskMode::Resume));
         assert_eq!(q1.images, ["aa.png", "bb.jpg"]);
@@ -182,13 +182,13 @@ mod tests {
         let day = AskScope::Day { date: "2026-10-09".into() };
         log.append(&AskTurn { scope: room.clone(), ..t("r", AskStatus::Done, "R") }).unwrap();
         log.append(&AskTurn { scope: day.clone(), ..t("d", AskStatus::Done, "D") }).unwrap();
-        let talk = AskScope::Conversation { agent: rooms_protocol::Agent::Codex, session: rooms_protocol::SessionId::parse("s-1").unwrap() };
+        let talk = AskScope::Session(rooms_protocol::SessionRef::parse_key("codex:s-1").unwrap());
         log.append(&AskTurn { scope: talk.clone(), ..t("c", AskStatus::Done, "C") }).unwrap();
         log.append(&t("a", AskStatus::Done, "A")).unwrap();
         let mut names: Vec<_> = std::fs::read_dir(d.path().join("asks")).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         names.sort();
         assert_eq!(names, [format!("{K1}.jsonl"), "conversation-codex-s-1.jsonl".to_string(), "day-2026-10-09.jsonl".to_string(), format!("room-{K1}.jsonl")]);
-        assert_eq!(log.read(&doc()).unwrap().iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a"]);
+        assert_eq!(log.read(&artifact()).unwrap().iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a"]);
         let r = log.read(&room).unwrap();
         assert_eq!((r.len(), r[0].id.as_str(), &r[0].scope), (1, "r", &room));
         assert_eq!(log.read(&day).unwrap()[0].scope, day);

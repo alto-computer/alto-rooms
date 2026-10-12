@@ -135,23 +135,23 @@ pub async fn list_artifacts(State(st): State<AppState>, Path(room_id): Path<Stri
 }
 
 pub async fn list_room_conversations(State(st): State<AppState>, Path(room_id): Path<String>) -> Result<Response, ApiErr> {
-    snapshot(&st, move |c| c.room_conversations(&room_id)).await
+    snapshot(&st, move |c| c.room_sessions(&room_id)).await
 }
 
-fn conversation_id(agent: &str, session: &str) -> Result<ConversationId, CoreError> {
-    ConversationId::parse_key(&format!("{agent}:{session}")).ok_or_else(|| CoreError::InvalidInput("unknown agent or bad session id".into()))
+fn conversation_id(agent: &str, session: &str) -> Result<SessionRef, CoreError> {
+    SessionRef::parse_key(&format!("{agent}:{session}")).ok_or_else(|| CoreError::InvalidInput("unknown agent or bad session id".into()))
 }
 
 pub async fn get_conversation(State(st): State<AppState>, Path((agent, session)): Path<(String, String)>) -> Result<Response, ApiErr> {
     let id = conversation_id(&agent, &session)?;
-    snapshot(&st, move |c| c.conversation(&id)).await
+    snapshot(&st, move |c| c.session(&id)).await
 }
 
 /// Body: the room id, or `null` to take the conversation out of its room.
-pub async fn set_conversation_room(State(st): State<AppState>, Path((agent, session)): Path<(String, String)>, b: Result<Json<Option<RoomId>>, JsonRejection>) -> Result<Json<Conversation>, ApiErr> {
+pub async fn set_conversation_room(State(st): State<AppState>, Path((agent, session)): Path<(String, String)>, b: Result<Json<Option<RoomId>>, JsonRejection>) -> Result<Json<Session>, ApiErr> {
     let Json(room) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
     let id = conversation_id(&agent, &session)?;
-    Ok(Json(blocking(&st, move |c| c.set_conversation_room(&id, room)).await?))
+    Ok(Json(blocking(&st, move |c| c.set_session_room(&id, room)).await?))
 }
 
 pub async fn journal_day(State(st): State<AppState>, Path(date): Path<String>) -> Result<Response, ApiErr> {

@@ -1,4 +1,4 @@
-//! `<home>/.rooms/sources.json`: which agent conversation last wrote a doc (written by rooms-collect
+//! `<home>/.rooms/sources.json`: which agent session last wrote an artifact (written by rooms-collect
 //! and by find_html.py). rooms-core never parses agent logs; it only reads this file, fresh on every ask.
 use rooms_protocol::Source;
 use std::path::Path;

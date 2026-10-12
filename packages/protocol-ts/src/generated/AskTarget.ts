@@ -7,6 +7,6 @@ import type { AskMode } from "./AskMode";
 export type AskTarget = { agent: string, mode: AskMode, models: Array<string>, 
 /**
  * A room or day ask whose agent is made to read only the listed files (the claude-code
- * `--settings` rules), not just asked to. Always false for a doc.
+ * `--settings` rules), not just asked to. Always false for an artifact.
  */
 scoped: boolean, };

@@ -2,6 +2,6 @@
 import type { Agent } from "./Agent";
 
 /**
- * One conversation: an agent's session.
+ * Points at one session: which agent ran it, and the id that agent gave it.
  */
-export type ConversationId = { agent: Agent, session: string, };
+export type SessionRef = { agent: Agent, id: string, };

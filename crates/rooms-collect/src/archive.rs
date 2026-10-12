@@ -1,4 +1,4 @@
-//! The conversation archive: log bytes copied as they are read, so they outlive the agents'
+//! The session archive: log bytes copied as they are read, so they outlive the agents'
 //! own cleanup (Claude Code deletes logs after 30 days). Not a cache: never rebuilt, never
 //! deleted by the collector.
 use rusqlite::{params, Connection, OptionalExtension};

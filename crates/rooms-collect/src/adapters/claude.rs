@@ -47,7 +47,7 @@ impl Adapter for Claude {
             let mut e = base(Kind::SessionSeen, ctx);
             if let Some(sid) = rec.get("sessionId").and_then(Value::as_str) { e.session = Some(sid.to_string()); }
             e.title = Some(t.to_string());
-            // A title the user typed outranks the agent's (conversations::title).
+            // A title the user typed outranks the agent's (sessions::title).
             e.role = (ty == "custom-title").then_some(Role::User);
             out.push(e);
             return;

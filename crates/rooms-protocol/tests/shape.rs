@@ -56,8 +56,9 @@ fn export_typescript_bindings() {
     StartAsk::export_all().unwrap();
     AskTarget::export_all().unwrap();
     AskImage::export_all().unwrap();
-    Conversation::export_all().unwrap();
-    JournalConversation::export_all().unwrap();
+    Session::export_all().unwrap();
+    SessionRef::export_all().unwrap();
+    JournalSession::export_all().unwrap();
     let list = PERMISSIONS.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
     let ts = format!("// Generated from rooms_protocol::PERMISSIONS by crates/rooms-protocol/tests/shape.rs. Do not edit.\n\nexport const PERMISSIONS = [{list}] as const;\n\nexport type Permission = (typeof PERMISSIONS)[number];\n");
     std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/protocol-ts/src/generated/permissions.ts"), ts).unwrap();
@@ -66,49 +67,50 @@ fn export_typescript_bindings() {
 #[test]
 fn ask_events_are_camel_and_tagged() {
     let turn = AskTurn {
-        id: "a1".into(), scope: AskScope::Doc { file_key: "0123456789abcdef".into() }, question: "q".into(), answer: "".into(),
+        id: "a1".into(), scope: AskScope::Artifact { file_key: "0123456789abcdef".into() }, question: "q".into(), answer: "".into(),
         agent: "claude-code".into(), model: None, mode: AskMode::Resume, status: AskStatus::Running,
         error: None, started_at: "2026-10-06T10:00:00+09:00".into(), ended_at: None, images: vec![],
         kind: AskKind::Question, left_out: 0, session: None,
     };
     let v = serde_json::to_value(&RoomsEvent { seq: 3, kind: EventKind::AskStarted { turn: turn.clone() } }).unwrap();
     assert_eq!(v["type"], "ask.started");
-    assert_eq!(v["turn"]["scope"], serde_json::json!({"kind": "doc", "fileKey": "0123456789abcdef"}));
+    assert_eq!(v["turn"]["scope"], serde_json::json!({"kind": "artifact", "fileKey": "0123456789abcdef"}));
     assert_eq!(v["turn"]["mode"], "resume");
     assert_eq!(v["turn"]["status"], "running");
     assert_eq!(v["turn"]["endedAt"], serde_json::Value::Null);
     let d = serde_json::to_value(&RoomsEvent { seq: 4, kind: EventKind::AskDone { turn } }).unwrap();
     assert_eq!(d["type"], "ask.done");
-    let s: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"doc","fileKey":"k"},"question":"hi"}"#).unwrap();
-    assert_eq!((&s.scope, s.question.as_str(), s.model), (&AskScope::Doc { file_key: "k".into() }, "hi", None));
+    let s: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"artifact","fileKey":"k"},"question":"hi"}"#).unwrap();
+    assert_eq!((&s.scope, s.question.as_str(), s.model), (&AskScope::Artifact { file_key: "k".into() }, "hi", None));
     assert_eq!(v["turn"]["kind"], "question");
     assert_eq!(v["turn"]["leftOut"], 0);
     assert_eq!(v["turn"]["session"], serde_json::Value::Null);
     assert_eq!(serde_json::to_value(AskMode::Continue).unwrap(), "continue");
-    let c: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"doc","fileKey":"k"},"question":"","kind":"compact"}"#).unwrap();
+    let c: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"artifact","fileKey":"k"},"question":"","kind":"compact"}"#).unwrap();
     assert_eq!(c.kind, Some(AskKind::Compact));
     // records written before kinds existed read back as questions
-    let old: AskTurn = serde_json::from_value(serde_json::json!({"id":"a","scope":{"kind":"doc","fileKey":"k"},"question":"q","answer":"","agent":"x","model":null,"mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null})).unwrap();
+    let old: AskTurn = serde_json::from_value(serde_json::json!({"id":"a","scope":{"kind":"artifact","fileKey":"k"},"question":"q","answer":"","agent":"x","model":null,"mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null})).unwrap();
     assert_eq!((old.kind, old.left_out), (AskKind::Question, 0));
 }
 
 #[test]
 fn ask_scope_is_tagged_by_kind_and_round_trips() {
     let cases = [
-        (AskScope::Doc { file_key: "0123456789abcdef".into() }, serde_json::json!({"kind": "doc", "fileKey": "0123456789abcdef"})),
+        (AskScope::Artifact { file_key: "0123456789abcdef".into() }, serde_json::json!({"kind": "artifact", "fileKey": "0123456789abcdef"})),
         (AskScope::Room { room_id: "연구-도구".into() }, serde_json::json!({"kind": "room", "roomId": "연구-도구"})),
         (AskScope::Day { date: "2026-10-09".into() }, serde_json::json!({"kind": "day", "date": "2026-10-09"})),
-        (AskScope::Conversation { agent: Agent::Codex, session: SessionId::parse("s-1").unwrap() }, serde_json::json!({"kind": "conversation", "agent": "codex", "session": "s-1"})),
+        (AskScope::Session(SessionRef { agent: Agent::Codex, id: SessionId::parse("s-1").unwrap() }), serde_json::json!({"kind": "session", "agent": "codex", "id": "s-1"})),
     ];
     for (scope, json) in cases {
         assert_eq!(serde_json::to_value(&scope).unwrap(), json);
         assert_eq!(serde_json::from_value::<AskScope>(json).unwrap(), scope);
     }
-    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"doc","roomId":"r"}"#).is_err());
+    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"artifact","roomId":"r"}"#).is_err());
     assert!(serde_json::from_str::<AskScope>(r#"{"fileKey":"k"}"#).is_err());
     assert!(serde_json::from_str::<AskScope>(r#"{"kind":"week","date":"2026-10-09"}"#).is_err());
-    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"conversation","agent":"codex","session":"--yolo x"}"#).is_err(), "a session id never reaches an argv unchecked");
-    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"conversation","agent":"gemini","session":"s"}"#).is_err());
+    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"session","agent":"codex","id":"--yolo x"}"#).is_err(), "a session id never reaches an argv unchecked");
+    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"session","agent":"codex","id":"-x"}"#).is_err(), "nor one that reads as a flag");
+    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"session","agent":"gemini","id":"s"}"#).is_err());
 }
 
 #[test]
@@ -118,7 +120,7 @@ fn start_ask_takes_any_scope_with_images_and_kind() {
     assert_eq!((room.model.as_deref(), room.images.as_deref(), room.kind), (Some("opus"), Some(&["i1".to_string(), "i2".to_string()][..]), Some(AskKind::Question)));
     let day: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"day","date":"2026-10-09"},"question":"","model":null,"kind":"clear"}"#).unwrap();
     assert_eq!((day.scope, day.images, day.kind), (AskScope::Day { date: "2026-10-09".into() }, None, Some(AskKind::Clear)));
-    // the old shape no longer parses: a client at the stack base gets 400, not a doc ask under some default
+    // the old shape no longer parses: a client at the stack base gets 400, not an artifact ask under some default
     assert!(serde_json::from_str::<StartAsk>(r#"{"roomId":"r","artifactId":"a","question":"hi"}"#).is_err());
 }
 
@@ -135,10 +137,10 @@ fn ask_progress_carries_the_scope_object() {
 
 #[test]
 fn ask_model_is_optional_on_the_wire() {
-    let s: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"doc","fileKey":"k"},"question":"hi","model":"sonnet"}"#).unwrap();
+    let s: StartAsk = serde_json::from_str(r#"{"scope":{"kind":"artifact","fileKey":"k"},"question":"hi","model":"sonnet"}"#).unwrap();
     assert_eq!(s.model.as_deref(), Some("sonnet"));
     // turns recorded before models existed still read back
-    let old = r#"{"id":"a1","scope":{"kind":"doc","fileKey":"k"},"question":"q","answer":"","agent":"codex","mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null}"#;
+    let old = r#"{"id":"a1","scope":{"kind":"artifact","fileKey":"k"},"question":"q","answer":"","agent":"codex","mode":"new","status":"done","error":null,"startedAt":"t","endedAt":null}"#;
     assert_eq!(serde_json::from_str::<AskTurn>(old).unwrap().model, None);
     let t = serde_json::to_value(AskTarget { agent: "codex".into(), mode: AskMode::New, models: vec!["m".into()], scoped: false }).unwrap();
     assert_eq!(t, serde_json::json!({"agent": "codex", "mode": "new", "models": ["m"], "scoped": false}));
@@ -159,33 +161,44 @@ fn plugin_data_changed_and_tool_types_have_camel_case_json() {
 }
 
 #[test]
-fn conversation_ids_validate_the_session_at_the_boundary() {
-    let id: ConversationId = serde_json::from_str(r#"{"agent":"claude-code","session":"4b264772-d86b_42ef"}"#).unwrap();
-    assert_eq!(id.key(), "claude-code:4b264772-d86b_42ef");
-    assert_eq!(ConversationId::parse_key(&id.key()), Some(id.clone()));
-    assert_eq!(id.resume_argv(), ["claude", "--resume", "4b264772-d86b_42ef"]);
-    let codex = ConversationId { agent: Agent::Codex, session: SessionId::parse("019c").unwrap() };
+fn session_refs_validate_the_id_at_the_boundary() {
+    let r: SessionRef = serde_json::from_str(r#"{"agent":"claude-code","id":"4b264772-d86b_42ef"}"#).unwrap();
+    assert_eq!(r.key(), "claude-code:4b264772-d86b_42ef");
+    assert_eq!(SessionRef::parse_key(&r.key()), Some(r.clone()));
+    assert_eq!(r.resume_argv(), ["claude", "--resume", "4b264772-d86b_42ef"]);
+    let codex = SessionRef { agent: Agent::Codex, id: SessionId::parse("019c").unwrap() };
     assert_eq!(codex.resume_argv(), ["codex", "resume", "019c"]);
-    assert_eq!(serde_json::to_value(&codex).unwrap(), serde_json::json!({"agent": "codex", "session": "019c"}));
-    for bad in ["", "a b", "a;rm -rf", "../x", "x:y", &"a".repeat(129)] {
+    assert_eq!(serde_json::to_value(&codex).unwrap(), serde_json::json!({"agent": "codex", "id": "019c"}));
+    for bad in ["", "a b", "a;rm -rf", "../x", "x:y", "-x", "--resume", &"a".repeat(129)] {
         assert!(SessionId::parse(bad).is_none(), "{bad:?}");
-        assert!(serde_json::from_value::<ConversationId>(serde_json::json!({"agent": "codex", "session": bad})).is_err(), "{bad:?}");
+        assert!(serde_json::from_value::<SessionRef>(serde_json::json!({"agent": "codex", "id": bad})).is_err(), "{bad:?}");
     }
-    assert!(serde_json::from_str::<ConversationId>(r#"{"agent":"cursor","session":"s"}"#).is_err());
-    assert_eq!(ConversationId::parse_key("cursor:s"), None);
+    assert!(SessionId::parse("x-").is_some(), "a dash after the first character is fine");
+    assert!(serde_json::from_str::<SessionRef>(r#"{"agent":"cursor","id":"s"}"#).is_err());
+    assert_eq!(SessionRef::parse_key("cursor:s"), None);
 }
 
 #[test]
-fn conversation_moved_is_camel_case() {
-    let c = Conversation {
-        id: ConversationId { agent: Agent::Aside, session: SessionId::parse("s1").unwrap() },
+fn a_source_points_at_its_session_only_when_both_parts_are_valid() {
+    let src = |agent: Option<&str>, session: Option<&str>| Source { agent: agent.map(Into::into), session: session.map(Into::into), cwd: None, machine: None };
+    assert_eq!(src(Some("codex"), Some("s-1")).session_ref(), Some(SessionRef { agent: Agent::Codex, id: SessionId::parse("s-1").unwrap() }));
+    for (agent, session) in [(None, Some("s-1")), (Some("codex"), None), (Some("cursor"), Some("s-1")), (Some("codex"), Some("-x"))] {
+        assert_eq!(src(agent, session).session_ref(), None, "{agent:?} {session:?}");
+    }
+}
+
+#[test]
+fn session_moved_is_camel_case_with_the_session_flattened() {
+    let s = Session {
+        agent: Agent::Aside, id: SessionId::parse("s1").unwrap(),
         title: Some("t".into()), cwd: None, started_at: "2026-10-01T00:00:00Z".into(), ended_at: "2026-10-01T01:00:00Z".into(),
         messages: 2, last_reply: None, artifacts_written: vec!["/a.html".into()], room_id: Some("r1".into()),
     };
-    let v = serde_json::to_value(&RoomsEvent { seq: 1, kind: EventKind::ConversationMoved { conversation: c, from_room_id: None } }).unwrap();
-    assert_eq!(v["type"], "conversation.moved");
+    assert_eq!(s.session_ref(), SessionRef { agent: Agent::Aside, id: SessionId::parse("s1").unwrap() });
+    let v = serde_json::to_value(&RoomsEvent { seq: 1, kind: EventKind::SessionMoved { session: s, from_room_id: None } }).unwrap();
+    assert_eq!(v["type"], "session.moved");
     assert_eq!(v["fromRoomId"], serde_json::Value::Null);
-    assert_eq!(v["conversation"]["roomId"], "r1");
-    assert_eq!(v["conversation"]["artifactsWritten"][0], "/a.html");
-    assert_eq!(v["conversation"]["id"], serde_json::json!({"agent": "aside", "session": "s1"}));
+    assert_eq!(v["session"]["roomId"], "r1");
+    assert_eq!(v["session"]["artifactsWritten"][0], "/a.html");
+    assert_eq!((&v["session"]["agent"], &v["session"]["id"]), (&serde_json::json!("aside"), &serde_json::json!("s1")));
 }

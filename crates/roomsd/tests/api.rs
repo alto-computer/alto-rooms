@@ -147,7 +147,7 @@ async fn without_collect_data_there_are_no_conversations() {
     assert!(r.headers().get("x-rooms-seq").is_some());
     assert_eq!(body_json(r).await, serde_json::json!([]));
     let r = app.clone().oneshot(get("/v1/journal/2026-10-05", API_HOST)).await.unwrap();
-    assert_eq!(body_json(r).await["conversations"], serde_json::json!([]));
+    assert_eq!(body_json(r).await["sessions"], serde_json::json!([]));
     let r = app.clone().oneshot(put_json("/v1/conversations/claude-code/s1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
     let r = app.oneshot(get("/v1/conversations/claude-code/s1", API_HOST)).await.unwrap();
@@ -180,7 +180,7 @@ async fn conversations_join_and_leave_a_room() {
     let r = app.clone().oneshot(put_json("/v1/conversations/codex/s-1/room", r#""inbox""#, Some("t0k"))).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     let v = body_json(r).await;
-    assert_eq!((&v["roomId"], &v["title"], &v["id"]), (&serde_json::json!("inbox"), &serde_json::json!("tidy the report"), &serde_json::json!({"agent": "codex", "session": "s-1"})));
+    assert_eq!((&v["roomId"], &v["title"], &v["agent"], &v["id"]), (&serde_json::json!("inbox"), &serde_json::json!("tidy the report"), &serde_json::json!("codex"), &serde_json::json!("s-1")));
     let r = app.clone().oneshot(get("/v1/rooms/inbox/conversations", API_HOST)).await.unwrap();
     assert_eq!(body_json(r).await.as_array().map(Vec::len), Some(1));
     let r = app.clone().oneshot(get("/v1/conversations/codex/s-1", API_HOST)).await.unwrap();
@@ -1030,21 +1030,21 @@ async fn ask_routes() {
     let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
     let mut rx = st.core.subscribe();
 
-    let body = format!(r#"{{"scope":{{"kind":"doc","fileKey":"{}"}},"question":"q"}}"#, art.file_key);
+    let body = format!(r#"{{"scope":{{"kind":"artifact","fileKey":"{}"}},"question":"q"}}"#, art.file_key);
     let r = app.clone().oneshot(post("/v1/asks", &body, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::ACCEPTED);
     let turn = body_json(r).await;
     assert_eq!(turn["status"], "running");
-    assert_eq!(turn["scope"], serde_json::json!({"kind": "doc", "fileKey": art.file_key}));
+    assert_eq!(turn["scope"], serde_json::json!({"kind": "artifact", "fileKey": art.file_key}));
     loop {
         let ev = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
         if let rooms_protocol::EventKind::AskDone { turn: t } = ev.kind { assert_eq!(t.answer, "hi"); break; }
     }
-    let r = app.clone().oneshot(get(&format!("/v1/asks?scope=doc:{}", art.file_key), API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(get(&format!("/v1/asks?scope=artifact:{}", art.file_key), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     let thread = body_json(r).await;
     assert_eq!(thread[0]["answer"], "hi");
-    assert_eq!(thread[0]["scope"], serde_json::json!({"kind": "doc", "fileKey": art.file_key}));
+    assert_eq!(thread[0]["scope"], serde_json::json!({"kind": "artifact", "fileKey": art.file_key}));
     assert!(d.path().join(format!(".rooms/asks/{}.jsonl", art.file_key)).exists());
 
     let r = app.clone().oneshot(post("/v1/asks", &body.replace("\"q\"", "\"  \""), Some("t0k"), API_HOST)).await.unwrap();
@@ -1056,7 +1056,7 @@ async fn ask_routes() {
     let r = app.clone().oneshot(post("/v1/asks", &body, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body_json(r).await["error"], "agent_config");
-    let r = app.clone().oneshot(get("/v1/asks?scope=doc:..%2Fx", API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(get("/v1/asks?scope=artifact:..%2Fx", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
     // nothing running under that id: the app's "running" turn is stale
     let r = app.clone().oneshot(delete("/v1/asks/whatever", Some("t0k"), API_HOST)).await.unwrap();
@@ -1068,7 +1068,7 @@ async fn ask_routes() {
 #[tokio::test]
 async fn ask_writes_are_forbidden_read_only() {
     let (_d, app, _) = app(true, "127.0.0.1:5000");
-    let r = app.clone().oneshot(post("/v1/asks", r#"{"scope":{"kind":"doc","fileKey":"0123456789abcdef"},"question":"q"}"#, Some("t0k"), API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(post("/v1/asks", r#"{"scope":{"kind":"artifact","fileKey":"0123456789abcdef"},"question":"q"}"#, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
 }
 
@@ -1083,9 +1083,9 @@ async fn ask_routes_take_a_scope_key() {
     let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
 
     for path in ["/v1/asks", "/v1/asks/target"] {
-        let r = app.clone().oneshot(get(&format!("{path}?scope=doc:{}", art.file_key), API_HOST)).await.unwrap();
+        let r = app.clone().oneshot(get(&format!("{path}?scope=artifact:{}", art.file_key), API_HOST)).await.unwrap();
         assert_eq!(r.status(), StatusCode::OK, "{path}");
-        for bad in ["doc:..%2Fx", "room:journal", "room:Journal", "room:a.b", "day:2026-13-01", "nope", &format!("doc:{}", "a".repeat(65))] {
+        for bad in ["artifact:..%2Fx", "room:journal", "room:Journal", "room:a.b", "day:2026-13-01", "nope", &format!("artifact:{}", "a".repeat(65))] {
             let r = app.clone().oneshot(get(&format!("{path}?scope={bad}"), API_HOST)).await.unwrap();
             assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{path} {bad}");
             assert_eq!(body_json(r).await["error"], "bad_request");
@@ -1102,8 +1102,8 @@ async fn ask_routes_take_a_scope_key() {
         (r#"{"kind":"room","roomId":"-Ab3_xYz9Q-0"}"#.to_string(), StatusCode::NOT_FOUND),
         (r#"{"kind":"day","date":"2026-13-09"}"#.to_string(), StatusCode::BAD_REQUEST),
         (r#"{"kind":"room","roomId":"journal"}"#.to_string(), StatusCode::BAD_REQUEST),
-        (r#"{"kind":"doc","fileKey":"../x"}"#.to_string(), StatusCode::BAD_REQUEST),
-        (r#"{"kind":"doc","fileKey":"0000000000000000"}"#.to_string(), StatusCode::NOT_FOUND),
+        (r#"{"kind":"artifact","fileKey":"../x"}"#.to_string(), StatusCode::BAD_REQUEST),
+        (r#"{"kind":"artifact","fileKey":"0000000000000000"}"#.to_string(), StatusCode::NOT_FOUND),
     ] {
         let r = app.clone().oneshot(post("/v1/asks", &format!(r#"{{"scope":{scope},"question":"q"}}"#), Some("t0k"), API_HOST)).await.unwrap();
         assert_eq!(r.status(), status, "{scope}");
@@ -1147,7 +1147,7 @@ async fn room_and_day_asks_list_their_documents() {
 #[tokio::test]
 async fn ask_extractor_rejections_use_the_error_shape() {
     let (_d, app, _) = app(false, "127.0.0.1:5000");
-    for body in ["{", r#"{"scope":{"kind":"doc"},"question":"q"}"#, r#"{"roomId":"r","artifactId":"a","question":"q"}"#] {
+    for body in ["{", r#"{"scope":{"kind":"artifact"},"question":"q"}"#, r#"{"roomId":"r","artifactId":"a","question":"q"}"#] {
         let r = app.clone().oneshot(post("/v1/asks", body, Some("t0k"), API_HOST)).await.unwrap();
         assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{body}");
         assert_eq!(body_json(r).await["error"], "bad_request");
@@ -1167,11 +1167,11 @@ async fn ask_target_route_and_model() {
     std::fs::write(d.path().join(".rooms/agents.toml"), "[agents.claude-code]\nnew = [\"/bin/echo\", \"-m\", \"{model}\", \"--settings\", \"{scope_settings}\"]\nmodels = [\"m1\"]\n").unwrap();
     let art = st.core.list_artifacts(&room.id).unwrap().remove(0);
 
-    let uri = format!("/v1/asks/target?scope=doc:{}", art.file_key);
+    let uri = format!("/v1/asks/target?scope=artifact:{}", art.file_key);
     let r = app.clone().oneshot(get(&uri, API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     assert_eq!(body_json(r).await, serde_json::json!({"agent": "claude-code", "mode": "new", "models": ["m1"], "scoped": false}));
-    let r = app.clone().oneshot(get("/v1/asks/target?scope=doc:0000000000000000", API_HOST)).await.unwrap();
+    let r = app.clone().oneshot(get("/v1/asks/target?scope=artifact:0000000000000000", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
     let r = app.clone().oneshot(get("/v1/asks/target", API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
@@ -1180,7 +1180,7 @@ async fn ask_target_route_and_model() {
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
 
     let mut rx = st.core.subscribe();
-    let body = format!(r#"{{"scope":{{"kind":"doc","fileKey":"{}"}},"question":"q","model":"m1"}}"#, art.file_key);
+    let body = format!(r#"{{"scope":{{"kind":"artifact","fileKey":"{}"}},"question":"q","model":"m1"}}"#, art.file_key);
     let r = app.clone().oneshot(post("/v1/asks", &body, Some("t0k"), API_HOST)).await.unwrap();
     assert_eq!(r.status(), StatusCode::ACCEPTED);
     assert_eq!(body_json(r).await["model"], "m1");

@@ -7,8 +7,8 @@
 //! `session`; see `stream.rs`). The built-in claude-code and codex profiles carry theirs; a file's
 //! profile replaces the built-in one whole, rules included.
 //!
-//! A profile with a `continue` template and a `session` rule keeps one agent session per doc or
-//! conversation thread: the first question forks the source session (`resume`, which keeps the
+//! A profile with a `continue` template and a `session` rule keeps one agent session per artifact
+//! or session thread: the first question forks the source session (`resume`, which keeps the
 //! fork), and the ones after it go to that fork (`continue`), so the agent remembers the thread
 //! itself and Rooms sends only the question. `/new`, a finished `/compact`, or another agent start
 //! a new fork. A `new` run is not continued: its session isn't kept.
@@ -21,15 +21,15 @@ use std::path::Path;
 pub(crate) const DEFAULT_AGENT: &str = "claude-code";
 pub(crate) const DEFAULT_PREAMBLE: &str =
     "[Rooms] The user is reading the HTML document below in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
-/// For a room or a Journal day. The `preamble` key in agents.toml replaces only the doc preamble.
+/// For a room or a Journal day. The `preamble` key in agents.toml replaces only the artifact preamble.
 /// The claude-code profile also enforces the list (`claude_read_scope`; `load` refuses one without
 /// `{scope_settings}`); other agents get only these words.
 pub(crate) const SCOPE_PREAMBLE: &str =
     "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder, not even the folder a listed file is in, and never search without a path. A Journal day also lists its agent sessions, each by its quoted title with the start of its last reply; a session has no file here, so don't look for one. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
-/// A conversation ask's preamble; agents.toml's `preamble` is about docs.
-pub(crate) const CONVERSATION_PREAMBLE: &str =
-    "[Rooms] The user is looking back at this agent conversation in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
+/// A session ask's preamble; agents.toml's `preamble` is about artifacts.
+pub(crate) const SESSION_PREAMBLE: &str =
+    "[Rooms] The user is looking back at this agent session in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -4,8 +4,6 @@ import type { AskImage } from "./generated/AskImage";
 import type { AskScope } from "./generated/AskScope";
 import type { AskTarget } from "./generated/AskTarget";
 import type { AskTurn } from "./generated/AskTurn";
-import type { Conversation } from "./generated/Conversation";
-import type { ConversationId } from "./generated/ConversationId";
 import type { Info } from "./generated/Info";
 import type { JournalDay } from "./generated/JournalDay";
 import type { Note } from "./generated/Note";
@@ -13,21 +11,23 @@ import type { PluginInfo } from "./generated/PluginInfo";
 import type { Room } from "./generated/Room";
 import type { RoomColor } from "./generated/RoomColor";
 import type { RoomsEvent } from "./generated/RoomsEvent";
+import type { Session } from "./generated/Session";
+import type { SessionRef } from "./generated/SessionRef";
 import type { StartAsk } from "./generated/StartAsk";
 
 export type Snapshot<T> = { data: T; seq: number };
 
-/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `doc:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `conversation:<agent>:<session>`. */
+/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `session:<agent>:<id>`. */
 export function scopeKey(scope: AskScope): string {
   switch (scope.kind) {
-    case "doc":
-      return `doc:${scope.fileKey}`;
+    case "artifact":
+      return `artifact:${scope.fileKey}`;
     case "room":
       return `room:${scope.roomId}`;
     case "day":
       return `day:${scope.date}`;
-    case "conversation":
-      return `conversation:${scope.agent}:${scope.session}`;
+    case "session":
+      return `session:${scope.agent}:${scope.id}`;
   }
 }
 
@@ -75,15 +75,15 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     listRooms: () => get<Room[]>("/v1/rooms"),
     listArtifacts: (roomId: string) => get<Artifact[]>(`/v1/rooms/${encodeURIComponent(roomId)}/artifacts`),
     journalDay: (date: string) => get<JournalDay>(`/v1/journal/${date}`),
-    /** The conversations added to a room, last active first; empty for the Journal. 404 `room_not_found`. */
-    listRoomConversations: (roomId: string) => get<Conversation[]>(`/v1/rooms/${encodeURIComponent(roomId)}/conversations`),
-    /** One conversation with its room, fresh from the agents' logs or as its room kept it. 404 `not_found`. */
-    getConversation: (id: ConversationId) =>
-      get<Conversation>(`/v1/conversations/${encodeURIComponent(id.agent)}/${encodeURIComponent(id.session)}`),
-    /** Puts a conversation in a room (out of any other), or out of every room with `null`. 400 `invalid_input` for an
-     *  unknown agent or a bad session id, 404 `not_found` / `room_not_found`. Emits `conversation.moved` when it moves. */
-    setConversationRoom: (id: ConversationId, roomId: string | null) =>
-      write<Conversation>("PUT", `/v1/conversations/${encodeURIComponent(id.agent)}/${encodeURIComponent(id.session)}/room`, JSON.stringify(roomId)),
+    /** The sessions added to a room, last active first; empty for the Journal. 404 `room_not_found`. */
+    listRoomSessions: (roomId: string) => get<Session[]>(`/v1/rooms/${encodeURIComponent(roomId)}/conversations`),
+    /** One session with its room, fresh from the agents' logs or as its room kept it. 404 `not_found`. */
+    getSession: (sessionRef: SessionRef) =>
+      get<Session>(`/v1/conversations/${encodeURIComponent(sessionRef.agent)}/${encodeURIComponent(sessionRef.id)}`),
+    /** Puts a session in a room (out of any other), or out of every room with `null`. 400 `invalid_input` for an
+     *  unknown agent or a bad session id, 404 `not_found` / `room_not_found`. Emits `session.moved` when it moves. */
+    setSessionRoom: (sessionRef: SessionRef, roomId: string | null) =>
+      write<Session>("PUT", `/v1/conversations/${encodeURIComponent(sessionRef.agent)}/${encodeURIComponent(sessionRef.id)}/room`, JSON.stringify(roomId)),
     getNote: async (date: string, name: string): Promise<string> => {
       const r = await fetch(`${baseUrl}/v1/journal/${date}/notes/${encodeURIComponent(name)}`);
       if (!r.ok) throw await failure(r);
