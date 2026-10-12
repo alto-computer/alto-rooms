@@ -41,8 +41,8 @@ function appSources(dir = __dirname): string[] {
   });
 }
 
-// Agent docs and plugins assume a white page, so their iframes keep one; everything else is themed.
-const WHITE_PAGE_FILES = ["ArtifactThumb.tsx", "DocView.tsx", "PluginFrame.tsx"];
+// Agent artifacts and plugins assume a white page, so their iframes keep one; everything else is themed.
+const WHITE_PAGE_FILES = ["ArtifactThumb.tsx", "ArtifactView.tsx", "PluginFrame.tsx"];
 
 describe("app code", () => {
   const files = appSources().map((f) => ({ name: path.basename(f), lines: readFileSync(f, "utf8").split("\n") }));

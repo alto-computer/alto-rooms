@@ -1,4 +1,4 @@
-import type { Artifact, AskScope, AskTurn, Conversation } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTurn, Session } from "@alto-rooms/protocol-ts";
 import { RoomsApiError, scopeKey } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,7 @@ import { renderWithStores, room } from "@/test/fakes";
 import { AskBar } from "./AskBar";
 import type { AskSubject } from "./askSubjects";
 
-const doc: Artifact = {
+const artifact: Artifact = {
   id: "a1", roomId: "r1", relPath: "doc.html", title: "Doc", createdAt: "2026-10-06T09:00:00+09:00",
   updatedAt: "2026-10-06T09:00:00+09:00", author: "agent", fileKey: "k1",
   source: { agent: "codex", session: "S1", cwd: null, machine: null },
@@ -21,11 +21,11 @@ const NAME = "회의에서 정한 것들 정리해줘";
 const ROOM_NOTE = `Room: Planning\n\n## ${NAME}\n\n- 금요일 배포\n- 리뷰는 둘`;
 
 /** Doc threads are keyed by file key, the others by scope key. */
-const threadKey = (scope: AskScope) => (scope.kind === "doc" ? scope.fileKey : scopeKey(scope));
+const threadKey = (scope: AskScope) => (scope.kind === "artifact" ? scope.fileKey : scopeKey(scope));
 
 function setup(subject: AskSubject, t: AskTurn, notes: Record<string, string | Error> = {}) {
   return renderWithStores(<AskBar subject={subject} />, {
-    rooms: [room("r1", "Planning")], artifacts: { r1: [doc] }, asks: { [threadKey(t.scope)]: [t] }, notes,
+    rooms: [room("r1", "Planning")], artifacts: { r1: [artifact] }, asks: { [threadKey(t.scope)]: [t] }, notes,
   });
 }
 
@@ -56,8 +56,8 @@ describe("SaveAsNote", () => {
   });
 
   it("saves a session answer into today's Journal under the session's title", async () => {
-    const conversation: Conversation = { id: { agent: "codex", session: "S1" }, title: "Sync bug", cwd: null, startedAt: "", endedAt: "", messages: 2, lastReply: null, artifactsWritten: [], roomId: null };
-    const { state } = await setup({ kind: "conversation", conversation }, turn({ kind: "conversation", agent: "codex", session: "S1" }));
+    const session: Session = { agent: "codex", id: "S1", title: "Sync bug", cwd: null, startedAt: "", endedAt: "", messages: 2, lastReply: null, artifactsWritten: [], roomId: null };
+    const { state } = await setup({ kind: "session", session }, turn({ kind: "session", agent: "codex", id: "S1" }));
     await openNameInput();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Saved to Journal")).toBeTruthy();
@@ -158,8 +158,8 @@ describe("SaveAsNote", () => {
     expect(screen.queryByRole("button", { name: "Save as note" })).toBeNull();
   });
 
-  it("offers no save on a doc answer", async () => {
-    await setup({ kind: "doc", artifact: doc }, turn({ kind: "doc", fileKey: "k1" }));
+  it("offers no save on an artifact answer", async () => {
+    await setup({ kind: "artifact", artifact: artifact }, turn({ kind: "artifact", fileKey: "k1" }));
     expect(await screen.findByRole("button", { name: "Copy answer" })).toBeTruthy();
     await act(async () => {});
     expect(screen.queryByRole("button", { name: "Save as note" })).toBeNull();

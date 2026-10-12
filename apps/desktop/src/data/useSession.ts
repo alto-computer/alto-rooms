@@ -1,20 +1,20 @@
 import { useCallback, useSyncExternalStore } from "react";
-import type { Conversation, ConversationId, RoomsEvent } from "@alto-rooms/protocol-ts";
+import type { RoomsEvent, Session, SessionRef } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
-import { conversationKey, sameConversation } from "@/lib/conversations";
+import { sameSession, sessionKey, toSessionRef } from "@/lib/sessions";
 import { useClient, useRoomsStore, type RoomsClient } from "./hooks";
 import type { RoomsStore } from "./roomsStore";
 
-/** `undefined` while loading, `null` when roomsd knows no such conversation, `"error"` when it could not answer. */
-export type ConversationState = Conversation | null | "error" | undefined;
+/** `undefined` while loading, `null` when roomsd knows no such session, `"error"` when it could not answer. */
+export type SessionState = Session | null | "error" | undefined;
 
-function touches(e: RoomsEvent, id: ConversationId): boolean {
-  if (e.type === "conversation.moved") return sameConversation(e.conversation.id, id);
+function touches(e: RoomsEvent, sessionRef: SessionRef): boolean {
+  if (e.type === "session.moved") return sameSession(e.session, sessionRef);
   return e.type === "resync" && e.roomId === null;
 }
 
-/** One conversation's load, shared by everything showing it (its tab label and its view). */
-type Load = { state: ConversationState; listeners: Set<() => void>; end: () => void };
+/** One session's load, shared by everything showing it (its tab label and its view). */
+type Load = { state: SessionState; listeners: Set<() => void>; end: () => void };
 
 const loads = new WeakMap<RoomsStore, Map<string, Load>>();
 
@@ -24,24 +24,24 @@ function loadsOf(store: RoomsStore): Map<string, Load> {
   return byKey;
 }
 
-/** The load of `id`, started for its first watcher; the last one to leave ends it. */
-function startLoad(client: RoomsClient, store: RoomsStore, id: ConversationId): Load {
+/** The load of `sessionRef`, started for its first watcher; the last one to leave ends it. */
+function startLoad(client: RoomsClient, store: RoomsStore, sessionRef: SessionRef): Load {
   const byKey = loadsOf(store);
-  const key = conversationKey(id);
+  const key = sessionKey(sessionRef);
   let latest = 0;
-  const set = (state: ConversationState) => {
+  const set = (state: SessionState) => {
     l.state = state;
     for (const fn of [...l.listeners]) fn();
   };
   const fetch = () => {
     const mine = ++latest;
-    client.getConversation(id).then(
+    client.getSession(sessionRef).then(
       ({ data }) => {
         if (mine === latest) set(data);
       },
       (e: unknown) => {
         const gone = e instanceof RoomsApiError && e.status === 404;
-        if (!gone) console.warn("could not load the conversation", e);
+        if (!gone) console.warn("could not load the session", e);
         // Once it has loaded, a failed or 404 refetch keeps what is shown; only a first load says so.
         const shown = typeof l.state === "object" && l.state !== null;
         if (mine === latest && !shown) set(gone ? null : "error");
@@ -49,7 +49,7 @@ function startLoad(client: RoomsClient, store: RoomsStore, id: ConversationId): 
     );
   };
   const stop = store.onSignal((_type, e) => {
-    if (touches(e, id)) fetch();
+    if (touches(e, sessionRef)) fetch();
   });
   window.addEventListener("focus", fetch);
   const l: Load = {
@@ -68,19 +68,19 @@ function startLoad(client: RoomsClient, store: RoomsStore, id: ConversationId): 
 }
 
 /**
- * One conversation with its room. Refetched when it moves (`conversation.moved`), on a full
- * resync, and when the window gets focus (its log grows without an event). Everything showing the
- * same conversation shares one load.
+ * One session with its room. Refetched when it moves (`session.moved`), on a full resync, and
+ * when the window gets focus (its log grows without an event). Everything showing the same
+ * session shares one load.
  */
-export function useConversation(id: ConversationId): ConversationState {
+export function useSession(sessionRef: SessionRef): SessionState {
   const client = useClient();
   const store = useRoomsStore();
-  const key = conversationKey(id);
-  const { agent, session } = id;
-  // The id object is rebuilt on every render; its key says when it really changed.
+  const key = sessionKey(sessionRef);
+  const ref = toSessionRef(sessionRef);
+  // The ref object is rebuilt on every render; its key says when it really changed.
   const subscribe = useCallback(
     (onChange: () => void) => {
-      const l = loadsOf(store).get(key) ?? startLoad(client, store, { agent, session });
+      const l = loadsOf(store).get(key) ?? startLoad(client, store, ref);
       l.listeners.add(onChange);
       return () => {
         l.listeners.delete(onChange);

@@ -16,7 +16,7 @@ import { useCurrentTabId, useTabVisible } from "@/shell/currentTab";
 import { AskBar } from "@/ask/AskBar";
 import { askAction, SelectionBar, type SelectionAction } from "@/selection/SelectionBar";
 import { readSelectionMessage, type SelectionRect } from "@/selection/useTextSelection";
-import { DocSkeleton } from "./DocSkeleton";
+import { ArtifactSkeleton } from "./ArtifactSkeleton";
 import { ShareMenu } from "./ShareMenu";
 import { WrittenIn } from "./WrittenIn";
 
@@ -60,12 +60,12 @@ function Breadcrumb({ artifact, room, info }: { artifact: Artifact; room: Room |
 }
 
 /**
- * A doc tab: a toolbar (breadcrumb, Share, the plugin opener) over one artifact on a sheet, in a
+ * An artifact tab: a toolbar (breadcrumb, Share, the plugin opener) over one artifact on a sheet, in a
  * sandboxed iframe from the files origin. In dark mode the page is dimmed unless it reported a
  * dark background itself. The ask bar and its answers float over the page. Watches the artifact's
  * room so a removal shows the "gone" copy.
  */
-export function DocView({ roomId, artifactId }: { roomId: string; artifactId: string }) {
+export function ArtifactView({ roomId, artifactId }: { roomId: string; artifactId: string }) {
   const info = useInfo();
   const rooms = useRoomList();
   const client = useClient();
@@ -74,7 +74,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
   const loadError = useScopeError(`room:${roomId}`);
   const visible = useTabVisible();
   const frame = useRef<HTMLIFrameElement>(null);
-  const selection = useDocSelection(frame);
+  const selection = useArtifactSelection(frame);
   const tone = useFrameTone(frame);
   const asks = useAsksStore();
   const readOnly = useReadOnly();
@@ -105,9 +105,9 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
       <div className="flex min-h-0 flex-1">
         <div className="relative flex min-w-0 flex-1 px-4 pb-4">
           <div className="relative min-w-0 flex-1 overflow-hidden rounded-xl bg-white shadow-sheet">
-            {/* No allow-same-origin: a doc is agent-written HTML and must never reach the app. What
+            {/* No allow-same-origin: an artifact is agent-written HTML and must never reach the app. What
                 it shares comes out by postMessage only: the selection and tone bridge roomsd splices in, and
-                the content scripts of the plugins the user turned on, which the doc variant adds. */}
+                the content scripts of the plugins the user turned on, which the artifact-tab variant adds. */}
             <iframe
               title={artifact.title}
               ref={frame}
@@ -123,7 +123,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
                 dimsInDark(tone) && "[filter:var(--artifact-filter)]",
               )}
             />
-            {loaded ? null : <DocSkeleton />}
+            {loaded ? null : <ArtifactSkeleton />}
             {selection.current ? (
               <SelectionBar
                 rect={selection.current.rect}
@@ -132,7 +132,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
                     ? []
                     : [
                         askAction(() => {
-                          asks.addQuote({ kind: "doc", fileKey: artifact.fileKey }, selection.current!.text);
+                          asks.addQuote({ kind: "artifact", fileKey: artifact.fileKey }, selection.current!.text);
                           selection.dismiss();
                         }),
                       ]),
@@ -151,7 +151,7 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
               />
             ) : null}
           </div>
-          <AskBar subject={{ kind: "doc", artifact }} />
+          <AskBar subject={{ kind: "artifact", artifact }} />
         </div>
         {/* A plugin frame treats a hidden tab as closed (its effects end), so it only lives in the visible one. */}
         {visible ? <PluginSlot slot="artifact.sidePanel" context={{ artifact }} /> : null}
@@ -160,12 +160,12 @@ export function DocView({ roomId, artifactId }: { roomId: string; artifactId: st
   );
 }
 
-/** Text selected in the doc frame, as its selection bridge reports it; `dismiss` hides the button until the next selection. */
-function useDocSelection(frame: RefObject<HTMLIFrameElement | null>) {
+/** Text selected in the artifact frame, as its selection bridge reports it; `dismiss` hides the button until the next selection. */
+function useArtifactSelection(frame: RefObject<HTMLIFrameElement | null>) {
   const [current, setCurrent] = useState<{ text: string; rect: SelectionRect } | null>(null);
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
-      // Only this tab's own frame: other docs and plugins post messages too.
+      // Only this tab's own frame: other artifacts and plugins post messages too.
       if (!frame.current || e.source !== frame.current.contentWindow) return;
       const m = readSelectionMessage(e.data);
       if (m) setCurrent(m.text && m.rect ? { text: m.text, rect: m.rect } : null);
@@ -177,7 +177,7 @@ function useDocSelection(frame: RefObject<HTMLIFrameElement | null>) {
 }
 
 /**
- * The content channel of this tab's doc frame: storage for the content scripts of the plugins
+ * The content channel of this tab's artifact frame: storage for the content scripts of the plugins
  * that are on, scoped to this document, the selection actions they declared, in plugin id order,
  * and the anchors a plugin's `open` queued for this tab. A new channel per frame load and each
  * time the tab comes back from the background; the frame tells each one what its scripts said.

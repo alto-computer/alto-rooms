@@ -3,16 +3,18 @@
  * page runs that page hidden while it is on. The app tells it the text of every chat answer on
  * screen, hands it the selections the user sends to one of its buttons, and paints the ranges it
  * answers with. Messages carry `rooms: "surface"` and go to `window.parent`; only messages whose
- * source is `window.parent` are trusted.
+ * source is `window.parent` are trusted. Each one also carries `api: 2`, and `connectSurfaces`
+ * says `hello` at once, so the app sends this SDK's scope shapes; a page that never says so is
+ * sent SDK 0.5's (`doc`, and `conversation` with the id in `session`).
  */
 import type { ContentAction } from "./content";
 
-/** A chat thread: a document's, a room's, a day's, or an agent conversation's (asked in a fork of that session). */
+/** A chat thread: an artifact's, a room's, a day's, or an agent session's (asked in a fork of that session). */
 export type AnswerScope =
-  | { kind: "doc"; fileKey: string }
+  | { kind: "artifact"; fileKey: string }
   | { kind: "room"; roomId: string }
   | { kind: "day"; date: string }
-  | { kind: "conversation"; agent: string; session: string };
+  | { kind: "session"; agent: string; id: string };
 
 /** A piece of host text plugins may read and mark. Today: one finished chat answer. */
 export type SurfaceId = { kind: "answer"; scope: AnswerScope; turnId: string };
@@ -45,28 +47,39 @@ export interface SurfaceSelection {
   text: string;
 }
 
-/** The scope's own id: a file key, a room id, a date, or `<agent>/<session>`. */
+/** The scope's own id: a file key, a room id, a date, or `<agent>/<id>`. */
 function scopeId(scope: AnswerScope, join: string): string {
   switch (scope.kind) {
-    case "doc":
+    case "artifact":
       return scope.fileKey;
     case "room":
       return scope.roomId;
     case "day":
       return scope.date;
-    case "conversation":
-      return `${scope.agent}${join}${scope.session}`;
+    case "session":
+      return `${scope.agent}${join}${scope.id}`;
   }
 }
 
-/** The surface's one name: `answer:<scope>/<turnId>`, with the scope as `doc:<fileKey>`, `room:<roomId>`, `day:<date>` or `conversation:<agent>:<session>`. */
+/** The surface's one name: `answer:<scope>/<turnId>`, with the scope as `artifact:<fileKey>`, `room:<roomId>`, `day:<date>` or `session:<agent>:<id>`. */
 export function surfaceKey(s: SurfaceId): string {
   return `${s.kind}:${s.scope.kind}:${scopeId(s.scope, ":")}/${s.turnId}`;
 }
 
-/** The same name as a storage path: `answer/doc/<fileKey>/<turnId>`, or `answer/conversation/<agent>/<session>/<turnId>`. Ids, dates and sessions fit the path rules. */
+/** The same name as a storage path: `answer/artifact/<fileKey>/<turnId>`, or `answer/session/<agent>/<id>/<turnId>`. Ids, dates and session ids fit the path rules. */
 export function surfacePath(s: SurfaceId): string {
   return `${s.kind}/${s.scope.kind}/${scopeId(s.scope, "/")}/${s.turnId}`;
+}
+
+/**
+ * The storage path SDK 0.5 gave this surface: `answer/doc/<fileKey>/<turnId>` for an artifact,
+ * `answer/conversation/<agent>/<id>/<turnId>` for a session, the same as `surfacePath` otherwise.
+ * Read it when `surfacePath` finds nothing, to pick up data saved before 0.6, and move it.
+ * @deprecated Goes in 0.7.
+ */
+export function legacySurfacePath(s: SurfaceId): string {
+  const old: Record<AnswerScope["kind"], string> = { artifact: "doc", room: "room", day: "day", session: "conversation" };
+  return `${s.kind}/${old[s.scope.kind]}/${scopeId(s.scope, "/")}/${s.turnId}`;
 }
 
 export interface RoomsSurfaces {
@@ -103,7 +116,7 @@ type Inbound =
 
 export function connectSurfaces(): RoomsSurfaces {
   const parent = window.parent;
-  const post = (m: Record<string, unknown>) => parent.postMessage({ rooms: "surface", v: 1, ...m }, "*");
+  const post = (m: Record<string, unknown>) => parent.postMessage({ rooms: "surface", v: 1, api: 2, ...m }, "*");
   const listeners = {
     open: new Set<(s: SurfaceId, text: string) => void>(),
     close: new Set<(s: SurfaceId) => void>(),
@@ -136,6 +149,7 @@ export function connectSurfaces(): RoomsSurfaces {
         return fire(listeners.rangeAction, d.surface, d.rangeId, d.actionId);
     }
   });
+  post({ type: "hello" });
 
   return {
     setActions: (items) => post({ type: "actions", items }),

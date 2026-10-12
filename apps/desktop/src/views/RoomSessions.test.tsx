@@ -2,7 +2,7 @@ import type { Artifact } from "@alto-rooms/protocol-ts";
 import { useState } from "react";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { conversation, renderWithStores, room } from "@/test/fakes";
+import { session, renderWithStores, room } from "@/test/fakes";
 import { RoomView } from "./RoomView";
 
 afterEach(() => {
@@ -25,15 +25,15 @@ const artifact = (id: string, extra: Partial<Artifact> = {}): Artifact => ({
   ...extra,
 });
 
-describe("Room: conversations", () => {
-  it("lists the room's conversations below its artifacts, counts both, and filters between them", async () => {
+describe("Room: sessions", () => {
+  it("lists the room's sessions below its artifacts, counts both, and filters between them", async () => {
     await renderWithStores(<RoomView roomId="p" />, {
       rooms: [room("p", "벤치마크", { artifactCount: 1, color: "clay" })],
       artifacts: { p: [artifact("a1")] },
-      conversations: [conversation("s1", { title: "Cold start", messages: 42, roomId: "p" }), conversation("s9", { title: "Elsewhere" })],
+      sessions: [session("s1", { title: "Cold start", messages: 42, roomId: "p" }), session("s9", { title: "Elsewhere" })],
     });
     const section = await screen.findByRole("region", { name: "Sessions" });
-    const card = within(section).getByTestId("conversation-card");
+    const card = within(section).getByTestId("session-card");
     expect(card).toHaveTextContent("Cold start");
     expect(card).toHaveTextContent("42 msgs");
     expect(screen.queryByText("Elsewhere")).toBeNull();
@@ -53,13 +53,13 @@ describe("Room: conversations", () => {
     const h = await renderWithStores(<RoomView roomId="p" />, {
       rooms: [room("p", "벤치마크")],
       artifacts: { p: [] },
-      conversations: [conversation("s1", { title: "Cold start", roomId: "p" }), conversation("s2", { title: "Report", roomId: "p" })],
+      sessions: [session("s1", { title: "Cold start", roomId: "p" }), session("s2", { title: "Report", roomId: "p" })],
     });
-    const [first, second] = await screen.findAllByTestId("conversation-card");
+    const [first, second] = await screen.findAllByTestId("session-card");
     fireEvent.click(first);
     fireEvent.click(second, { metaKey: true });
-    const sessions = h.viewer.getState().tabs.filter((t) => t.kind === "conversation");
-    expect(sessions.map((t) => (t.kind === "conversation" ? t.session : null)).sort()).toEqual(["s1", "s2"]);
+    const sessions = h.viewer.getState().tabs.filter((t) => t.kind === "session");
+    expect(sessions.map((t) => (t.kind === "session" ? t.sessionId : null)).sort()).toEqual(["s1", "s2"]);
   });
 
   it("says so in the Sessions area when the first list fails", async () => {
@@ -67,7 +67,7 @@ describe("Room: conversations", () => {
     await renderWithStores(<RoomView roomId="p" />, {
       rooms: [room("p", "벤치마크", { artifactCount: 1 })],
       artifacts: { p: [artifact("a1")] },
-      conversationErrors: { p: new Error("down") },
+      sessionErrors: { p: new Error("down") },
     });
     expect(within(await screen.findByRole("region", { name: "Sessions" })).getByText("Couldn't load this room's sessions")).toBeInTheDocument();
   });
@@ -77,10 +77,10 @@ describe("Room: conversations", () => {
     const h = await renderWithStores(<RoomView roomId="p" />, {
       rooms: [room("p", "벤치마크", { artifactCount: 1 })],
       artifacts: { p: [artifact("a1")] },
-      conversations: [conversation("s1", { title: "Cold start", roomId: "p" })],
+      sessions: [session("s1", { title: "Cold start", roomId: "p" })],
     });
     await screen.findByText("Cold start");
-    h.client.listRoomConversations.mockRejectedValueOnce(new Error("down"));
+    h.client.listRoomSessions.mockRejectedValueOnce(new Error("down"));
     await act(async () => void window.dispatchEvent(new Event("focus")));
     expect(within(screen.getByRole("region", { name: "Sessions" })).getByText("Cold start")).toBeInTheDocument();
   });
@@ -89,7 +89,7 @@ describe("Room: conversations", () => {
     await renderWithStores(<RoomView roomId="p" />, {
       rooms: [room("p", "벤치마크")],
       artifacts: { p: [] },
-      conversations: [conversation("s1", { title: "Cold start", roomId: "p" })],
+      sessions: [session("s1", { title: "Cold start", roomId: "p" })],
     });
     expect(within(await screen.findByRole("region", { name: "Sessions" })).getByText("Cold start")).toBeInTheDocument();
     expect(screen.queryByText("Nothing in 벤치마크 yet")).toBeNull();
@@ -97,30 +97,30 @@ describe("Room: conversations", () => {
     expect(screen.getByTestId("room-band")).toHaveAttribute("data-perch", "end");
   });
 
-  it("has no filter and no conversations section when the room has none", async () => {
+  it("has no filter and no sessions section when the room has none", async () => {
     const h = await renderWithStores(<RoomView roomId="p" />, { rooms: [room("p", "벤치마크", { artifactCount: 1 })], artifacts: { p: [artifact("a1")] } });
-    await waitFor(() => expect(h.client.listRoomConversations).toHaveBeenCalledWith("p"));
+    await waitFor(() => expect(h.client.listRoomSessions).toHaveBeenCalledWith("p"));
     expect(screen.queryByRole("group", { name: "Show" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Sessions" })).toBeNull();
   });
 
-  it("refetches when a conversation moves in, and on window focus", async () => {
-    const c = conversation("s1", { title: "Moved here" });
-    const h = await renderWithStores(<RoomView roomId="p" />, { rooms: [room("p", "벤치마크")], artifacts: { p: [] }, conversations: [c] });
-    await waitFor(() => expect(h.client.listRoomConversations).toHaveBeenCalled());
-    const calls = () => h.client.listRoomConversations.mock.calls.length;
+  it("refetches when a session moves in, and on window focus", async () => {
+    const c = session("s1", { title: "Moved here" });
+    const h = await renderWithStores(<RoomView roomId="p" />, { rooms: [room("p", "벤치마크")], artifacts: { p: [] }, sessions: [c] });
+    await waitFor(() => expect(h.client.listRoomSessions).toHaveBeenCalled());
+    const calls = () => h.client.listRoomSessions.mock.calls.length;
     const before = calls();
-    await act(async () => h.emit({ type: "conversation.moved", conversation: { ...c, id: { agent: "codex", session: "x" } }, fromRoomId: "r" }));
+    await act(async () => h.emit({ type: "session.moved", session: { ...c, agent: "codex", id: "x" }, fromRoomId: "r" }));
     expect(calls()).toBe(before);
-    h.state.conversations[0] = { ...c, roomId: "p" };
-    await act(async () => h.emit({ type: "conversation.moved", conversation: { ...c, roomId: "p" }, fromRoomId: null }));
+    h.state.sessions[0] = { ...c, roomId: "p" };
+    await act(async () => h.emit({ type: "session.moved", session: { ...c, roomId: "p" }, fromRoomId: null }));
     expect(await screen.findByText("Moved here")).toBeInTheDocument();
     await act(async () => void window.dispatchEvent(new Event("focus")));
     expect(calls()).toBe(before + 2);
   });
 
   it("opens a card's menu from the keyboard, offering Move to Room and Remove from Room and no Continue", async () => {
-    await renderWithStores(<RoomView roomId="p" />, { rooms: [room("p", "벤치마크")], artifacts: { p: [] }, conversations: [conversation("s1", { title: "Cold start", roomId: "p" })] });
+    await renderWithStores(<RoomView roomId="p" />, { rooms: [room("p", "벤치마크")], artifacts: { p: [] }, sessions: [session("s1", { title: "Cold start", roomId: "p" })] });
     const card = await screen.findByRole("button", { name: "Cold start" });
     expect(within(card).queryByRole("button")).toBeNull();
     fireEvent.keyDown(card, { key: "F10", shiftKey: true });
@@ -132,7 +132,7 @@ describe("Room: conversations", () => {
     const opts = {
       rooms: [room("p", "벤치마크", { artifactCount: 1 }), room("q", "리서치", { artifactCount: 1 })],
       artifacts: { p: [artifact("a1")], q: [artifact("b1", { roomId: "q" })] },
-      conversations: [conversation("s1", { roomId: "p" }), conversation("s2", { roomId: "q" })],
+      sessions: [session("s1", { roomId: "p" }), session("s2", { roomId: "q" })],
     };
     function Tab() {
       const [roomId, setRoomId] = useState("p");

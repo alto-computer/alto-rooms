@@ -5,8 +5,8 @@ import type {
   AskScope,
   AskTarget,
   AskTurn,
-  Conversation,
-  ConversationId,
+  Session,
+  SessionRef,
   Info,
   JournalDay,
   PluginInfo,
@@ -22,6 +22,7 @@ import { StoresProvider, type RoomsClient } from "@/data/hooks";
 import { RoomsStore } from "@/data/roomsStore";
 import type { Clock } from "@/lib/clock";
 import { ViewerStore } from "@/data/viewerStore";
+import { sameSession } from "@/lib/sessions";
 
 /** roomsd's note file name: one trailing ".md" (any case) stripped, NFC, then ".md". */
 const noteFile = (name: string) => `${name.trim().replace(/\.md$/i, "").normalize("NFC")}.md`;
@@ -40,9 +41,10 @@ export const room = (id: string, name: string, extra: Partial<Room> = {}): Room 
   ...extra,
 });
 
-export const conversation = (session: string, extra: Partial<Conversation> = {}): Conversation => ({
-  id: { agent: "claude-code", session },
-  title: `Conversation ${session}`,
+export const session = (id: string, extra: Partial<Session> = {}): Session => ({
+  agent: "claude-code",
+  id,
+  title: `Session ${id}`,
   cwd: "/h/code",
   startedAt: "2026-10-05T01:00:00Z",
   endedAt: "2026-10-05T02:00:00Z",
@@ -80,14 +82,14 @@ export function fakeClient(
     pluginData?: Record<string, string>;
     /** `Info.home` (default `/h`). */
     home?: string;
-    /** Ask threads by file key (a doc scope). */
+    /** Ask threads by file key (an artifact scope). */
     asks?: Record<string, AskTurn[]>;
-    /** What `askTarget` answers (or throws), by file key (or a conversation's scope key); default: the doc's own agent with no models. */
+    /** What `askTarget` answers (or throws), by file key (or a session's scope key); default: the artifact's own agent with no models. */
     askTargets?: Record<string, AskTarget | Error>;
-    /** Conversations roomsd knows, each in the room its `roomId` names. */
-    conversations?: Conversation[];
-    /** What listing a room's conversations throws, by room id. */
-    conversationErrors?: Record<string, Error>;
+    /** Sessions roomsd knows, each in the room its `roomId` names. */
+    sessions?: Session[];
+    /** What listing a room's sessions throws, by room id. */
+    sessionErrors?: Record<string, Error>;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -100,7 +102,7 @@ export function fakeClient(
     plugins: opts.plugins ?? [],
     pluginData: opts.pluginData ?? {},
     asks: opts.asks ?? {},
-    conversations: opts.conversations ?? [],
+    sessions: opts.sessions ?? [],
   };
   const info: Info = {
     version: "0",
@@ -110,16 +112,16 @@ export function fakeClient(
     filesOrigin: "http://files.test",
   };
   /**
-   * Like roomsd: a doc goes to the agent that made it, a session to its own agent resumed, a room or
-   * day to the default agent in a new conversation.
+   * Like roomsd: an artifact goes to the agent that made it, a session to its own agent resumed, a
+   * room or day to the default agent in a new session.
    */
   const answerer = (scope: AskScope): { agent: string; mode: AskMode } => {
-    if (scope.kind === "conversation") {
-      const known = state.conversations.some((c) => c.id.agent === scope.agent && c.id.session === scope.session);
+    if (scope.kind === "session") {
+      const known = state.sessions.some((s) => sameSession(s, scope));
       if (!known) throw new RoomsApiError(404, "Can't find this session", "not_found");
       return { agent: scope.agent, mode: "resume" };
     }
-    if (scope.kind !== "doc") return { agent: "claude-code", mode: "new" };
+    if (scope.kind !== "artifact") return { agent: "claude-code", mode: "new" };
     const a = Object.values(state.artifacts).flat().find((x) => x.fileKey === scope.fileKey);
     if (!a) throw new RoomsApiError(404, "Can't find this artifact", "not_found");
     return { agent: a.source.agent ?? "claude-code", mode: a.source.session ? "resume" : "new" };
@@ -161,7 +163,7 @@ export function fakeClient(
     journalDay: vi.fn(async (date: string) => {
       const err = opts.dayErrors?.[date];
       if (err) throw err;
-      return { data: { date, artifacts: [], notes: [], conversations: [], ...state.days[date] } as JournalDay, seq };
+      return { data: { date, artifacts: [], notes: [], sessions: [], ...state.days[date] } as JournalDay, seq };
     }),
     // Like roomsd: the file is the name with exactly one trailing ".md" stripped, plus ".md".
     getNote: vi.fn(async (date: string, name: string): Promise<string> => {
@@ -231,22 +233,22 @@ export function fakeClient(
       state.rooms.splice(others[pinned] ?? state.rooms.length, 0, updated);
       return updated;
     }),
-    getConversation: vi.fn(async (id: ConversationId) => {
-      const c = state.conversations.find((x) => x.id.agent === id.agent && x.id.session === id.session);
-      if (!c) throw new RoomsApiError(404, "not found", "not_found");
-      return { data: c, seq };
+    getSession: vi.fn(async (sessionRef: SessionRef) => {
+      const found = state.sessions.find((s) => sameSession(s, sessionRef));
+      if (!found) throw new RoomsApiError(404, "not found", "not_found");
+      return { data: found, seq };
     }),
-    listRoomConversations: vi.fn(async (roomId: string) => {
-      const err = opts.conversationErrors?.[roomId];
+    listRoomSessions: vi.fn(async (roomId: string) => {
+      const err = opts.sessionErrors?.[roomId];
       if (err) throw err;
-      return { data: state.conversations.filter((c) => c.roomId === roomId), seq };
+      return { data: state.sessions.filter((s) => s.roomId === roomId), seq };
     }),
-    // Like roomsd, minus the conversation.moved event (tests emit it).
-    setConversationRoom: vi.fn(async (id: ConversationId, roomId: string | null): Promise<Conversation> => {
-      const i = state.conversations.findIndex((c) => c.id.agent === id.agent && c.id.session === id.session);
+    // Like roomsd, minus the session.moved event (tests emit it).
+    setSessionRoom: vi.fn(async (sessionRef: SessionRef, roomId: string | null): Promise<Session> => {
+      const i = state.sessions.findIndex((s) => sameSession(s, sessionRef));
       if (i < 0) throw new RoomsApiError(404, "not found", "not_found");
-      state.conversations[i] = { ...state.conversations[i], roomId };
-      return state.conversations[i];
+      state.sessions[i] = { ...state.sessions[i], roomId };
+      return state.sessions[i];
     }),
     moveArtifact: vi.fn(async (roomId: string, artifactId: string, toRoomId: string): Promise<Artifact> => {
       const a = state.artifacts[roomId]?.find((x) => x.id === artifactId);
@@ -267,14 +269,14 @@ export function fakeClient(
     uploadAskImage: vi.fn(async (image: Blob) => ({ id: `img-${(image as File).name ?? "blob"}` })),
     askImageUrl: (i: Info, id: string) => `${i.filesOrigin}/_asks/images/${id}`,
     askTarget: vi.fn(async (scope: AskScope): Promise<AskTarget> => {
-      const t = opts.askTargets?.[scope.kind === "doc" ? scope.fileKey : scopeKey(scope)];
+      const t = opts.askTargets?.[scope.kind === "artifact" ? scope.fileKey : scopeKey(scope)];
       if (t instanceof Error) throw t;
       return t ?? { ...answerer(scope), models: [], scoped: scope.kind === "room" || scope.kind === "day" };
     }),
-    askThread: vi.fn(async (scope: AskScope) => (scope.kind === "doc" ? state.asks[scope.fileKey] : state.asks[scopeKey(scope)]) ?? []),
+    askThread: vi.fn(async (scope: AskScope) => (scope.kind === "artifact" ? state.asks[scope.fileKey] : state.asks[scopeKey(scope)]) ?? []),
     cancelAsk: vi.fn(async () => {}),
     // Like the real client minus encoding, and unversioned so tests can match plain paths.
-    fileUrl: (i: Info, a: Artifact, doc?: { contentKey: string }) => `${i.filesOrigin}/${a.roomId}/${a.relPath}${doc ? `?doc=1&cs=${doc.contentKey}` : ""}`,
+    fileUrl: (i: Info, a: Artifact, tab?: { contentKey: string }) => `${i.filesOrigin}/${a.roomId}/${a.relPath}${tab ? `?tab=1&cs=${tab.contentKey}` : ""}`,
     subscribe: (cb: (e: RoomsEvent) => void) => {
       onEvent = cb;
       return () => {};

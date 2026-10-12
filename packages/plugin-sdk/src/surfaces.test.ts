@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { connectSurfaces, surfaceKey, surfacePath, type SurfaceId } from "./surfaces";
+import { connectSurfaces, legacySurfacePath, surfaceKey, surfacePath, type SurfaceId } from "./surfaces";
 
 function fakeParent() {
   const sent: Record<string, unknown>[] = [];
@@ -17,9 +17,10 @@ beforeEach(() => {
 
 const answer: SurfaceId = { kind: "answer", scope: { kind: "room", roomId: "r1" }, turnId: "t1" };
 const fromApp = (m: Record<string, unknown>) => ({ rooms: "surface", v: 1, ...m });
+const toApp = (m: Record<string, unknown>) => ({ rooms: "surface", v: 1, api: 2, ...m });
 
 describe("connectSurfaces", () => {
-  it("posts ready, actions, paint and menu with the surface envelope, and passes styles through for the app to judge", () => {
+  it("says hello on connect, then posts ready, actions, paint and menu, each saying it reads API 2 surfaces, and passes styles through for the app to judge", () => {
     const s = connectSurfaces();
     s.ready();
     s.setActions([{ id: "tag", title: "Tag", color: "#ffd400" }]);
@@ -27,11 +28,12 @@ describe("connectSurfaces", () => {
     s.paint(answer, [{ id: "a", start: 0, end: 3, style: "mustard" }]);
     s.menu(answer, "a", [{ id: "untag", title: "Untag" }]);
     expect(host.sent).toEqual([
-      fromApp({ type: "ready" }),
-      fromApp({ type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] }),
-      fromApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }], styles: { mustard: "rgba(199,154,62,0.28)" } }),
-      fromApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }] }),
-      fromApp({ type: "menu", surface: answer, rangeId: "a", items: [{ id: "untag", title: "Untag" }] }),
+      toApp({ type: "hello" }),
+      toApp({ type: "ready" }),
+      toApp({ type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] }),
+      toApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }], styles: { mustard: "rgba(199,154,62,0.28)" } }),
+      toApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }] }),
+      toApp({ type: "menu", surface: answer, rangeId: "a", items: [{ id: "untag", title: "Untag" }] }),
     ]);
   });
 
@@ -74,11 +76,19 @@ describe("connectSurfaces", () => {
 describe("surface names", () => {
   it("names a surface the way the app does, and as a storage path", () => {
     expect(surfaceKey(answer)).toBe("answer:room:r1/t1");
-    expect(surfaceKey({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" })).toBe("answer:doc:0123456789abcdef/t1");
+    expect(surfaceKey({ kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t1" })).toBe("answer:artifact:0123456789abcdef/t1");
     expect(surfaceKey({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" })).toBe("answer:day:2026-10-10/t1");
-    expect(surfaceKey({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })).toBe("answer:conversation:codex:s_1-2/t1");
-    expect(surfacePath({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })).toBe("answer/conversation/codex/s_1-2/t1");
+    expect(surfaceKey({ kind: "answer", scope: { kind: "session", agent: "codex", id: "s_1-2" }, turnId: "t1" })).toBe("answer:session:codex:s_1-2/t1");
+    expect(surfacePath({ kind: "answer", scope: { kind: "session", agent: "codex", id: "s_1-2" }, turnId: "t1" })).toBe("answer/session/codex/s_1-2/t1");
     expect(surfacePath(answer)).toBe("answer/room/r1/t1");
     expect(surfacePath({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "V1StGXR8_Z5jdHi6" })).toBe("answer/day/2026-10-10/V1StGXR8_Z5jdHi6");
+  });
+});
+
+describe("legacySurfacePath", () => {
+  it("gives the 0.5 storage path, so data saved before the rename can be found and moved", () => {
+    expect(legacySurfacePath({ kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t1" })).toBe("answer/doc/0123456789abcdef/t1");
+    expect(legacySurfacePath({ kind: "answer", scope: { kind: "session", agent: "codex", id: "s_1-2" }, turnId: "t1" })).toBe("answer/conversation/codex/s_1-2/t1");
+    expect(legacySurfacePath(answer)).toBe(surfacePath(answer));
   });
 });

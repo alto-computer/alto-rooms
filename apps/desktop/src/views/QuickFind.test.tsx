@@ -26,7 +26,7 @@ const setup = (onClose = vi.fn(), storeTimers?: ReturnType<typeof manualTimers>[
   });
 
 describe("QuickFind", () => {
-  it("typing finds a doc under 문서, and Enter opens its doc tab and closes", async () => {
+  it("typing finds an artifact under 문서, and Enter opens its artifact tab and closes", async () => {
     const onClose = vi.fn();
     const h = await setup(onClose);
     const input = screen.getByPlaceholderText("Find a room or artifact");
@@ -41,7 +41,7 @@ describe("QuickFind", () => {
       fireEvent.keyDown(input, { key: "Enter" });
     });
     const active = h.viewer.getState().tabs.find((t) => t.id === h.viewer.getState().activeId);
-    expect(active).toEqual(expect.objectContaining({ kind: "doc", roomId: "r1", artifactId: "d1" }));
+    expect(active).toEqual(expect.objectContaining({ kind: "artifact", roomId: "r1", artifactId: "d1" }));
     expect(onClose).toHaveBeenCalled();
   });
 

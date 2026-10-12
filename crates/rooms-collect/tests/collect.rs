@@ -181,11 +181,11 @@ fn links_go_to_the_inbox_even_with_a_repo_named_room() {
     e.since(5.0);
     std::fs::create_dir_all(e.root.join("code/Alto Rooms/.git")).unwrap();
     std::fs::create_dir_all(e.home.join("alto rooms")).unwrap(); // a room named like the repo: rooms-sort's R1 moves it
-    let doc = e.html("code/Alto Rooms/docs/plan.html");
+    let artifact = e.html("code/Alto Rooms/docs/plan.html");
     let other = e.html("code/other/x.html");
-    e.claude_log("s1.jsonl", &[cc("Write", &doc, 1.0), cc("Write", &other, 1.0)]);
+    e.claude_log("s1.jsonl", &[cc("Write", &artifact, 1.0), cc("Write", &other, 1.0)]);
     e.collector().drain().unwrap();
-    assert_eq!(e.links(), vec![("inbox/plan.html".into(), doc), ("inbox/x.html".into(), other)]);
+    assert_eq!(e.links(), vec![("inbox/plan.html".into(), artifact), ("inbox/x.html".into(), other)]);
 }
 
 #[test]
@@ -202,9 +202,9 @@ fn rooms_files_linked_rooms_worktrees_and_noise_are_skipped() {
     let wt = e.root.join("wt/feat");
     std::fs::create_dir_all(&wt).unwrap();
     std::fs::write(wt.join(".git"), format!("gitdir: {}/.git/worktrees/feat\n", e.root.join("repo").display())).unwrap();
-    let wt_doc = e.html("wt/feat/docs/a.html");
+    let wt_artifact = e.html("wt/feat/docs/a.html");
     e.claude_log("s1.jsonl", &[cc("Write", &inside, 1.0), cc("Write", &in_linked, 1.0), cc("Write", &scratch, 1.0),
-        cc("Write", &main, 1.0), cc("Write", &wt_doc, 1.0)]);
+        cc("Write", &main, 1.0), cc("Write", &wt_artifact, 1.0)]);
     e.collector().drain().unwrap();
     assert_eq!(e.links(), vec![("inbox/a.html".into(), main)]);
     let s = e.sources();
@@ -405,8 +405,8 @@ fn cx_msg(role: &str, text: &str, ts: &str) -> Value {
 }
 
 #[test]
-fn conversations_by_day_span_midnight_and_skip_heartbeats() {
-    use rooms_collect::conversations::{get, on_day};
+fn sessions_by_day_span_midnight_and_skip_heartbeats() {
+    use rooms_collect::sessions::{get, on_day};
     let e = Env::new();
     let w = e.html("proj/report.html");
     let mut write = cc("Write", &w, 0.0);
@@ -425,24 +425,24 @@ fn conversations_by_day_span_midnight_and_skip_heartbeats() {
         cx_msg("assistant", "checked", "2026-10-02T03:01:00Z"),
     ]);
     let c = { let mut c = e.collector(); c.drain().unwrap(); c };
-    let keys = |v: &[(String, rooms_protocol::Conversation)]| v.iter().map(|(at, c)| (at.clone(), c.id.key())).collect::<Vec<_>>();
+    let keys = |v: &[(String, rooms_protocol::Session)]| v.iter().map(|(at, s)| (at.clone(), s.session_ref().key())).collect::<Vec<_>>();
     let day1 = on_day(&c.conn, "2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z").unwrap();
     let day2 = on_day(&c.conn, "2026-10-02T00:00:00Z", "2026-10-03T00:00:00Z").unwrap();
     assert_eq!(keys(&day1), [("2026-10-01T23:50:00Z".to_string(), "claude-code:s-late".to_string())]);
     assert_eq!(keys(&day2), [("2026-10-02T00:10:00Z".to_string(), "claude-code:s-late".to_string())], "the heartbeat run is left out");
-    let conv = &day2[0].1;
-    assert_eq!(conv.title.as_deref(), Some("plan the launch"));
-    assert_eq!((conv.started_at.as_str(), conv.ended_at.as_str(), conv.messages), ("2026-10-01T23:50:00Z", "2026-10-02T00:12:00Z", 4));
-    assert_eq!((conv.cwd.as_deref(), conv.last_reply.as_deref()), (Some("/work/proj"), Some("Done: report.html")));
-    assert_eq!(conv.artifacts_written, [w.to_string_lossy().into_owned()]);
-    let hb = rooms_protocol::ConversationId::parse_key("codex:s-hb").unwrap();
+    let session = &day2[0].1;
+    assert_eq!(session.title.as_deref(), Some("plan the launch"));
+    assert_eq!((session.started_at.as_str(), session.ended_at.as_str(), session.messages), ("2026-10-01T23:50:00Z", "2026-10-02T00:12:00Z", 4));
+    assert_eq!((session.cwd.as_deref(), session.last_reply.as_deref()), (Some("/work/proj"), Some("Done: report.html")));
+    assert_eq!(session.artifacts_written, [w.to_string_lossy().into_owned()]);
+    let hb = rooms_protocol::SessionRef::parse_key("codex:s-hb").unwrap();
     assert_eq!(get(&c.conn, &hb).unwrap().unwrap().messages, 2, "get still finds a heartbeat run");
-    assert_eq!(get(&c.conn, &rooms_protocol::ConversationId::parse_key("codex:nope").unwrap()).unwrap(), None);
+    assert_eq!(get(&c.conn, &rooms_protocol::SessionRef::parse_key("codex:nope").unwrap()).unwrap(), None);
 }
 
 #[test]
 fn titles_prefer_the_users_then_the_agents_then_the_first_prompt() {
-    use rooms_collect::conversations::title;
+    use rooms_collect::sessions::title;
     let e = Env::new();
     let ts = "2026-10-02T01:00:00Z";
     e.claude_log("t.jsonl", &[
@@ -478,11 +478,11 @@ fn titles_reach_logs_read_before_adapters_knew_them() {
         // what a store filled by the older adapters holds
         c.conn.execute("DELETE FROM events WHERE kind='session.seen' AND preview IS NOT NULL", []).unwrap();
         c.conn.execute("UPDATE meta SET value='none' WHERE key='reindex'", []).unwrap();
-        assert_eq!(rooms_collect::conversations::title(&c.conn, "claude-code", "s-t").unwrap().as_deref(), Some("first prompt"));
+        assert_eq!(rooms_collect::sessions::title(&c.conn, "claude-code", "s-t").unwrap().as_deref(), Some("first prompt"));
     }
     let mut c = e.collector();
     let events = count(&c, "SELECT count(*) FROM events");
     c.drain().unwrap();
     assert_eq!(count(&c, "SELECT count(*) FROM events"), events + 1, "only the title is new");
-    assert_eq!(rooms_collect::conversations::title(&c.conn, "claude-code", "s-t").unwrap().as_deref(), Some("AI name"));
+    assert_eq!(rooms_collect::sessions::title(&c.conn, "claude-code", "s-t").unwrap().as_deref(), Some("AI name"));
 }

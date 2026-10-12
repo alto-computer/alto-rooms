@@ -15,12 +15,12 @@ import { TabLabel } from "./TabLabel";
 
 const ICONS: Record<Tab["kind"], LucideIcon> = {
   room: Folder,
-  doc: FileText,
+  artifact: FileText,
   note: FileText,
   journal: Calendar,
   plugin: Puzzle,
   // Drawn as its agent's mark instead.
-  conversation: MessageSquare,
+  session: MessageSquare,
   settings: Settings,
 };
 
@@ -114,7 +114,7 @@ export function TabItem({
               sort.isDragging && "cursor-grabbing rounded-lg border-hairline shadow-float before:hidden after:hidden",
             )}
           >
-            {tab.kind === "conversation" ? (
+            {tab.kind === "session" ? (
               <AgentMark agent={tab.agent} className="size-[15px]" />
             ) : color ? (
               <RoomDot color={color} />

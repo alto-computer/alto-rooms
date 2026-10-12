@@ -115,7 +115,7 @@ describe("handleBridgeCall", () => {
     await handleBridgeCall(plugin(), call("open", { roomId: "r1" }), d);
     expect(d.viewer.navigate).toHaveBeenLastCalledWith({ kind: "room", roomId: "r1" });
     await handleBridgeCall(plugin(), call("open", { fileKey: "key-new" }), d);
-    expect(d.viewer.navigate).toHaveBeenLastCalledWith({ kind: "doc", roomId: "r1", artifactId: "new" });
+    expect(d.viewer.navigate).toHaveBeenLastCalledWith({ kind: "artifact", roomId: "r1", artifactId: "new" });
     expect(d.viewer.open).not.toHaveBeenCalled();
     expect(d.viewer.reveal).not.toHaveBeenCalled();
     expect(await codeOf(handleBridgeCall(plugin(), call("open", { fileKey: "nope" }), d))).toBe("not_found");
@@ -125,7 +125,7 @@ describe("handleBridgeCall", () => {
   it("from a tab, opens a document in a tab next to it and a room in place", async () => {
     const d = { ...deps(), slot: "tab" as const };
     await handleBridgeCall(plugin(), call("open", { fileKey: "key-new" }), d);
-    expect(d.viewer.open).toHaveBeenCalledWith({ kind: "doc", roomId: "r1", artifactId: "new" }, { nextToActive: true });
+    expect(d.viewer.open).toHaveBeenCalledWith({ kind: "artifact", roomId: "r1", artifactId: "new" }, { nextToActive: true });
     expect(d.viewer.navigate).not.toHaveBeenCalled();
     await handleBridgeCall(plugin(), call("open", { roomId: "r1" }), d);
     expect(d.viewer.navigate).toHaveBeenCalledWith({ kind: "room", roomId: "r1" });
@@ -133,33 +133,33 @@ describe("handleBridgeCall", () => {
 
   it("opens the thread that holds a surface and reveals the range there, for plugins that may mark answers", async () => {
     const surfaces = plugin({ permissions: ["surfaces.text"], background: "background.html" });
-    const docAnswer = { kind: "answer", scope: { kind: "doc", fileKey: "key-new" }, turnId: "t1" };
+    const artifactAnswer = { kind: "answer", scope: { kind: "artifact", fileKey: "key-new" }, turnId: "t1" };
     const panel = deps();
-    await handleBridgeCall(surfaces, call("open", { surface: docAnswer, rangeId: "q" }), panel);
-    expect(panel.viewer.navigate).toHaveBeenLastCalledWith({ kind: "doc", roomId: "r1", artifactId: "new" });
-    expect(panel.revealSurface).toHaveBeenCalledWith(docAnswer, "q");
+    await handleBridgeCall(surfaces, call("open", { surface: artifactAnswer, rangeId: "q" }), panel);
+    expect(panel.viewer.navigate).toHaveBeenLastCalledWith({ kind: "artifact", roomId: "r1", artifactId: "new" });
+    expect(panel.revealSurface).toHaveBeenCalledWith(artifactAnswer, "q");
     const tab = { ...deps(), slot: "tab" as const };
     await handleBridgeCall(surfaces, call("open", { surface: { kind: "answer", scope: { kind: "room", roomId: "r1" }, turnId: "t2" }, rangeId: "q" }), tab);
     expect(tab.viewer.open).toHaveBeenLastCalledWith({ kind: "room", roomId: "r1" }, { nextToActive: true });
     await handleBridgeCall(surfaces, call("open", { surface: { kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t3" }, rangeId: "q" }), tab);
     expect(tab.viewer.open).toHaveBeenLastCalledWith({ kind: "journal", date: "2026-10-10" }, { nextToActive: true });
-    await handleBridgeCall(surfaces, call("open", { surface: { kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s1" }, turnId: "t4" }, rangeId: "q" }), tab);
-    expect(tab.viewer.open).toHaveBeenLastCalledWith({ kind: "conversation", agent: "codex", session: "s1" }, { nextToActive: true });
+    await handleBridgeCall(surfaces, call("open", { surface: { kind: "answer", scope: { kind: "session", agent: "codex", id: "s1" }, turnId: "t4" }, rangeId: "q" }), tab);
+    expect(tab.viewer.open).toHaveBeenLastCalledWith({ kind: "session", agent: "codex", sessionId: "s1" }, { nextToActive: true });
     expect(tab.revealSurface).toHaveBeenCalledTimes(3);
-    expect(await codeOf(handleBridgeCall(plugin(), call("open", { surface: docAnswer, rangeId: "q" }), tab))).toBe("permission_denied");
-    expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: { ...docAnswer, scope: { kind: "doc", fileKey: "nope" } }, rangeId: "q" }), tab))).toBe("not_found");
-    expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: { ...docAnswer, scope: { kind: "room", roomId: "gone" } }, rangeId: "q" }), tab))).toBe("not_found");
+    expect(await codeOf(handleBridgeCall(plugin(), call("open", { surface: artifactAnswer, rangeId: "q" }), tab))).toBe("permission_denied");
+    expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: { ...artifactAnswer, scope: { kind: "artifact", fileKey: "nope" } }, rangeId: "q" }), tab))).toBe("not_found");
+    expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: { ...artifactAnswer, scope: { kind: "room", roomId: "gone" } }, rangeId: "q" }), tab))).toBe("not_found");
     expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: "answer:doc:x/t1", rangeId: "q" }), tab))).toBe("bad_request");
-    expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: docAnswer, rangeId: "q r" }), tab))).toBe("bad_request");
-    expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: docAnswer }), tab))).toBe("bad_request");
+    expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: artifactAnswer, rangeId: "q r" }), tab))).toBe("bad_request");
+    expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: artifactAnswer }), tab))).toBe("bad_request");
     expect(tab.revealSurface).toHaveBeenCalledTimes(3);
   });
 
   it("from a background page, opens anything only within 2 s of the user's click on that plugin", async () => {
     const surfaces = plugin({ permissions: ["surfaces.text"], background: "background.html" });
-    const docAnswer = { kind: "answer", scope: { kind: "doc", fileKey: "key-new" }, turnId: "t1" };
+    const artifactAnswer = { kind: "answer", scope: { kind: "artifact", fileKey: "key-new" }, turnId: "t1" };
     const d = { ...deps(), slot: "background" as const };
-    const targets = [{ surface: docAnswer, rangeId: "q" }, { roomId: "r1" }, { fileKey: "key-new" }];
+    const targets = [{ surface: artifactAnswer, rangeId: "q" }, { roomId: "r1" }, { fileKey: "key-new" }];
     for (const target of targets) expect(await codeOf(handleBridgeCall(surfaces, call("open", target), d)), "no click yet").toBe("permission_denied");
     d.lastSurfaceGesture.mockImplementation(() => Date.now() - 2001);
     for (const target of targets) expect(await codeOf(handleBridgeCall(surfaces, call("open", target), d)), "a click too long ago").toBe("permission_denied");
@@ -167,11 +167,11 @@ describe("handleBridgeCall", () => {
     expect(d.revealSurface).not.toHaveBeenCalled();
     d.lastSurfaceGesture.mockImplementation(() => Date.now() - 1500);
     for (const target of targets) expect(await codeOf(handleBridgeCall(surfaces, call("open", target), d))).toBe("ok");
-    expect(d.viewer.navigate).toHaveBeenNthCalledWith(1, { kind: "doc", roomId: "r1", artifactId: "new" });
+    expect(d.viewer.navigate).toHaveBeenNthCalledWith(1, { kind: "artifact", roomId: "r1", artifactId: "new" });
     expect(d.viewer.navigate).toHaveBeenNthCalledWith(2, { kind: "room", roomId: "r1" });
-    expect(d.viewer.navigate).toHaveBeenNthCalledWith(3, { kind: "doc", roomId: "r1", artifactId: "new" });
+    expect(d.viewer.navigate).toHaveBeenNthCalledWith(3, { kind: "artifact", roomId: "r1", artifactId: "new" });
     expect(d.viewer.navigate).toHaveBeenCalledTimes(3);
-    expect(d.revealSurface).toHaveBeenCalledWith(docAnswer, "q");
+    expect(d.revealSurface).toHaveBeenCalledWith(artifactAnswer, "q");
     const panel = deps();
     expect(await codeOf(handleBridgeCall(surfaces, call("open", { roomId: "r1" }), panel)), "a panel the user can see needs no click").toBe("ok");
     expect(panel.lastSurfaceGesture).not.toHaveBeenCalled();

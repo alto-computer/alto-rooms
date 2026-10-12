@@ -27,17 +27,17 @@ let writeText: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   native.tauri = true;
   native.invoke.mockReset();
-  native.invoke.mockImplementation(async (cmd: string) => (cmd === "doc_original" ? "/Users/me/project/report.html" : undefined));
+  native.invoke.mockImplementation(async (cmd: string) => (cmd === "artifact_original" ? "/Users/me/project/report.html" : undefined));
   writeText = vi.fn(async () => {});
   Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
 });
 afterEach(cleanup);
 
-async function openMenu(doc = artifact("r1", "sub/report.html")) {
+async function openMenu(shown = artifact("r1", "sub/report.html")) {
   await renderWithStores(
     <>
       <ToolbarGroup label="Artifact actions">
-        <ShareMenu artifact={doc} />
+        <ShareMenu artifact={shown} />
       </ToolbarGroup>
       <Toaster />
     </>,
@@ -56,7 +56,7 @@ describe("ShareMenu", () => {
     await openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Copy file path" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("/Users/me/project/report.html"));
-    expect(native.invoke).toHaveBeenCalledWith("doc_original", { link: "/h/rooms/r1/sub/report.html" });
+    expect(native.invoke).toHaveBeenCalledWith("artifact_original", { link: "/h/rooms/r1/sub/report.html" });
     expect(await screen.findByText("Copied file path")).toBeInTheDocument();
   });
 
@@ -73,7 +73,7 @@ describe("ShareMenu", () => {
       await openMenu();
       fireEvent.click(screen.getByRole("menuitem", { name: "Copy file path" }));
       expect(write).toHaveBeenCalledTimes(1);
-      expect(native.invoke).toHaveBeenCalledWith("doc_original", { link: "/h/rooms/r1/sub/report.html" });
+      expect(native.invoke).toHaveBeenCalledWith("artifact_original", { link: "/h/rooms/r1/sub/report.html" });
       answer("/Users/me/project/report.html");
       const [item] = (write.mock.calls[0] as unknown as [FakeClipboardItem[]])[0];
       expect(await (await item.data["text/plain"]).text()).toBe("/Users/me/project/report.html");
@@ -83,19 +83,19 @@ describe("ShareMenu", () => {
     }
   });
 
-  it("reveals and opens the doc through its room link", async () => {
+  it("reveals and opens the artifact through its room link", async () => {
     await openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Reveal in Finder" }));
-    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("reveal_doc", { link: "/h/rooms/r1/sub/report.html" }));
+    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("reveal_artifact", { link: "/h/rooms/r1/sub/report.html" }));
     fireEvent.keyDown(screen.getByRole("button", { name: "Share" }), { key: "Enter" });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Open in browser" }));
-    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("open_doc", { link: "/h/rooms/r1/sub/report.html" }));
+    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("open_artifact", { link: "/h/rooms/r1/sub/report.html" }));
   });
 
-  it("finds a journal doc under the journal folder", async () => {
+  it("finds a journal artifact under the journal folder", async () => {
     await openMenu(artifact("journal", "2026-10-09/plan.html"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Reveal in Finder" }));
-    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("reveal_doc", { link: "/h/journal/2026-10-09/plan.html" }));
+    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("reveal_artifact", { link: "/h/journal/2026-10-09/plan.html" }));
   });
 
   it("toasts when the app can't do it", async () => {

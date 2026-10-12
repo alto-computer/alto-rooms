@@ -6,7 +6,7 @@ import { memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { plugin } from "@/test/plugins";
 import { ViewerStore } from "@/data/viewerStore";
 import { CurrentTabContext } from "@/shell/currentTab";
-import { DocView } from "./DocView";
+import { ArtifactView } from "./ArtifactView";
 
 afterEach(cleanup);
 
@@ -23,21 +23,21 @@ const artifact = (id: string, title: string): Artifact => ({
 
 describe("DocView", () => {
   it("renders the artifact full size in a sandboxed iframe from fileUrl", async () => {
-    const { container } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const { container } = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
     const frame = container.querySelector("iframe")!;
     expect(frame).toBeInTheDocument();
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-popups");
-    expect(frame.getAttribute("src")).toMatch(/^http:\/\/files\.test\/r1\/sub\/a1\.html\?doc=1&cs=[0-9a-f]{8}$/);
+    expect(frame.getAttribute("src")).toMatch(/^http:\/\/files\.test\/r1\/sub\/a1\.html\?tab=1&cs=[0-9a-f]{8}$/);
     expect(frame.hasAttribute("srcdoc")).toBe(false);
     expect(frame).toHaveAttribute("title", "보고서");
   });
 
-  it("keys the doc URL by the content plugins that are on, so turning one off reloads the frame", async () => {
+  it("keys the artifact URL by the content plugins that are on, so turning one off reloads the frame", async () => {
     const marker = plugin({ id: "marker", permissions: ["artifact.content"], granted: ["artifact.content"], slots: { artifactSidePanel: null, tab: null } });
-    const { container, client, emit } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const { container, client, emit } = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
       plugins: [marker],
@@ -55,17 +55,17 @@ describe("DocView", () => {
   });
 
   it("shows a skeleton until the document loads", async () => {
-    const { container } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const { container } = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
-    expect(screen.getByTestId("doc-skeleton")).toBeInTheDocument();
+    expect(screen.getByTestId("artifact-skeleton")).toBeInTheDocument();
     fireEvent.load(container.querySelector("iframe")!);
-    expect(screen.queryByTestId("doc-skeleton")).toBeNull();
+    expect(screen.queryByTestId("artifact-skeleton")).toBeNull();
   });
 
   it("fades the document in, without the fade under reduced motion", async () => {
-    const { container } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const { container } = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
@@ -76,7 +76,7 @@ describe("DocView", () => {
   });
 
   it("takes the dark-mode dim unless its own page reports a dark background", async () => {
-    const { container } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const { container } = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
@@ -94,7 +94,7 @@ describe("DocView", () => {
   });
 
   it("names where the artifact lives in a breadcrumb, and the room opens from it", async () => {
-    const { viewer } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const { viewer } = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
@@ -105,7 +105,7 @@ describe("DocView", () => {
   });
 
   it("middle-click on the breadcrumb's room opens it in a new tab", async () => {
-    const { viewer } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const { viewer } = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
@@ -116,7 +116,7 @@ describe("DocView", () => {
   });
 
   it("says the document is gone once the room's artifacts no longer include it", async () => {
-    const fake = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const fake = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
@@ -128,7 +128,7 @@ describe("DocView", () => {
   });
 
   it("shows the generic error when the room can't be loaded", async () => {
-    await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifactErrors: { r1: new Error("boom") },
     });
@@ -138,7 +138,7 @@ describe("DocView", () => {
 
 describe("DocView: removed room", () => {
   it("says the document is gone when its room is removed", async () => {
-    const fake = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const fake = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
@@ -149,7 +149,7 @@ describe("DocView: removed room", () => {
   });
 
   it("offers Ask over text selected in its own frame and quotes it in the ask bar", async () => {
-    const { container, client } = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const { container, client } = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
     });
@@ -185,7 +185,7 @@ describe("DocView: content scripts", () => {
   const marker = plugin({ id: "marker", name: "Marker", permissions: ["artifact.content"], granted: ["artifact.content"], slots: { artifactSidePanel: null, tab: null } });
 
   async function open(opts: { readOnly?: boolean } = {}) {
-    const h = await renderWithStores(<DocView roomId="r1" artifactId="a1" />, {
+    const h = await renderWithStores(<ArtifactView roomId="r1" artifactId="a1" />, {
       rooms: [room("r1", "방")],
       artifacts: { r1: [artifact("a1", "보고서")] },
       plugins: [marker],
@@ -246,10 +246,10 @@ describe("DocView: a frame that outlives its channel", () => {
   const sync = { rooms: "content", v: 1, type: "sync", plugin: "marker" };
   const reveals = (posted: { mock: { calls: unknown[][] } }) => posted.mock.calls.map(([m]) => m as { type: string }).filter((m) => m.type === "reveal");
 
-  /** The doc in a tab that can go to the background, as AppShell keeps one. */
+  /** The artifact in a tab that can go to the background, as AppShell keeps one. */
   async function kept() {
     const viewer = new ViewerStore(memoryStorage());
-    const tabId = viewer.open({ kind: "doc", roomId: "r1", artifactId: "a1" });
+    const tabId = viewer.open({ kind: "artifact", roomId: "r1", artifactId: "a1" });
     let show!: (visible: boolean) => void;
     function Tab() {
       const [visible, setVisible] = useState(true);
@@ -257,7 +257,7 @@ describe("DocView: a frame that outlives its channel", () => {
       return (
         <Activity mode={visible ? "visible" : "hidden"}>
           <CurrentTabContext.Provider value={tabId}>
-            <DocView roomId="r1" artifactId="a1" />
+            <ArtifactView roomId="r1" artifactId="a1" />
           </CurrentTabContext.Provider>
         </Activity>
       );
@@ -326,7 +326,7 @@ describe("DocView: a frame that outlives its channel", () => {
     expect(reveals(t.posted()), "handed over once").toHaveLength(1);
   });
 
-  it("drops an anchor for a plugin that is not on in this doc", async () => {
+  it("drops an anchor for a plugin that is not on in this artifact", async () => {
     const t = await kept();
     act(() => t.viewer.reveal(t.tabId, { pluginId: "goals", anchor: 1 }));
     const left: unknown[] = [];

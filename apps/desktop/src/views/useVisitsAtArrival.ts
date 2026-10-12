@@ -10,7 +10,7 @@ export type Visits = {
 
 /**
  * The viewer's room visits as they were when this view mounted (AppShell mounts a
- * view on arrival). Frozen: `lastVisit` is only written when leaving, and new-doc
+ * view on arrival). Frozen: `lastVisit` is only written when leaving, and new-artifact
  * dots must not vanish while they are being looked at.
  */
 export function useVisitsAtArrival(): Visits {

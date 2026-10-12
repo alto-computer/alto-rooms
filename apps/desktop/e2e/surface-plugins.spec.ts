@@ -53,7 +53,7 @@ async function openRoom(page: Page, room: string) {
   await expect(page.getByRole("tab", { name: room, exact: true, selected: true })).toBeVisible();
 }
 
-async function openDocTab(page: Page, title: string) {
+async function openArtifactTab(page: Page, title: string) {
   const card = page.getByTestId("artifact-card").filter({ hasText: title });
   await card.hover();
   await card.getByRole("button", { name: "Open in new tab" }).click();
@@ -103,7 +103,7 @@ async function tagFiles(daemon: Daemon): Promise<string[]> {
   return (await fs.readdir(dir, { recursive: true, withFileTypes: true })).filter((e) => e.isFile()).map((e) => path.relative(dir, path.join(e.parentPath, e.name))).sort();
 }
 
-test("tagging words in a room answer and a doc answer paints them in their own threads, survives a reload, and leaves the DOM alone", async ({ page, daemon }) => {
+test("tagging words in a room answer and an artifact answer paints them in their own threads, survives a reload, and leaves the DOM alone", async ({ page, daemon }) => {
   installStreamingAgent(daemon, "Room");
   const room = await daemon.createRoom("harness");
   await daemon.write("harness/alpha.html", "<html><head><title>Alpha</title></head><body>a</body></html>");
@@ -113,7 +113,7 @@ test("tagging words in a room answer and a doc answer paints them in their own t
   await backgroundFrame(page);
 
   await openRoom(page, "harness");
-  const roomAnswer = await ask(page, "Ask about this room…", "Which doc is first?");
+  const roomAnswer = await ask(page, "Ask about this room…", "Which artifact is first?");
   const roomText = (await roomAnswer.textContent())!;
   const before = await roomAnswer.locator("xpath=ancestor::*[@data-surface]").innerHTML();
   await tag(page, roomAnswer);
@@ -123,18 +123,18 @@ test("tagging words in a room answer and a doc answer paints them in their own t
   const [turn] = (await api(daemon, "GET", `/v1/asks?scope=room:${room.id}`)) as { id: string }[];
   expect(await tagFiles(daemon)).toEqual([`answer/room/${room.id}/${turn.id}.json`]);
 
-  await openDocTab(page, "Alpha");
+  await openArtifactTab(page, "Alpha");
   await expect.poll(() => painted(page), "the room thread left the screen with its paint").toEqual([]);
-  const docAnswer = await ask(page, "Ask about this artifact…", "What is this?");
-  const docText = (await docAnswer.textContent())!;
-  await tag(page, docAnswer);
-  await expect.poll(() => painted(page)).toEqual([docText]);
+  const artifactAnswer = await ask(page, "Ask about this artifact…", "What is this?");
+  const artifactText = (await artifactAnswer.textContent())!;
+  await tag(page, artifactAnswer);
+  await expect.poll(() => painted(page)).toEqual([artifactText]);
   await expect(page.getByText(roomText)).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByRole("tab", { name: "Alpha", selected: true })).toBeVisible();
-  await expect(page.getByText(docText)).toBeVisible();
-  await expect.poll(() => painted(page), "the plugin repaints from its storage").toEqual([docText]);
+  await expect(page.getByText(artifactText)).toBeVisible();
+  await expect.poll(() => painted(page), "the plugin repaints from its storage").toEqual([artifactText]);
   await page.getByRole("tab", { name: "harness", exact: true }).click();
   await expect(page.getByText(roomText)).toBeVisible();
   await expect.poll(() => painted(page)).toEqual([roomText]);
@@ -149,7 +149,7 @@ test("a click on a painted range shows the plugin's menu; Untag removes the pain
   await turnOnTagger(page);
   await backgroundFrame(page);
   await openRoom(page, "harness");
-  const answer = await ask(page, "Ask about this room…", "Which doc is first?");
+  const answer = await ask(page, "Ask about this room…", "Which artifact is first?");
   const text = (await answer.textContent())!;
   await tag(page, answer);
   await expect.poll(() => painted(page)).toEqual([text]);
@@ -181,7 +181,7 @@ test("open({ surface, rangeId }) from the background is refused unless the user 
   await turnOnTagger(page);
   const frame = await backgroundFrame(page);
   await openRoom(page, "harness");
-  const answer = await ask(page, "Ask about this room…", "Which doc is first?");
+  const answer = await ask(page, "Ask about this room…", "Which artifact is first?");
   const text = (await answer.textContent())!;
   await tag(page, answer);
   await expect.poll(() => painted(page)).toEqual([text]);
@@ -194,7 +194,7 @@ test("open({ surface, rangeId }) from the background is refused unless the user 
       { surface, rangeId: tags[0].id },
     );
 
-  await openDocTab(page, "Alpha");
+  await openArtifactTab(page, "Alpha");
   await expect.poll(() => painted(page)).toEqual([]);
   await page.waitForTimeout(2100);
   expect(await open(), "no click on the plugin in the last 2 s").toBe("permission_denied");
@@ -241,7 +241,7 @@ test("the background frame is sandboxed without network; hostile paint is droppe
   expect(csp).toContain("sandbox allow-scripts");
 
   await openRoom(page, "harness");
-  const answer = await ask(page, "Ask about this room…", "Which doc is first?");
+  const answer = await ask(page, "Ask about this room…", "Which artifact is first?");
   const text = (await answer.textContent())!;
   await tag(page, answer);
   await expect.poll(() => painted(page)).toEqual([text]);

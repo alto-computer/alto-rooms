@@ -8,13 +8,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useClient, useViewerStore } from "@/data/hooks";
 import {
   carriesArtifact,
-  carriesConversation,
+  carriesSession,
   draggingFromRoom,
   endDrag,
   readArtifactPayload,
-  readConversationPayload,
+  readSessionPayload,
   type ArtifactDragPayload,
-  type ConversationDragPayload,
+  type SessionDragPayload,
 } from "@/lib/drag";
 import { wantsNewTab } from "@/lib/nav";
 import { roomTint } from "@/lib/roomTint";
@@ -26,15 +26,15 @@ import { ICON, ITEM, ITEM_CURRENT, ITEM_INTERACTIVE } from "./sidebarItem";
 /** What a room row does with what is dropped on it; a kind it has no handler for is refused. */
 export type RoomDrops = {
   artifact?: (p: ArtifactDragPayload, toRoomId: string) => void;
-  conversation?: (p: ConversationDragPayload, toRoomId: string) => void;
+  session?: (p: SessionDragPayload, toRoomId: string) => void;
 };
 
-/** Drop handlers for a room row that accepts artifacts and conversations; `over` drives the highlight. */
+/** Drop handlers for a room row that accepts artifacts and sessions; `over` drives the highlight. */
 function useDropTarget(roomId: string, drops: RoomDrops) {
   const [over, setOver] = useState(false);
-  if (!drops.artifact && !drops.conversation) return { over: false, handlers: {} };
+  if (!drops.artifact && !drops.session) return { over: false, handlers: {} };
   const accepts = (e: DragEvent) =>
-    ((drops.artifact && carriesArtifact(e.dataTransfer)) || (drops.conversation && carriesConversation(e.dataTransfer))) && draggingFromRoom() !== roomId;
+    ((drops.artifact && carriesArtifact(e.dataTransfer)) || (drops.session && carriesSession(e.dataTransfer))) && draggingFromRoom() !== roomId;
   const enter = (e: DragEvent) => {
     if (!accepts(e)) return;
     e.preventDefault();
@@ -53,18 +53,18 @@ function useDropTarget(roomId: string, drops: RoomDrops) {
       onDrop: (e: DragEvent) => {
         setOver(false);
         const artifact = drops.artifact && readArtifactPayload(e.dataTransfer);
-        const conversation = !artifact && drops.conversation ? readConversationPayload(e.dataTransfer) : null;
-        if (!artifact && !conversation) return;
+        const session = !artifact && drops.session ? readSessionPayload(e.dataTransfer) : null;
+        if (!artifact && !session) return;
         e.preventDefault();
         endDrag();
         if (artifact && artifact.roomId !== roomId) drops.artifact?.(artifact, roomId);
-        if (conversation && conversation.roomId !== roomId) drops.conversation?.(conversation, roomId);
+        if (session && session.roomId !== roomId) drops.session?.(session, roomId);
       },
     },
   };
 }
 
-/** A room in the sidebar list: opens on click, renames on double click, sorts by drag, takes dropped artifacts and conversations, and has a menu on right-click. */
+/** A room in the sidebar list: opens on click, renames on double click, sorts by drag, takes dropped artifacts and sessions, and has a menu on right-click. */
 export function RoomRow({
   room,
   active,

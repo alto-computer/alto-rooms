@@ -5,7 +5,7 @@ import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
 import { useClient, useReadOnly, useRoomList, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { isNewSince, localDate } from "@/lib/dates";
-import { INBOX_ID, type ArtifactDragPayload, type ConversationDragPayload } from "@/lib/drag";
+import { INBOX_ID, type ArtifactDragPayload, type SessionDragPayload } from "@/lib/drag";
 import { errorCopy, moveErrorCopy } from "@/lib/errors";
 import { moveWithinSection } from "@/lib/roomOrder";
 import { openSettings } from "@/lib/settings";
@@ -55,12 +55,12 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
     );
   };
 
-  // Likewise for a conversation dropped on a room: conversation.moved updates the Journal and the room.
-  const addConversation = (p: ConversationDragPayload, toRoomId: string) => {
-    client.setConversationRoom(p.id, toRoomId).then(
+  // Likewise for a session dropped on a room: session.moved updates the Journal and the room.
+  const addSession = (p: SessionDragPayload, toRoomId: string) => {
+    client.setSessionRoom(p.sessionRef, toRoomId).then(
       () => moveFailed.clear(),
       (e: unknown) => {
-        console.warn("could not add the conversation to the room", e);
+        console.warn("could not add the session to the room", e);
         setMoveError(errorCopy(e));
         moveFailed.flash();
       },
@@ -106,7 +106,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
       unread={unread(room)}
       readOnly={readOnly}
       sortable={!readOnly}
-      drops={readOnly ? {} : { artifact: isArtifactDropTarget(room) ? move : undefined, conversation: addConversation }}
+      drops={readOnly ? {} : { artifact: isArtifactDropTarget(room) ? move : undefined, session: addSession }}
     />
   );
 
@@ -218,7 +218,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
   );
 }
 
-/** Artifacts can be dropped on owned, available rooms other than the inbox. (Conversations on any listed room.) */
+/** Artifacts can be dropped on owned, available rooms other than the inbox. (Sessions on any listed room.) */
 const isArtifactDropTarget = (room: Room) => room.kind === "owned" && room.id !== INBOX_ID && room.status === "ok";
 
 /** `rooms` in the `order` of ids (rooms it doesn't list keep their place at the end); `rooms` when there is none. */

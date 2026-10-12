@@ -12,7 +12,7 @@ const shot = (page: Page, name: string) => page.screenshot({ path: path.join(SCR
 /** Skeletons inside the window: cards past the preload margin keep theirs until they scroll near. */
 const skeletonsOnScreen = (page: Page) =>
   page.evaluate(() =>
-    [...document.querySelectorAll("[data-testid=doc-skeleton]")].filter((el) => {
+    [...document.querySelectorAll("[data-testid=artifact-skeleton]")].filter((el) => {
       const r = el.getBoundingClientRect();
       return r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight;
     }).length,
@@ -46,7 +46,7 @@ test("screens for visual review", async ({ page, daemon }) => {
   await daemon.createRoom("Benchmarks");
   await daemon.createRoom("Design system");
   await daemon.createRoom("Research");
-  const docs: [string, string, string, [string, string][], number[]][] = [
+  const reports: [string, string, string, [string, string][], number[]][] = [
     ["Latency comparison", "Benchmark · 3 runtimes", "#3b6fd8", [["42 ms", "p50"], ["118 ms", "p95"], ["−18%", "vs last week"]], [70, 55, 82, 40, 63]],
     ["Memory usage", "Heap snapshots", "#2f9e6e", [["212 MB", "peak"], ["148 MB", "steady"], ["3", "leaks fixed"]], [45, 60, 52, 38, 30]],
     ["Weekly report", "Week 40", "#c9781a", [["2", "regressions"], ["3", "wins"], ["14", "PRs merged"]], [30, 48, 66, 72, 90]],
@@ -54,12 +54,12 @@ test("screens for visual review", async ({ page, daemon }) => {
     ["Bundle size", "Web client", "#d14b6a", [["412 KB", "gzip"], ["−9%", "since v2"], ["38", "chunks"]], [80, 76, 70, 66, 61]],
     ["Error budget", "SLO · 30 days", "#1f8a8a", [["99.94%", "uptime"], ["26 min", "left"], ["1", "incident"]], [20, 35, 25, 60, 15]],
   ];
-  for (const [i, [title, kicker, accent, stats, bars]] of docs.entries()) {
+  for (const [i, [title, kicker, accent, stats, bars]] of reports.entries()) {
     await daemon.write(`Benchmarks/doc-${i + 1}.html`, reportHtml(title, kicker, accent, stats, bars));
     await new Promise((r) => setTimeout(r, 30)); // distinct createdAt, oldest first
   }
   await daemon.write("Design-system/tokens.html", reportHtml("Color tokens", "Design system", "#ff385c", [["12", "tokens"], ["2", "themes"], ["AA", "contrast"]], [60, 40, 80]));
-  await daemon.write(`journal/${date}/dream.html`, reportHtml("Yesterday in review", "Dream", "#444444", [["3", "rooms"], ["8", "new docs"], ["2", "notes"]], [40, 70, 55]));
+  await daemon.write(`journal/${date}/dream.html`, reportHtml("Yesterday in review", "Dream", "#444444", [["3", "rooms"], ["8", "new artifacts"], ["2", "notes"]], [40, 70, 55]));
   await daemon.saveNote(date, "Plan", "- Read the weekly benchmark report\n- Clean up the color tokens");
   await daemon.saveNote(date, "Review", "Finished the latency report today.");
 

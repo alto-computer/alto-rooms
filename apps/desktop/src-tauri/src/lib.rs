@@ -1,8 +1,8 @@
 mod collector;
-mod conversation;
 mod daemon;
 mod drafts;
 mod flush;
+mod session;
 mod share;
 mod sorter;
 #[cfg(target_os = "macos")]
@@ -102,10 +102,10 @@ fn invoke_handler() -> InvokeHandler {
         drafts::save_note_draft,
         drafts::load_note_draft,
         drafts::delete_note_draft,
-        share::doc_original,
-        share::reveal_doc,
-        share::open_doc,
-        conversation::continue_conversation,
+        share::artifact_original,
+        share::reveal_artifact,
+        share::open_artifact,
+        session::continue_session,
         sorter::sort_state,
         sorter::sort_set_key,
         sorter::sort_clear_key,
@@ -123,10 +123,10 @@ fn invoke_handler() -> InvokeHandler {
         drafts::save_note_draft,
         drafts::load_note_draft,
         drafts::delete_note_draft,
-        share::doc_original,
-        share::reveal_doc,
-        share::open_doc,
-        conversation::continue_conversation,
+        share::artifact_original,
+        share::reveal_artifact,
+        share::open_artifact,
+        session::continue_session,
         sorter::sort_state,
         sorter::sort_set_key,
         sorter::sort_clear_key,

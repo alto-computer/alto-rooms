@@ -179,8 +179,8 @@ export function useViewer(): ViewerState {
   return useSyncExternalStore(store.subscribe, store.getState);
 }
 
-/** Opens a doc in this tab, or in a new one when `newTab` (see `wantsNewTab`). */
-export function useOpenDoc(): (a: Artifact, newTab: boolean) => void {
+/** Opens an artifact in this tab, or in a new one when `newTab` (see `wantsNewTab`). */
+export function useOpenArtifact(): (a: Artifact, newTab: boolean) => void {
   const viewer = useViewerStore();
-  return useCallback((a: Artifact, newTab: boolean) => viewer.go({ kind: "doc", roomId: a.roomId, artifactId: a.id }, newTab), [viewer]);
+  return useCallback((a: Artifact, newTab: boolean) => viewer.go({ kind: "artifact", roomId: a.roomId, artifactId: a.id }, newTab), [viewer]);
 }

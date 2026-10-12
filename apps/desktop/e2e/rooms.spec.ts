@@ -50,7 +50,7 @@ test("AC-6: renaming the room from its title renames the folder, tab and sidebar
   await expect(page.getByRole("heading", { level: 1, name: "연구", exact: true })).toBeVisible();
 });
 
-test("AC-9: Open in new tab opens a doc tab with the files-origin iframe", async ({ page, daemon }) => {
+test("AC-9: Open in new tab opens an artifact tab with the files-origin iframe", async ({ page, daemon }) => {
   await openApp(page);
   await createRoomInUi(page, "연구 도구");
   await daemon.write("연구-도구/a.html", "<title>첫 문서</title>");
@@ -64,7 +64,7 @@ test("AC-9: Open in new tab opens a doc tab with the files-origin iframe", async
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts allow-popups");
 });
 
-test("the doc tab's Share menu copies the doc's path; the app-only actions stay out of the web build", async ({ page, context, daemon }) => {
+test("the artifact tab's Share menu copies the artifact's path; the app-only actions stay out of the web build", async ({ page, context, daemon }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await openApp(page);
   await createRoomInUi(page, "연구 도구");
@@ -96,17 +96,17 @@ async function expectOneLinePill(page: Page, text: string) {
   expect(shape.width, `toast ${JSON.stringify(shape)} should be wider than its text`).toBeGreaterThan(shape.textWidth);
 }
 
-test("an open doc reloads when its file is rewritten", async ({ page, daemon }) => {
+test("an open artifact reloads when its file is rewritten", async ({ page, daemon }) => {
   await openApp(page);
   await createRoomInUi(page, "연구 도구");
   await daemon.write("연구-도구/a.html", "<title>첫 문서</title><p>v1</p>");
   const c = card(page, "첫 문서");
   await expect(c).toBeVisible({ timeout: 2000 });
   await c.click();
-  const doc = page.frameLocator('[role="tabpanel"] iframe');
-  await expect(doc.locator("p")).toHaveText("v1");
+  const artifact = page.frameLocator('[role="tabpanel"] iframe');
+  await expect(artifact.locator("p")).toHaveText("v1");
   await daemon.write("연구-도구/a.html", "<title>첫 문서</title><p>v2</p>");
-  await expect(doc.locator("p")).toHaveText("v2", { timeout: 3000 });
+  await expect(artifact.locator("p")).toHaveText("v2", { timeout: 3000 });
 });
 
 test("AC-14: ⌘B hides the sidebar and ⌘B brings it back", async ({ page, daemon: _daemon }) => {

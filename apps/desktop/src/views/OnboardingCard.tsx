@@ -26,7 +26,7 @@ export function onboardPrompt(home: string): string {
 export const EXAMPLE_PROMPTS: readonly { icon: LucideIcon; text: string }[] = [
   { icon: FileText, text: "Turn this result into an HTML report and put it in the right room" },
   { icon: RefreshCw, text: "Sort my rooms again, going back 30 days" },
-  { icon: Calendar, text: "Turn today's conversation into an HTML review and put it in today's Journal" },
+  { icon: Calendar, text: "Turn today's session into an HTML review and put it in today's Journal" },
 ];
 
 /** First run: synced, and no rooms besides the inbox. False before the first sync, when nothing can be told yet. */

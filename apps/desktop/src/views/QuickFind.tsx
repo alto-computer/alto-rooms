@@ -7,7 +7,7 @@ import { useRooms, useViewerStore, useWatchArtifacts } from "@/data/hooks";
 import { INBOX_ID } from "@/lib/drag";
 
 const MAX_ROOMS = 8;
-const MAX_DOCS = 30;
+const MAX_ARTIFACTS = 30;
 
 const norm = (s: string) => s.normalize("NFC").toLowerCase();
 
@@ -62,23 +62,23 @@ function FindBody({ onClose }: { onClose: () => void }) {
   };
 
 
-  const { roomHits, docHits } = useMemo(() => {
+  const { roomHits, artifactHits } = useMemo(() => {
     const q = norm(query.trim());
     const roomHits: Room[] = roomNames
       .filter((n) => n.key.includes(q))
       .slice(0, MAX_ROOMS)
       .map((n) => n.room);
-    const docHits: { id: string; roomId: string; title: string; roomName: string }[] = [];
+    const artifactHits: { id: string; roomId: string; title: string; roomName: string }[] = [];
     for (const r of rooms) {
       const list = artifacts[r.id];
       if (!list) continue;
       const titles = titlesOf(list);
-      for (let i = 0; i < list.length && docHits.length < MAX_DOCS; i++) {
+      for (let i = 0; i < list.length && artifactHits.length < MAX_ARTIFACTS; i++) {
         const a = list[i];
-        if (titles[i].includes(q)) docHits.push({ id: a.id, roomId: r.id, title: a.title, roomName: r.name });
+        if (titles[i].includes(q)) artifactHits.push({ id: a.id, roomId: r.id, title: a.title, roomName: r.name });
       }
     }
-    return { roomHits, docHits };
+    return { roomHits, artifactHits };
     // titlesOf only reads its per-list cache.
   }, [query, rooms, roomNames, artifacts]);
 
@@ -106,14 +106,14 @@ function FindBody({ onClose }: { onClose: () => void }) {
             ))}
           </CommandGroup>
         ) : null}
-        {docHits.length > 0 ? (
+        {artifactHits.length > 0 ? (
           <CommandGroup heading="Artifacts">
-            {docHits.map((d) => (
+            {artifactHits.map((d) => (
               <CommandItem
                 key={`${d.roomId}/${d.id}`}
-                value={`doc:${d.roomId}/${d.id}`}
+                value={`artifact:${d.roomId}/${d.id}`}
                 onSelect={() => {
-                  viewer.navigate({ kind: "doc", roomId: d.roomId, artifactId: d.id });
+                  viewer.navigate({ kind: "artifact", roomId: d.roomId, artifactId: d.id });
                   done();
                 }}
               >

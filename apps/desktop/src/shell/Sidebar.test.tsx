@@ -1,10 +1,10 @@
 import { RoomsApiError, type Artifact } from "@alto-rooms/protocol-ts";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { conversation, memoryStorage, renderWithStores, room } from "@/test/fakes";
+import { session, memoryStorage, renderWithStores, room } from "@/test/fakes";
 import { ViewerStore } from "@/data/viewerStore";
 import { localDate } from "@/lib/dates";
-import { ARTIFACT_DRAG_TYPE, CONVERSATION_DRAG_TYPE } from "@/lib/drag";
+import { ARTIFACT_DRAG_TYPE, SESSION_DRAG_TYPE } from "@/lib/drag";
 import { AppShell } from "./AppShell";
 
 vi.mock("@/lib/native", () => ({
@@ -18,7 +18,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const doc = (id: string, roomId: string, title: string): Artifact => ({
+const artifact = (id: string, roomId: string, title: string): Artifact => ({
   id,
   roomId,
   relPath: `${id}.html`,
@@ -35,7 +35,7 @@ const ROOMS = [
   room("l", "연결된 폴더", { kind: "linked", path: "/Users/me/code" }),
   room("u", "없는 폴더", { status: "unavailable" }),
 ];
-const ARTIFACTS = { inbox: [doc("x1", "inbox", "떠도는 문서")], a: [] };
+const ARTIFACTS = { inbox: [artifact("x1", "inbox", "떠도는 문서")], a: [] };
 
 /** jsdom has no DataTransfer that holds custom types; this one keeps data in a Map. */
 function stubTransfer(init: Record<string, string> = {}) {
@@ -95,7 +95,7 @@ describe("Sidebar: drag to move", () => {
       await dropOn(target, dt);
       expect(target).not.toHaveClass("outline-ink");
     }
-    // A doc from room a dropped back on a.
+    // An artifact from room a dropped back on a.
     await dropOn(sidebarRow("벤치마크"), stubTransfer({ [ARTIFACT_DRAG_TYPE]: JSON.stringify({ roomId: "a", artifactId: "y" }) }));
     expect(h.client.moveArtifact).not.toHaveBeenCalled();
   });
@@ -145,28 +145,28 @@ describe("Sidebar: drag to move", () => {
   });
 });
 
-describe("Sidebar: drag a conversation into a room", () => {
+describe("Sidebar: drag a session into a room", () => {
   const today = localDate();
   const journal = () => {
     const viewer = new ViewerStore(memoryStorage());
     viewer.open({ kind: "journal", date: today });
     return viewer;
   };
-  const talk = conversation("s1", { title: "Cold start" });
+  const talk = session("s1", { title: "Cold start" });
   const opts = () => ({
     rooms: ROOMS,
     artifacts: ARTIFACTS,
     viewer: journal(),
-    conversations: [talk],
-    days: { [today]: { conversations: [{ at: `${today}T01:00:00Z`, conversation: talk }] } },
+    sessions: [talk],
+    days: { [today]: { sessions: [{ at: `${today}T01:00:00Z`, session: talk }] } },
   });
 
   it("a Journal row dropped on a room (linked ones too) adds it there, highlighting while over", async () => {
     const h = await renderWithStores(<AppShell />, opts());
-    const row = await screen.findByTestId("day-conversation");
+    const row = await screen.findByTestId("day-session");
     const dt = stubTransfer();
     fireEvent.dragStart(row, { dataTransfer: dt });
-    expect(JSON.parse(dt.data.get(CONVERSATION_DRAG_TYPE)!)).toEqual({ id: talk.id, roomId: null });
+    expect(JSON.parse(dt.data.get(SESSION_DRAG_TYPE)!)).toEqual({ sessionRef: { agent: talk.agent, id: talk.id }, roomId: null });
 
     const target = sidebarRow("연결된 폴더");
     fireEvent.dragEnter(target, { dataTransfer: dt });
@@ -174,15 +174,15 @@ describe("Sidebar: drag a conversation into a room", () => {
     expect(target).toHaveClass("outline-ink");
     await dropOn(target, dt);
     fireEvent.dragEnd(row, { dataTransfer: dt });
-    expect(h.client.setConversationRoom).toHaveBeenCalledWith(talk.id, "l");
+    expect(h.client.setSessionRoom).toHaveBeenCalledWith({ agent: talk.agent, id: talk.id }, "l");
     expect(h.client.moveArtifact).not.toHaveBeenCalled();
   });
 
   it("the room it is already in doesn't light up while it is carried over it", async () => {
     const inRoom = { ...talk, roomId: "a" };
-    await renderWithStores(<AppShell />, { ...opts(), conversations: [inRoom], days: { [today]: { conversations: [{ at: `${today}T01:00:00Z`, conversation: inRoom }] } } });
+    await renderWithStores(<AppShell />, { ...opts(), sessions: [inRoom], days: { [today]: { sessions: [{ at: `${today}T01:00:00Z`, session: inRoom }] } } });
     const dt = stubTransfer();
-    fireEvent.dragStart(await screen.findByTestId("day-conversation"), { dataTransfer: dt });
+    fireEvent.dragStart(await screen.findByTestId("day-session"), { dataTransfer: dt });
     const own = sidebarRow("벤치마크");
     fireEvent.dragOver(own, { dataTransfer: dt });
     expect(own).not.toHaveClass("outline-ink");
@@ -193,16 +193,16 @@ describe("Sidebar: drag a conversation into a room", () => {
 
   it("is refused by the room it is already in, and a malformed payload does nothing", async () => {
     const h = await renderWithStores(<AppShell />, opts());
-    await dropOn(sidebarRow("벤치마크"), stubTransfer({ [CONVERSATION_DRAG_TYPE]: JSON.stringify({ id: talk.id, roomId: "a" }) }));
-    for (const bad of ["nope", "{}", JSON.stringify({ id: { agent: "gpt", session: "s1" }, roomId: null })]) {
-      await dropOn(sidebarRow("벤치마크"), stubTransfer({ [CONVERSATION_DRAG_TYPE]: bad }));
+    await dropOn(sidebarRow("벤치마크"), stubTransfer({ [SESSION_DRAG_TYPE]: JSON.stringify({ sessionRef: { agent: talk.agent, id: talk.id }, roomId: "a" }) }));
+    for (const bad of ["nope", "{}", JSON.stringify({ sessionRef: { agent: "gpt", id: "s1" }, roomId: null })]) {
+      await dropOn(sidebarRow("벤치마크"), stubTransfer({ [SESSION_DRAG_TYPE]: bad }));
     }
-    expect(h.client.setConversationRoom).not.toHaveBeenCalled();
+    expect(h.client.setSessionRoom).not.toHaveBeenCalled();
   });
 
   it("read-only: the row does not drag", async () => {
     await renderWithStores(<AppShell />, { ...opts(), readOnly: true });
-    expect(await screen.findByTestId("day-conversation")).not.toHaveAttribute("draggable", "true");
+    expect(await screen.findByTestId("day-session")).not.toHaveAttribute("draggable", "true");
   });
 });
 
@@ -212,19 +212,19 @@ describe("Sidebar: reorder rooms", () => {
   const names = () => within(screen.getByRole("list", { name: "Rooms" })).getAllByRole("button").map((b) => b.textContent);
 
   it("rooms are sortable; the inbox stays put", async () => {
-    await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] } });
+    await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [artifact("x1", "inbox", "떠도는 문서")] } });
     expect(inboxRow()).not.toHaveAttribute("aria-roledescription", "sortable");
     for (const n of ["A", "B", "C"]) expect(sidebarRow(n)).toHaveAttribute("aria-roledescription", "sortable");
   });
 
   it("follows rooms.reordered from the core", async () => {
-    const h = await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] } });
+    const h = await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [artifact("x1", "inbox", "떠도는 문서")] } });
     act(() => h.emit({ type: "rooms.reordered", roomIds: ["inbox", "c", "a", "b"] }));
     expect(names()).toEqual(["C", "A", "B"]);
   });
 
   it("is off when read-only", async () => {
-    await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] }, readOnly: true });
+    await renderWithStores(<AppShell />, { rooms: four(), artifacts: { inbox: [artifact("x1", "inbox", "떠도는 문서")] }, readOnly: true });
     expect(sidebarRow("A")).not.toHaveAttribute("aria-roledescription", "sortable");
   });
 });
@@ -239,7 +239,7 @@ describe("Sidebar: pinned rooms", () => {
     room("a", "A"),
     room("b", "B"),
   ];
-  const opts = () => ({ rooms: rooms(), artifacts: { inbox: [doc("x1", "inbox", "떠도는 문서")] } });
+  const opts = () => ({ rooms: rooms(), artifacts: { inbox: [artifact("x1", "inbox", "떠도는 문서")] } });
   const listNames = (label: string) => within(screen.getByRole("list", { name: label })).getAllByRole("button").map((b) => b.textContent);
   const rowIn = (label: string, name: string) => within(screen.getByRole("list", { name: label })).getByRole("button", { name });
 
@@ -425,10 +425,10 @@ describe("Sidebar: room menu", () => {
 describe("Sidebar: inbox", () => {
   const rows = () => within(screen.getByRole("list", { name: "Rooms" })).getAllByRole("button").map((b) => b.textContent);
 
-  it("sits above the rooms and hides while it is empty; once a doc waits there it shows with its count", async () => {
+  it("sits above the rooms and hides while it is empty; once an artifact waits there it shows with its count", async () => {
     const h = await renderWithStores(<AppShell />, { rooms: [room("inbox", "Inbox", { artifactCount: 0 }), room("a", "A")] });
     expect(inboxRow()).toBeNull();
-    act(() => h.emit({ type: "artifact.added", artifact: doc("x1", "inbox", "떠도는 문서") }));
+    act(() => h.emit({ type: "artifact.added", artifact: artifact("x1", "inbox", "떠도는 문서") }));
     expect(inboxRow()).toHaveTextContent("Inbox1");
     expect(rows()).toEqual(["A"]);
   });

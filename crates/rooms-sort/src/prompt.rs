@@ -1,5 +1,5 @@
 //! What Jev sees (spec §3): the repo a file lives in (N1), the state text and the room options,
-//! each cut to its budget. Nothing else about the document or the machine is sent.
+//! each cut to its budget. Nothing else about the artifact or the machine is sent.
 use std::path::{Path, PathBuf};
 
 pub const TITLE_CHARS: usize = 120;
@@ -97,7 +97,7 @@ fn entity(s: &str) -> Option<(char, usize)> {
     None
 }
 
-/// The state Jev reads for one document.
+/// The state Jev reads for one artifact.
 pub fn state(title: &str, location: &str, excerpt: &str) -> String {
     format!("제목: {}\n위치: {location}\n\n{excerpt}", cut(title, TITLE_CHARS))
 }

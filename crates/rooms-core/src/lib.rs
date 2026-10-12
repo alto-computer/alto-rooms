@@ -1,6 +1,5 @@
 mod artifacts;
 pub mod asks;
-mod conversations;
 pub mod core;
 mod dangling;
 pub mod error;
@@ -15,6 +14,7 @@ pub mod plugins;
 mod rooms;
 pub mod rules;
 mod scan;
+mod sessions;
 pub mod state;
 pub mod tools;
 pub mod walk;

@@ -438,8 +438,8 @@ describe("AppShell: shortcuts while typing", () => {
   });
 });
 
-describe("AppShell: kept doc tabs", () => {
-  const doc = (id: string, title: string) => ({
+describe("AppShell: kept artifact tabs", () => {
+  const artifact = (id: string, title: string) => ({
     id,
     roomId: "r1",
     relPath: `${id}.html`,
@@ -451,10 +451,10 @@ describe("AppShell: kept doc tabs", () => {
     fileKey: `fk-${id}`,
   });
 
-  it("a doc tab you leave stays loaded (hidden) and comes back with the same frame", async () => {
+  it("an artifact tab you leave stays loaded (hidden) and comes back with the same frame", async () => {
     const viewer = new ViewerStore(memoryStorage());
-    const d1 = viewer.open({ kind: "doc", roomId: "r1", artifactId: "a" });
-    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [doc("a", "첫 문서"), doc("b", "둘째")] }, viewer });
+    const d1 = viewer.open({ kind: "artifact", roomId: "r1", artifactId: "a" });
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [artifact("a", "첫 문서"), artifact("b", "둘째")] }, viewer });
     const frame = await screen.findByTitle("첫 문서");
     act(() => {
       viewer.open({ kind: "room", roomId: "r2" });
@@ -469,11 +469,11 @@ describe("AppShell: kept doc tabs", () => {
 
   it("reordering tabs never moves a kept frame (a moved iframe reloads)", async () => {
     const viewer = new ViewerStore(memoryStorage());
-    const a = viewer.open({ kind: "doc", roomId: "r1", artifactId: "a" });
-    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [doc("a", "첫 문서"), doc("b", "둘째")] }, viewer });
+    const a = viewer.open({ kind: "artifact", roomId: "r1", artifactId: "a" });
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [artifact("a", "첫 문서"), artifact("b", "둘째")] }, viewer });
     await screen.findByTitle("첫 문서");
     act(() => {
-      viewer.open({ kind: "doc", roomId: "r1", artifactId: "b" });
+      viewer.open({ kind: "artifact", roomId: "r1", artifactId: "b" });
     });
     await screen.findByTitle("둘째");
     act(() => viewer.activate(a));
@@ -484,13 +484,13 @@ describe("AppShell: kept doc tabs", () => {
     expect(order()).toEqual(before);
   });
 
-  it("keeps one doc tab besides the active one", async () => {
+  it("keeps one artifact tab besides the active one", async () => {
     const viewer = new ViewerStore(memoryStorage());
     const ids = ["a", "b", "c", "d", "e"];
-    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: ids.map((id) => doc(id, `doc ${id}`)) }, viewer });
+    await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: ids.map((id) => artifact(id, `doc ${id}`)) }, viewer });
     for (const id of ids) {
       act(() => {
-        viewer.open({ kind: "doc", roomId: "r1", artifactId: id });
+        viewer.open({ kind: "artifact", roomId: "r1", artifactId: id });
       });
       await screen.findByTitle(`doc ${id}`);
     }
@@ -499,12 +499,12 @@ describe("AppShell: kept doc tabs", () => {
   });
 });
 
-describe("AppShell: gone rooms and docs, and before the first sync", () => {
+describe("AppShell: gone rooms and artifacts, and before the first sync", () => {
   it("labels a tab whose room or doc is gone Missing room / Missing doc once synced", async () => {
     const viewer = new ViewerStore(memoryStorage());
     viewer.open({ kind: "room", roomId: "gone" });
-    viewer.open({ kind: "doc", roomId: "r1", artifactId: "missing" });
-    viewer.open({ kind: "doc", roomId: "gone", artifactId: "x" });
+    viewer.open({ kind: "artifact", roomId: "r1", artifactId: "missing" });
+    viewer.open({ kind: "artifact", roomId: "gone", artifactId: "x" });
     await renderWithStores(<AppShell />, { rooms: twoRooms, artifacts: { r1: [] }, viewer });
     await act(async () => {});
     const labels = screen.getAllByRole("tab").map((t) => t.textContent);

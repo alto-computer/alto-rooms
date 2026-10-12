@@ -49,7 +49,7 @@ where
     tokio::task::spawn_blocking(move || f(&asks)).await.map_err(|e| AskError::Io(e.to_string()))?.map_err(AskErr)
 }
 
-/// `?scope=<key>`: `doc:<fileKey>`, `room:<roomId>` or `day:<YYYY-MM-DD>`.
+/// `?scope=<key>`: `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>` or `session:<agent>:<id>`.
 #[derive(Deserialize)]
 pub struct ScopeQuery { scope: String }
 
@@ -134,24 +134,24 @@ pub async fn list_artifacts(State(st): State<AppState>, Path(room_id): Path<Stri
     snapshot(&st, move |c| c.list_artifacts(&room_id)).await
 }
 
-pub async fn list_room_conversations(State(st): State<AppState>, Path(room_id): Path<String>) -> Result<Response, ApiErr> {
-    snapshot(&st, move |c| c.room_conversations(&room_id)).await
+pub async fn list_room_sessions(State(st): State<AppState>, Path(room_id): Path<String>) -> Result<Response, ApiErr> {
+    snapshot(&st, move |c| c.room_sessions(&room_id)).await
 }
 
-fn conversation_id(agent: &str, session: &str) -> Result<ConversationId, CoreError> {
-    ConversationId::parse_key(&format!("{agent}:{session}")).ok_or_else(|| CoreError::InvalidInput("unknown agent or bad session id".into()))
+fn session_ref(agent: &str, id: &str) -> Result<SessionRef, CoreError> {
+    SessionRef::parse_key(&format!("{agent}:{id}")).ok_or_else(|| CoreError::InvalidInput("unknown agent or bad session id".into()))
 }
 
-pub async fn get_conversation(State(st): State<AppState>, Path((agent, session)): Path<(String, String)>) -> Result<Response, ApiErr> {
-    let id = conversation_id(&agent, &session)?;
-    snapshot(&st, move |c| c.conversation(&id)).await
+pub async fn get_session(State(st): State<AppState>, Path((agent, id)): Path<(String, String)>) -> Result<Response, ApiErr> {
+    let session_ref = session_ref(&agent, &id)?;
+    snapshot(&st, move |c| c.session(&session_ref)).await
 }
 
-/// Body: the room id, or `null` to take the conversation out of its room.
-pub async fn set_conversation_room(State(st): State<AppState>, Path((agent, session)): Path<(String, String)>, b: Result<Json<Option<RoomId>>, JsonRejection>) -> Result<Json<Conversation>, ApiErr> {
+/// Body: the room id, or `null` to take the session out of its room.
+pub async fn set_session_room(State(st): State<AppState>, Path((agent, id)): Path<(String, String)>, b: Result<Json<Option<RoomId>>, JsonRejection>) -> Result<Json<Session>, ApiErr> {
     let Json(room) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
-    let id = conversation_id(&agent, &session)?;
-    Ok(Json(blocking(&st, move |c| c.set_conversation_room(&id, room)).await?))
+    let session_ref = session_ref(&agent, &id)?;
+    Ok(Json(blocking(&st, move |c| c.set_session_room(&session_ref, room)).await?))
 }
 
 pub async fn journal_day(State(st): State<AppState>, Path(date): Path<String>) -> Result<Response, ApiErr> {
@@ -237,9 +237,9 @@ fn none_match_items<'a>(if_none_match: impl Iterator<Item = &'a str>) -> impl It
     if_none_match.flat_map(|v| v.split(',')).map(str::trim).filter(|t| !t.is_empty())
 }
 
-/// Spliced into every HTML document Rooms shows, so "ask about this" works inside docs and a light
-/// doc can be dimmed in dark mode. The app frames a doc sandboxed with no origin of its own
-/// (agent-written HTML must not reach the app), so it can't read the doc's selection or background;
+/// Spliced into every HTML document Rooms shows, so "ask about this" works inside artifacts and a
+/// light artifact can be dimmed in dark mode. The app frames an artifact sandboxed with no origin of
+/// its own (agent-written HTML must not reach the app), so it can't read its selection or background;
 /// this script, running inside, posts them out instead. It goes
 /// right after `<head>`, before any `<meta>` policy the document declares, which would block a
 /// script after it (`inject`). The file on disk is untouched.
@@ -247,10 +247,10 @@ const SELECTION_BRIDGE: &[u8] = include_bytes!("selection-bridge.html");
 /// Bumped when the bridge or its placement changes, so cached documents pick up the new one.
 const BRIDGE_VERSION: &str = "b4";
 
-/// `doc=1` asks for the doc-tab variant: the bridge plus the content scripts of enabled plugins.
-/// Card previews send nothing and get the bridge alone.
+/// `tab=1` asks for the artifact-tab variant: the bridge plus the content scripts of enabled
+/// plugins. Card previews send nothing and get the bridge alone.
 #[derive(Deserialize)]
-pub struct FileQuery { doc: Option<String> }
+pub struct FileQuery { tab: Option<String> }
 
 /// The block spliced into an HTML document: the bridge, then one tag per content script. The
 /// tag's URL is absolute so a document's `<base href>` cannot redirect it.
@@ -276,11 +276,11 @@ fn inject_version(scripts: &[ContentScript]) -> String {
 /// Serves a room file. Previews remount often (scrolling, tab switches), so responses carry an
 /// ETag with `no-cache`: the webview revalidates every time and gets a bodyless 304 while unchanged.
 pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String, String)>, Query(q): Query<FileQuery>, headers: HeaderMap) -> Result<Response, ApiErr> {
-    let doc = q.doc.as_deref() == Some("1");
+    let tab = q.tab.as_deref() == Some("1");
     let (path, ext, scripts) = blocking(&st, move |c| {
         let path = c.resolve_file(&room_id, &rel)?;
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-        let scripts = if doc && matches!(ext.as_str(), "html" | "htm") { c.content_scripts() } else { Vec::new() };
+        let scripts = if tab && matches!(ext.as_str(), "html" | "htm") { c.content_scripts() } else { Vec::new() };
         Ok((path, ext, scripts))
     }).await?;
     let read_err = |e: std::io::Error| ApiErr(CoreError::Io(e));

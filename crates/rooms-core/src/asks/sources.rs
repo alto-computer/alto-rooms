@@ -1,4 +1,4 @@
-//! `<home>/.rooms/sources.json`: which agent conversation last wrote a doc (written by rooms-collect
+//! `<home>/.rooms/sources.json`: which agent session last wrote an artifact (written by rooms-collect
 //! and by find_html.py). rooms-core never parses agent logs; it only reads this file, fresh on every ask.
 use rooms_protocol::Source;
 use std::path::Path;
@@ -50,8 +50,8 @@ mod tests {
 
     #[test]
     fn key_in_other_case_matches_on_case_insensitive_fs() {
-        let docs = tempfile::tempdir().unwrap();
-        let real = std::fs::canonicalize(docs.path()).unwrap().join("Doc.html");
+        let dir = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(dir.path()).unwrap().join("Doc.html");
         std::fs::write(&real, "").unwrap();
         let typed = real.with_file_name("DOC.html");
         if std::fs::canonicalize(&typed).ok().as_ref() != Some(&real) {

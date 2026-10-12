@@ -1,4 +1,4 @@
-//! `<home>/.rooms/sources.json`: which agent conversation last wrote each file. The same file
+//! `<home>/.rooms/sources.json`: which agent session last wrote each file. The same file
 //! and format find_html.py `--record-sources` writes; rooms-core reads it for asks.
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;

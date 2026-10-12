@@ -1,16 +1,16 @@
 import type { Agent, Artifact } from "@alto-rooms/protocol-ts";
-import { isAgent } from "@/lib/agents";
+import { isAgent, isSessionId } from "@/lib/agents";
 import { isAppearance, type Appearance } from "@/lib/appearance";
 import { globalTimers, type Clock } from "@/lib/clock";
 import { localDate } from "@/lib/dates";
 
 export type Tab =
   | { id: string; kind: "room"; roomId: string }
-  | { id: string; kind: "doc"; roomId: string; artifactId: string }
+  | { id: string; kind: "artifact"; roomId: string; artifactId: string }
   | { id: string; kind: "journal"; date: string }
   | { id: string; kind: "note"; date: string; name: string }
   | { id: string; kind: "plugin"; pluginId: string }
-  | { id: string; kind: "conversation"; agent: Agent; session: string }
+  | { id: string; kind: "session"; agent: Agent; sessionId: string }
   /** One per window: opening it again shows the one already open. */
   | { id: string; kind: "settings" };
 
@@ -31,7 +31,7 @@ export type PluginPanel = { open: boolean; width: number; pluginId: string | nul
 
 export const DEFAULT_PLUGIN_PANEL: PluginPanel = { open: false, width: 360, pluginId: null };
 
-/** An anchor a plugin passed to `open`, on its way to that plugin's content script in a doc tab. Opaque to the app. */
+/** An anchor a plugin passed to `open`, on its way to that plugin's content script in an artifact tab. Opaque to the app. */
 export type Reveal = { pluginId: string; anchor: unknown };
 
 export type ViewerState = {
@@ -62,12 +62,11 @@ function defaultStorage(): StorageLike | undefined {
 }
 
 const isStr = (v: unknown): v is string => typeof v === "string";
-/** roomsd's session id rule; anything else could never name a conversation. */
-const isSession = (v: unknown): v is string => isStr(v) && /^[A-Za-z0-9_-]{1,128}$/.test(v);
-
 /**
  * Rebuilds a tab from untrusted JSON, keeping only its id fields. The retired New tab
- * (`kind: "new"`) comes back as the Journal for `today`, which took its place as home.
+ * (`kind: "new"`) comes back as the Journal for `today`, which took its place as home. Tabs saved
+ * before artifacts and sessions had their names (`kind: "doc"`, and `kind: "conversation"` with
+ * the id in `session`) come back under the new ones.
  */
 function parseTab(v: unknown, today: string): Tab | null {
   if (!v || typeof v !== "object") return null;
@@ -76,8 +75,9 @@ function parseTab(v: unknown, today: string): Tab | null {
   switch (t.kind) {
     case "room":
       return isStr(t.roomId) ? { id: t.id, kind: "room", roomId: t.roomId } : null;
+    case "artifact":
     case "doc":
-      return isStr(t.roomId) && isStr(t.artifactId) ? { id: t.id, kind: "doc", roomId: t.roomId, artifactId: t.artifactId } : null;
+      return isStr(t.roomId) && isStr(t.artifactId) ? { id: t.id, kind: "artifact", roomId: t.roomId, artifactId: t.artifactId } : null;
     case "journal":
       return isStr(t.date) ? { id: t.id, kind: "journal", date: t.date } : null;
     case "note":
@@ -86,8 +86,10 @@ function parseTab(v: unknown, today: string): Tab | null {
       return { id: t.id, kind: "journal", date: today };
     case "plugin":
       return isStr(t.pluginId) ? { id: t.id, kind: "plugin", pluginId: t.pluginId } : null;
+    case "session":
+      return isAgent(t.agent) && isSessionId(t.sessionId) ? { id: t.id, kind: "session", agent: t.agent, sessionId: t.sessionId } : null;
     case "conversation":
-      return isAgent(t.agent) && isSession(t.session) ? { id: t.id, kind: "conversation", agent: t.agent, session: t.session } : null;
+      return isAgent(t.agent) && isSessionId(t.session) ? { id: t.id, kind: "session", agent: t.agent, sessionId: t.session } : null;
     case "settings":
       return { id: t.id, kind: "settings" };
     default:
@@ -167,16 +169,16 @@ function sameTab(a: TabInput | Tab, b: TabInput | Tab): boolean {
   switch (a.kind) {
     case "room":
       return b.kind === "room" && a.roomId === b.roomId;
-    case "doc":
-      return b.kind === "doc" && a.roomId === b.roomId && a.artifactId === b.artifactId;
+    case "artifact":
+      return b.kind === "artifact" && a.roomId === b.roomId && a.artifactId === b.artifactId;
     case "journal":
       return b.kind === "journal" && a.date === b.date;
     case "note":
       return b.kind === "note" && a.date === b.date && a.name === b.name;
     case "plugin":
       return b.kind === "plugin" && a.pluginId === b.pluginId;
-    case "conversation":
-      return b.kind === "conversation" && a.agent === b.agent && a.session === b.session;
+    case "session":
+      return b.kind === "session" && a.agent === b.agent && a.sessionId === b.sessionId;
     case "settings":
       return b.kind === "settings";
   }
@@ -193,16 +195,16 @@ function makeTab(id: string, t: TabInput): Tab {
   switch (t.kind) {
     case "room":
       return { id, kind: "room", roomId: t.roomId };
-    case "doc":
-      return { id, kind: "doc", roomId: t.roomId, artifactId: t.artifactId };
+    case "artifact":
+      return { id, kind: "artifact", roomId: t.roomId, artifactId: t.artifactId };
     case "journal":
       return { id, kind: "journal", date: t.date };
     case "note":
       return { id, kind: "note", date: t.date, name: t.name };
     case "plugin":
       return { id, kind: "plugin", pluginId: t.pluginId };
-    case "conversation":
-      return { id, kind: "conversation", agent: t.agent, session: t.session };
+    case "session":
+      return { id, kind: "session", agent: t.agent, sessionId: t.sessionId };
     case "settings":
       return { id, kind: "settings" };
   }
@@ -219,7 +221,7 @@ export class ViewerStore {
   private lastChild: { opener: string; id: string } | null = null;
   /** Transient: recently closed tabs, oldest first. */
   private closed: { tab: TabInput; index: number; history: TabHistory }[] = [];
-  /** Transient: tab id -> the anchor waiting for the doc it shows. Dropped once taken, or when the tab closes or moves on. */
+  /** Transient: tab id -> the anchor waiting for the artifact it shows. Dropped once taken, or when the tab closes or moves on. */
   private reveals = new Map<string, Reveal>();
   private readonly storage: StorageLike | undefined;
   private readonly now: () => Date;
@@ -417,16 +419,16 @@ export class ViewerStore {
     this.set({ ...this.leaving(), activeId: id });
   }
 
-  /** Queues `r` for the doc that tab `id` shows, replacing one still waiting there. */
+  /** Queues `r` for the artifact that tab `id` shows, replacing one still waiting there. */
   reveal(id: string, r: Reveal): void {
-    if (!this.state.tabs.some((t) => t.id === id && t.kind === "doc")) return;
+    if (!this.state.tabs.some((t) => t.id === id && t.kind === "artifact")) return;
     this.reveals.set(id, r);
     this.emit();
   }
 
   /**
    * Offers the anchor waiting for tab `id` to `accept`, and forgets it once `accept` returns true.
-   * It stays while the doc's script is not ready yet, so a channel the tab drops and makes again
+   * It stays while the artifact's script is not ready yet, so a channel the tab drops and makes again
    * does not lose it.
    */
   takeReveal(id: string, accept: (r: Reveal) => boolean): void {

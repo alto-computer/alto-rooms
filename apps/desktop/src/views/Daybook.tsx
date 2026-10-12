@@ -1,23 +1,23 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Artifact, Conversation, Info, JournalDay, Note, Room, RoomColor } from "@alto-rooms/protocol-ts";
+import type { Artifact, Session, Info, JournalDay, Note, Room, RoomColor } from "@alto-rooms/protocol-ts";
 import { RoomDot } from "@/components/RoomDot";
-import { useClient, useOpenDoc, useViewerStore } from "@/data/hooks";
-import { conversationKey } from "@/lib/conversations";
+import { useClient, useOpenArtifact, useViewerStore } from "@/data/hooks";
+import { sessionKey } from "@/lib/sessions";
 import { clockTime } from "@/lib/dates";
 import { INBOX_ID } from "@/lib/drag";
 import { noteBase } from "@/lib/notes";
 import { wantsNewTab } from "@/lib/nav";
 import { ArtifactThumb } from "./ArtifactThumb";
-import { ConversationRow } from "./ConversationRow";
+import { SessionRow } from "./SessionRow";
 
 /**
  * One line of a day, at the time it happened: a note of yours, an artifact an agent wrote (with
- * its room's name and pin colour), or a conversation (at its first message that day, with its room).
+ * its room's name and pin colour), or a session (at its first message that day, with its room).
  */
 export type DayEntry =
   | { kind: "note"; at: string; key: string; note: Note }
   | { kind: "artifact"; at: string; key: string; artifact: Artifact; label: string; color: RoomColor | null }
-  | { kind: "conversation"; at: string; key: string; conversation: Conversation; room: Room | undefined };
+  | { kind: "session"; at: string; key: string; session: Session; room: Room | undefined };
 
 /** The day's entries, oldest first. An artifact is labelled with its room; the Dream (the day's dream.html in the Journal) is "Review". */
 export function dayEntries(day: JournalDay, info: Info, rooms: readonly Room[]): DayEntry[] {
@@ -32,13 +32,13 @@ export function dayEntries(day: JournalDay, info: Info, rooms: readonly Room[]):
     ...day.artifacts.map(
       (artifact): DayEntry => ({ kind: "artifact", at: artifact.createdAt, key: `artifact:${artifact.id}`, artifact, label: label(artifact), color: color(artifact) }),
     ),
-    ...day.conversations.map(
-      ({ at, conversation }): DayEntry => ({
-        kind: "conversation",
+    ...day.sessions.map(
+      ({ at, session }): DayEntry => ({
+        kind: "session",
         at,
-        key: `conversation:${conversationKey(conversation.id)}`,
-        conversation,
-        room: rooms.find((r) => r.id === conversation.roomId),
+        key: `session:${sessionKey(session)}`,
+        session,
+        room: rooms.find((r) => r.id === session.roomId),
       }),
     ),
   ];
@@ -145,14 +145,14 @@ function NoteEntry({ note }: { note: Note }) {
 }
 
 export function ArtifactEntry({ artifact, label, color, info }: { artifact: Artifact; label: string; color: RoomColor | null; info: Info }) {
-  const openDoc = useOpenDoc();
+  const openArtifact = useOpenArtifact();
   return (
     <button
       type="button"
       data-testid="day-artifact"
       aria-label={artifact.title}
-      onClick={(e) => openDoc(artifact, wantsNewTab(e))}
-      onAuxClick={(e) => e.button === 1 && openDoc(artifact, true)}
+      onClick={(e) => openArtifact(artifact, wantsNewTab(e))}
+      onAuxClick={(e) => e.button === 1 && openArtifact(artifact, true)}
       className="flex w-full max-w-[440px] min-w-0 items-center gap-3.5 rounded-xl bg-sheet p-1.5 pr-4 text-left shadow-sheet outline-none transition-[box-shadow] duration-150 hover:shadow-lift focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
     >
       <ArtifactThumb artifact={artifact} info={info} variant="row" className="w-[104px] shrink-0 rounded-md" />
@@ -169,16 +169,16 @@ export function ArtifactEntry({ artifact, label, color, info }: { artifact: Arti
   );
 }
 
-type ConversationEntry = Extract<DayEntry, { kind: "conversation" }>;
+type SessionEntry = Extract<DayEntry, { kind: "session" }>;
 
-/** The entries as the daybook stacks them: consecutive conversations make one run of tight rows. */
-type Block = { kind: "run"; key: string; run: ConversationEntry[] } | { kind: "one"; entry: Exclude<DayEntry, ConversationEntry> };
+/** The entries as the daybook stacks them: consecutive sessions make one run of tight rows. */
+type Block = { kind: "run"; key: string; run: SessionEntry[] } | { kind: "one"; entry: Exclude<DayEntry, SessionEntry> };
 
 function blocks(entries: DayEntry[]): Block[] {
   const out: Block[] = [];
   for (const e of entries) {
     const last = out.at(-1);
-    if (e.kind !== "conversation") out.push({ kind: "one", entry: e });
+    if (e.kind !== "session") out.push({ kind: "one", entry: e });
     else if (last?.kind === "run") last.run.push(e);
     else out.push({ kind: "run", key: e.key, run: [e] });
   }
@@ -189,7 +189,7 @@ const TIME = "pr-4 text-right text-small font-medium text-ink-3 tabular-nums";
 
 /**
  * The day as a daybook: times in the left margin against a thin rule, your notes in serif, agents'
- * artifacts as compact sheets, conversations as one line each.
+ * artifacts as compact sheets, sessions as one line each.
  */
 export function Daybook({ entries, info }: { entries: DayEntry[]; info: Info }) {
   return (
@@ -205,7 +205,7 @@ export function Daybook({ entries, info }: { entries: DayEntry[]; info: Info }) 
                 <time dateTime={e.at} className={`${TIME} leading-[30px]`}>
                   {clockTime(e.at)}
                 </time>
-                <ConversationRow conversation={e.conversation} room={e.room} entryKey={e.key} />
+                <SessionRow session={e.session} room={e.room} entryKey={e.key} />
               </div>
             ))}
           </li>

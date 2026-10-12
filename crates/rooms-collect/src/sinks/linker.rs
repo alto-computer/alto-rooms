@@ -2,7 +2,7 @@
 //! symlink in `<home>/inbox`. Choosing a room is rooms-sort's job (its R1 is the old "room named
 //! like the repo" rule), which reads `linked.jsonl` to know what the collector put there. It
 //! never creates rooms, never writes into rooms, and never re-adds a link the user removed.
-//! The same pass records each written file's conversation in sources.json.
+//! The same pass records each written file's session in sources.json.
 use super::sources::{self, Entry};
 use crate::filter::{link_targets, linked_roots, not_a_document, repo_info};
 use crate::pathutil::under;
