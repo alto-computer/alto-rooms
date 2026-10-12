@@ -14,7 +14,7 @@
 import type { AskScope } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { isAgent } from "@/lib/agents";
-import { noteKey } from "@/lib/notes";
+import { isNoteName, noteKey } from "@/lib/notes";
 import { isColor, parseActions, type ContentAction } from "@/plugins/contentChannel";
 import { buildIndex, offsetOf, rangeAt, type TextIndex } from "./surfaceIndex";
 
@@ -38,8 +38,6 @@ const STYLE = /^[a-z][a-z0-9-]{0,31}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 /** roomsd's session id rule. */
 const SESSION = /^[A-Za-z0-9_-]{1,128}$/;
-/** A note file name as roomsd admits it: one path segment, no control characters, no leading dot or `..`, within 80 characters (roomsd allows 60 plus `.md`). */
-const NOTE_NAME = /^(?![.])(?!.*\.\.)[^\p{Cc}/\\:]{1,80}$/u;
 
 export type SurfaceRange = { id: string; start: number; end: number; style: string };
 /** Where a selection lies: inside one open surface, as offsets into its text, with that slice of it. */
@@ -182,7 +180,7 @@ export function parseSurfaceId(v: unknown): SurfaceId | null {
   if (!v || typeof v !== "object") return null;
   const { kind, scope, turnId, date, name } = v as Record<string, unknown>;
   if (kind === "note") {
-    return typeof date === "string" && DATE.test(date) && typeof name === "string" && NOTE_NAME.test(name) ? { kind: "note", date, name } : null;
+    return typeof date === "string" && DATE.test(date) && typeof name === "string" && isNoteName(name) ? { kind: "note", date, name } : null;
   }
   if (kind !== "answer" || typeof turnId !== "string" || !ID.test(turnId) || !scope || typeof scope !== "object") return null;
   const s = scope as Record<string, unknown>;

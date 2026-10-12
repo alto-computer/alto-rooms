@@ -28,7 +28,7 @@ export type BridgeDeps = {
     deletePluginData(id: string, path: string): Promise<void>;
     listArtifacts(roomId: string): Promise<{ data: Artifact[] }>;
     findArtifactByFileKey(fileKey: string): Promise<Artifact | null>;
-    getNote(date: string, name: string): Promise<string>;
+    noteExists(date: string, name: string): Promise<boolean>;
   };
   /** A write or delete of `path` in the plugin's data went through. */
   changed(path: string): void;
@@ -108,8 +108,8 @@ export function relay<T>(promise: Promise<T>): Promise<T> {
 /** The tab that shows the surface: the note itself, or the one whose ask bar holds the answer's thread. */
 async function surfaceTab(surface: SurfaceId, deps: BridgeDeps): Promise<TabInput> {
   if (surface.kind === "note") {
-    // A note tab for a name that is not on disk would be a new, empty note; roomsd's 404 refuses it.
-    await relay(deps.client.getNote(surface.date, surface.name));
+    // A note tab for a name that is not on disk would be a new, empty note.
+    if (!(await relay(deps.client.noteExists(surface.date, surface.name)))) throw new BridgeError("not_found");
     return { kind: "note", date: surface.date, name: surface.name };
   }
   const { scope } = surface;

@@ -25,10 +25,7 @@ function deps() {
     deletePluginData: vi.fn(async () => undefined),
     listArtifacts: vi.fn(async () => ({ data: [art("old", "2026-01-01T00:00:00Z"), art("new", "2026-02-01T00:00:00Z")], seq: 1 })),
     findArtifactByFileKey: vi.fn(async (k: string) => (k === "key-new" ? art("new", "2026-02-01T00:00:00Z") : null)),
-    getNote: vi.fn(async (_date: string, name: string) => {
-      if (name !== "Plan.md") throw new RoomsApiError(404, "not found", "not_found");
-      return "# Plan";
-    }),
+    noteExists: vi.fn(async (_date: string, name: string) => name === "Plan.md"),
   };
   const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null, color: null }];
   const viewer = { navigate: vi.fn(() => "current"), open: vi.fn(() => "opened"), reveal: vi.fn() };
@@ -157,6 +154,18 @@ describe("handleBridgeCall", () => {
     expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: docAnswer, rangeId: "q r" }), tab))).toBe("bad_request");
     expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: docAnswer }), tab))).toBe("bad_request");
     expect(tab.revealSurface).toHaveBeenCalledTimes(3);
+  });
+
+  it("opens a note surface in its own tab once the note is known to be on disk, asking only whether it is, not for its body", async () => {
+    const surfaces = plugin({ permissions: ["surfaces.text"], background: "background.html" });
+    const tab = { ...deps(), slot: "tab" as const };
+    const note = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    await handleBridgeCall(surfaces, call("open", { surface: note, rangeId: "q" }), tab);
+    expect(tab.viewer.open).toHaveBeenLastCalledWith({ kind: "note", date: "2026-10-10", name: "Plan.md" }, { nextToActive: true });
+    expect(tab.revealSurface).toHaveBeenCalledWith(note, "q");
+    expect(tab.client.noteExists).toHaveBeenCalledWith("2026-10-10", "Plan.md");
+    expect(await codeOf(handleBridgeCall(surfaces, call("open", { surface: { ...note, name: "Gone.md" }, rangeId: "q" }), tab)), "a missing note would open as a new, empty one").toBe("not_found");
+    expect(tab.revealSurface).toHaveBeenCalledTimes(1);
   });
 
   it("from a background page, opens anything only within 2 s of the user's click on that plugin", async () => {

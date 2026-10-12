@@ -563,6 +563,9 @@ describe("parseSurfaceId", () => {
   it("accepts a note by date and file name, and nothing a path could not hold", () => {
     expect(parseSurfaceId({ kind: "note", date: "2026-10-10", name: "New Note 2.md", extra: 1 })).toEqual({ kind: "note", date: "2026-10-10", name: "New Note 2.md" });
     expect(parseSurfaceId({ kind: "note", date: "2026-10-10", name: "계획.md" })).toEqual({ kind: "note", date: "2026-10-10", name: "계획.md" });
+    // roomsd's rule, exactly: `..` is checked on the base after one `.md` comes off, and the 60 are code points.
+    expect(parseSurfaceId({ kind: "note", date: "2026-10-10", name: "a..md" })).toEqual({ kind: "note", date: "2026-10-10", name: "a..md" });
+    expect(parseSurfaceId({ kind: "note", date: "2026-10-10", name: `${"🙂".repeat(60)}.md` })).not.toBeNull();
     for (const bad of [
       { kind: "note", date: "today", name: "Plan.md" },
       { kind: "note", date: "2026-10-10", name: "" },
@@ -570,7 +573,8 @@ describe("parseSurfaceId", () => {
       { kind: "note", date: "2026-10-10", name: "..md" },
       { kind: "note", date: "2026-10-10", name: ".hidden.md" },
       { kind: "note", date: "2026-10-10", name: "a\u0000b.md" },
-      { kind: "note", date: "2026-10-10", name: `${"x".repeat(81)}.md` },
+      { kind: "note", date: "2026-10-10", name: "a..b.md" },
+      { kind: "note", date: "2026-10-10", name: `${"x".repeat(61)}.md` },
       { kind: "note", date: "2026-10-10" },
     ]) {
       expect(parseSurfaceId(bad), JSON.stringify(bad)).toBeNull();

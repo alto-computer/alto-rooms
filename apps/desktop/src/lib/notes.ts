@@ -51,6 +51,18 @@ export const MAX_QUESTION_NAME = 55;
 
 /** A name's length as roomsd counts it: code points of the NFC name without its `.md`. */
 export const noteNameLength = (name: string) => Array.from(noteBase(name.trim()).normalize("NFC")).length;
+
+/**
+ * Whether roomsd takes `name` as a note name (`validate_note_name` in rooms-core's `rules.rs`):
+ * trimmed, one trailing `.md` off, NFC, then 1 to 60 code points with no `/`, `\` or `:`, no
+ * `..`, no leading `.` and no control character. So `a..md` is fine (its base is `a.`) and the
+ * length is counted in code points, as the daemon counts it.
+ */
+export function isNoteName(name: string): boolean {
+  const base = noteBase(name.trim()).normalize("NFC");
+  const n = Array.from(base).length;
+  return n > 0 && n <= 60 && !/[/\\:]/.test(base) && !base.includes("..") && !base.startsWith(".") && !/\p{Cc}/u.test(base);
+}
 /** The name of a saved answer whose question leaves nothing usable. */
 const ANSWER_NOTE = "Answer";
 
