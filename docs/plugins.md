@@ -116,6 +116,51 @@ Errors are `PluginError` with a `code`: `permission_denied`, `invalid_path`, `to
 
 The context is `{ slot: "artifact.sidePanel", artifact }` or `{ slot: "tab" }`. `artifact.fileKey` identifies the original file: it stays the same when Rooms moves the artifact, and every room that links the same original gets the same key. Key your per-artifact data by it.
 
+## Theme
+
+The app tells your page its theme (SDK 0.7.0): the scheme, light or dark, and a few of its colours, fonts and measures. It sends them when you connect and again whenever the user changes the appearance. The SDK puts each on your `<html>` as a CSS variable, sets `color-scheme` to the scheme, and gives the page the app's background and text colour. That default has no specificity, so a `body` or `html` rule of your own wins.
+
+| Variable | What it is |
+| --- | --- |
+| `--rooms-bg` | The pane behind content: the colour around your page |
+| `--rooms-card` | A sheet or card on the pane |
+| `--rooms-surface` | A control at rest (an input, a chip) |
+| `--rooms-surface-strong` | A control hovered or pressed |
+| `--rooms-border` | A hairline |
+| `--rooms-border-strong` | An input's border |
+| `--rooms-text` | Text |
+| `--rooms-text-muted` | Secondary text |
+| `--rooms-text-faint` | Placeholder and hint text |
+| `--rooms-accent` | The accent: a filled button |
+| `--rooms-on-accent` | Text on the accent |
+| `--rooms-error` | An error |
+| `--rooms-success` | A success |
+| `--rooms-radius` | The corner radius |
+| `--rooms-font-sans` | The app's text font |
+| `--rooms-font-serif` | The app's serif font, when the app defines one |
+| `--rooms-shadow` | A sheet's shadow |
+
+Use them in your CSS with a fallback for a page opened outside Rooms:
+
+```css
+button { background: var(--rooms-accent, #e31c5f); color: var(--rooms-on-accent, #fff); border-radius: var(--rooms-radius, 8px); }
+html[data-rooms-scheme="dark"] .logo { filter: invert(1); }
+```
+
+A component that takes the scheme as a prop reads it from `rooms.theme`:
+
+```ts
+const rooms = await connect();
+rooms.theme.onChange((theme) => render(<Excalidraw theme={theme.scheme} />));
+```
+
+| Call | What it does |
+| --- | --- |
+| `theme.current()` | The theme last heard, `{ scheme, tokens }`, or `null` before the app sent one. `tokens` has the names above without the `--rooms-` prefix; a token the app does not define is absent |
+| `theme.onChange(cb)` | Calls `cb(theme)` at once when a theme is known, then on every change. Returns an unsubscribe function |
+
+`connect({ theme: false })` keeps the SDK off your page's style: no variables, no `color-scheme`, no default colours. `rooms.theme` still reports the theme. A page that only calls `connectSurfaces()` gets the variables too. A plugin built on an older SDK ignores the message and keeps its own look.
+
 ## Tools for agents
 
 A plugin can let agents write into its data by declaring tools in `manifest.json`. Rooms exposes them to agents through `rooms-mcp`, an MCP server that ships with the app; asks from the ask bar get it automatically.

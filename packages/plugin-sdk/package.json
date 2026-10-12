@@ -1,6 +1,6 @@
 {
   "name": "@alto-rooms/plugin-sdk",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Build Alto Rooms plugins: the bridge between a sandboxed plugin iframe and the app.",
   "license": "MIT",
   "type": "module",
@@ -13,7 +13,8 @@
     "src/index.ts",
     "src/content.ts",
     "src/surfaces.ts",
-    "src/errors.ts"
+    "src/errors.ts",
+    "src/theme.ts"
   ],
   "repository": {
     "type": "git",

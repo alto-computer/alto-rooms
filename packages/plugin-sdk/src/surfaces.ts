@@ -8,6 +8,7 @@
  * never says so is sent SDK 0.5's (`doc`, and `conversation` with the id in `session`).
  */
 import type { ContentAction } from "./content";
+import { themeReceiver } from "./theme";
 
 /** A chat thread: an artifact's, a room's, a day's, or an agent session's (asked in a fork of that session). */
 export type AnswerScope =
@@ -178,9 +179,12 @@ export function connectSurfaces(): RoomsSurfaces {
   };
   /** The version of the text last heard per open surface: what a paint names when the plugin names none. */
   const heard = new Map<string, number>();
+  // A page that connects only here (no `connect()`) still gets the app's theme on its <html>.
+  const theme = themeReceiver(true);
 
   window.addEventListener("message", (e: MessageEvent) => {
     if (e.source !== parent) return;
+    theme.receive(e.data);
     const d = e.data as ({ rooms?: unknown; v?: unknown } & Inbound) | null;
     if (!d || typeof d !== "object" || d.rooms !== "surface" || d.v !== 1) return;
     switch (d.type) {

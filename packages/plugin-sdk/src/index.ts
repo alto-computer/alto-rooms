@@ -8,6 +8,7 @@
  */
 import { PluginError, type PluginErrorCode } from "./errors";
 import type { SurfaceId } from "./surfaces";
+import { type RoomsThemeApi, themeReceiver } from "./theme";
 
 /** Where this frame runs: beside a document, as a tab, or as the hidden background page of a plugin with `surfaces.text`. */
 export type PluginContext = { slot: "artifact.sidePanel"; artifact: PluginArtifact } | { slot: "tab" } | { slot: "background" };
@@ -58,10 +59,16 @@ export interface RoomsPlugin {
    * and flashes your range `rangeId` there once the answer is on screen.
    */
   open(target: { roomId: string } | { fileKey: string; anchor?: unknown } | { surface: SurfaceId; rangeId: string }): Promise<void>;
+  /**
+   * The app's theme (SDK 0.7.0). The SDK already applies it to your page as `--rooms-*` variables
+   * and `color-scheme`; read it here when a component takes the scheme as a prop.
+   */
+  theme: RoomsThemeApi;
 }
 
 type Inbound =
   | { rooms: 1; type: "context"; pluginId: string; context: PluginContext }
+  | { rooms: 1; type: "theme" }
   | { rooms: 1; type: "beforeClose"; id: string }
   | { rooms: 1; type: "ping"; id: string }
   | { rooms: 1; type: "dataChanged"; path: string }
@@ -69,14 +76,20 @@ type Inbound =
 
 export { connectContent, type ContentAction, type ContentSelection, type RoomsContent } from "./content";
 export { connectSurfaces, legacySurfacePath, surfaceKey, surfacePath, type AnswerScope, type RoomsSurfaces, type SurfaceId, type SurfaceRange, type SurfaceSelection, type SurfaceStyles } from "./surfaces";
+export { THEME_TOKENS, type RoomsTheme, type RoomsThemeApi, type ThemeScheme, type ThemeToken } from "./theme";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-/** Connects to the app: posts `ready` and resolves once the app sends the first context. */
-export function connect(opts: { timeoutMs?: number } = {}): Promise<RoomsPlugin> {
+/**
+ * Connects to the app: posts `ready` and resolves once the app sends the first context. With
+ * `theme: false` the SDK leaves your page's style alone: no `--rooms-*` variables, no
+ * `color-scheme`, no default colours; `rooms.theme` still reports the theme.
+ */
+export function connect(opts: { timeoutMs?: number; theme?: boolean } = {}): Promise<RoomsPlugin> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const parent = window.parent;
   const post = (m: Record<string, unknown>) => parent.postMessage({ rooms: 1, ...m }, "*");
+  const theme = themeReceiver(opts.theme ?? true);
 
   let pluginId = "";
   let current: PluginContext | null = null;
@@ -108,7 +121,9 @@ export function connect(opts: { timeoutMs?: number } = {}): Promise<RoomsPlugin>
     const d = e.data as Inbound | null;
     if (!d || typeof d !== "object" || d.rooms !== 1) return;
     if ("type" in d) {
-      if (d.type === "context") {
+      if (d.type === "theme") {
+        theme.receive(d);
+      } else if (d.type === "context") {
         pluginId = d.pluginId;
         current = d.context;
         for (const l of [...contextListeners]) l(d.context);
@@ -156,6 +171,7 @@ export function connect(opts: { timeoutMs?: number } = {}): Promise<RoomsPlugin>
     rooms: { list: () => request<PluginRoom[]>("rooms.list", {}) },
     artifacts: { list: (roomId) => request<PluginArtifact[]>("artifacts.list", { roomId }) },
     open: (target) => request<void>("open", target),
+    theme: theme.api,
   };
 
   return new Promise<RoomsPlugin>((resolve, reject) => {
