@@ -11,6 +11,12 @@
       "repo": "https://github.com/alto-computer/rooms-plugin-excalidraw",
       "version": "0.2.0",
       "sha256": "71630c28992bca0a7cf5033245a5ad3f0245015f4f7f54f7d25db5f0682485a4"
+    },
+    {
+      "id": "highlight",
+      "repo": "https://github.com/alto-computer/rooms-plugin-highlight",
+      "version": "0.4.0",
+      "sha256": "73ce630b96a9bfdc5509babc0f68439ad5ae58e8465894fde19d44fe6424f475"
     }
   ]
 }
