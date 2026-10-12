@@ -4,8 +4,9 @@ import { describe, expect, it } from "vitest";
 
 /*
  * Guard for docs/glossary.md: agent runs are sessions and agent-written files are artifacts, in
- * code too. It reads identifiers only (string literals and comments are skipped; text between JSX
- * tags is not, so UI copy there needs an allowlist entry).
+ * code too. It reads identifiers, and text between JSX tags, so UI copy there needs an allowlist
+ * entry. Comments and regex literals are skipped; string literals are read only for the retired
+ * wire names and kinds, which migration code and its tests may name with an allowlist entry.
  */
 
 const REPO = path.resolve(__dirname, "../../..");
@@ -16,17 +17,58 @@ const SOURCE_ROOTS = ["crates", "apps/desktop/src", "apps/desktop/src-tauri/src"
 const APP_ROOTS = ["apps/desktop/src", "apps/desktop/src-tauri/src", "apps/desktop/e2e", "packages/plugin-sdk/src", "packages/protocol-ts/src"];
 const SKIP_DIRS = new Set(["node_modules", "target", "dist", ".git"]);
 
+/** Wire paths, events and file names from before the rename, found anywhere in a string literal. */
+const RETIRED_NAMES = ["/v1/conversations", "conversation.moved", "conversations.json"];
+/** Scope and tab kinds from before the rename, as a whole string literal. `doc` only in app code. */
+const RETIRED_KIND = /^(["'`])(conversation|doc)\1$/;
+
 type Allowed = { file: string; word: string; why: string };
 
-/** Each entry allows one word in one file. */
+/** Each entry allows one word in one file: an identifier, a retired name, or a kind as `"doc"`. */
 const ALLOWED: Allowed[] = [
-  { file: "apps/desktop/src/ask/ThreadSheet.tsx", word: "conversation", why: "ask-chat UI copy: the conversation got long" },
+  { file: "apps/desktop/src/ask/ThreadSheet.tsx", word: "conversation", why: "ask-chat UI copy: the conversation got long, Couldn't load the conversation" },
   { file: "apps/desktop/src/ask/Turn.tsx", word: "Conversation", why: "ask-chat UI copy: Conversation summarized" },
   { file: "apps/desktop/src/ask/Turn.tsx", word: "conversation", why: "ask-chat UI copy: New conversation" },
   { file: "crates/rooms-core/src/sessions.rs", word: "conversations", why: "migration: the map key in conversations.json" },
+  { file: "crates/rooms-core/src/sessions.rs", word: "conversations.json", why: "migration: the store's old file name" },
+  { file: "crates/roomsd/tests/api.rs", word: "/v1/conversations", why: "test: the old routes are gone" },
+  { file: "apps/desktop/src/data/viewerStore.ts", word: '"doc"', why: "migration: saved tabs of the old kind" },
+  { file: "apps/desktop/src/data/viewerStore.ts", word: '"conversation"', why: "migration: saved tabs of the old kind" },
+  { file: "apps/desktop/src/data/viewerStore.test.ts", word: '"doc"', why: "test: saved tabs of the old kind" },
+  { file: "apps/desktop/src/data/viewerStore.test.ts", word: '"conversation"', why: "test: saved tabs of the old kind" },
+  { file: "apps/desktop/src/surfaces/surfaceHub.ts", word: '"doc"', why: "SDK 0.5 surface scopes, sent and accepted until 0.7" },
+  { file: "apps/desktop/src/surfaces/surfaceHub.ts", word: '"conversation"', why: "SDK 0.5 surface scopes, sent and accepted until 0.7" },
+  { file: "apps/desktop/src/surfaces/surfaceHub.test.ts", word: '"doc"', why: "test: SDK 0.5 surface scopes" },
+  { file: "apps/desktop/src/surfaces/surfaceHub.test.ts", word: '"conversation"', why: "test: SDK 0.5 surface scopes" },
+  { file: "packages/plugin-sdk/src/surfaces.ts", word: '"doc"', why: "legacySurfacePath: the 0.5 storage path" },
+  { file: "packages/plugin-sdk/src/surfaces.ts", word: '"conversation"', why: "legacySurfacePath: the 0.5 storage path" },
 ];
 
-type Segment = { kind: "code" | "string" | "comment"; text: string; start: number };
+type Segment = { kind: "code" | "string" | "comment" | "regex"; text: string; start: number };
+
+/** A `/` in TypeScript at `i` starts a regex literal when what comes before cannot end an operand. */
+function startsRegex(src: string, i: number): boolean {
+  let k = i - 1;
+  while (k >= 0 && /\s/.test(src[k])) k--;
+  if (k < 0 || "(,=:[!&|?;{+-*%~^".includes(src[k]) || (src[k] === ">" && src[k - 1] === "=")) return true;
+  return /(?:^|[^\w$])(?:return|typeof|case|do|else|in|of|void|yield|await|delete|new|throw)$/.test(src.slice(Math.max(0, k - 10), k + 1));
+}
+
+/** Where the regex literal starting at `i` ends (after its flags), or -1 when the line has no closing `/`. */
+function regexEnd(src: string, i: number): number {
+  let inClass = false;
+  for (let j = i + 1; j < src.length && src[j] !== "\n"; j++) {
+    if (src[j] === "\\") j++;
+    else if (src[j] === "[") inClass = true;
+    else if (src[j] === "]") inClass = false;
+    else if (src[j] === "/" && !inClass) {
+      let end = j + 1;
+      while (/[a-z]/.test(src[end] ?? "")) end++;
+      return end;
+    }
+  }
+  return -1;
+}
 
 /** Splits Rust or TypeScript source into code, string literals and comments. */
 function segments(src: string, ts: boolean): Segment[] {
@@ -56,6 +98,13 @@ function segments(src: string, ts: boolean): Segment[] {
       continue;
     }
     const prev = src[i - 1] ?? " ";
+    if (ts && c === "/") {
+      const end = startsRegex(src, i) ? regexEnd(src, i) : -1;
+      if (end > 0) {
+        push("regex", end);
+        continue;
+      }
+    }
     if (!ts && (c === "r" || c === "b") && /^b?r#*"/.test(src.slice(i, i + 130)) && !/[A-Za-z0-9_]/.test(prev)) {
       const m = /^b?r(#*)"/.exec(src.slice(i))!;
       const end = src.indexOf(`"${m[1]}`, i + m[0].length);
@@ -69,7 +118,8 @@ function segments(src: string, ts: boolean): Segment[] {
         continue;
       }
     }
-    if (c === '"' || (ts && (c === "'" || c === "`"))) {
+    // An apostrophe right after a letter is JSX text (`Couldn't`), never the start of a string.
+    if (c === '"' || (ts && ((c === "'" && !/[A-Za-z0-9]/.test(prev)) || c === "`"))) {
       let j = i + 1;
       while (j < src.length && src[j] !== c) {
         if (src[j] === "\\") j++;
@@ -129,13 +179,34 @@ const wordParts = (id: string) =>
 const namesConversation = (id: string) => /conversation/i.test(id);
 const namesDoc = (id: string) => wordParts(id).some((p) => p === "doc" || p === "docs");
 
-/** Every identifier that breaks the glossary in `src`, as `file:line word`. */
-function offending(file: string, src: string, allowed: readonly Allowed[] = ALLOWED): string[] {
+/** The retired wire names in a file's string literals, and string literals that are a retired kind (as `"doc"`). */
+function retiredStrings(src: string, ts: boolean, app: boolean): { word: string; at: number }[] {
+  const found: { word: string; at: number }[] = [];
+  for (const s of segments(src, ts)) {
+    if (s.kind !== "string") continue;
+    for (const name of RETIRED_NAMES) {
+      const at = s.text.indexOf(name);
+      if (at >= 0) found.push({ word: name, at: s.start + at });
+    }
+    const kind = RETIRED_KIND.exec(s.text)?.[2];
+    if (kind === "conversation" || (app && kind === "doc")) found.push({ word: `"${kind}"`, at: s.start });
+  }
+  return found;
+}
+
+/** Everything in `file` that breaks the glossary, before the allowlist. */
+function breaches(file: string, src: string): { word: string; at: number }[] {
   const ts = /\.(ts|tsx|mts|mjs|js)$/.test(file);
   const app = APP_ROOTS.some((r) => file.startsWith(`${r}/`));
+  const named = identifiers(src, ts).filter(({ word }) => namesConversation(word) || (app && namesDoc(word)));
+  return [...named, ...retiredStrings(src, ts, app)].sort((a, b) => a.at - b.at);
+}
+
+/** Every breach the allowlist does not cover, as `file:line word`. */
+function offending(file: string, src: string, allowed: readonly Allowed[] = ALLOWED): string[] {
   const ok = (word: string) => allowed.some((a) => a.file === file && a.word === word);
-  return identifiers(src, ts)
-    .filter(({ word }) => (namesConversation(word) || (app && namesDoc(word))) && !ok(word))
+  return breaches(file, src)
+    .filter(({ word }) => !ok(word))
     .map(({ word, at }) => `${file}:${src.slice(0, at).split("\n").length} ${word}`);
 }
 
@@ -155,18 +226,18 @@ describe("terms (docs/glossary.md)", () => {
   });
 
   it("every allowlist entry still matches something, so the list never outlives its reason", () => {
-    const unused = ALLOWED.filter((a) => !identifiers(readFileSync(path.join(REPO, a.file), "utf8"), !a.file.endsWith(".rs")).some((x) => x.word === a.word));
+    const unused = ALLOWED.filter((a) => !breaches(a.file, readFileSync(path.join(REPO, a.file), "utf8")).some((x) => x.word === a.word));
     expect(unused).toEqual([]);
   });
 
-  it("flags identifiers and JSX text, never strings or comments", () => {
+  it("flags identifiers and JSX text, not words inside strings or comments", () => {
     const ts = [
       "const conversationId = 1;",
       'const label = "New conversation"; // a conversation',
       "const t = `conversation:${conversationKey(x)}`;",
       "<Divider>New conversation</Divider>",
       "const openDoc = () => document.body;",
-      "/* DocView */ const kind = \"doc\";",
+      "/* DocView */ const dir = \"docs\";",
     ].join("\n");
     expect(offending("apps/desktop/src/x.tsx", ts, [])).toEqual([
       "apps/desktop/src/x.tsx:1 conversationId",
@@ -177,6 +248,47 @@ describe("terms (docs/glossary.md)", () => {
     const rs = ['fn get_conversation() {}', 'let s = "conversation-"; // ConversationId', 'let r = r#"conversation"#;', "let doc = 1;"].join("\n");
     expect(offending("crates/x/src/lib.rs", rs, [])).toEqual(["crates/x/src/lib.rs:1 get_conversation"]);
     expect(offending("apps/desktop/src-tauri/src/x.rs", "fn doc_original() {}", [])).toEqual(["apps/desktop/src-tauri/src/x.rs:1 doc_original"]);
+  });
+
+  it("flags retired wire names and scope or tab kinds in string literals", () => {
+    const ts = [
+      "fetch(`${base}/v1/conversations/${id}`);",
+      'if (e.type === "conversation.moved") return;',
+      'const store = ".rooms/conversations.json";',
+      'const tab = { kind: "conversation" };',
+      "const scope = { kind: 'doc' };",
+      'const fine = ["Open the doc", "document", "conversation-", `${name}`];',
+    ].join("\n");
+    expect(offending("apps/desktop/src/x.ts", ts, [])).toEqual([
+      "apps/desktop/src/x.ts:1 /v1/conversations",
+      "apps/desktop/src/x.ts:2 conversation.moved",
+      "apps/desktop/src/x.ts:3 conversations.json",
+      'apps/desktop/src/x.ts:4 "conversation"',
+      'apps/desktop/src/x.ts:5 "doc"',
+    ]);
+    const rs = ['let kind = "conversation";', 'let input = json!({"doc": key});', 'let p = r"conversations.json";'].join("\n");
+    expect(offending("crates/x/src/lib.rs", rs, [])).toEqual(['crates/x/src/lib.rs:1 "conversation"', "crates/x/src/lib.rs:3 conversations.json"]);
+    expect(offending("apps/desktop/src/x.ts", 'const kind = "doc";', [{ file: "apps/desktop/src/x.ts", word: '"doc"', why: "migration" }])).toEqual([]);
+  });
+
+  it("reads JSX text with an apostrophe to the end of the line", () => {
+    const tsx = ["<ErrorText>Couldn't load the conversation</ErrorText>", "<p>It's {conversationCount} items</p>", "const s = 'conversation';"].join("\n");
+    expect(offending("apps/desktop/src/x.tsx", tsx, [])).toEqual([
+      "apps/desktop/src/x.tsx:1 conversation",
+      "apps/desktop/src/x.tsx:2 conversationCount",
+      'apps/desktop/src/x.tsx:3 "conversation"',
+    ]);
+  });
+
+  it("skips regex literals, and keeps reading code after one that holds a quote", () => {
+    const ts = [
+      "const re = /conversation-(\\w+)\\.jsonl$/;",
+      "if (/docs?/i.test(name)) return /[/]doc/.exec(name);",
+      'const quote = /"/g; const conversationId = 1;',
+      "const half = total / 2 / docCount;",
+      "<p>a / b</p>",
+    ].join("\n");
+    expect(offending("apps/desktop/src/x.tsx", ts, [])).toEqual(["apps/desktop/src/x.tsx:3 conversationId", "apps/desktop/src/x.tsx:4 docCount"]);
   });
 
   it("splits words so document, docker or Doctor never count as doc", () => {

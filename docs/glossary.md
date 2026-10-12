@@ -68,7 +68,8 @@ roomsd and the app move old names to new ones the first time they meet them. Eac
 
 `apps/desktop/src/terms.test.ts` runs with `bun run test` in `apps/desktop` (alone: `bunx vitest run src/terms.test.ts`). It reads every Rust and TypeScript file under `crates`, `packages` and `apps/desktop` (`src`, `src-tauri/src`, `e2e`) and fails when:
 
-- an identifier contains `conversation` in any case, or
-- in app code (`apps/desktop` and `packages/*/src`, not the crates, which keep `doc` for a generic HTML document), an identifier has `doc` or `docs` as a word part: `openDoc`, `DocView`, `doc_original`, `MAX_DOCS`. `document` and `ownerDocument` are fine.
+- an identifier contains `conversation` in any case,
+- in app code (`apps/desktop` and `packages/*/src`, not the crates, which keep `doc` for a generic HTML document), an identifier has `doc` or `docs` as a word part: `openDoc`, `DocView`, `doc_original`, `MAX_DOCS`. `document` and `ownerDocument` are fine, or
+- a string literal holds a retired wire name (`/v1/conversations`, `conversation.moved`, `conversations.json`), or is a retired kind as a whole: `"conversation"` anywhere, `"doc"` in app code.
 
-String literals and comments are not checked, so the migration code can name the old keys and kinds. Text between JSX tags is checked, which is why the ask-chat copy in `ThreadSheet.tsx` and `Turn.tsx` is on the allowlist at the top of the test, next to the one Rust field that reads the old `conversations.json`. Each entry names a file, a word and the reason; a second test fails when an entry no longer matches anything.
+Comments and regex literals are not checked. Text between JSX tags is, which is why the ask-chat copy in `ThreadSheet.tsx` and `Turn.tsx` is on the allowlist at the top of the test, next to the Rust field that reads the old `conversations.json` and the migration code and tests that name the old routes, file and kinds. Each entry names a file, a word (an identifier, a retired name, or a kind written as `"doc"`) and the reason; a second test fails when an entry no longer matches anything.
