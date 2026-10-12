@@ -8,7 +8,7 @@
  */
 import { PluginError, type PluginErrorCode } from "./errors";
 import type { SurfaceId } from "./surfaces";
-import { type RoomsThemeApi, themeReceiver } from "./theme";
+import { pageTheme, type RoomsThemeApi } from "./theme";
 
 /** Where this frame runs: beside a document, as a tab, or as the hidden background page of a plugin with `surfaces.text`. */
 export type PluginContext = { slot: "artifact.sidePanel"; artifact: PluginArtifact } | { slot: "tab" } | { slot: "background" };
@@ -68,7 +68,6 @@ export interface RoomsPlugin {
 
 type Inbound =
   | { rooms: 1; type: "context"; pluginId: string; context: PluginContext }
-  | { rooms: 1; type: "theme" }
   | { rooms: 1; type: "beforeClose"; id: string }
   | { rooms: 1; type: "ping"; id: string }
   | { rooms: 1; type: "dataChanged"; path: string }
@@ -83,13 +82,15 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 /**
  * Connects to the app: posts `ready` and resolves once the app sends the first context. With
  * `theme: false` the SDK leaves your page's style alone: no `--rooms-*` variables, no
- * `color-scheme`, no default colours; `rooms.theme` still reports the theme.
+ * `color-scheme`, no default colours; `rooms.theme` still reports the theme. `ready` says
+ * `theme: true` when the page applies the theme, and the app paints the frame's backdrop in its
+ * pane colour only then; a page that does not say so keeps a white one.
  */
 export function connect(opts: { timeoutMs?: number; theme?: boolean } = {}): Promise<RoomsPlugin> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const parent = window.parent;
   const post = (m: Record<string, unknown>) => parent.postMessage({ rooms: 1, ...m }, "*");
-  const theme = themeReceiver(opts.theme ?? true);
+  const theme = pageTheme(opts.theme ?? true);
 
   let pluginId = "";
   let current: PluginContext | null = null;
@@ -121,9 +122,7 @@ export function connect(opts: { timeoutMs?: number; theme?: boolean } = {}): Pro
     const d = e.data as Inbound | null;
     if (!d || typeof d !== "object" || d.rooms !== 1) return;
     if ("type" in d) {
-      if (d.type === "theme") {
-        theme.receive(d);
-      } else if (d.type === "context") {
+      if (d.type === "context") {
         pluginId = d.pluginId;
         current = d.context;
         for (const l of [...contextListeners]) l(d.context);
@@ -181,6 +180,6 @@ export function connect(opts: { timeoutMs?: number; theme?: boolean } = {}): Pro
       clearTimeout(timer);
       resolve(api);
     };
-    post({ type: "ready" });
+    post({ type: "ready", ...(theme.applies ? { theme: true } : {}) });
   });
 }

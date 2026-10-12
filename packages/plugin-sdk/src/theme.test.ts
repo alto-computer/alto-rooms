@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connect, connectSurfaces, type RoomsTheme } from "./index";
+import { resetPageTheme } from "./theme";
 
 function fakeParent() {
   const sent: Record<string, unknown>[] = [];
@@ -23,6 +24,7 @@ beforeEach(() => {
   host = fakeParent();
 });
 afterEach(() => {
+  resetPageTheme();
   root().removeAttribute("style");
   delete root().dataset.roomsScheme;
   document.getElementById("rooms-theme")?.remove();
@@ -73,12 +75,27 @@ describe("theme on connect()", () => {
     expect(after).toEqual([light, dark]);
   });
 
+  it("tells the app on ready that the page applies the theme, and says nothing when it opted out", async () => {
+    await connected();
+    expect(host.sent[0]).toEqual({ rooms: 1, type: "ready", theme: true });
+    host.sent.length = 0;
+    await connected({ theme: false });
+    expect(host.sent[0]).toEqual({ rooms: 1, type: "ready" });
+  });
+
   it("with theme: false leaves the page alone but still reports the theme", async () => {
     const rooms = await connected({ theme: false });
     host.deliver(themeMessage(light));
     expect(root().getAttribute("style")).toBeNull();
     expect(defaultRule()).toBeNull();
     expect(rooms.theme.current()).toEqual(light);
+  });
+
+  it("keeps a font name in another script, such as Korean", async () => {
+    const rooms = await connected();
+    host.deliver({ rooms: 1, type: "theme", scheme: "light", tokens: { "font-sans": '"Apple SD Gothic Neo", "나눔고딕", Pretendard, sans-serif' } });
+    expect(roomsVar("font-sans")).toBe('"Apple SD Gothic Neo", "나눔고딕", Pretendard, sans-serif');
+    expect(rooms.theme.current()?.tokens["font-sans"]).toBe('"Apple SD Gothic Neo", "나눔고딕", Pretendard, sans-serif');
   });
 
   it("drops a token it does not know or cannot read as a plain value, and ignores a message with an unknown scheme or from another window", async () => {
@@ -101,10 +118,31 @@ describe("theme on connect()", () => {
 });
 
 describe("theme on connectSurfaces()", () => {
-  it("applies the theme to a page that only connects its surfaces", () => {
+  it("applies the theme to a page that only connects its surfaces, and says so in hello", () => {
     connectSurfaces();
+    expect(host.sent[0]).toEqual({ rooms: "surface", v: 1, api: 2, type: "hello", theme: true });
     host.deliver(themeMessage(dark));
     expect(roomsVar("bg")).toBe("#211c19");
     expect(root().style.getPropertyValue("color-scheme")).toBe("dark");
+  });
+
+  it("with theme: false leaves the page alone and says nothing in hello", () => {
+    connectSurfaces({ theme: false });
+    expect(host.sent[0]).toEqual({ rooms: "surface", v: 1, api: 2, type: "hello" });
+    host.deliver(themeMessage(dark));
+    expect(root().getAttribute("style")).toBeNull();
+    expect(defaultRule()).toBeNull();
+  });
+
+  it("holds the opt-out of connect({ theme: false }) on a page that also connects its surfaces, and reports one theme to both", async () => {
+    const rooms = await connected({ theme: false });
+    connectSurfaces();
+    expect(host.sent.map((m) => m.theme)).toEqual([undefined, undefined]);
+    const heard: RoomsTheme[] = [];
+    rooms.theme.onChange((t) => heard.push(t));
+    host.deliver(themeMessage(dark));
+    expect(root().getAttribute("style")).toBeNull();
+    expect(defaultRule()).toBeNull();
+    expect(heard).toEqual([dark]);
   });
 });
