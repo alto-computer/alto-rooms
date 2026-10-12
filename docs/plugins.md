@@ -229,7 +229,7 @@ surfaces.ready();
 | `surfaceKey(surface)`, `surfacePath(surface)` | The answer's name, `answer:artifact:<fileKey>/<turnId>`, and the same as a storage path, `answer/artifact/<fileKey>/<turnId>` |
 | `legacySurfacePath(surface)` | Deprecated, goes in 0.7.0. The path SDK 0.5 gave the same answer (`answer/doc/…`, `answer/conversation/<agent>/<id>/…`). Read it when `surfacePath` finds nothing, and move what you find |
 
-SDK 0.6.0 renamed two scope kinds to the words in the [glossary](glossary.md): `doc` is now `artifact`, and `conversation` is now `session`, with the id in `id` instead of `session`. The app sends only the new names. It still accepts the old ones in `paint`, `menu` and `open` until 0.7.0, so surfaces a plugin saved under 0.5 keep working.
+SDK 0.6.0 renamed two scope kinds to the words in the [glossary](glossary.md): `doc` is now `artifact`, and `conversation` is now `session`, with the id in `id` instead of `session`. `connectSurfaces` in 0.6.0 tells the app which names it reads, and the app sends it the new ones. A page built on 0.5.0 says nothing, so the app keeps sending it the old ones and its `surfacePath` keeps its paths. The app accepts the old names in `paint`, `menu` and `open` until 0.7.0, so surfaces a plugin saved under 0.5 keep working.
 
 Messages are `{ rooms: "surface", v: 1, type, … }` posted to `window.parent`, and the SDK trusts only messages whose source is `window.parent`. The background frame has no network and no token, like every plugin frame, so what it reads stays in your `data/`. Notes become a surface in a later release; the `surface.kind` tells them apart.
 

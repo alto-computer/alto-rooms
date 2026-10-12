@@ -13,6 +13,7 @@ let sent: Record<string, unknown>[];
 beforeEach(() => {
   sent = [];
   seat = surfaceHub.register("tagger", (m) => void sent.push(m));
+  seat.receive({ rooms: "surface", v: 1, api: 2, type: "hello" });
 });
 afterEach(() => {
   seat.dispose();

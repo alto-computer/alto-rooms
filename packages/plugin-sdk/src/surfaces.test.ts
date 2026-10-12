@@ -17,9 +17,10 @@ beforeEach(() => {
 
 const answer: SurfaceId = { kind: "answer", scope: { kind: "room", roomId: "r1" }, turnId: "t1" };
 const fromApp = (m: Record<string, unknown>) => ({ rooms: "surface", v: 1, ...m });
+const toApp = (m: Record<string, unknown>) => ({ rooms: "surface", v: 1, api: 2, ...m });
 
 describe("connectSurfaces", () => {
-  it("posts ready, actions, paint and menu with the surface envelope, and passes styles through for the app to judge", () => {
+  it("says hello on connect, then posts ready, actions, paint and menu, each saying it reads API 2 surfaces, and passes styles through for the app to judge", () => {
     const s = connectSurfaces();
     s.ready();
     s.setActions([{ id: "tag", title: "Tag", color: "#ffd400" }]);
@@ -27,11 +28,12 @@ describe("connectSurfaces", () => {
     s.paint(answer, [{ id: "a", start: 0, end: 3, style: "mustard" }]);
     s.menu(answer, "a", [{ id: "untag", title: "Untag" }]);
     expect(host.sent).toEqual([
-      fromApp({ type: "ready" }),
-      fromApp({ type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] }),
-      fromApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }], styles: { mustard: "rgba(199,154,62,0.28)" } }),
-      fromApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }] }),
-      fromApp({ type: "menu", surface: answer, rangeId: "a", items: [{ id: "untag", title: "Untag" }] }),
+      toApp({ type: "hello" }),
+      toApp({ type: "ready" }),
+      toApp({ type: "actions", items: [{ id: "tag", title: "Tag", color: "#ffd400" }] }),
+      toApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }], styles: { mustard: "rgba(199,154,62,0.28)" } }),
+      toApp({ type: "paint", surface: answer, ranges: [{ id: "a", start: 0, end: 3, style: "mustard" }] }),
+      toApp({ type: "menu", surface: answer, rangeId: "a", items: [{ id: "untag", title: "Untag" }] }),
     ]);
   });
 

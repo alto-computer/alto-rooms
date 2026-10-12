@@ -3,7 +3,9 @@
  * page runs that page hidden while it is on. The app tells it the text of every chat answer on
  * screen, hands it the selections the user sends to one of its buttons, and paints the ranges it
  * answers with. Messages carry `rooms: "surface"` and go to `window.parent`; only messages whose
- * source is `window.parent` are trusted.
+ * source is `window.parent` are trusted. Each one also carries `api: 2`, and `connectSurfaces`
+ * says `hello` at once, so the app sends this SDK's scope shapes; a page that never says so is
+ * sent SDK 0.5's (`doc`, and `conversation` with the id in `session`).
  */
 import type { ContentAction } from "./content";
 
@@ -114,7 +116,7 @@ type Inbound =
 
 export function connectSurfaces(): RoomsSurfaces {
   const parent = window.parent;
-  const post = (m: Record<string, unknown>) => parent.postMessage({ rooms: "surface", v: 1, ...m }, "*");
+  const post = (m: Record<string, unknown>) => parent.postMessage({ rooms: "surface", v: 1, api: 2, ...m }, "*");
   const listeners = {
     open: new Set<(s: SurfaceId, text: string) => void>(),
     close: new Set<(s: SurfaceId) => void>(),
@@ -147,6 +149,7 @@ export function connectSurfaces(): RoomsSurfaces {
         return fire(listeners.rangeAction, d.surface, d.rangeId, d.actionId);
     }
   });
+  post({ type: "hello" });
 
   return {
     setActions: (items) => post({ type: "actions", items }),

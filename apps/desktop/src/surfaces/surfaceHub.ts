@@ -6,6 +6,11 @@
  * touches the surface's DOM. Everything from a frame is untrusted: shapes, sizes, offsets, style
  * names and colors are checked here, and a surface's ranges die with the surface.
  *
+ * A frame built on SDK 0.6 or later says `hello` when it connects and puts `api: 2` on every
+ * message; it hears artifact and session scopes by those names. A frame that never does is on SDK
+ * 0.5 and hears them as `doc` and as `conversation` with the id in `session`, the shapes its
+ * `surfacePath` reads.
+ *
  * Each plugin's `::highlight` rules live in a constructed stylesheet of its own, written one rule
  * at a time, so nothing a plugin declares can reach another plugin's rules. A constructed sheet
  * is CSSOM, not an inline style: the desktop app's CSP carries Tauri's nonce in `style-src`,
@@ -62,6 +67,7 @@ type HostMessage =
 type Styles = Map<string, string>;
 
 type FrameMessage =
+  | { type: "hello" }
   | { type: "ready" }
   | { type: "actions"; items: ContentAction[] }
   | { type: "paint"; key: string; styles: Styles; ranges: SurfaceRange[]; dropped: number }
@@ -70,6 +76,8 @@ type FrameMessage =
 type OpenSurface = { id: SurfaceId; key: string; root: HTMLElement; index: TextIndex };
 type Seat = {
   id: string;
+  /** The surface shapes the plugin's SDK reads: 1 until it says `api: 2` (SDK 0.6). */
+  api: 1 | 2;
   post: (m: HostMessage) => void;
   actions: ContentAction[];
   styles: Styles;
@@ -116,6 +124,14 @@ function adoptSheet(): CSSStyleSheet | null {
 
 function dropSheet(sheet: CSSStyleSheet | null): void {
   if (sheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== sheet);
+}
+
+/** `id` as SDK 0.5 names it, for a plugin that never said it reads API 2. */
+function surfaceForApi1(id: SurfaceId): unknown {
+  const { scope } = id;
+  if (scope.kind === "artifact") return { ...id, scope: { kind: "doc", fileKey: scope.fileKey } };
+  if (scope.kind === "session") return { ...id, scope: { kind: "conversation", agent: scope.agent, session: scope.id } };
+  return id;
 }
 
 /**
@@ -175,6 +191,7 @@ function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurf
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
   if (d.rooms !== "surface" || d.v !== 1) return null;
+  if (d.type === "hello") return { type: "hello" };
   if (d.type === "ready") return { type: "ready" };
   if (d.type === "actions") {
     const items = parseActions(d.items, isColor);
@@ -280,17 +297,30 @@ export class SurfaceHub {
   /** One plugin's background frame: `receive` takes its messages, `dispose` forgets its paint and buttons. */
   register(plugin: string, post: (m: Record<string, unknown>) => void): { receive(data: unknown): void; dispose(): void } {
     if (!/^[a-z0-9-]{2,40}$/.test(plugin)) throw new Error(`not a plugin id: ${plugin}`);
-    const seat: Seat = { id: plugin, post: (m) => post({ rooms: "surface", v: 1, ...m }), actions: [], styles: new Map(), paints: new Map(), sheet: adoptSheet(), gestureAt: null };
+    const seat: Seat = {
+      id: plugin,
+      api: 1,
+      post: (m) => post({ rooms: "surface", v: 1, ...m, surface: seat.api === 2 ? m.surface : surfaceForApi1(m.surface) }),
+      actions: [],
+      styles: new Map(),
+      paints: new Map(),
+      sheet: adoptSheet(),
+      gestureAt: null,
+    };
     this.seats.set(plugin, seat);
     return {
       receive: (data) => {
         if (!data || typeof data !== "object" || (data as { rooms?: unknown }).rooms !== "surface") return;
+        const { api } = data as { api?: unknown };
+        if (isInt(api) && api >= 2) seat.api = 2;
         const m = parseFrameMessage(data, this.surfaces, seat.styles);
         if (!m) {
           this.dropped++;
           return;
         }
         switch (m.type) {
+          case "hello":
+            return;
           case "ready":
             for (const s of this.surfaces.values()) seat.post({ type: "surface.open", surface: s.id, text: s.index.text });
             return;
