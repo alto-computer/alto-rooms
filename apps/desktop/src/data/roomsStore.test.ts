@@ -1,4 +1,4 @@
-import type { Artifact, Conversation, Info, JournalDay, Room, RoomsEvent, Snapshot } from "@alto-rooms/protocol-ts";
+import type { Artifact, Session, Info, JournalDay, Room, RoomsEvent, Snapshot } from "@alto-rooms/protocol-ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RoomsStore, type RoomsClientLike } from "./roomsStore";
 
@@ -28,7 +28,7 @@ function art(id: string, roomId = "r1", createdAt = `2026-10-05T00:00:0${id.slic
 }
 
 function day(date: string, n = 0): JournalDay {
-  return { date, artifacts: [], notes: Array.from({ length: n }, (_, i) => ({ date, name: `n${i}`, relPath: `n${i}.md`, updatedAt: date, author: "me" })), conversations: [] };
+  return { date, artifacts: [], notes: Array.from({ length: n }, (_, i) => ({ date, name: `n${i}`, relPath: `n${i}.md`, updatedAt: date, author: "me" })), sessions: [] };
 }
 
 /** Scripted roomsd: snapshot results are captured at call time; `hold()` delays responses until `release*()`. */
@@ -563,19 +563,19 @@ describe("RoomsStore days", () => {
     s.stop();
   });
 
-  it("conversation.moved refetches the watched days that list the conversation", async () => {
+  it("session.moved refetches the watched days that list the session", async () => {
     vi.useFakeTimers();
     const c = new FakeClient();
-    const talk = (session: string, roomId: string | null = null): Conversation => ({
-      id: { agent: "codex", session }, title: session, cwd: null, startedAt: "", endedAt: "", messages: 1, lastReply: null, artifactsWritten: [], roomId,
+    const talk = (id: string, roomId: string | null = null): Session => ({
+      agent: "codex", id, title: id, cwd: null, startedAt: "", endedAt: "", messages: 1, lastReply: null, artifactsWritten: [], roomId,
     });
-    c.days.set("2026-10-05", { data: { ...day("2026-10-05"), conversations: [{ at: "2026-10-05T01:00:00Z", conversation: talk("s1") }] }, seq: 1 });
+    c.days.set("2026-10-05", { data: { ...day("2026-10-05"), sessions: [{ at: "2026-10-05T01:00:00Z", session: talk("s1") }] }, seq: 1 });
     c.days.set("2026-10-04", { data: day("2026-10-04"), seq: 1 });
     const s = await liveStore(c);
     await s.loadDay("2026-10-05");
     await s.loadDay("2026-10-04");
-    c.emit({ seq: 2, type: "conversation.moved", conversation: talk("s1", "r1"), fromRoomId: null });
-    c.emit({ seq: 3, type: "conversation.moved", conversation: talk("other", "r1"), fromRoomId: null });
+    c.emit({ seq: 2, type: "session.moved", session: talk("s1", "r1"), fromRoomId: null });
+    c.emit({ seq: 3, type: "session.moved", session: talk("other", "r1"), fromRoomId: null });
     await vi.advanceTimersByTimeAsync(150);
     expect(c.calls.journalDay).toEqual(["2026-10-05", "2026-10-04", "2026-10-05"]);
     s.stop();

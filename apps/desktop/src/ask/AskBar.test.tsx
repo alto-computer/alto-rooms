@@ -1,20 +1,20 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Artifact, AskScope, AskTarget, AskTurn, Conversation } from "@alto-rooms/protocol-ts";
+import type { Artifact, AskScope, AskTarget, AskTurn, Session } from "@alto-rooms/protocol-ts";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { useAsksStore } from "@/data/hooks";
 import { renderWithStores, room } from "@/test/fakes";
 import { AskBar } from "./AskBar";
 
-const scope: AskScope = { kind: "doc", fileKey: "k1" };
-const doc: Artifact = {
+const scope: AskScope = { kind: "artifact", fileKey: "k1" };
+const artifact: Artifact = {
   id: "a1", roomId: "r1", relPath: "doc.html", title: "Doc", createdAt: "2026-10-06T09:00:00+09:00",
   updatedAt: "2026-10-06T09:00:00+09:00", author: "agent", fileKey: "k1",
   source: { agent: "claude-code", session: "S1", cwd: null, machine: null },
 };
 const turn = (extra: Partial<AskTurn>): AskTurn => ({
-  id: "t1", scope: { kind: "doc", fileKey: "k1" }, question: "왜?", answer: "", agent: "claude-code", model: null, mode: "resume", status: "running",
+  id: "t1", scope: { kind: "artifact", fileKey: "k1" }, question: "왜?", answer: "", agent: "claude-code", model: null, mode: "resume", status: "running",
   error: null, startedAt: "2026-10-06T10:00:00+09:00", endedAt: null, images: [], kind: "question", leftOut: 0, session: null, ...extra,
 });
 
@@ -23,7 +23,7 @@ function Grab() { store = useAsksStore(); return null; }
 
 async function setup(asks: Record<string, AskTurn[]> = {}, readOnly = false, target?: AskTarget) {
   const askTargets = target ? { k1: target } : undefined;
-  return renderWithStores(<><Grab /><AskBar subject={{ kind: "doc", artifact: doc }} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks, readOnly, askTargets });
+  return renderWithStores(<><Grab /><AskBar subject={{ kind: "artifact", artifact: artifact }} /></>, { rooms: [room("r1", "R")], artifacts: { r1: [artifact] }, asks, readOnly, askTargets });
 }
 
 const claude: AskTarget = { agent: "claude-code", mode: "resume", models: ["opus", "sonnet", "haiku", "claude-x-1"], scoped: false };
@@ -254,9 +254,9 @@ describe("AskBar", () => {
 
   it("shows quotes waiting above the input and on the asked question", async () => {
     const { emit } = await setup();
-    act(() => store.addQuote({ kind: "doc", fileKey: "k1" }, "첫 인용\n둘째 줄"));
-    act(() => store.addQuote({ kind: "doc", fileKey: "k1" }, "  다른 인용  "));
-    act(() => store.addQuote({ kind: "doc", fileKey: "k1" }, "다른 인용"));
+    act(() => store.addQuote({ kind: "artifact", fileKey: "k1" }, "첫 인용\n둘째 줄"));
+    act(() => store.addQuote({ kind: "artifact", fileKey: "k1" }, "  다른 인용  "));
+    act(() => store.addQuote({ kind: "artifact", fileKey: "k1" }, "다른 인용"));
     const chips = await screen.findByRole("list", { name: "Quoted text" });
     expect(chips.querySelectorAll("li")).toHaveLength(2);
     fireEvent.click(screen.getAllByRole("button", { name: "Remove quote" })[1]);
@@ -402,7 +402,7 @@ describe("AskBar", () => {
     expect(screen.getByText("답")).toBeTruthy();
   });
 
-  it("floats over the page: an outside pointerdown or a click into the doc iframe folds the sheet; inside does not", async () => {
+  it("floats over the page: an outside pointerdown or a click into the artifact iframe folds the sheet; inside does not", async () => {
     const { container } = await setup({ k1: [turn({ status: "done", answer: "답", endedAt: "2026-10-06T10:00:03+09:00" })] });
     const input = await screen.findByPlaceholderText("Ask about this artifact…");
     fireEvent.pointerDown(await screen.findByText("답"));
@@ -432,11 +432,11 @@ describe("AskBar", () => {
     expect(screen.queryByLabelText(/^Model/)).toBeNull();
   });
 
-  it("falls back to the doc's agent when roomsd can't say where the ask goes", async () => {
+  it("falls back to the artifact's agent when roomsd can't say where the ask goes", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const noAgent = { ...doc, source: { ...doc.source, agent: null } };
-      await renderWithStores(<AskBar subject={{ kind: "doc", artifact: noAgent }} />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { k1: new Error("down") } });
+      const noAgent = { ...artifact, source: { ...artifact.source, agent: null } };
+      await renderWithStores(<AskBar subject={{ kind: "artifact", artifact: noAgent }} />, { rooms: [room("r1", "R")], artifacts: { r1: [noAgent] }, askTargets: { k1: new Error("down") } });
       expect(await screen.findByText("Default agent")).toBeTruthy();
       await waitFor(() => expect(warn).toHaveBeenCalled());
       expect(screen.getByText("Default agent")).toBeTruthy();
@@ -579,7 +579,7 @@ describe("AskBar", () => {
     });
   });
 
-  it("keeps an unsent draft per doc, across a remount", async () => {
+  it("keeps an unsent draft per artifact, across a remount", async () => {
     const first = await setup();
     const input = (await screen.findByPlaceholderText("Ask about this artifact…")) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: "쓰다 만 질문" } });
@@ -613,7 +613,7 @@ describe("AskBar for a room", () => {
   const roomTurn = (extra: Partial<AskTurn>) => turn({ id: "rt1", scope: roomScope, mode: "new", ...extra });
   const setupRoom = (opts: { asks?: Record<string, AskTurn[]>; readOnly?: boolean; target?: AskTarget } = {}) =>
     renderWithStores(<AskBar subject={{ kind: "room", roomId: "r1" }} />, {
-      rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks: opts.asks, readOnly: opts.readOnly,
+      rooms: [room("r1", "R")], artifacts: { r1: [artifact] }, asks: opts.asks, readOnly: opts.readOnly,
       askTargets: opts.target ? { "room:r1": opts.target } : undefined,
     });
 
@@ -634,7 +634,7 @@ describe("AskBar for a room", () => {
     expect(head.getAttribute("title")).toBeNull();
   });
 
-  it("shows only the room's thread, never the doc's", async () => {
+  it("shows only the room's thread, never the artifact's", async () => {
     await setupRoom({
       asks: {
         k1: [turn({ question: "doc question", status: "done", answer: "doc answer", endedAt: "2026-10-06T10:00:01+09:00" })],
@@ -652,7 +652,7 @@ describe("AskBar for a room", () => {
       show = setRoomId;
       return <AskBar key={roomId} subject={{ kind: "room", roomId }} />;
     }
-    const { client, emit } = await renderWithStores(<Switch />, { rooms: [room("r1", "A"), room("r2", "B")], artifacts: { r1: [doc], r2: [] } });
+    const { client, emit } = await renderWithStores(<Switch />, { rooms: [room("r1", "A"), room("r2", "B")], artifacts: { r1: [artifact], r2: [] } });
     const input = await screen.findByPlaceholderText("Ask about this room…");
     fireEvent.change(input, { target: { value: "길게?" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -683,7 +683,7 @@ describe("AskBar for a day", () => {
     return <AskBar subject={{ kind: "day", date }} />;
   }
   const setupDays = (asks: Record<string, AskTurn[]> = {}) =>
-    renderWithStores(<Journal />, { rooms: [room("r1", "R")], artifacts: { r1: [doc] }, asks });
+    renderWithStores(<Journal />, { rooms: [room("r1", "R")], artifacts: { r1: [artifact] }, asks });
   const input = () => screen.getByPlaceholderText("Ask about this day…") as HTMLTextAreaElement;
 
   afterEach(() => {
@@ -748,18 +748,18 @@ describe("AskBar for a session", () => {
     localStorage.clear();
   });
 
-  const session = (agent: "aside" | "codex"): Conversation => ({
-    id: { agent, session: "S1" }, title: "t", cwd: null, startedAt: "", endedAt: "", messages: 2, lastReply: null, artifactsWritten: [], roomId: null,
+  const session = (agent: "aside" | "codex"): Session => ({
+    agent, id: "S1", title: "t", cwd: null, startedAt: "", endedAt: "", messages: 2, lastReply: null, artifactsWritten: [], roomId: null,
   });
 
   it("says under the bar that an Aside session's asks continue it; a Codex session says nothing", async () => {
     const target: AskTarget = { agent: "aside", mode: "resume", models: [], scoped: false };
-    const first = await renderWithStores(<AskBar subject={{ kind: "conversation", conversation: session("aside") }} />, {
-      rooms: [room("r1", "R")], askTargets: { "conversation:aside:S1": target },
+    const first = await renderWithStores(<AskBar subject={{ kind: "session", session: session("aside") }} />, {
+      rooms: [room("r1", "R")], askTargets: { "session:aside:S1": target },
     });
     expect(await screen.findByText("Asks continue this Aside session; it can use the browser.")).toBeTruthy();
     first.unmount();
-    await renderWithStores(<AskBar subject={{ kind: "conversation", conversation: session("codex") }} />, { rooms: [room("r1", "R")] });
+    await renderWithStores(<AskBar subject={{ kind: "session", session: session("codex") }} />, { rooms: [room("r1", "R")] });
     await screen.findByPlaceholderText("Ask about this session…");
     expect(screen.queryByText(/continue this Aside session/)).toBeNull();
   });

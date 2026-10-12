@@ -1,6 +1,6 @@
 /*
  * Content scripts: roomsd splices the content scripts of the plugins the user
- * turned on into a doc tab's document, right after <head>, next to the selection
+ * turned on into an artifact tab's document, right after <head>, next to the selection
  * bridge. Card previews get the bridge alone. The name matches the WebKit
  * project's pattern, so this runs on both engines.
  */
@@ -28,8 +28,8 @@ async function turnOnMarker(page: Page) {
   await expect(card).toBeHidden();
 }
 
-/** Opens the doc from its card in the Bench room grid, once the card's preview has loaded. */
-async function openDoc(page: Page, title: string) {
+/** Opens the artifact from its card in the Bench room grid, once the card's preview has loaded. */
+async function openArtifact(page: Page, title: string) {
   if (!(await page.getByRole("tab", { name: "Bench", selected: true }).isVisible())) {
     await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "Bench" }).click();
   }
@@ -40,9 +40,9 @@ async function openDoc(page: Page, title: string) {
   await expect(page.getByRole("tab", { name: title, selected: true })).toBeVisible();
 }
 
-/** The doc tab's frame: the card preview frame has the same title but is aria-hidden. */
-const docFrameEl = (page: Page, title: string) => page.locator(`iframe[title="${title}"]:not([aria-hidden])`);
-const docFrame = (page: Page, title: string): FrameLocator => page.frameLocator(`iframe[title="${title}"]:not([aria-hidden])`);
+/** The artifact tab's frame: the card preview frame has the same title but is aria-hidden. */
+const artifactFrameEl = (page: Page, title: string) => page.locator(`iframe[title="${title}"]:not([aria-hidden])`);
+const artifactFrame = (page: Page, title: string): FrameLocator => page.frameLocator(`iframe[title="${title}"]:not([aria-hidden])`);
 const cardFrame = (page: Page, title: string): FrameLocator => page.getByTestId("artifact-card").filter({ hasText: title }).frameLocator(`iframe[title="${title}"]`);
 
 /** Selects the paragraph's text inside the frame the way a drag would end up: a selection change the bridge reports. */
@@ -56,7 +56,7 @@ async function selectText(frame: FrameLocator) {
   });
 }
 
-test("a doc tab runs the content scripts of plugins that are on; cards don't; off reloads the doc without them", async ({ page, daemon }) => {
+test("an artifact tab runs the content scripts of plugins that are on; cards don't; off reloads the artifact without them", async ({ page, daemon }) => {
   await daemon.createRoom("Bench");
   await daemon.write("Bench/report.html", "<!doctype html><html><head><meta charset=\"utf-8\"><title>Report</title></head><body><p id=\"text\">p95 118 ms</p></body></html>");
   await daemon.installPlugin("marker");
@@ -68,28 +68,28 @@ test("a doc tab runs the content scripts of plugins that are on; cards don't; of
   await expect(card.locator("#text")).toHaveText("p95 118 ms");
   await expect(card.locator("html")).not.toHaveAttribute("data-marker");
 
-  await openDoc(page, "Report");
-  const doc = docFrame(page, "Report");
-  await expect(doc.locator("html")).toHaveAttribute("data-marker", "1");
-  const withMarker = await docFrameEl(page, "Report").getAttribute("src");
-  expect(withMarker).toContain("doc=1&cs=");
+  await openArtifact(page, "Report");
+  const artifact = artifactFrame(page, "Report");
+  await expect(artifact.locator("html")).toHaveAttribute("data-marker", "1");
+  const withMarker = await artifactFrameEl(page, "Report").getAttribute("src");
+  expect(withMarker).toContain("tab=1&cs=");
 
   await page.getByRole("button", { name: "Back (⌘[)" }).click();
   await expect(card.locator("#text")).toHaveText("p95 118 ms");
   await expect(card.locator("html"), "the card preview keeps running without the script").not.toHaveAttribute("data-marker");
   await page.getByRole("button", { name: "Forward (⌘])" }).click();
-  await expect(doc.locator("html")).toHaveAttribute("data-marker", "1");
+  await expect(artifact.locator("html")).toHaveAttribute("data-marker", "1");
 
   await api(daemon, "PATCH", "/v1/plugins/marker", { enabled: false });
-  await expect(docFrameEl(page, "Report"), "turning the plugin off gives the doc frame a new URL").not.toHaveAttribute("src", withMarker!);
-  await expect(doc.locator("#text")).toHaveText("p95 118 ms");
-  await expect(doc.locator("html"), "the reloaded doc runs no content script").not.toHaveAttribute("data-marker");
+  await expect(artifactFrameEl(page, "Report"), "turning the plugin off gives the artifact frame a new URL").not.toHaveAttribute("src", withMarker!);
+  await expect(artifact.locator("#text")).toHaveText("p95 118 ms");
+  await expect(artifact.locator("html"), "the reloaded artifact runs no content script").not.toHaveAttribute("data-marker");
 
   await api(daemon, "PATCH", "/v1/plugins/marker", { enabled: true });
   const [bench] = await daemon.listRooms().then((rs) => rs.filter((r) => r.name === "Bench"));
   const files = `http://127.0.0.1:${FILES_PORT}/${bench.id}/report.html`;
-  const served = await (await fetch(`${files}?doc=1`)).text();
-  expect(served, "the doc variant: bridge, then the tag, right after <head>").toMatch(
+  const served = await (await fetch(`${files}?tab=1`)).text();
+  expect(served, "the artifact-tab variant: bridge, then the tag, right after <head>").toMatch(
     new RegExp(`^<!doctype html><html><head><script data-rooms-bridge>[\\s\\S]*</script>\n<script src="http://127\\.0\\.0\\.1:${FILES_PORT}/_plugins/marker/content\\.js\\?r=[0-9a-f]{12}"></script>\n<meta charset="utf-8">`),
   );
   expect(served.endsWith("</body></html>"), "nothing after </html>").toBe(true);
@@ -112,13 +112,13 @@ test("the bridge and the content scripts run under every artifact CSP, and a lat
   for (const f of names) titles.set(f, (await fs.readFile(path.join(CSP_FIXTURES, f), "utf8")).match(/<title>(.*)<\/title>/)![1]);
   titles.set("korean.html", "Korean");
   for (const [f, title] of titles) {
-    await openDoc(page, title);
-    const doc = docFrame(page, title);
-    await expect(doc.locator("html"), f).toHaveAttribute("data-marker", "1");
-    await selectText(doc);
+    await openArtifact(page, title);
+    const artifact = artifactFrame(page, title);
+    await expect(artifact.locator("html"), f).toHaveAttribute("data-marker", "1");
+    await selectText(artifact);
     await expect(page.getByRole("button", { name: "Ask" }), f).toBeVisible();
-    if (f === "csp-nonce.html") await expect(doc.locator("html"), "the document's own nonce script still runs").toHaveAttribute("data-own", "1");
-    if (f === "korean.html") await expect(doc.locator("#text"), "the header charset wins when the splice pushes <meta charset> past the 1,024-byte prescan").toHaveText(korean);
+    if (f === "csp-nonce.html") await expect(artifact.locator("html"), "the document's own nonce script still runs").toHaveAttribute("data-own", "1");
+    if (f === "korean.html") await expect(artifact.locator("#text"), "the header charset wins when the splice pushes <meta charset> past the 1,024-byte prescan").toHaveText(korean);
     await page.keyboard.press("Escape");
   }
 });
@@ -142,22 +142,22 @@ test("a content script stores data for its document through the app, and its act
   await daemon.installPlugin("marker");
   await page.goto("/");
   await turnOnMarker(page);
-  await openDoc(page, "Report");
-  const doc = docFrame(page, "Report");
-  await expect(doc.locator("html"), "wrote marks.json, then read it back").toHaveAttribute("data-marker-read", "Report");
+  await openArtifact(page, "Report");
+  const artifact = artifactFrame(page, "Report");
+  await expect(artifact.locator("html"), "wrote marks.json, then read it back").toHaveAttribute("data-marker-read", "Report");
   const key = await fileKeyOf(daemon, "Bench", "Report");
   expect(await dataFiles(daemon, "marker")).toEqual([`docs/${key}/marks.json`]);
   expect(JSON.parse(await daemon.read(`.rooms/plugins/marker/data/docs/${key}/marks.json`))).toEqual({ title: "Report" });
 
-  await selectText(doc);
+  await selectText(artifact);
   const bar = page.getByRole("toolbar", { name: "Selection actions" });
   await expect(bar).toBeVisible();
   await expect(bar.getByRole("button")).toHaveText(["Ask", "Mark"]);
   await bar.getByRole("button", { name: "Mark" }).click();
-  await expect(doc.locator("html")).toHaveAttribute("data-marker-selected", "p95 118 ms");
+  await expect(artifact.locator("html")).toHaveAttribute("data-marker-selected", "p95 118 ms");
   await expect(bar).toBeHidden();
 
-  await selectText(doc);
+  await selectText(artifact);
   await page.getByRole("button", { name: "Ask" }).click();
   await expect(page.getByRole("list", { name: "Quoted text" })).toContainText("p95 118 ms");
 });
@@ -191,10 +191,10 @@ setTimeout(() => { for (let i = 0; i < 500; i++) send({ plugin: "marker", type: 
   const tokenBefore = await daemon.read(".rooms/token");
   await page.goto("/");
   await turnOnMarker(page);
-  await openDoc(page, "Hostile");
-  const doc = docFrame(page, "Hostile");
-  await expect(doc.locator("html")).toHaveAttribute("data-marker-read", "Hostile");
-  const results = async () => JSON.parse((await doc.locator("body").getAttribute("data-results")) ?? "{}") as Record<string, string>;
+  await openArtifact(page, "Hostile");
+  const artifact = artifactFrame(page, "Hostile");
+  await expect(artifact.locator("html")).toHaveAttribute("data-marker-read", "Hostile");
+  const results = async () => JSON.parse((await artifact.locator("body").getAttribute("data-results")) ?? "{}") as Record<string, string>;
   await expect.poll(async () => Object.keys(await results()).filter((k) => k.startsWith("flood")).length, { timeout: 10_000 }).toBe(500);
   const r = await results();
   expect({ escape: r.escape, token: r.token, readToken: r.readToken, otherPlugin: r.otherPlugin }).toEqual({
@@ -231,7 +231,7 @@ async function openPluginTab(page: Page, name: string) {
   await page.getByRole("menu", { name: "Plugins" }).getByRole("menuitem", { name }).click();
 }
 
-async function writeDocs(daemon: Daemon) {
+async function writeArtifacts(daemon: Daemon) {
   await daemon.createRoom("Bench");
   for (const [file, title] of [["report.html", "Report"], ["second.html", "Second"]]) {
     await daemon.write(`Bench/${file}`, `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><p id="text">${title} body</p></body></html>`);
@@ -246,8 +246,8 @@ async function openFromMarker(page: Page, fileKey: string, anchor: string) {
   await tab.getByRole("button", { name: "Open at anchor" }).click();
 }
 
-test("a plugin tab opens a doc next to it at an anchor; an open doc comes forward and gets the next one; a reopened doc gets none", async ({ page, daemon }) => {
-  await writeDocs(daemon);
+test("a plugin tab opens an artifact next to it at an anchor; an open artifact comes forward and gets the next one; a reopened artifact gets none", async ({ page, daemon }) => {
+  await writeArtifacts(daemon);
   await daemon.installPlugin("marker");
   await page.goto("/");
   await turnOnMarker(page);
@@ -256,20 +256,20 @@ test("a plugin tab opens a doc next to it at an anchor; an open doc comes forwar
   await openPluginTab(page, "Marker");
   await expect(tabNamed(page, "Marker")).toHaveAttribute("aria-selected", "true");
   await openFromMarker(page, key, '{"mark":"x"}');
-  await expect(tabNamed(page, "Report"), "the doc opens in its own tab").toHaveAttribute("aria-selected", "true");
-  await expect(tabs(page), "the plugin tab stays, with the doc right after it").toHaveText(["Marker", "Report"]);
-  const doc = docFrame(page, "Report");
-  await expect(doc.locator("html")).toHaveAttribute("data-marker-reveal", '{"mark":"x"}');
-  await expect(doc.locator("html")).toHaveAttribute("data-marker-reveals", "1");
+  await expect(tabNamed(page, "Report"), "the artifact opens in its own tab").toHaveAttribute("aria-selected", "true");
+  await expect(tabs(page), "the plugin tab stays, with the artifact right after it").toHaveText(["Marker", "Report"]);
+  const artifact = artifactFrame(page, "Report");
+  await expect(artifact.locator("html")).toHaveAttribute("data-marker-reveal", '{"mark":"x"}');
+  await expect(artifact.locator("html")).toHaveAttribute("data-marker-reveals", "1");
   await expect.poll(() => daemon.read(`.rooms/plugins/marker/data/docs/${key}/reveal.json`).catch(() => ""), "the script can store what it got").toBe('{"anchor":{"mark":"x"},"count":1}');
 
   await tabNamed(page, "Marker").click();
   await openFromMarker(page, key, '{"mark":"y"}');
   await expect(tabNamed(page, "Report")).toHaveAttribute("aria-selected", "true");
-  await expect(tabs(page), "no second tab for the same doc").toHaveCount(2);
-  await expect(doc.locator("html"), "the doc kept in the background gets the new anchor").toHaveAttribute("data-marker-reveal", '{"mark":"y"}');
-  await expect(doc.locator("html")).toHaveAttribute("data-marker-reveals", "2");
-  await selectText(doc);
+  await expect(tabs(page), "no second tab for the same artifact").toHaveCount(2);
+  await expect(artifact.locator("html"), "the artifact kept in the background gets the new anchor").toHaveAttribute("data-marker-reveal", '{"mark":"y"}');
+  await expect(artifact.locator("html")).toHaveAttribute("data-marker-reveals", "2");
+  await selectText(artifact);
   await expect(page.getByRole("toolbar", { name: "Selection actions" }).getByRole("button"), "its plugin actions survive the trip to the background").toHaveText(["Ask", "Mark"]);
   await page.keyboard.press("Escape");
 
@@ -280,35 +280,35 @@ test("a plugin tab opens a doc next to it at an anchor; an open doc comes forwar
 
   await page.getByRole("tablist", { name: "Tabs" }).locator("[role=presentation]", { has: page.getByRole("tab", { name: "Report", exact: true }) }).getByRole("button", { name: "Close tab" }).click();
   await expect(tabs(page)).toHaveCount(1);
-  await openDoc(page, "Report");
-  await expect(doc.locator("html"), "the reopened doc's script ran").toHaveAttribute("data-marker-read", "Report");
-  await expect(doc.locator("html"), "and got no stale anchor").not.toHaveAttribute("data-marker-reveal");
+  await openArtifact(page, "Report");
+  await expect(artifact.locator("html"), "the reopened artifact's script ran").toHaveAttribute("data-marker-read", "Report");
+  await expect(artifact.locator("html"), "and got no stale anchor").not.toHaveAttribute("data-marker-reveal");
 });
 
-test("open from a side panel replaces its doc tab; from a plugin tab it opens a new tab and keeps the plugin tab", async ({ page, daemon }) => {
-  await writeDocs(daemon);
+test("open from a side panel replaces its artifact tab; from a plugin tab it opens a new tab and keeps the plugin tab", async ({ page, daemon }) => {
+  await writeArtifacts(daemon);
   await daemon.installPlugin("echo");
   await api(daemon, "PATCH", "/v1/plugins/echo", { enabled: true, permissions: ["rooms.read"] });
   await page.goto("/");
   const echo = pluginFrame(page, "Echo");
 
-  await openDoc(page, "Report");
+  await openArtifact(page, "Report");
   await page.getByRole("button", { name: "Open Echo" }).click();
   await echo.locator("#fileKey").fill(await fileKeyOf(daemon, "Bench", "Second"));
-  await echo.getByRole("button", { name: "Open doc" }).click();
+  await echo.getByRole("button", { name: "Open artifact" }).click();
   await expect(tabNamed(page, "Second")).toHaveAttribute("aria-selected", "true");
   await expect(tabs(page), "the side panel navigated its own tab").toHaveText(["Second"]);
 
   await openPluginTab(page, "Echo");
   await expect(tabNamed(page, "Echo")).toHaveAttribute("aria-selected", "true");
   await echo.locator("#fileKey").fill(await fileKeyOf(daemon, "Bench", "Report"));
-  await echo.getByRole("button", { name: "Open doc" }).click();
+  await echo.getByRole("button", { name: "Open artifact" }).click();
   await expect(tabNamed(page, "Report")).toHaveAttribute("aria-selected", "true");
   await expect(tabs(page)).toHaveText(["Echo", "Report"]);
 });
 
-test("a doc rewritten while in the background keeps its plugin buttons and still gets anchors; two quick opens deliver one anchor", async ({ page, daemon }) => {
-  await writeDocs(daemon);
+test("an artifact rewritten while in the background keeps its plugin buttons and still gets anchors; two quick opens deliver one anchor", async ({ page, daemon }) => {
+  await writeArtifacts(daemon);
   await daemon.installPlugin("marker");
   await page.goto("/");
   await turnOnMarker(page);
@@ -319,17 +319,17 @@ test("a doc rewritten while in the background keeps its plugin buttons and still
 
   await openPluginTab(page, "Marker");
   await openFromMarker(page, key, '{"mark":"first"}');
-  const doc = docFrame(page, "Report");
-  await expect(doc.locator("html")).toHaveAttribute("data-marker-reveal", '{"mark":"first"}');
-  // The room tab watches Bench, so the doc tab gets the rewrite and reloads as it comes back.
+  const artifact = artifactFrame(page, "Report");
+  await expect(artifact.locator("html")).toHaveAttribute("data-marker-reveal", '{"mark":"first"}');
+  // The room tab watches Bench, so the artifact tab gets the rewrite and reloads as it comes back.
   await benchInNewTab();
   await expect(tabs(page)).toHaveText(["Marker", "Report", "Bench"]);
   await rewrite("Report v2");
   await expect(cardFrame(page, "Report").locator("#text")).toHaveText("Report v2");
 
   await tabNamed(page, "Report").click();
-  await expect(doc.locator("#text")).toHaveText("Report v2");
-  await selectText(doc);
+  await expect(artifact.locator("#text")).toHaveText("Report v2");
+  await selectText(artifact);
   await expect(page.getByRole("toolbar", { name: "Selection actions" }).getByRole("button"), "its buttons are back").toHaveText(["Ask", "Mark"]);
   await page.keyboard.press("Escape");
 
@@ -339,8 +339,8 @@ test("a doc rewritten while in the background keeps its plugin buttons and still
   await tabNamed(page, "Marker").click();
   await openFromMarker(page, key, '{"mark":"after-reload"}');
   await expect(tabNamed(page, "Report")).toHaveAttribute("aria-selected", "true");
-  await expect(doc.locator("#text")).toHaveText("Report v3");
-  await expect(doc.locator("html"), "the reloaded doc gets the anchor").toHaveAttribute("data-marker-reveal", '{"mark":"after-reload"}');
+  await expect(artifact.locator("#text")).toHaveText("Report v3");
+  await expect(artifact.locator("html"), "the reloaded artifact gets the anchor").toHaveAttribute("data-marker-reveal", '{"mark":"after-reload"}');
 
   await page.getByRole("tablist", { name: "Tabs" }).locator("[role=presentation]", { has: page.getByRole("tab", { name: "Report", exact: true }) }).getByRole("button", { name: "Close tab" }).click();
   await tabNamed(page, "Marker").click();
@@ -348,6 +348,6 @@ test("a doc rewritten while in the background keeps its plugin buttons and still
   await pluginFrame(page, "Marker").getByRole("button", { name: "Open twice" }).click();
   await expect(tabNamed(page, "Report")).toHaveAttribute("aria-selected", "true");
   // Which open finishes last depends on two lookups racing; the unit tests pin that the later anchor replaces a waiting one.
-  await expect(doc.locator("html"), "the doc gets one of them").toHaveAttribute("data-marker-reveal", /^\{"n":[12]\}$/);
-  await expect.poll(async () => Number(await doc.locator("html").getAttribute("data-marker-reveals")), "each anchor arrives at most once").toBeLessThanOrEqual(2);
+  await expect(artifact.locator("html"), "the artifact gets one of them").toHaveAttribute("data-marker-reveal", /^\{"n":[12]\}$/);
+  await expect.poll(async () => Number(await artifact.locator("html").getAttribute("data-marker-reveals")), "each anchor arrives at most once").toBeLessThanOrEqual(2);
 });

@@ -27,6 +27,6 @@ export function saveModel(agent: string, model: string | null): void {
     if (model) localStorage.setItem(key(agent), model);
     else localStorage.removeItem(key(agent));
   } catch {
-    // storage unavailable: the choice lasts until the bar shows another doc
+    // storage unavailable: the choice lasts until the bar shows another artifact
   }
 }

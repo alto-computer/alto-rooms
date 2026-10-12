@@ -11,7 +11,7 @@ const BUNDLED = path.resolve(import.meta.dirname, "../src-tauri/resources/plugin
 test.skip(!existsSync(path.join(BUNDLED, "goals", "manifest.json")), "bundled plugins missing: run `bun run plugins`");
 test.use({ bundledPlugins: BUNDLED });
 
-type Doc = { id: string; fileKey: string };
+type Artifact = { id: string; fileKey: string };
 
 async function setup(page: Page, daemon: Daemon) {
   const bench = await daemon.createRoom("Bench");
@@ -19,19 +19,19 @@ async function setup(page: Page, daemon: Daemon) {
   const csp: string[] = [];
   page.on("console", (m) => /Content Security Policy|Refused to/.test(m.text()) && csp.push(m.text()));
   await page.goto("/");
-  await expect.poll(async () => ((await (await fetch(`${daemon.baseUrl}/v1/rooms/${bench.id}/artifacts`)).json()) as Doc[]).length).toBe(1);
-  const [doc] = (await (await fetch(`${daemon.baseUrl}/v1/rooms/${bench.id}/artifacts`)).json()) as Doc[];
-  return { doc, csp };
+  await expect.poll(async () => ((await (await fetch(`${daemon.baseUrl}/v1/rooms/${bench.id}/artifacts`)).json()) as Artifact[]).length).toBe(1);
+  const [artifact] = (await (await fetch(`${daemon.baseUrl}/v1/rooms/${bench.id}/artifacts`)).json()) as Artifact[];
+  return { artifact, csp };
 }
 
-async function openDoc(page: Page) {
+async function openArtifact(page: Page) {
   await page.getByRole("list", { name: "Rooms" }).getByRole("button", { name: "Bench" }).click();
   await page.getByTestId("artifact-card").filter({ hasText: "Latency report" }).getByRole("button", { name: "Latency report" }).click();
   await expect(page.getByRole("tab", { name: "Latency report", selected: true })).toBeVisible();
 }
 
 test("Goals comes with the app: no card, a goal links a document and opens it", async ({ page, daemon }) => {
-  const { doc, csp } = await setup(page, daemon);
+  const { artifact, csp } = await setup(page, daemon);
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await page.getByRole("menu", { name: "Plugins" }).getByRole("menuitem", { name: "Goals" }).click();
   await expect(page.getByRole("dialog", { name: /plugin/i })).toHaveCount(0);
@@ -49,7 +49,7 @@ test("Goals comes with the app: no card, a goal links a document and opens it", 
   const picker = goals.getByRole("dialog", { name: "Link a document" });
   await picker.getByRole("button", { name: "Bench" }).click();
   await picker.getByRole("button", { name: "Latency report" }).click();
-  await expect.poll(() => daemon.read(".rooms/plugins/goals/data/goals.json").catch(() => "")).toContain(doc.fileKey);
+  await expect.poll(() => daemon.read(".rooms/plugins/goals/data/goals.json").catch(() => "")).toContain(artifact.fileKey);
 
   await goals.getByRole("button", { name: "Open Latency report" }).click();
   await expect(page.getByRole("tab", { name: "Latency report", selected: true })).toBeVisible();
@@ -57,8 +57,8 @@ test("Goals comes with the app: no card, a goal links a document and opens it", 
 });
 
 test("Excalidraw notes come with the app: a drawing is saved per document and exports as PNG", async ({ page, daemon }) => {
-  const { doc, csp } = await setup(page, daemon);
-  await openDoc(page);
+  const { artifact, csp } = await setup(page, daemon);
+  await openArtifact(page);
   await page.getByRole("button", { name: "Open Notes" }).click();
 
   const frame = page.frameLocator('iframe[title="Excalidraw notes"]');
@@ -77,7 +77,7 @@ test("Excalidraw notes come with the app: a drawing is saved per document and ex
   await page.mouse.move(box.x + 160, box.y + 200, { steps: 8 });
   await page.mouse.up();
 
-  const notes = `.rooms/plugins/excalidraw/data/notes/${doc.fileKey}.excalidraw`;
+  const notes = `.rooms/plugins/excalidraw/data/notes/${artifact.fileKey}.excalidraw`;
   await expect.poll(() => daemon.read(notes).catch(() => ""), { timeout: 5000 }).toContain('"type":"rectangle"');
 
   const download = page.waitForEvent("download");
@@ -96,7 +96,7 @@ test("Excalidraw notes come with the app: a drawing is saved per document and ex
 
 test("Notes resize follows across both frames, persists once per drag and cancels cleanly", async ({ page, daemon }, testInfo) => {
   const { csp } = await setup(page, daemon);
-  await openDoc(page);
+  await openArtifact(page);
   await page.getByRole("button", { name: "Open Notes" }).click();
   await expect(page.frameLocator('iframe[title="Excalidraw notes"]').locator("canvas.interactive")).toBeVisible();
   const handle = page.getByRole("separator", { name: "Resize panel" });

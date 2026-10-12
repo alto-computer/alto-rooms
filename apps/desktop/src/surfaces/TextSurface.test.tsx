@@ -6,7 +6,7 @@ import { useTextSelection } from "@/selection/useTextSelection";
 import { surfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
 import { TextSurface } from "./TextSurface";
 
-const id: SurfaceId = { kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" };
+const id: SurfaceId = { kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t1" };
 
 let seat: ReturnType<typeof surfaceHub.register>;
 let sent: Record<string, unknown>[];

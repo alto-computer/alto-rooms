@@ -390,9 +390,9 @@ describe("surfaceKey", () => {
   it("is the name the SDK gives the same surface", () => {
     for (const id of [
       answer("t1"),
-      { kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" } as SurfaceId,
+      { kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t1" } as SurfaceId,
       { kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" } as SurfaceId,
-      { kind: "answer", scope: { kind: "conversation", agent: "claude-code", session: "abc-123" }, turnId: "t1" } as SurfaceId,
+      { kind: "answer", scope: { kind: "session", agent: "claude-code", id: "abc-123" }, turnId: "t1" } as SurfaceId,
     ]) {
       expect(surfaceKey(id)).toBe(sdkSurfaceKey(id));
     }
@@ -400,14 +400,22 @@ describe("surfaceKey", () => {
 });
 
 describe("parseSurfaceId", () => {
-  it("accepts an answer in a doc, room, day or conversation thread and nothing else", () => {
-    expect(parseSurfaceId({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" })).toEqual({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" });
+  it("reads a scope a plugin saved under SDK 0.5 names as the scope it is now", () => {
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" })!.scope).toEqual({ kind: "artifact", fileKey: "0123456789abcdef" });
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })!.scope).toEqual({ kind: "session", agent: "codex", id: "s_1-2" });
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "-x" }, turnId: "t1" })).toBeNull();
+  });
+
+  it("accepts an answer in an artifact, room, day or session thread and nothing else", () => {
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t_1-2" })).toEqual({ kind: "answer", scope: { kind: "artifact", fileKey: "0123456789abcdef" }, turnId: "t_1-2" });
     expect(parseSurfaceId({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" })!.scope).toEqual({ kind: "day", date: "2026-10-10" });
-    expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })!.scope).toEqual({ kind: "conversation", agent: "codex", session: "s_1-2" });
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "session", agent: "codex", id: "s_1-2" }, turnId: "t1" })!.scope).toEqual({ kind: "session", agent: "codex", id: "s_1-2" });
     for (const bad of [
-      { kind: "answer", scope: { kind: "conversation", agent: "cursor", session: "s1" }, turnId: "t1" },
-      { kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s 1" }, turnId: "t1" },
-      { kind: "answer", scope: { kind: "conversation", agent: "codex", session: "x".repeat(129) }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "cursor", id: "s1" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "codex", id: "s 1" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "codex", id: "-x" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "codex", session: "s1" }, turnId: "t1" },
+      { kind: "answer", scope: { kind: "session", agent: "codex", id: "x".repeat(129) }, turnId: "t1" },
       null,
       "answer:room:r1/t1",
       { kind: "note", scope: { kind: "room", roomId: "r1" }, turnId: "t1" },

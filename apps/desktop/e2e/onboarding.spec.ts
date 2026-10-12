@@ -44,7 +44,7 @@ test("a fresh home opens on today's Journal with the welcome page, and roomsd wr
   await expect(copy).toHaveText("Copy");
 
   // An example card copies its own text.
-  const example = "Turn today's conversation into an HTML review and put it in today's Journal";
+  const example = "Turn today's session into an HTML review and put it in today's Journal";
   await page.getByRole("button", { name: `Copy example: ${example}`, exact: true }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(example);
 

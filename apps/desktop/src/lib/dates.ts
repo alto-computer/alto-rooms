@@ -14,7 +14,7 @@ export function monthDay(date: string): string {
   return `${MONTHS[m - 1]} ${d}`;
 }
 
-/** New-doc dot: `createdAt` is strictly after `baseline` (both ISO instants). False if either is unparseable. */
+/** New-artifact dot: `createdAt` is strictly after `baseline` (both ISO instants). False if either is unparseable. */
 export function isNewSince(createdAt: string, baseline: string): boolean {
   const created = Date.parse(createdAt);
   const since = Date.parse(baseline);

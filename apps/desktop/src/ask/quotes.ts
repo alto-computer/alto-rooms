@@ -1,5 +1,5 @@
 /*
- * Quotes: text picked with "Ask" in a doc or an answer. They travel inside the question as
+ * Quotes: text picked with "Ask" in an artifact or an answer. They travel inside the question as
  * Markdown blockquotes, so roomsd and the agent see one plain question.
  */
 

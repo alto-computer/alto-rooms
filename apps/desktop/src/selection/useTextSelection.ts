@@ -4,7 +4,7 @@ import type { SurfaceSpan } from "@/surfaces/surfaceHub";
 /** Where the selection is, in px from the top-left of the box the bar is placed in. */
 export type SelectionRect = { x: number; y: number; w: number; h: number };
 
-/** The bridge's message from a doc frame: `{roomsSelection: 1, text, rect}`. Anything else is null. */
+/** The bridge's message from an artifact frame: `{roomsSelection: 1, text, rect}`. Anything else is null. */
 export function readSelectionMessage(data: unknown): { text: string; rect: SelectionRect | null } | null {
   if (!data || typeof data !== "object" || (data as { roomsSelection?: unknown }).roomsSelection !== 1) return null;
   const { text, rect } = data as { text?: unknown; rect?: unknown };

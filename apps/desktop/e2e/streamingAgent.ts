@@ -3,8 +3,8 @@ import { join } from "node:path";
 import type { Daemon } from "./fixtures";
 
 /**
- * The default agent for room and day asks: one Read of the first listed doc for a second, then
- * "<label> answer to <question> (<n> docs)" in deltas, n being how many docs the prompt lists.
+ * The default agent for room and day asks: one Read of the first listed file for a second, then
+ * "<label> answer to <question> (<n> artifacts)" in deltas, n being how many artifacts the prompt lists.
  * Its argv carries the scope settings, so roomsd reports its reads as scoped.
  */
 export function installStreamingAgent(daemon: Daemon, label: string) {
@@ -13,12 +13,12 @@ export function installStreamingAgent(daemon: Daemon, label: string) {
     bin,
     [
       "#!/bin/sh",
-      `doc=$(printf %s "$1" | grep '^- "' | head -n 1 | cut -d '"' -f 2)`,
+      `first=$(printf %s "$1" | grep '^- "' | head -n 1 | cut -d '"' -f 2)`,
       `n=$(printf %s "$1" | grep '^Documents (' | head -n 1 | sed 's/^Documents (\\([0-9]*\\)):$/\\1/')`,
       `q=$(printf %s "$1" | tail -n 1 | sed 's/^Question: //')`,
-      `printf '{"t":"act","p":"%s"}\\n' "$doc"; sleep 1`,
+      `printf '{"t":"act","p":"%s"}\\n' "$first"; sleep 1`,
       `printf '{"t":"d","x":"${label} answer to "}\\n'; sleep 0.4`,
-      `printf '{"t":"d","x":"%s (%s docs)"}\\n' "$q" "$n"`,
+      `printf '{"t":"d","x":"%s (%s artifacts)"}\\n' "$q" "$n"`,
     ].join("\n") + "\n",
   );
   chmodSync(bin, 0o755);

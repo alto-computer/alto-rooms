@@ -14,8 +14,8 @@ export type TextIndex = {
 };
 
 export function buildIndex(root: Node): TextIndex {
-  const doc = root.ownerDocument ?? (root as Document);
-  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+  const dom = root.ownerDocument ?? (root as Document);
+  const walker = dom.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       const p = n.parentElement;
       return !n.nodeValue || !p || SKIP.has(p.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;

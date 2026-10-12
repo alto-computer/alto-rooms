@@ -5,7 +5,7 @@ export const CurrentTabContext = createContext("");
 
 export const useCurrentTabId = (): string => useContext(CurrentTabContext);
 
-/** False while the view's tab is kept alive in the background (see AppShell's kept doc tabs). */
+/** False while the view's tab is kept alive in the background (see AppShell's kept artifact tabs). */
 export const TabVisibleContext = createContext(true);
 
 export const useTabVisible = (): boolean => useContext(TabVisibleContext);

@@ -16,7 +16,7 @@ import { useComposer } from "./useComposer";
 const PART_OF_THE_BAR = "[data-slot=dropdown-menu-content], [data-slot=dialog-content], [data-slot=dialog-overlay], [data-selection-ask]";
 
 /**
- * The ask bar at the bottom of a doc, room or Journal tab (⌘J): the subject's thread, and the input that
+ * The ask bar at the bottom of an artifact, room or Journal tab (⌘J): the subject's thread, and the input that
  * asks about it. The thread folds on Esc or a click elsewhere, and unfolds when the input is focused.
  */
 export function AskBar({ subject }: { subject: AskSubject }) {
@@ -47,7 +47,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const input = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => store.hold(scope), [store, key]);
-  // Fetch the Markdown renderer while the doc is read, so an answer never waits on it.
+  // Fetch the Markdown renderer while the artifact is read, so an answer never waits on it.
   useEffect(() => void preloadAnswer(), []);
   useLoadThread(scope, shown && !(thread?.loaded ?? false));
   useFocusRules({ open, shown, quoteCount: composer.quotes.length, runningId: running?.id, input, container, setUnfolded, setAnnounce });
@@ -133,8 +133,8 @@ function useLoadThread(scope: AskScope, needed: boolean) {
 }
 
 /**
- * Where the caret goes, never stolen from the doc or another input:
- * - into the input when the user opens the bar (not on mount: doc tabs must not grab focus);
+ * Where the caret goes, never stolen from the artifact or another input:
+ * - into the input when the user opens the bar (not on mount: artifact tabs must not grab focus);
  * - into the input when a quote is added, ready for the question;
  * - back into the input when an answer ends, if focus was nowhere else or in the bar.
  */
@@ -183,7 +183,7 @@ function useUnfoldForReveal(key: string, setUnfolded: (v: boolean) => void) {
   }, [mine, setUnfolded]);
 }
 
-/** A click outside the bar folds the thread, like Esc. A click in the doc iframe never reaches this document, so focus moving into an iframe counts too. */
+/** A click outside the bar folds the thread, like Esc. A click in the artifact iframe never reaches this document, so focus moving into an iframe counts too. */
 function useFoldOnOutsideClick(container: RefObject<HTMLDivElement | null>, shown: boolean, fold: () => void) {
   const latest = useRef(fold);
   latest.current = fold;

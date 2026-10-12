@@ -13,7 +13,7 @@
  */
 import type { AskScope } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
-import { isAgent } from "@/lib/agents";
+import { isAgent, isSessionId } from "@/lib/agents";
 import { isColor, parseActions, type ContentAction } from "@/plugins/contentChannel";
 import { buildIndex, offsetOf, rangeAt, type TextIndex } from "./surfaceIndex";
 
@@ -34,8 +34,6 @@ const ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 /** A style name goes into a `::highlight()` selector as is, so it is a plain lowercase identifier. */
 const STYLE = /^[a-z][a-z0-9-]{0,31}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-/** roomsd's session id rule. */
-const SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 
 export type SurfaceRange = { id: string; start: number; end: number; style: string };
 /** Where a selection lies: inside one open surface, as offsets into its text, with that slice of it. */
@@ -120,19 +118,23 @@ function dropSheet(sheet: CSSStyleSheet | null): void {
   if (sheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== sheet);
 }
 
-/** The surface a plugin named, as JSON from its frame, or null. */
+/**
+ * The surface a plugin named, as JSON from its frame, or null. Until SDK 0.7 a plugin may still
+ * name a scope the 0.5 way (`doc`, and `conversation` with the id in `session`), as surfaces it
+ * saved then do; those come back under the new names.
+ */
 export function parseSurfaceId(v: unknown): SurfaceId | null {
   if (!v || typeof v !== "object") return null;
   const { kind, scope, turnId } = v as Record<string, unknown>;
   if (kind !== "answer" || typeof turnId !== "string" || !ID.test(turnId) || !scope || typeof scope !== "object") return null;
   const s = scope as Record<string, unknown>;
   const str = (x: unknown): x is string => typeof x === "string" && x.length > 0 && x.length <= 200;
-  if (s.kind === "doc" && str(s.fileKey)) return { kind: "answer", scope: { kind: "doc", fileKey: s.fileKey }, turnId };
-  if (s.kind === "room" && str(s.roomId)) return { kind: "answer", scope: { kind: "room", roomId: s.roomId }, turnId };
-  if (s.kind === "day" && typeof s.date === "string" && DATE.test(s.date)) return { kind: "answer", scope: { kind: "day", date: s.date }, turnId };
-  if (s.kind === "conversation" && isAgent(s.agent) && typeof s.session === "string" && SESSION.test(s.session)) {
-    return { kind: "answer", scope: { kind: "conversation", agent: s.agent, session: s.session }, turnId };
-  }
+  const answer = (scope: AskScope): SurfaceId => ({ kind: "answer", scope, turnId });
+  if ((s.kind === "artifact" || s.kind === "doc") && str(s.fileKey)) return answer({ kind: "artifact", fileKey: s.fileKey });
+  if (s.kind === "room" && str(s.roomId)) return answer({ kind: "room", roomId: s.roomId });
+  if (s.kind === "day" && typeof s.date === "string" && DATE.test(s.date)) return answer({ kind: "day", date: s.date });
+  const id = s.kind === "session" ? s.id : s.kind === "conversation" ? s.session : undefined;
+  if (isAgent(s.agent) && isSessionId(id)) return answer({ kind: "session", agent: s.agent, id });
   return null;
 }
 
@@ -199,12 +201,12 @@ const registry = (): HighlightRegistry | null =>
 const highlightName = (plugin: string, style: string) => `rooms-${plugin}-${style}`;
 
 /** The caret at a point, in whichever form the engine offers. */
-function caretAt(doc: Document, x: number, y: number): { node: Node; offset: number } | null {
-  if (typeof doc.caretPositionFromPoint === "function") {
-    const p = doc.caretPositionFromPoint(x, y);
+function caretAt(dom: Document, x: number, y: number): { node: Node; offset: number } | null {
+  if (typeof dom.caretPositionFromPoint === "function") {
+    const p = dom.caretPositionFromPoint(x, y);
     return p ? { node: p.offsetNode, offset: p.offset } : null;
   }
-  const r = doc.caretRangeFromPoint?.(x, y);
+  const r = dom.caretRangeFromPoint?.(x, y);
   return r ? { node: r.startContainer, offset: r.startOffset } : null;
 }
 

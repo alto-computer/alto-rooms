@@ -3,10 +3,10 @@ import { type Note } from "@alto-rooms/protocol-ts";
 import { CircleAlert, Plus } from "lucide-react";
 import { AskBar } from "@/ask/AskBar";
 import { useFrameAfter } from "@/ask/useFrameAfter";
-import { useClient, useJournalDay, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
+import { useClient, useJournalDay, useInfo, useOpenArtifact, useReadOnly, useRoomList, useScopeError, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
 import { AGENT_NAMES } from "@/lib/agents";
-import { conversationTab, conversationTitle } from "@/lib/conversations";
+import { sessionTab, sessionTitle } from "@/lib/sessions";
 import { daybookTitle, isoWeek, localDate, monthDay } from "@/lib/dates";
 import { errorCopy, GENERIC_ERROR } from "@/lib/errors";
 import { useScrollMemory } from "@/lib/scrollMemory";
@@ -84,7 +84,7 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
   const rooms = useRoomList();
   const info = useInfo();
   const viewer = useViewerStore();
-  const openDoc = useOpenDoc();
+  const openArtifact = useOpenArtifact();
   const day = useJournalDay(date);
   const loadError = useScopeError(`day:${date}`);
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:journal:${date}`, day !== undefined);
@@ -116,19 +116,19 @@ export function JournalView({ tabId, date }: { tabId?: string; date: string }) {
       case "note":
         return { key: e.key, title: noteBase(e.note.name), at: e.at, meta: "", open: (newTab) => viewer.go({ kind: "note", date, name: e.note.name }, newTab) };
       case "artifact":
-        return { key: e.key, title: e.artifact.title, at: e.at, meta: e.label, open: (newTab) => openDoc(e.artifact, newTab) };
-      case "conversation":
+        return { key: e.key, title: e.artifact.title, at: e.at, meta: e.label, open: (newTab) => openArtifact(e.artifact, newTab) };
+      case "session":
         return {
           key: e.key,
-          title: conversationTitle(e.conversation),
+          title: sessionTitle(e.session),
           at: e.at,
-          meta: [AGENT_NAMES[e.conversation.id.agent], e.room?.name].filter(Boolean).join(" · "),
-          open: (newTab) => viewer.go(conversationTab(e.conversation.id), newTab),
+          meta: [AGENT_NAMES[e.session.agent], e.room?.name].filter(Boolean).join(" · "),
+          open: (newTab) => viewer.go(sessionTab(e.session), newTab),
         };
     }
   };
   const cells: TallyCell[] = [
-    { noun: "session", items: entries.filter((e) => e.kind === "conversation").map(tallyItem) },
+    { noun: "session", items: entries.filter((e) => e.kind === "session").map(tallyItem) },
     { noun: "artifact", items: entries.filter((e) => e.kind === "artifact").map(tallyItem) },
     { noun: "note", items: entries.filter((e) => e.kind === "note").map(tallyItem) },
   ];

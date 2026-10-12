@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { Artifact, Conversation, Room } from "@alto-rooms/protocol-ts";
+import type { Artifact, Session, Room } from "@alto-rooms/protocol-ts";
 import { CircleAlert, FolderOpen } from "lucide-react";
 import { toast } from "sonner";
 import { AskBar } from "@/ask/AskBar";
@@ -7,16 +7,16 @@ import { useFrameAfter } from "@/ask/useFrameAfter";
 import { Dotted } from "@/components/Dotted";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { useCurrentTabId } from "@/shell/currentTab";
-import { useArtifacts, useClient, useInfo, useOpenDoc, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
-import { useRoomConversations } from "@/data/useRoomConversations";
-import { conversationKey } from "@/lib/conversations";
+import { useArtifacts, useClient, useInfo, useOpenArtifact, useReadOnly, useRoomList, useScopeError } from "@/data/hooks";
+import { useRoomSessions } from "@/data/useRoomSessions";
+import { sessionKey } from "@/lib/sessions";
 import { agoPhrase, count, isNewSince } from "@/lib/dates";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { showInFinder } from "@/lib/native";
 import { isTauri } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { ArtifactCard } from "./ArtifactCard";
-import { ConversationCard } from "./ConversationCard";
+import { SessionCard } from "./SessionCard";
 import { EditableTitle } from "./EditableTitle";
 import { EmptyRoom } from "./EmptyRoom";
 import { bandButton, perchFor, RoomBand, type Perch } from "./RoomBand";
@@ -29,21 +29,21 @@ function Centered({ children }: { children: ReactNode }) {
 }
 
 /** `7 artifacts · 2 sessions · last added 12 min ago by claude-code`; `No artifacts yet` for an empty room. */
-function roomMeta(room: Room, newest: Artifact | undefined, conversations: number): ReactNode {
-  const talks = conversations ? count(conversations, "session") : null;
+function roomMeta(room: Room, newest: Artifact | undefined, sessions: number): ReactNode {
+  const talks = sessions ? count(sessions, "session") : null;
   if (room.artifactCount === 0) return <Dotted parts={["No artifacts yet", talks]} />;
   const added = newest ? `last added ${agoPhrase(newest.createdAt)}${newest.source.agent ? ` by ${newest.source.agent}` : ""}` : null;
   return <Dotted parts={[count(room.artifactCount, "artifact"), talks, added]} />;
 }
 
-type Filter = "all" | "artifacts" | "conversations";
+type Filter = "all" | "artifacts" | "sessions";
 
-/** All · Artifacts · Sessions, each with its count; shown only when the room has conversations. */
-function FilterRow({ value, onChange, artifacts, conversations }: { value: Filter; onChange: (f: Filter) => void; artifacts: number; conversations: number }) {
+/** All · Artifacts · Sessions, each with its count; shown only when the room has sessions. */
+function FilterRow({ value, onChange, artifacts, sessions }: { value: Filter; onChange: (f: Filter) => void; artifacts: number; sessions: number }) {
   const options: [Filter, string, number][] = [
-    ["all", "All", artifacts + conversations],
+    ["all", "All", artifacts + sessions],
     ["artifacts", "Artifacts", artifacts],
-    ["conversations", "Sessions", conversations],
+    ["sessions", "Sessions", sessions],
   ];
   return (
     <div role="group" aria-label="Show" className="mx-10 mt-6 inline-flex gap-0.5 self-start rounded-[9px] bg-surface p-[3px] shadow-[inset_0_0_0_1px_var(--hairline)]">
@@ -63,8 +63,8 @@ function FilterRow({ value, onChange, artifacts, conversations }: { value: Filte
   );
 }
 
-/** The room's conversations, below its artifacts and quieter than them. */
-function Conversations({ list, alone }: { list: Conversation[] | "error"; alone: boolean }) {
+/** The room's sessions, below its artifacts and quieter than them. */
+function Sessions({ list, alone }: { list: Session[] | "error"; alone: boolean }) {
   return (
     <section aria-label="Sessions" className={cn("px-10 pb-10", alone && "pt-7")}>
       <h2 className="mb-3 text-small font-semibold tracking-[0.02em] text-ink-3">Sessions</h2>
@@ -73,7 +73,7 @@ function Conversations({ list, alone }: { list: Conversation[] | "error"; alone:
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(400px,1fr))] gap-4">
           {list.map((c) => (
-            <ConversationCard key={conversationKey(c.id)} conversation={c} />
+            <SessionCard key={sessionKey(c)} session={c} />
           ))}
         </div>
       )}
@@ -92,7 +92,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   const rooms = useRoomList();
   const info = useInfo();
   const client = useClient();
-  const openDoc = useOpenDoc();
+  const openArtifact = useOpenArtifact();
   const artifacts = useArtifacts(roomId);
   const loadError = useScopeError(`room:${roomId}`);
   const room = rooms.find((r) => r.id === roomId);
@@ -100,12 +100,12 @@ export function RoomView({ roomId }: { roomId: string }) {
   const scrollRef = useScrollMemory<HTMLDivElement>(`${useCurrentTabId()}:room:${roomId}`, !!artifacts?.length && !!info);
 
   const baseline = useVisitsAtArrival().since(roomId);
-  const listed = useRoomConversations(roomId);
-  const conversations = Array.isArray(listed) ? listed : [];
+  const listed = useRoomSessions(roomId);
+  const sessions = Array.isArray(listed) ? listed : [];
   // A tab moved to another room starts that room on All.
   const [picked, setPicked] = useState<{ roomId: string; filter: Filter } | null>(null);
   const filter = picked?.roomId === roomId ? picked.filter : "all";
-  const shows = (part: Exclude<Filter, "all">) => conversations.length === 0 || filter === "all" || filter === part;
+  const shows = (part: Exclude<Filter, "all">) => sessions.length === 0 || filter === "all" || filter === part;
   // The ask bar mounts once the cards have painted, so it never delays them.
   const barReady = useFrameAfter(artifacts !== undefined);
 
@@ -115,7 +115,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   }
 
   // An empty room's Clew waits for its sessions: with some, it perches as over a few cards.
-  const perch: Perch = !info || !artifacts ? null : artifacts.length ? perchFor(artifacts.length) : listed === undefined ? null : conversations.length ? "end" : "start";
+  const perch: Perch = !info || !artifacts ? null : artifacts.length ? perchFor(artifacts.length) : listed === undefined ? null : sessions.length ? "end" : "start";
   let body: ReactNode;
   if (!shows("artifacts")) {
     body = null;
@@ -124,7 +124,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   } else if (artifacts.length === 0) {
     // A room holding only sessions shows them; whether it does is known once they are listed.
     if (listed === undefined || !info) body = null;
-    else if (conversations.length) body = <p className="px-10 pt-7 pb-6 text-small text-ink-3">No artifacts in this room yet</p>;
+    else if (sessions.length) body = <p className="px-10 pt-7 pb-6 text-small text-ink-3">No artifacts in this room yet</p>;
     else body = <EmptyRoom room={room} home={info.home} />;
   } else {
     body = (
@@ -139,7 +139,7 @@ export function RoomView({ roomId }: { roomId: string }) {
                   info={info}
                   isNew={isNewSince(a.createdAt, baseline)}
                   draggable={roomId === INBOX_ID && !readOnly}
-                  onOpen={openDoc}
+                  onOpen={openArtifact}
                 />
               ))
           : null}
@@ -174,7 +174,7 @@ export function RoomView({ roomId }: { roomId: string }) {
           color={room.color}
           meta={
             <>
-              {roomMeta(room, artifacts?.at(-1), conversations.length)}
+              {roomMeta(room, artifacts?.at(-1), sessions.length)}
               {room.status === "unavailable" ? (
                 <span className="ml-2 flex items-center gap-1.5 text-error">
                   <CircleAlert size={14} aria-hidden />
@@ -207,10 +207,10 @@ export function RoomView({ roomId }: { roomId: string }) {
             </div>
           ) : null}
         </RoomBand>
-        {conversations.length ? <FilterRow value={filter} onChange={(f) => setPicked({ roomId, filter: f })} artifacts={artifacts?.length ?? room.artifactCount} conversations={conversations.length} /> : null}
+        {sessions.length ? <FilterRow value={filter} onChange={(f) => setPicked({ roomId, filter: f })} artifacts={artifacts?.length ?? room.artifactCount} sessions={sessions.length} /> : null}
         {body}
-        {listed === "error" ? <Conversations list="error" alone={false} /> : null}
-        {conversations.length && shows("conversations") ? <Conversations list={conversations} alone={!shows("artifacts")} /> : null}
+        {listed === "error" ? <Sessions list="error" alone={false} /> : null}
+        {sessions.length && shows("sessions") ? <Sessions list={sessions} alone={!shows("artifacts")} /> : null}
       </div>
       {barReady && !readOnly ? <AskBar subject={{ kind: "room", roomId }} /> : null}
     </div>

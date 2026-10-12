@@ -13,5 +13,5 @@ const run = (open: (fileKey: string) => Promise<void>) => async () => {
   }
 };
 $("open").onclick = run((fileKey) => rooms.open({ fileKey, anchor: JSON.parse($<HTMLTextAreaElement>("anchor").value) }));
-// Both at once: once the first brings its doc forward, this tab is in the background and its calls stop.
+// Both at once: once the first brings its artifact forward, this tab is in the background and its calls stop.
 $("twice").onclick = run(async (fileKey) => void (await Promise.all([rooms.open({ fileKey, anchor: { n: 1 } }), rooms.open({ fileKey, anchor: { n: 2 } })])));

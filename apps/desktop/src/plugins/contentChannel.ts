@@ -1,20 +1,22 @@
 /*
- * The app side of content scripts: messages between one doc frame and the
+ * The app side of content scripts: messages between one artifact frame and the
  * content scripts roomsd spliced into it. Everything from the frame is
  * untrusted, because the document's own script shares the window and can post
  * anything a content script can. So the host takes the document's fileKey from
  * the tab, never from a message, and maps every storage path under
  * `docs/<fileKey>/` in the named plugin's data. A hostile document can at most
- * read or rewrite that folder for the plugins the user turned on.
+ * read or rewrite that folder for the plugins the user turned on. The folder
+ * keeps the name it had before artifacts were called that: installed plugins
+ * already keep data there and read it back by that path.
  */
 import { BridgeError, relay, validPath, type BridgeDeps, type BridgeErrorCode } from "./bridge";
 import { pluginDataBus } from "./pluginDataBus";
 
 /** Largest text one content-script write may store (UTF-8 bytes). */
 export const MAX_CONTENT_WRITE_BYTES = 1024 * 1024;
-/** Writes and deletes one doc frame may make in any one second. */
+/** Writes and deletes one artifact frame may make in any one second. */
 export const MAX_WRITES_PER_SECOND = 20;
-/** Reads and lists one doc frame may make in any one second. */
+/** Reads and lists one artifact frame may make in any one second. */
 export const MAX_READS_PER_SECOND = 100;
 export const MAX_ACTIONS = 6;
 export const MAX_ACTION_TITLE = 24;
@@ -59,7 +61,7 @@ export function parseActions(items: unknown, validColor: (v: string) => boolean)
   return out;
 }
 
-/** `{rooms: "content", v: 1, plugin, type, …}` from a doc frame, or null for anything else. */
+/** `{rooms: "content", v: 1, plugin, type, …}` from an artifact frame, or null for anything else. */
 export function parseFrameMessage(data: unknown, validColor: (v: string) => boolean = isColor): FrameMessage | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
@@ -80,7 +82,7 @@ export type ContentChannelDeps = {
   fileKey: string;
   /** The usable plugins that hold `artifact.content`: the set the frame URL's contentKey was built from. */
   plugins: ReadonlySet<string>;
-  /** The doc frame's window: the only source the channel listens to and the only target it posts to. */
+  /** The artifact frame's window: the only source the channel listens to and the only target it posts to. */
   frame: () => Window | null;
   client: Pick<BridgeDeps["client"], "getPluginData" | "putPluginData" | "listPluginData" | "deletePluginData">;
   /** Every plugin's declared actions, after each change. */
@@ -92,7 +94,7 @@ export type ContentChannelDeps = {
 };
 
 export type ContentChannel = {
-  /** Handles one window `message` event; ignores events from any window but the doc frame. */
+  /** Handles one window `message` event; ignores events from any window but the artifact frame. */
   receive(e: MessageEvent): void;
   /** Tells `plugin`'s content script that its action was clicked; only an action it declared. */
   runAction(plugin: string, actionId: string): void;
@@ -104,12 +106,12 @@ export type ContentChannel = {
   reveal(plugin: string, anchor: unknown): boolean;
   /**
    * Asks the frame's scripts to say `ready` and their actions again. A frame outlives its channel
-   * (a doc tab in the background drops the channel and its frame keeps running), so only the frame
+   * (an artifact tab in the background drops the channel and its frame keeps running), so only the frame
    * knows what its scripts said. Scripts built with SDK 0.3 ignore the ask: their buttons and
    * anchors work only when a channel was listening as they said them.
    */
   sync(): void;
-  /** Messages from the doc frame that were malformed or named a plugin outside the set. */
+  /** Messages from the artifact frame that were malformed or named a plugin outside the set. */
   readonly dropped: number;
   dispose(): void;
 };
@@ -125,7 +127,7 @@ export function createContentChannel(deps: ContentChannelDeps): ContentChannel {
 
   const post = (m: HostMessage) => frame()?.postMessage({ rooms: "content", v: 1, ...m }, "*");
 
-  const docPath = (p: unknown): string => {
+  const dataPath = (p: unknown): string => {
     if (!validPath(p) || !validPath(base + p)) throw new BridgeError("invalid_path");
     return base + p;
   };
@@ -148,9 +150,9 @@ export function createContentChannel(deps: ContentChannelDeps): ContentChannel {
     switch (m.type) {
       case "storage.read":
         takeReadSlot();
-        return relay(client.getPluginData(m.plugin, docPath(m.path)));
+        return relay(client.getPluginData(m.plugin, dataPath(m.path)));
       case "storage.write": {
-        const path = docPath(m.path);
+        const path = dataPath(m.path);
         if (typeof m.text !== "string") throw new BridgeError("invalid_path", "text must be a string");
         // UTF-8 never takes fewer bytes than UTF-16 code units, so an oversized string is refused before the slot and the encode.
         if (m.text.length > MAX_CONTENT_WRITE_BYTES) throw new BridgeError("too_large");
@@ -168,7 +170,7 @@ export function createContentChannel(deps: ContentChannelDeps): ContentChannel {
         return found.filter((p) => p.startsWith(base)).map((p) => p.slice(base.length));
       }
       case "storage.delete": {
-        const path = docPath(m.path);
+        const path = dataPath(m.path);
         takeWriteSlot();
         await relay(client.deletePluginData(m.plugin, path));
         changed(m.plugin, path);

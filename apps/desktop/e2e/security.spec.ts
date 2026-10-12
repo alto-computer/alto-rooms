@@ -27,18 +27,18 @@ test("Review Focus 4: a hostile artifact can't navigate the app or write to room
   const c = page.getByTestId("artifact-card").filter({ hasText: "수상한 문서" });
   await expect(c).toBeVisible({ timeout: 2000 });
   await expect(c.locator("iframe")).toHaveAttribute("sandbox", "allow-scripts allow-popups");
-  // …and so does the full doc tab.
+  // …and so does the full artifact tab.
   await c.hover();
   await c.getByRole("button", { name: "Open in new tab" }).click();
   await expect(page.getByRole("tab", { name: "수상한 문서", selected: true })).toBeVisible();
 
-  await expect.poll(() => ran).toBeGreaterThanOrEqual(2); // strip preview + doc tab
+  await expect.poll(() => ran).toBeGreaterThanOrEqual(2); // strip preview + artifact tab
   await page.waitForTimeout(1000);
   expect(page.url()).toBe(start);
   expect(mainNavigations).toBe(0);
   const rooms = await daemon.listRooms();
   expect(rooms.map((r) => r.name)).not.toContain("x");
   expect(await daemon.exists("x")).toBe(false);
-  // The app ignored the message: still on the doc tab, nothing else opened (room tab + doc tab).
+  // The app ignored the message: still on the artifact tab, nothing else opened (room tab + artifact tab).
   await expect(page.getByRole("tab")).toHaveCount(2);
 });
