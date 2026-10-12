@@ -45,12 +45,12 @@ pub struct Answer {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub min_confidence: f64,
-    pub new_room_min_docs: usize,
+    pub new_room_min_artifacts: usize,
     pub ignore_names: Vec<String>,
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { min_confidence: 0.7, new_room_min_docs: 3, ignore_names: Vec::new() } }
+    fn default() -> Self { Config { min_confidence: 0.7, new_room_min_artifacts: 3, ignore_names: Vec::new() } }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,8 +120,8 @@ pub fn decide(doc: &Doc, rooms: &[Room], mem: &Memory, jev: Option<&Answer>, cfg
     if let Some(repo) = doc.repo.as_deref().filter(|r| votable(r, mem, cfg)) {
         let others = mem.votes.get(repo).map(|v| v.iter().filter(|k| *k != &doc.file_key).count()).unwrap_or(0);
         let votes = others + 1;
-        let create = votes >= cfg.new_room_min_docs;
-        let why = if create { format!("created room \"{repo}\" ({votes} votes)") } else { format!("vote \"{repo}\" {votes}/{}", cfg.new_room_min_docs) };
+        let create = votes >= cfg.new_room_min_artifacts;
+        let why = if create { format!("created room \"{repo}\" ({votes} votes)") } else { format!("vote \"{repo}\" {votes}/{}", cfg.new_room_min_artifacts) };
         return Decision { rule: Rule::R4, action: Action::Vote { repo: repo.to_string(), votes, create }, why };
     }
     keep(match picked {

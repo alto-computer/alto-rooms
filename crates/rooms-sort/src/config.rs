@@ -11,15 +11,19 @@ pub struct Config {
     /// Off: nothing moves, not even by R1 and R2.
     pub enabled: bool,
     pub min_confidence: f64,
-    pub new_room_min_docs: usize,
+    /// Also read as `new_room_min_docs`, its name before artifacts were called that.
+    #[serde(alias = "new_room_min_docs")]
+    pub new_room_min_artifacts: usize,
     pub model: String,
-    pub max_docs_per_run: usize,
+    /// Also read as `max_docs_per_run`.
+    #[serde(alias = "max_docs_per_run")]
+    pub max_artifacts_per_run: usize,
     pub ignore_names: Vec<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, min_confidence: 0.7, new_room_min_docs: 3, model: "jev-1.13.0".into(), max_docs_per_run: 50, ignore_names: Vec::new() }
+        Config { enabled: true, min_confidence: 0.7, new_room_min_artifacts: 3, model: "jev-1.13.0".into(), max_artifacts_per_run: 50, ignore_names: Vec::new() }
     }
 }
 
@@ -40,7 +44,7 @@ impl Config {
     pub fn rules(&self) -> crate::rules::Config {
         crate::rules::Config {
             min_confidence: self.min_confidence,
-            new_room_min_docs: self.new_room_min_docs.max(1),
+            new_room_min_artifacts: self.new_room_min_artifacts.max(1),
             ignore_names: self.ignore_names.clone(),
         }
     }
@@ -63,8 +67,20 @@ mod tests {
         std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
         std::fs::write(Config::path(d.path()), "min_confidence = 0.8\nignore_names = ['sandbox']\n").unwrap();
         let c = Config::load(d.path());
-        assert!(c.enabled && c.min_confidence == 0.8 && c.ignore_names == ["sandbox"] && c.new_room_min_docs == 3);
+        assert!(c.enabled && c.min_confidence == 0.8 && c.ignore_names == ["sandbox"] && c.new_room_min_artifacts == 3);
         std::fs::write(Config::path(d.path()), "api_key = 'x'").unwrap();
         assert_eq!(Config::load(d.path()), Config::default(), "unknown keys (a key, say) are refused");
+    }
+
+    #[test]
+    fn keys_from_before_the_rename_still_read() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".rooms")).unwrap();
+        std::fs::write(Config::path(d.path()), "new_room_min_docs = 5\nmax_docs_per_run = 9\n").unwrap();
+        let c = Config::load(d.path());
+        assert_eq!((c.new_room_min_artifacts, c.max_artifacts_per_run), (5, 9));
+        std::fs::write(Config::path(d.path()), "new_room_min_artifacts = 4\nmax_artifacts_per_run = 8\n").unwrap();
+        let c = Config::load(d.path());
+        assert_eq!((c.new_room_min_artifacts, c.max_artifacts_per_run), (4, 8));
     }
 }

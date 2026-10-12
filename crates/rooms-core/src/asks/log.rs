@@ -49,16 +49,36 @@ impl Stored {
     }
 }
 
-impl AskLog {
-    pub fn new(dir: PathBuf) -> Self { Self { dir } }
+/// Session logs were named `conversation-<agent>-<id>.jsonl` before sessions had their name.
+const LEGACY_SESSION_PREFIX: &str = "conversation-";
 
-    /// File keys are 16 alphanumerics, so a `room-`, `day-` or `conversation-` name never names a doc file.
+impl AskLog {
+    pub fn new(dir: PathBuf) -> Self {
+        let log = Self { dir };
+        log.migrate_legacy_names();
+        log
+    }
+
+    /// Renames session logs from before the rename to `session-<agent>-<id>.jsonl`. A log already
+    /// under the new name wins and the old one stays where it is, so running this again is a no-op.
+    fn migrate_legacy_names(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else { return };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(rest) = name.strip_prefix(LEGACY_SESSION_PREFIX).filter(|r| r.ends_with(".jsonl")) else { continue };
+            let to = self.dir.join(format!("session-{rest}"));
+            if to.exists() { continue; }
+            if let Err(err) = std::fs::rename(e.path(), &to) { eprintln!("rooms-core: {name} not renamed: {err}"); }
+        }
+    }
+
+    /// File keys are 16 alphanumerics, so a `room-`, `day-` or `session-` name never names an artifact's file.
     fn path(&self, scope: &AskScope) -> PathBuf {
         let name = match scope {
             AskScope::Artifact { file_key } => format!("{file_key}.jsonl"),
             AskScope::Room { room_id } => format!("room-{room_id}.jsonl"),
             AskScope::Day { date } => format!("day-{date}.jsonl"),
-            AskScope::Session(r) => format!("conversation-{}-{}.jsonl", r.agent.as_str(), r.id),
+            AskScope::Session(r) => format!("session-{}-{}.jsonl", r.agent.as_str(), r.id),
         };
         self.dir.join(name)
     }
@@ -152,7 +172,7 @@ mod tests {
     );
 
     #[test]
-    fn legacy_doc_lines_read_back_under_doc_scope() {
+    fn legacy_artifact_lines_read_back_under_artifact_scope() {
         let d = tempfile::tempdir().unwrap();
         let log = AskLog::new(d.path().join("asks"));
         std::fs::create_dir_all(d.path().join("asks")).unwrap();
@@ -167,7 +187,7 @@ mod tests {
         assert_eq!((got[1].kind, got[1].question.as_str()), (AskKind::Clear, "/new"));
         assert_eq!((got[2].kind, got[2].answer.as_str(), got[2].status), (AskKind::Compact, "요약", AskStatus::Done));
         assert_eq!((got[3].left_out, got[3].error.as_deref()), (2, Some("Stopped because Rooms restarted")));
-        // a doc line written now has the same shape, so the base roomsd reads it after a downgrade
+        // an artifact line written now has the same shape, so the base roomsd reads it after a downgrade
         log.append(&t("q3", AskStatus::Done, "A")).unwrap();
         let last = std::fs::read_to_string(d.path().join(format!("asks/{K1}.jsonl"))).unwrap().lines().last().unwrap().to_string();
         assert!(last.starts_with(r#"{"id":"q3","fileKey":"0123456789abcdef","question":"q","answer":"A","agent":"a","model":null,"mode":"new","status":"done","error":null,"startedAt":"s","endedAt":null,"images":[],"kind":"question","leftOut":0}"#), "{last}");
@@ -187,7 +207,7 @@ mod tests {
         log.append(&t("a", AskStatus::Done, "A")).unwrap();
         let mut names: Vec<_> = std::fs::read_dir(d.path().join("asks")).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         names.sort();
-        assert_eq!(names, [format!("{K1}.jsonl"), "conversation-codex-s-1.jsonl".to_string(), "day-2026-10-09.jsonl".to_string(), format!("room-{K1}.jsonl")]);
+        assert_eq!(names, [format!("{K1}.jsonl"), "day-2026-10-09.jsonl".to_string(), format!("room-{K1}.jsonl"), "session-codex-s-1.jsonl".to_string()]);
         assert_eq!(log.read(&artifact()).unwrap().iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a"]);
         let r = log.read(&room).unwrap();
         assert_eq!((r.len(), r[0].id.as_str(), &r[0].scope), (1, "r", &room));
@@ -195,5 +215,23 @@ mod tests {
         assert_eq!(log.read(&talk).unwrap()[0].scope, talk);
         let line = std::fs::read_to_string(d.path().join(format!("asks/room-{K1}.jsonl"))).unwrap();
         assert!(!line.contains("fileKey") && !line.contains("scope"), "{line}");
+    }
+
+    #[test]
+    fn session_logs_from_before_the_rename_are_renamed_once() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("asks");
+        let scope = AskScope::Session(rooms_protocol::SessionRef::parse_key("claude-code:s-1").unwrap());
+        AskLog::new(dir.clone()).append(&AskTurn { scope: scope.clone(), ..t("old", AskStatus::Done, "A") }).unwrap();
+        std::fs::rename(dir.join("session-claude-code-s-1.jsonl"), dir.join("conversation-claude-code-s-1.jsonl")).unwrap();
+        std::fs::write(dir.join("conversation-codex-s-2.jsonl"), "stays").unwrap();
+        std::fs::write(dir.join("session-codex-s-2.jsonl"), "").unwrap();
+
+        let log = AskLog::new(dir.clone());
+        assert_eq!(log.read(&scope).unwrap().iter().map(|t| (t.id.as_str(), &t.scope)).collect::<Vec<_>>(), [("old", &scope)]);
+        assert!(!dir.join("conversation-claude-code-s-1.jsonl").exists());
+        assert_eq!(std::fs::read_to_string(dir.join("conversation-codex-s-2.jsonl")).unwrap(), "stays", "an existing new log wins");
+        AskLog::new(dir.clone());
+        assert_eq!(log.read(&scope).unwrap().len(), 1, "a second run changes nothing");
     }
 }

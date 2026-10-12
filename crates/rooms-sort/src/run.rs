@@ -111,7 +111,7 @@ fn run_inner(api: &dyn Rooms, jev: Option<&dyn Classifier>, store: &Store, o: &O
         targets.push((*at, Target { artifact: a.clone(), doc: d, real, repo }));
     }
     targets.sort_by_key(|(at, _)| *at);
-    targets.truncate(o.cfg.max_docs_per_run);
+    targets.truncate(o.cfg.max_artifacts_per_run);
     let targets: Vec<Target> = targets.into_iter().map(|(_, t)| t).collect();
     s.considered = targets.len() as u32;
     if targets.is_empty() { return Ok(()); }

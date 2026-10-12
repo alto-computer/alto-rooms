@@ -1,7 +1,7 @@
 //! Sessions in the Journal and in rooms. What a session is comes from rooms-collect's
 //! `collect.db`, opened read-only and only when roomsd was given the collector's folder. Which
-//! room holds one is `.rooms/conversations.json`: a map keyed by session, so a session is in at
-//! most one room, with a snapshot that keeps it showing after its log is gone.
+//! room holds one is `.rooms/sessions.json`: a map keyed by session, so a session is in at most
+//! one room, with a snapshot that keeps it showing after its log is gone.
 
 use crate::core::RoomsCore;
 use crate::error::CoreError;
@@ -53,13 +53,38 @@ type Memberships = BTreeMap<SessionRef, Membership>;
 struct Disk {
     version: u32,
     /// Keyed by `<agent>:<id>`.
-    conversations: BTreeMap<String, Membership>,
+    sessions: BTreeMap<String, Membership>,
 }
 
-fn store_path(home: &Path) -> PathBuf { home.join(".rooms/conversations.json") }
+fn store_path(home: &Path) -> PathBuf { home.join(".rooms/sessions.json") }
+
+/// Where the store was before sessions had their name. Same shape, with the map under `conversations`.
+fn legacy_store_path(home: &Path) -> PathBuf { home.join(".rooms/conversations.json") }
+
+/// Moves a store from before the rename to `sessions.json` and keeps the old file as
+/// `conversations.json.bak`. Safe to run again after a crash at any step: an existing
+/// `sessions.json` always wins, and the old file is only ever renamed.
+pub(crate) fn migrate_legacy_store(home: &Path) {
+    #[derive(Deserialize)]
+    struct LegacyDisk { version: u32, conversations: BTreeMap<String, Membership> }
+    let old = legacy_store_path(home);
+    let Ok(bytes) = std::fs::read(&old) else { return };
+    if !store_path(home).exists() {
+        match serde_json::from_slice::<LegacyDisk>(&bytes) {
+            Ok(d) => if let Err(e) = write(home, &Disk { version: d.version, sessions: d.conversations }) {
+                eprintln!("rooms-core: {} not moved to sessions.json: {e}", old.display());
+                return;
+            },
+            Err(e) => eprintln!("rooms-core: {}: {e}; kept as conversations.json.bak", old.display()),
+        }
+    }
+    if let Err(e) = std::fs::rename(&old, old.with_extension("json.bak")) {
+        eprintln!("rooms-core: {} not renamed: {e}", old.display());
+    }
+}
 
 /// The memberships on disk, without those whose room is gone. A file that does not parse is
-/// kept aside as `conversations.json.corrupt` and read as empty.
+/// kept aside as `sessions.json.corrupt` and read as empty.
 fn load(home: &Path, rooms: &HashSet<RoomId>) -> Memberships {
     let path = store_path(home);
     let Ok(bytes) = std::fs::read(&path) else { return Memberships::new() };
@@ -71,17 +96,21 @@ fn load(home: &Path, rooms: &HashSet<RoomId>) -> Memberships {
             return Memberships::new();
         }
     };
-    disk.conversations.into_iter()
+    disk.sessions.into_iter()
         .filter(|(_, m)| rooms.contains(&m.room_id))
         .filter_map(|(k, m)| Some((SessionRef::parse_key(&k)?, m)))
         .collect()
 }
 
 fn save(home: &Path, map: &Memberships) -> Result<(), CoreError> {
-    let disk = Disk { version: 1, conversations: map.iter().map(|(r, m)| (r.key(), m.clone())).collect() };
+    write(home, &Disk { version: 1, sessions: map.iter().map(|(r, m)| (r.key(), m.clone())).collect() })
+}
+
+/// Replaces `sessions.json` whole: written aside, then renamed over it.
+fn write(home: &Path, disk: &Disk) -> Result<(), CoreError> {
     let path = store_path(home);
     let tmp = path.with_extension(format!("{}.tmp", nanoid::nanoid!(8)));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(&disk).map_err(|e| CoreError::Internal(e.to_string()))?)?;
+    std::fs::write(&tmp, serde_json::to_vec_pretty(disk).map_err(|e| CoreError::Internal(e.to_string()))?)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
 }
@@ -325,6 +354,39 @@ mod tests {
             ("a reply with no prompt before it", "11:00–11:00", None, Some("a reply with no prompt before it")),
             ("plan the launch", "09:00–09:30", Some("Launch"), Some("planned")),
         ]);
+    }
+
+    #[test]
+    fn a_store_from_before_the_rename_moves_to_sessions_json_once() {
+        let f = fixture();
+        let room = f.core.create_room("Launch").unwrap().id;
+        let dot = f.core.home().join(".rooms");
+        let legacy = serde_json::json!({"version": 1, "conversations": {"claude-code:s1": {"roomId": room, "addedAt": "2026-10-01T10:00:00+09:00",
+            "snapshot": {"title": "plan the launch", "cwd": null, "startedAt": "2026-10-01T01:00:00Z", "endedAt": "2026-10-01T02:00:00Z", "messages": 4, "lastReply": "planned", "artifactsWritten": []}}}});
+        std::fs::write(dot.join("conversations.json"), legacy.to_string()).unwrap();
+        let reopened = RoomsCore::open(f.core.home()).unwrap();
+        let seen = reopened.room_sessions(&room).unwrap();
+        assert_eq!(seen.iter().map(|s| (s.session_ref(), s.title.as_deref(), s.messages)).collect::<Vec<_>>(), [(sref("s1"), Some("plan the launch"), 4)]);
+        assert!(dot.join("sessions.json").is_file() && !dot.join("conversations.json").exists());
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&std::fs::read(dot.join("conversations.json.bak")).unwrap()).unwrap(), legacy, "the old file is kept as it was");
+        let again = RoomsCore::open(f.core.home()).unwrap();
+        assert_eq!(again.room_sessions(&room).unwrap(), seen, "a second run changes nothing");
+
+        // A crash after sessions.json was written but before the old file moved: the new store wins.
+        std::fs::write(dot.join("conversations.json"), serde_json::json!({"version": 1, "conversations": {}}).to_string()).unwrap();
+        let after_crash = RoomsCore::open(f.core.home()).unwrap();
+        assert_eq!(after_crash.room_sessions(&room).unwrap(), seen);
+        assert!(!dot.join("conversations.json").exists());
+    }
+
+    #[test]
+    fn an_unreadable_legacy_store_is_kept_aside_not_lost() {
+        let f = fixture();
+        let dot = f.core.home().join(".rooms");
+        std::fs::write(dot.join("conversations.json"), b"{not json").unwrap();
+        RoomsCore::open(f.core.home()).unwrap();
+        assert_eq!(std::fs::read(dot.join("conversations.json.bak")).unwrap(), b"{not json");
+        assert!(!dot.join("sessions.json").exists());
     }
 
     #[test]

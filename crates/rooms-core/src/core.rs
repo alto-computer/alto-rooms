@@ -103,6 +103,7 @@ impl RoomsCore {
         }
         let _ = index.take_touched_days();
         if let Err(e) = crate::onboarding::ensure(&home) { eprintln!("rooms-core: onboarding files not written: {e}"); }
+        crate::sessions::migrate_legacy_store(&home);
         let (tx, _) = broadcast::channel(EVENT_BUFFER);
         Ok(RoomsCore {
             inner: Arc::new(Mutex::new(Inner { home: home.clone(), state, index, unavailable: HashSet::new(), dangling: DanglingLinks::default(), collect_db: None })),
