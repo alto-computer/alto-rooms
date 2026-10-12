@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { useAsks, useAsksStore, useReadOnly } from "@/data/hooks";
@@ -18,7 +18,7 @@ const PART_OF_THE_BAR = "[data-slot=dropdown-menu-content], [data-slot=dialog-co
 /**
  * The ask bar at the bottom of an artifact, room or Journal tab (⌘J): the subject's thread, and the input that
  * asks about it. A tab opens with the bar alone; the thread unfolds when the input is focused, when a question
- * goes out or an answer is running, and folds on Esc or a click elsewhere.
+ * goes out, an answer is running or the thread couldn't load, and folds on Esc or a click elsewhere.
  */
 export function AskBar({ subject }: { subject: AskSubject }) {
   const framing = frameSubject(subject);
@@ -40,7 +40,10 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   const { target, model, pick, modelFor } = useAskTarget(scope, shown);
   const note = framing.note?.(target);
   const composer = useComposer(scope, model);
-  const [unfolded, setUnfolded] = useState(false);
+  // What the sheet unfolds for on its own: a question on its way, an answer running, or a thread that couldn't load.
+  const wantsAttention = !!composer.pending || !!running || !!thread?.error;
+  const [unfolded, setUnfolded] = useState(wantsAttention);
+  const sheetId = useId();
   const [dragging, setDragging] = useState(false);
   /** What the live region says once an answer ends. */
   const [announce, setAnnounce] = useState("");
@@ -53,7 +56,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   useLoadThread(scope, shown && !(thread?.loaded ?? false));
   useFocusRules({ open, shown, quoteCount: composer.quotes.length, runningId: running?.id, input, container, setUnfolded, setAnnounce });
   useFoldOnOutsideClick(container, shown, () => setUnfolded(false));
-  useUnfoldForActivity(!!composer.pending || !!running, setUnfolded);
+  useUnfoldForAttention(wantsAttention, setUnfolded);
   useUnfoldForReveal(key, setUnfolded);
 
   // Stable for the memoized turns.
@@ -86,6 +89,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
     >
       {showThread ? (
         <ThreadSheet
+          id={sheetId}
           turns={turns}
           scope={scope}
           header={framing.header}
@@ -105,6 +109,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
       <Composer
         composer={composer}
         inputRef={input}
+        sheetId={showThread ? sheetId : undefined}
         placeholder={framing.placeholder}
         turns={turns}
         running={running}
@@ -176,11 +181,15 @@ function useFocusRules({ open, shown, quoteCount, runningId, input, container, s
   }, [runningId, shown, input, container, setAnnounce]);
 }
 
-/** A question on its way or an answer running, from here or found so on mount: the thread unfolds so it can be watched. */
-function useUnfoldForActivity(active: boolean, setUnfolded: (v: boolean) => void) {
+/**
+ * The thread unfolds when it comes to want attention (a question sent from here or another client, a load
+ * that failed), and only then: a fold by the user holds while the same cause lasts. What wants attention on
+ * mount is unfolded from the first frame by the initial state, so this effect's run then changes nothing.
+ */
+function useUnfoldForAttention(wantsAttention: boolean, setUnfolded: (v: boolean) => void) {
   useEffect(() => {
-    if (active) setUnfolded(true);
-  }, [active, setUnfolded]);
+    if (wantsAttention) setUnfolded(true);
+  }, [wantsAttention, setUnfolded]);
 }
 
 /** A plugin opened this thread at one of its ranges: the thread unfolds so the answer can show it. */
