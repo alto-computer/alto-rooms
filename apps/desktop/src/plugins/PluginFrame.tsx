@@ -130,7 +130,7 @@ export const PluginFrame = forwardRef<PluginFrameHandle, Props>(function PluginF
           viewer,
           rooms: () => rooms.getState().rooms,
           revealSurface: (surface, rangeId) => {
-            asks.setOpen(true);
+            if (surface.kind === "answer") asks.setOpen(true);
             surfaceHub.reveal(surface, rangeId);
           },
           lastSurfaceGesture: () => surfaceHub.lastGesture(latest.current.plugin.id),

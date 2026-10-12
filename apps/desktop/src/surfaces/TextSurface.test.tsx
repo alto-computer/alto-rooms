@@ -56,10 +56,12 @@ describe("TextSurface", () => {
   });
 
   it("keeps the paint on text React re-renders into new nodes, without posting the same text again", async () => {
-    class FakeHighlight {
-      ranges: Range[];
+    class FakeHighlight extends Set<Range> {
       constructor(...ranges: Range[]) {
-        this.ranges = ranges;
+        super(ranges);
+      }
+      get ranges() {
+        return [...this];
       }
     }
     const highlights = new Map<string, FakeHighlight>();
@@ -85,7 +87,7 @@ describe("TextSurface", () => {
   });
 
   it("sends a click on a painted range to the plugin and leaves other clicks alone", async () => {
-    vi.stubGlobal("Highlight", class { constructor(..._r: Range[]) {} });
+    vi.stubGlobal("Highlight", class extends Set<Range> {});
     vi.stubGlobal("CSS", { highlights: new Map(), supports: () => true });
     const view = render(
       <TextSurface id={id}>
@@ -153,6 +155,35 @@ describe("useTextSelection with surfaces", () => {
     });
     expect(result.current.picked!.text).toContain("second");
     expect(result.current.picked!.span).toBeNull();
+  });
+
+  it("live() reads the selection as it is, while picked holds the earlier one until its deferred read lands", async () => {
+    const view = render(
+      <div data-sheet>
+        <TextSurface id={id}>
+          <p>first answer here</p>
+        </TextSurface>
+      </div>,
+    );
+    await act(async () => {});
+    const sheet = view.container.querySelector("[data-sheet]") as HTMLElement;
+    const { result } = renderHook(() => {
+      const scope = useRef<HTMLElement | null>(sheet);
+      return useTextSelection(scope, scope, true, surfaceHub.locate);
+    });
+    const p1 = view.container.querySelector("p")!.firstChild!;
+    select(p1, 6, p1, 12);
+    await act(async () => {
+      document.dispatchEvent(new Event("mouseup"));
+      await new Promise((r) => setTimeout(r, 1));
+    });
+    expect(result.current.picked!.text).toBe("answer");
+    // The selection grew on a key whose deferred read has not run yet.
+    select(p1, 0, p1, 12);
+    expect(result.current.picked!.text).toBe("answer");
+    expect(result.current.live()).toMatchObject({ text: "first answer", span: { key: surfaceKey(id), start: 0, end: 12, text: "first answer" } });
+    document.getSelection()!.removeAllRanges();
+    expect(result.current.live()).toBeNull();
   });
 
   it("marks nothing for a drag from a question across one answer into the next, though only one answer holds an end", async () => {

@@ -89,6 +89,13 @@ export function createRoomsClient(baseUrl: string, token?: string) {
       if (!r.ok) throw await failure(r);
       return r.text();
     },
+    /** Whether the note is on disk, without its body: a HEAD of the same route. 400 `invalid_input` for a bad name. */
+    noteExists: async (date: string, name: string): Promise<boolean> => {
+      const r = await fetch(`${baseUrl}/v1/journal/${date}/notes/${encodeURIComponent(name)}`, { method: "HEAD" });
+      if (r.status === 404) return false;
+      if (!r.ok) throw await failure(r);
+      return true;
+    },
     createRoom: (name: string) => write<Room>("POST", "/v1/rooms", JSON.stringify({ name })),
     linkFolder: (path: string, name?: string) => write<Room>("POST", "/v1/rooms/link", JSON.stringify({ path, name })),
     renameRoom: (id: string, name: string) => write<Room>("PATCH", `/v1/rooms/${encodeURIComponent(id)}`, JSON.stringify({ name })),

@@ -1,7 +1,13 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FocusEvent, type KeyboardEvent } from "react";
 import { RoomsApiError } from "@alto-rooms/protocol-ts";
 import { CircleAlert, ExternalLink } from "lucide-react";
-import { useClient, useJournalDay, useReadOnly, useInfo, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { useClient, useJournalDay, usePlugins, useReadOnly, useInfo, useRoomsStore, useViewerStore } from "@/data/hooks";
+import { surfacePlugins } from "@/plugins/pluginsStore";
+import { SelectionBar, type SelectionAction } from "@/selection/SelectionBar";
+import type { SelectionRect } from "@/selection/useTextSelection";
+import { NoteBackdrop } from "@/surfaces/NoteBackdrop";
+import { surfaceHub, surfaceKey } from "@/surfaces/surfaceHub";
+import { menuRect, useRangeMenu } from "@/surfaces/useRangeMenu";
 import { GENERIC_ERROR, noteNameErrorCopy, SAVE_FAILED } from "@/lib/errors";
 import { checkNoteDraft, clearNoteDraft, type NoteDraft } from "@/lib/drafts";
 import { useBriefError } from "./briefError";
@@ -37,6 +43,9 @@ function useSaverState(saver: NoteSaver | null): NoteSaverState {
 
 const warn = (...args: unknown[]) => console.warn(...args);
 
+/** The body's type, on the textarea and on the backdrop that mirrors it: both must wrap alike. */
+const BODY_TYPE = "font-serif text-lead leading-[1.7]";
+
 /**
  * A note tab: the note's markdown in a plain textarea with autosave (see
  * `noteSaver`). The textarea stays disabled until the body has loaded, so
@@ -47,6 +56,11 @@ const warn = (...args: unknown[]) => console.warn(...args);
  * The heading renames the note in place: the body is saved first (so nothing
  * typed is lost), then the file is renamed, then the live saver and the tab
  * move to the new name. The view re-renders with that name and keeps the saver.
+ *
+ * While a plugin that marks host text is on, the body is also a text surface:
+ * `NoteBackdrop` paints the plugin's ranges behind the textarea, a selection
+ * shows the plugin's buttons (notes have no Ask), and a click on a painted
+ * range asks the plugin for its menu. None of that touches the textarea.
  */
 export function NoteView({ tabId, date, name }: { tabId?: string; date: string; name: string }) {
   // `name` is the on-disk file name (e.g. `Plan.md`, `x.md.md`): the API gets it
@@ -63,23 +77,29 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
 
   // The note's live saver from the registry: reopening a note whose saver is
   // still saving (or retrying) attaches to it instead of reloading from disk.
-  // Unmounting detaches; the saver lives on until its text has landed.
-  const [saver, setSaver] = useState<NoteSaver | null>(null);
+  // Unmounting detaches; the saver lives on until its text has landed. The saver
+  // is held with the file it was attached for, so a render for another file sees
+  // no saver (and none of the old file's text) until its own is attached.
+  const saverKey = noteSaverKey(date, fileName);
+  const [attached, setAttached] = useState<{ key: string; saver: NoteSaver } | null>(null);
+  const saver = attached?.key === saverKey ? attached.saver : null;
   useEffect(() => {
-    const key = noteSaverKey(date, fileName);
+    const key = saverKey;
     const { saver: s } = attachNoteSaver(key, () => createNoteSaver({ save: (text) => client.saveNote(date, name, text), warn }), {
       date,
       name,
     });
-    setSaver(s);
+    setAttached({ key, saver: s });
     // Detached a microtask later: on a rename the re-render attaches under the
     // new key first, so the live saver is kept rather than released and reloaded.
     return () => queueMicrotask(() => detachNoteSaver(key, s));
-  }, [client, date, name, fileName]);
+  }, [client, date, name, saverKey]);
   const st = useSaverState(saver);
 
-  // Initial load (and "Try again").
+  // Initial load (and "Try again"). `ready` is the body's state to show and edit: this file's saver
+  // holds its text. `load` alone lags a render behind a change of file.
   const [load, setLoad] = useState<"loading" | "ready" | "error">("loading");
+  const ready = load === "ready" && st.ready;
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!saver) return;
@@ -123,13 +143,13 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const draftChecked = useRef<NoteSaver | null>(null);
   const [offer, setOffer] = useState<NoteDraft | null>(null);
   useEffect(() => {
-    if (!saver || load !== "ready" || readOnly || draftChecked.current === saver) return;
+    if (!saver || !ready || readOnly || draftChecked.current === saver) return;
     draftChecked.current = saver;
     // Checked once per saver (no cleanup: a StrictMode re-run must not drop the answer).
     void checkNoteDraft(saver, date, name).then((r) => {
       if (r.kind === "conflict" && draftChecked.current === saver) setOffer(r.draft);
     });
-  }, [saver, load, readOnly, date, name]);
+  }, [saver, ready, readOnly, date, name]);
 
   // External changes.
   const [focused, setFocused] = useState(false);
@@ -137,7 +157,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const reloading = useRef(false);
   const remoteUpdatedAt = day ? findNote(day.notes, name)?.updatedAt : undefined;
   useEffect(() => {
-    if (!saver || load !== "ready" || !remoteUpdatedAt || focused || reloading.current) return;
+    if (!saver || !ready || !remoteUpdatedAt || focused || reloading.current) return;
     if (st.inFlight || st.text !== st.savedText || !saver.isNewer(remoteUpdatedAt)) return;
     let live = true;
     reloading.current = true;
@@ -155,13 +175,13 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
     return () => {
       live = false;
     };
-  }, [saver, load, remoteUpdatedAt, focused, st, client, date, name]);
+  }, [saver, ready, remoteUpdatedAt, focused, st, client, date, name]);
 
   // A new note asks for the cursor in its body once it has loaded.
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (load === "ready" && !readOnly && takeNoteBodyFocus(date, name)) textareaRef.current?.focus();
-  }, [load, readOnly, date, name]);
+    if (ready && !readOnly && takeNoteBodyFocus(date, name)) textareaRef.current?.focus();
+  }, [ready, readOnly, date, name]);
 
   const [renaming, setRenaming] = useState(false);
   const rename = async (next: string) => {
@@ -189,7 +209,59 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
     }
   };
 
-  const editable = load === "ready" && !readOnly && !renaming;
+  const editable = ready && !readOnly && !renaming;
+
+  // Plugins that mark host text: the body is a surface only while one is on.
+  const surfaced = surfacePlugins(usePlugins().list).length > 0;
+  const surface = { kind: "note", date, name: fileName } as const;
+  const key = surfaceKey(surface);
+  const box = useRef<HTMLDivElement>(null);
+  const { actions: { note: surfaceActions } } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
+  // Where the bar sits: over the selection as it was once the pointer or key was up, as `useTextSelection` reads DOM text.
+  const [picked, setPicked] = useState<SelectionRect | null>(null);
+  const menu = useRangeMenu(box);
+  // The textarea's selection as it is now, as a span of the note's surface; null when nothing is selected.
+  const liveSpan = () => {
+    const ta = textareaRef.current;
+    return ta && ta.selectionStart !== ta.selectionEnd ? surfaceHub.span(key, ta.selectionStart, ta.selectionEnd) : null;
+  };
+  const readSelection = () => {
+    if (!surfaced) return;
+    setTimeout(() => {
+      const span = liveSpan();
+      const b = box.current;
+      if (!span || !b) return setPicked(null);
+      const r = span.range.getBoundingClientRect();
+      const bb = b.getBoundingClientRect();
+      // Scrolled out of the box, the selection has no place for a bar.
+      if (r.bottom < bb.top || r.top > bb.bottom) return setPicked(null);
+      setPicked({ x: r.left - bb.left, y: r.top - bb.top, w: r.width, h: r.height });
+    }, 0);
+  };
+  const dismiss = () => {
+    if (surfaced) setPicked(null);
+  };
+  // Focus may move from the text onto the bar (Tab, or an accessibility press, which focuses the
+  // button before its click) and must keep the bar; focus leaving the body altogether takes it.
+  const onBodyBlur = (e: FocusEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget)) dismiss();
+  };
+  // Escape takes the bar away and puts the caret back in the text, from the text or from a button Tab reached; the selection stays.
+  const onBodyKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Escape" || !picked) return;
+    setPicked(null);
+    textareaRef.current?.focus();
+  };
+  // A button runs on the selection as it is now, not the one the bar was shown for: the deferred read
+  // runs after the click or key that activated the button when the main thread is busy, and a user who
+  // extends the selection with Shift+Arrow and presses Enter at once means the selection they see.
+  const runPicked = (plugin: string, actionId: string) => {
+    const span = liveSpan();
+    if (span) surfaceHub.runAction(plugin, actionId, span);
+    setPicked(null);
+    // A button that was activated from the keyboard held the focus; the text takes it back.
+    if (document.activeElement !== textareaRef.current) textareaRef.current?.focus();
+  };
   const openFailed = useBriefError();
   const openElsewhere = (absPath: string) => {
     openInEditor(absPath).then(openFailed.clear, (err) => {
@@ -275,27 +347,60 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
           {SAVE_FAILED}
         </p>
       ) : null}
-      <textarea
-        aria-label="Note"
-        data-note-editor=""
-        ref={textareaRef}
-        value={st.text}
-        disabled={load !== "ready"}
-        readOnly={readOnly || renaming}
-        onChange={(e) => {
-          if (editable) saver?.edit(e.target.value);
-        }}
-        onFocus={() => {
-          focusedRef.current = true;
-          setFocused(true);
-        }}
-        onBlur={() => {
-          focusedRef.current = false;
-          setFocused(false);
-          if (editable) saver?.blur();
-        }}
-        className="min-h-0 flex-1 resize-none border-0 bg-transparent font-serif text-lead leading-[1.7] text-ink outline-none disabled:bg-transparent"
-      />
+      <div ref={box} onBlur={onBodyBlur} onKeyDown={onBodyKeyDown} className="relative min-h-0 flex-1">
+        {/* Mounted once the text is this file's, keyed by file: plugins hear a note's own text first, never an empty one or another note's. */}
+        {surfaced && ready ? <NoteBackdrop key={key} id={surface} text={st.text} textarea={textareaRef} className={BODY_TYPE} /> : null}
+        <textarea
+          aria-label="Note"
+          data-note-editor=""
+          ref={textareaRef}
+          value={st.text}
+          disabled={!ready}
+          readOnly={readOnly || renaming}
+          onChange={(e) => {
+            if (editable) saver?.edit(e.target.value);
+            dismiss();
+          }}
+          onFocus={() => {
+            focusedRef.current = true;
+            setFocused(true);
+          }}
+          onBlur={() => {
+            focusedRef.current = false;
+            setFocused(false);
+            if (editable) saver?.blur();
+          }}
+          onMouseUp={(e) => {
+            if (!surfaced) return;
+            const ta = e.currentTarget;
+            // A click with no selection on a painted range is the plugin's; the caret still lands.
+            if (ta.selectionStart === ta.selectionEnd) surfaceHub.clickAt(key, ta.selectionStart);
+            readSelection();
+          }}
+          onKeyUp={(e) => {
+            // The key that dismissed the bar must not bring it back on its way up.
+            if (e.key !== "Escape") readSelection();
+          }}
+          onScroll={() => {
+            // The bar follows the selection as the note scrolls; a menu sits on nodes that moved and closes.
+            readSelection();
+            if (surfaced) surfaceHub.closeMenu();
+          }}
+          className={`absolute inset-0 resize-none border-0 bg-transparent ${BODY_TYPE} text-ink outline-none disabled:bg-transparent`}
+        />
+        {picked && surfaceActions.length > 0 ? (
+          <SelectionBar
+            rect={picked}
+            actions={surfaceActions.map((a): SelectionAction => ({ key: `${a.plugin}:${a.id}`, title: a.title, color: a.color, run: () => runPicked(a.plugin, a.id) }))}
+          />
+        ) : null}
+        {menu && box.current ? (
+          <SelectionBar
+            rect={menuRect(menu, box.current)}
+            actions={menu.items.map((a): SelectionAction => ({ key: `${menu.plugin}:${a.id}`, title: a.title, color: a.color, run: () => surfaceHub.runMenu(a.id) }))}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }

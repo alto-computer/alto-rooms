@@ -37,15 +37,43 @@ describe("connectSurfaces", () => {
     ]);
   });
 
+  it("stamps a paint with the version of the text it last heard for that surface", () => {
+    const s = connectSurfaces();
+    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "abc", version: 3 }));
+    s.paint(answer, []);
+    expect(host.sent.at(-1)).toEqual(toApp({ type: "paint", surface: answer, ranges: [], version: 3 }));
+    host.deliver(fromApp({ type: "surface.close", surface: answer }));
+    s.paint(answer, []);
+    expect(host.sent.at(-1), "a closed surface has no text to be against").toEqual(toApp({ type: "paint", surface: answer, ranges: [] }));
+  });
+
+  it("lets a plugin that paints after an await name the text its offsets came from, instead of the one that arrived meanwhile", async () => {
+    const s = connectSurfaces();
+    const paints: Promise<void>[] = [];
+    s.onOpen((surface, text, version) => {
+      // Like a plugin that reads its storage first: by the time it paints, the next text has been heard.
+      paints.push(Promise.resolve().then(() => s.paint(surface, [{ id: "all", start: 0, end: text.length, style: "m" }], undefined, version)));
+    });
+    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "abc", version: 1 }));
+    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "abcd", version: 2 }));
+    await Promise.all(paints);
+    expect(host.sent.filter((m) => m.type === "paint")).toEqual([
+      toApp({ type: "paint", surface: answer, ranges: [{ id: "all", start: 0, end: 3, style: "m" }], version: 1 }),
+      toApp({ type: "paint", surface: answer, ranges: [{ id: "all", start: 0, end: 4, style: "m" }], version: 2 }),
+    ]);
+    s.paint(answer, []);
+    expect(host.sent.at(-1), "a paint that names no text is read against the last heard").toEqual(toApp({ type: "paint", surface: answer, ranges: [], version: 2 }));
+  });
+
   it("hands each app message to its listeners, until they unsubscribe", () => {
     const s = connectSurfaces();
     const got: unknown[] = [];
-    const offOpen = s.onOpen((surface, text) => got.push(["open", surface, text]));
+    const offOpen = s.onOpen((surface, text, version) => got.push(["open", surface, text, version]));
     s.onClose((surface) => got.push(["close", surface]));
     s.onAction((id, sel) => got.push(["action", id, sel]));
     s.onRangeClick((surface, rangeId) => got.push(["click", surface, rangeId]));
     s.onRangeAction((surface, rangeId, actionId) => got.push(["rangeAction", surface, rangeId, actionId]));
-    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "the quick fox" }));
+    host.deliver(fromApp({ type: "surface.open", surface: answer, text: "the quick fox", version: 7 }));
     host.deliver(fromApp({ type: "selection.action", surface: answer, actionId: "tag", start: 4, end: 9, text: "quick" }));
     host.deliver(fromApp({ type: "range.click", surface: answer, rangeId: "a" }));
     host.deliver(fromApp({ type: "range.action", surface: answer, rangeId: "a", actionId: "untag" }));
@@ -53,7 +81,7 @@ describe("connectSurfaces", () => {
     offOpen();
     host.deliver(fromApp({ type: "surface.open", surface: answer, text: "again" }));
     expect(got).toEqual([
-      ["open", answer, "the quick fox"],
+      ["open", answer, "the quick fox", 7],
       ["action", "tag", { surface: answer, start: 4, end: 9, text: "quick" }],
       ["click", answer, "a"],
       ["rangeAction", answer, "a", "untag"],
@@ -82,6 +110,25 @@ describe("surface names", () => {
     expect(surfacePath({ kind: "answer", scope: { kind: "session", agent: "codex", id: "s_1-2" }, turnId: "t1" })).toBe("answer/session/codex/s_1-2/t1");
     expect(surfacePath(answer)).toBe("answer/room/r1/t1");
     expect(surfacePath({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "V1StGXR8_Z5jdHi6" })).toBe("answer/day/2026-10-10/V1StGXR8_Z5jdHi6");
+  });
+
+  it("names a note by its folded file name, and as a path segment the storage rules admit", () => {
+    const plan: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    expect(surfaceKey(plan)).toBe("note:2026-10-10/plan.md");
+    expect(surfaceKey({ ...plan, name: "PLAN.md" }), "one file on a case-insensitive disk").toBe(surfaceKey(plan));
+    expect(surfaceKey({ ...plan, name: "계획.md".normalize("NFD") })).toBe(surfaceKey({ ...plan, name: "계획.md" }));
+    const segment = /^[A-Za-z0-9._-]{1,200}$/;
+    for (const name of ["Plan.md", "New Note 2.md", "계획.md", "회의 메모 (2).md", "a".repeat(60) + ".md", "-.md"]) {
+      const path = surfacePath({ ...plan, name });
+      const [kind, date, seg, ...rest] = path.split("/");
+      expect([kind, date, rest], name).toEqual(["note", "2026-10-10", []]);
+      expect(seg, name).toMatch(segment);
+      expect(seg, "not a dot segment").not.toMatch(/^\.\.?$/);
+    }
+    expect(surfacePath(plan)).toMatch(/^note\/2026-10-10\/plan\.md-[0-9a-f]{8}$/);
+    expect(surfacePath({ ...plan, name: "PLAN.md" })).toBe(surfacePath(plan));
+    expect(surfacePath({ ...plan, name: "Plan 2.md" })).not.toBe(surfacePath(plan));
+    expect(surfacePath({ ...plan, name: "계획.md" })).not.toBe(surfacePath({ ...plan, name: "회고.md" }));
   });
 });
 

@@ -1,6 +1,6 @@
 import type { Note } from "@alto-rooms/protocol-ts";
 import { describe, expect, it } from "vitest";
-import { findNote, firstNewNoteNames, freeNoteNames, noteBase, noteFileName, noteNameFromQuestion } from "./notes";
+import { findNote, firstNewNoteNames, freeNoteNames, isNoteName, noteBase, noteFileName, noteNameFromQuestion } from "./notes";
 
 const note = (name: string): Note => ({ date: "2026-10-05", name, relPath: `2026-10-05/${name}`, updatedAt: "2026-10-05T01:00:00Z", author: "me" });
 
@@ -49,11 +49,16 @@ describe("noteFileName", () => {
 });
 
 /** A port of roomsd's `validate_note_name` (crates/rooms-core/src/rules.rs). */
-function roomsdAccepts(name: string): boolean {
-  const base = noteBase(name.trim()).normalize("NFC");
-  const n = Array.from(base).length;
-  return n > 0 && n <= 60 && !/[/\\:]/.test(base) && !base.includes("..") && !base.startsWith(".") && !/\p{Cc}/u.test(base);
-}
+const roomsdAccepts = isNoteName;
+
+describe("isNoteName", () => {
+  it("takes what roomsd's validate_note_name takes: the base after one .md, 1 to 60 code points, no path characters, .. or control characters", () => {
+    for (const ok of ["Plan.md", "Plan", "a..md", "x.md.md", "회의 (2).md", `${"x".repeat(60)}.md`, `${"🙂".repeat(60)}.md`, " spaced .md"]) expect(isNoteName(ok), ok).toBe(true);
+    for (const bad of ["", ".md", " ", "a/b.md", "a\\b", "a:b.md", "a..b.md", "..md", ".hidden.md", "a\u0000b", "a\nb.md", `${"x".repeat(61)}.md`, `${"🙂".repeat(61)}.md`]) {
+      expect(isNoteName(bad), JSON.stringify(bad)).toBe(false);
+    }
+  });
+});
 
 describe("noteNameFromQuestion", () => {
   const cases: [string, string, string][] = [

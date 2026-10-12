@@ -9,7 +9,9 @@
  * A frame built on SDK 0.6 or later says `hello` when it connects and puts `api: 2` on every
  * message; it hears artifact and session scopes by those names. A frame that never does is on SDK
  * 0.5 and hears them as `doc` and as `conversation` with the id in `session`, the shapes its
- * `surfacePath` reads.
+ * `surfacePath` reads. Such a frame hears nothing of a note: 0.5's `surfacePath` reads `scope` off
+ * every surface and throws on a note, so a note's text, bar buttons, clicks and menus are for
+ * frames on API 2 only (`hears`).
  *
  * Each plugin's `::highlight` rules live in a constructed stylesheet of its own, written one rule
  * at a time, so nothing a plugin declares can reach another plugin's rules. A constructed sheet
@@ -19,13 +21,16 @@
 import type { AskScope } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { isAgent, isSessionId } from "@/lib/agents";
+import { isNoteName, noteKey } from "@/lib/notes";
 import { isColor, parseActions, type ContentAction } from "@/plugins/contentChannel";
 import { buildIndex, offsetOf, rangeAt, type TextIndex } from "./surfaceIndex";
 
-export type SurfaceId = { kind: "answer"; scope: AskScope; turnId: string };
+/** A finished chat answer, or a note's body; `name` is the note's on-disk file name, `.md` included. */
+export type SurfaceId = { kind: "answer"; scope: AskScope; turnId: string } | { kind: "note"; date: string; name: string };
+type AnswerId = Extract<SurfaceId, { kind: "answer" }>;
 
-/** `answer:<scopeKey>/<turnId>`: the one name a surface has while open. */
-export const surfaceKey = (s: SurfaceId): string => `${s.kind}:${scopeKey(s.scope)}/${s.turnId}`;
+/** `answer:<scopeKey>/<turnId>` or `note:<date>/<folded file name>`: the one name a surface has while open. */
+export const surfaceKey = (s: SurfaceId): string => (s.kind === "answer" ? `answer:${scopeKey(s.scope)}/${s.turnId}` : `note:${noteKey(s.date, s.name)}`);
 
 const FLASH = "rooms-flash";
 
@@ -48,8 +53,8 @@ export type SurfaceMenu = { plugin: string; key: string; rangeId: string; range:
 export type SurfaceReveal = { id: SurfaceId; rangeId: string };
 
 export type SurfaceSnapshot = {
-  /** Every plugin's declared buttons, in plugin id order. */
-  actions: SurfaceAction[];
+  /** The buttons for a selection in a surface of each kind, in plugin id order: every plugin's over an answer, the API 2 plugins' over a note. */
+  actions: Record<SurfaceId["kind"], SurfaceAction[]>;
   /** A menu a plugin answered a range click with. */
   menu: SurfaceMenu | null;
   /** An `open({ surface, rangeId })` on its way to a surface that is not open yet. */
@@ -57,7 +62,7 @@ export type SurfaceSnapshot = {
 };
 
 type HostMessage =
-  | { type: "surface.open"; surface: SurfaceId; text: string }
+  | { type: "surface.open"; surface: SurfaceId; text: string; version: number }
   | { type: "surface.close"; surface: SurfaceId }
   | { type: "selection.action"; surface: SurfaceId; actionId: string; start: number; end: number; text: string }
   | { type: "range.click"; surface: SurfaceId; rangeId: string }
@@ -70,10 +75,66 @@ type FrameMessage =
   | { type: "hello" }
   | { type: "ready" }
   | { type: "actions"; items: ContentAction[] }
+  /** Ranges as offsets into the text the plugin last heard (`OpenSurface.told`), not the text on screen. */
   | { type: "paint"; key: string; styles: Styles; ranges: SurfaceRange[]; dropped: number }
+  /** A paint against a text older than the one last told; the plugin heard the newer one and paints again. */
+  | { type: "stale" }
   | { type: "menu"; key: string; rangeId: string; items: ContentAction[] };
 
-type OpenSurface = { id: SurfaceId; key: string; root: HTMLElement; index: TextIndex };
+export type OpenOptions = {
+  /**
+   * How long the text must stay still before plugins hear a change. 0 tells them at once; a note
+   * passes 300, so a run of keystrokes is one message. The paint keeps up either way: core moves
+   * it through each edit itself.
+   */
+  quietMs?: number;
+  /** Brings a range into view for a flash. The default scrolls the element holding its first text node. */
+  reveal?: (range: Range) => void;
+};
+
+type OpenSurface = OpenOptions & {
+  id: SurfaceId;
+  key: string;
+  root: HTMLElement;
+  index: TextIndex;
+  /** The text plugins last heard for this surface, null before the first `surface.open`. */
+  told: string | null;
+  /** The hub-wide number of the text last told for this surface (0 before the first); a paint names the one it was read against. */
+  version: number;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+/** One replacement that turns `before` into `after`: `[start, end)` of `before` became `inserted` characters. */
+export type TextEdit = { start: number; end: number; inserted: number };
+
+/** The edit between two texts, read off their common prefix and suffix; a typed keystroke is one. */
+export function editBetween(before: string, after: string): TextEdit {
+  const shortest = Math.min(before.length, after.length);
+  let start = 0;
+  while (start < shortest && before.charCodeAt(start) === after.charCodeAt(start)) start++;
+  let suffix = 0;
+  while (suffix < shortest - start && before.charCodeAt(before.length - 1 - suffix) === after.charCodeAt(after.length - 1 - suffix)) suffix++;
+  return { start, end: before.length - suffix, inserted: after.length - suffix - start };
+}
+
+/**
+ * `ranges` as they lie after `edit`: one before it stays, one after it moves by the edit's growth,
+ * and one the edit cut into is gone, since its plugin re-anchors from the quote once it hears the
+ * text. Typing at a range's edge counts as outside it, so a word stays painted while the user
+ * types up to and away from it.
+ */
+export function shiftRanges(ranges: readonly SurfaceRange[], edit: TextEdit): SurfaceRange[] {
+  const delta = edit.inserted - (edit.end - edit.start);
+  const out: SurfaceRange[] = [];
+  for (const r of ranges) {
+    if (r.end <= edit.start) out.push(r);
+    else if (r.start >= edit.end) out.push({ ...r, start: r.start + delta, end: r.end + delta });
+  }
+  return out;
+}
+/** A range in one of a plugin's highlights, and the style it is under. */
+type Drawn = { range: Range; style: string };
+
 type Seat = {
   id: string;
   /** The surface shapes the plugin's SDK reads: 1 until it says `api: 2` (SDK 0.6). */
@@ -82,6 +143,8 @@ type Seat = {
   actions: ContentAction[];
   styles: Styles;
   paints: Map<string, SurfaceRange[]>;
+  /** The live ranges this plugin's highlights hold, per surface, so one surface repaints without the others. */
+  drawn: Map<string, Drawn[]>;
   /** This plugin's `::highlight` rules, one per style; null without a DOM. */
   sheet: CSSStyleSheet | null;
   /**
@@ -126,8 +189,11 @@ function dropSheet(sheet: CSSStyleSheet | null): void {
   if (sheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== sheet);
 }
 
+/** Whether a plugin on `api` can take a surface of `kind`: a note is API 2 only, since SDK 0.5's `surfacePath` throws on one. */
+const hears = (api: Seat["api"], kind: SurfaceId["kind"]): boolean => api === 2 || kind === "answer";
+
 /** `id` as SDK 0.5 names it, for a plugin that never said it reads API 2. */
-function surfaceForApi1(id: SurfaceId): unknown {
+function surfaceForApi1(id: AnswerId): unknown {
   const { scope } = id;
   if (scope.kind === "artifact") return { ...id, scope: { kind: "doc", fileKey: scope.fileKey } };
   if (scope.kind === "session") return { ...id, scope: { kind: "conversation", agent: scope.agent, session: scope.id } };
@@ -141,7 +207,10 @@ function surfaceForApi1(id: SurfaceId): unknown {
  */
 export function parseSurfaceId(v: unknown): SurfaceId | null {
   if (!v || typeof v !== "object") return null;
-  const { kind, scope, turnId } = v as Record<string, unknown>;
+  const { kind, scope, turnId, date, name } = v as Record<string, unknown>;
+  if (kind === "note") {
+    return typeof date === "string" && DATE.test(date) && typeof name === "string" && isNoteName(name) ? { kind: "note", date, name } : null;
+  }
   if (kind !== "answer" || typeof turnId !== "string" || !ID.test(turnId) || !scope || typeof scope !== "object") return null;
   const s = scope as Record<string, unknown>;
   const str = (x: unknown): x is string => typeof x === "string" && x.length > 0 && x.length <= 200;
@@ -187,7 +256,8 @@ function parseRanges(v: unknown, length: number, styles: Styles): { ranges: Surf
   return { ranges, dropped };
 }
 
-function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurface>, known: Styles): FrameMessage | null {
+/** A message from `seat`'s frame, or null; one about a surface the seat cannot hear (a note, from SDK 0.5) is null too. */
+function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurface>, seat: Pick<Seat, "api" | "styles">): FrameMessage | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
   if (d.rooms !== "surface" || d.v !== 1) return null;
@@ -198,11 +268,12 @@ function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurf
     return items ? { type: "actions", items } : null;
   }
   const id = parseSurfaceId(d.surface);
-  const open = id && surfaces.get(surfaceKey(id));
+  const open = id && hears(seat.api, id.kind) ? surfaces.get(surfaceKey(id)) : undefined;
   if (!open) return null;
   if (d.type === "paint") {
-    const styles = parseStyles(d.styles, known);
-    const parsed = styles && parseRanges(d.ranges, open.index.text.length, styles);
+    if (d.version !== undefined && d.version !== open.version) return isInt(d.version) ? { type: "stale" } : null;
+    const styles = parseStyles(d.styles, seat.styles);
+    const parsed = styles && parseRanges(d.ranges, (open.told ?? open.index.text).length, styles);
     return styles && parsed ? { type: "paint", key: open.key, styles, ...parsed } : null;
   }
   if (d.type === "menu" && typeof d.rangeId === "string" && ID.test(d.rangeId)) {
@@ -216,6 +287,17 @@ const registry = (): HighlightRegistry | null =>
   typeof CSS !== "undefined" && "highlights" in CSS && typeof Highlight !== "undefined" ? CSS.highlights : null;
 
 const highlightName = (plugin: string, style: string) => `rooms-${plugin}-${style}`;
+
+/** The highlight `plugin` paints `style` into, registered on first use. */
+function highlightFor(reg: HighlightRegistry, plugin: string, style: string): Highlight {
+  const name = highlightName(plugin, style);
+  let h = reg.get(name);
+  if (!h) {
+    h = new Highlight();
+    reg.set(name, h);
+  }
+  return h;
+}
 
 /** The caret at a point, in whichever form the engine offers. */
 function caretAt(dom: Document, x: number, y: number): { node: Node; offset: number } | null {
@@ -231,11 +313,13 @@ export class SurfaceHub {
   private surfaces = new Map<string, OpenSurface>();
   private seats = new Map<string, Seat>();
   private listeners = new Set<() => void>();
-  private snapshot: SurfaceSnapshot = { actions: [], menu: null, reveal: null };
+  private snapshot: SurfaceSnapshot = { actions: { answer: [], note: [] }, menu: null, reveal: null };
   /** The flash rule, in a sheet of its own like each plugin's; made on the first flash. */
   private flashSheet: CSSStyleSheet | null = null;
   private flashTimer: ReturnType<typeof setTimeout> | null = null;
   private revealTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Texts told so far, over every surface: a surface that closes and opens again never repeats a number, so a paint from its earlier life cannot match. */
+  private versions = 0;
   /** Messages from a frame that were malformed, named a closed surface, or carried ranges outside the text. */
   dropped = 0;
 
@@ -246,38 +330,66 @@ export class SurfaceHub {
   getSnapshot = (): SurfaceSnapshot => this.snapshot;
 
   /**
-   * A surface's element and text are on screen: every background frame hears `surface.open`. The
-   * same text in new nodes (React swapped them) re-anchors the paint and posts nothing; new text
-   * drops the paint, since its offsets no longer mean anything. Either way a menu over the surface
-   * pointed into the old nodes and closes.
+   * A surface's element and text are on screen: every background frame hears `surface.open`, at
+   * once or after `quietMs` of still text. The same text in new nodes (React swapped them)
+   * re-anchors the paint and tells no plugin; changed text moves the paint through the edit now,
+   * and the plugins re-anchor from their quotes when they hear it. Either way a menu over the
+   * surface pointed into the old nodes and closes.
    */
-  open(id: SurfaceId, root: HTMLElement): void {
+  open(id: SurfaceId, root: HTMLElement, opts: OpenOptions = {}): void {
     const key = surfaceKey(id);
     const index = buildIndex(root);
     const was = this.surfaces.get(key);
-    this.surfaces.set(key, { id, key, root, index });
+    const s: OpenSurface = { ...opts, id, key, root, index, told: was?.told ?? null, version: was?.version ?? 0, timer: was?.timer ?? null };
+    this.surfaces.set(key, s);
     if (this.snapshot.menu?.key === key) this.set({ menu: null });
-    if (was?.index.text === index.text) {
-      this.repaintAll();
-      return;
+    if (was && was.index.text !== index.text) {
+      const edit = editBetween(was.index.text, index.text);
+      for (const seat of this.seats.values()) {
+        const ranges = seat.paints.get(key);
+        if (ranges) seat.paints.set(key, shiftRanges(ranges, edit));
+      }
     }
-    for (const seat of this.seats.values()) {
-      if (was) seat.paints.delete(key);
-      seat.post({ type: "surface.open", surface: id, text: index.text });
-    }
-    if (was) this.repaintAll();
+    if (was) for (const seat of this.seats.values()) this.repaint(seat, key);
+    this.tell(s);
+  }
+
+  /**
+   * Plugins hear `s`'s text once it differs from what they last heard: the first text now, a
+   * change after the quiet time, or now when `now` (a click over the text needs them on it).
+   */
+  private tell(s: OpenSurface, now = false): void {
+    if (s.timer) clearTimeout(s.timer);
+    s.timer = null;
+    if (s.told === s.index.text) return;
+    const post = () => {
+      s.timer = null;
+      s.told = s.index.text;
+      s.version = ++this.versions;
+      for (const seat of this.seats.values()) seat.post({ type: "surface.open", surface: s.id, text: s.told, version: s.version });
+    };
+    if (!now && s.quietMs && s.told !== null) s.timer = setTimeout(post, s.quietMs);
+    else post();
   }
 
   close(key: string): void {
     const s = this.surfaces.get(key);
     if (!s) return;
+    if (s.timer) clearTimeout(s.timer);
     this.surfaces.delete(key);
     for (const seat of this.seats.values()) {
       seat.paints.delete(key);
+      this.repaint(seat, key);
       seat.post({ type: "surface.close", surface: s.id });
     }
-    this.repaintAll();
     if (this.snapshot.menu?.key === key) this.set({ menu: null });
+  }
+
+  /** `text.slice(start, end)` of open surface `key` as a span for a button, with its DOM range for placing the bar; null outside the text. */
+  span(key: string, start: number, end: number): (SurfaceSpan & { range: Range }) | null {
+    const s = this.surfaces.get(key);
+    const range = s && rangeAt(s.index, start, end);
+    return s && range ? { key, start, end, text: s.index.text.slice(start, end), range } : null;
   }
 
   /**
@@ -300,10 +412,15 @@ export class SurfaceHub {
     const seat: Seat = {
       id: plugin,
       api: 1,
-      post: (m) => post({ rooms: "surface", v: 1, ...m, surface: seat.api === 2 ? m.surface : surfaceForApi1(m.surface) }),
+      // `hears`, spelled so the type narrows: on API 1 an answer goes under 0.5's names and a note goes nowhere.
+      post: (m) => {
+        if (seat.api === 2) post({ rooms: "surface", v: 1, ...m });
+        else if (m.surface.kind === "answer") post({ rooms: "surface", v: 1, ...m, surface: surfaceForApi1(m.surface) });
+      },
       actions: [],
       styles: new Map(),
       paints: new Map(),
+      drawn: new Map(),
       sheet: adoptSheet(),
       gestureAt: null,
     };
@@ -313,7 +430,7 @@ export class SurfaceHub {
         if (!data || typeof data !== "object" || (data as { rooms?: unknown }).rooms !== "surface") return;
         const { api } = data as { api?: unknown };
         if (isInt(api) && api >= 2) seat.api = 2;
-        const m = parseFrameMessage(data, this.surfaces, seat.styles);
+        const m = parseFrameMessage(data, this.surfaces, seat);
         if (!m) {
           this.dropped++;
           return;
@@ -322,7 +439,9 @@ export class SurfaceHub {
           case "hello":
             return;
           case "ready":
-            for (const s of this.surfaces.values()) seat.post({ type: "surface.open", surface: s.id, text: s.index.text });
+            for (const s of this.surfaces.values()) seat.post({ type: "surface.open", surface: s.id, text: s.told ?? s.index.text, version: s.version });
+            return;
+          case "stale":
             return;
           case "actions":
             seat.actions = m.items;
@@ -334,8 +453,10 @@ export class SurfaceHub {
               seat.styles = m.styles;
               this.restyle(seat);
             }
-            seat.paints.set(m.key, m.ranges);
-            this.repaint(seat);
+            // Read against the text the plugin heard; keystrokes since then move it, as they move every paint.
+            const s = this.surfaces.get(m.key)!;
+            seat.paints.set(m.key, s.told !== null && s.told !== s.index.text ? shiftRanges(m.ranges, editBetween(s.told, s.index.text)) : m.ranges);
+            this.repaint(seat, m.key);
             const r = this.snapshot.reveal;
             if (r && surfaceKey(r.id) === m.key && m.ranges.some((x) => x.id === r.rangeId)) {
               this.set({ reveal: null });
@@ -364,13 +485,18 @@ export class SurfaceHub {
     };
   }
 
-  /** A button of `plugin` was clicked over `span`: the plugin hears where and what. */
+  /**
+   * A button of `plugin` was clicked over `span`: the plugin hears where and what, in the text on
+   * screen, which it hears first if a quiet time still held it. A span whose text is no longer at
+   * its offsets (the text changed under a bar), or in a surface the plugin cannot hear, is not a click.
+   */
   runAction(plugin: string, actionId: string, span: SurfaceSpan): void {
     const seat = this.seats.get(plugin);
     const s = this.surfaces.get(span.key);
-    if (!seat || !s || !seat.actions.some((a) => a.id === actionId)) return;
+    if (!seat || !s || !hears(seat.api, s.id.kind) || !seat.actions.some((a) => a.id === actionId) || s.index.text.slice(span.start, span.end) !== span.text) return;
+    this.tell(s, true);
     seat.gestureAt = Date.now();
-    seat.post({ type: "selection.action", surface: s.id, actionId, start: span.start, end: span.end, text: s.index.text.slice(span.start, span.end) });
+    seat.post({ type: "selection.action", surface: s.id, actionId, start: span.start, end: span.end, text: span.text });
   }
 
   /** When the user last clicked one of `plugin`'s buttons or menu items, or null. A range click does not count. */
@@ -388,7 +514,13 @@ export class SurfaceHub {
     if (!s) return false;
     const caret = caretAt(s.root.ownerDocument, x, y);
     if (!caret || !s.root.contains(caret.node)) return false;
-    const at = offsetOf(s.index, caret.node, caret.offset);
+    return this.clickAt(key, offsetOf(s.index, caret.node, caret.offset));
+  }
+
+  /** `click` for a surface whose caret the browser reports as an offset, as a textarea does. */
+  clickAt(key: string, at: number): boolean {
+    const s = this.surfaces.get(key);
+    if (!s) return false;
     let hit: { seat: Seat; range: SurfaceRange } | null = null;
     for (const seat of this.seats.values()) {
       for (const range of seat.paints.get(key) ?? []) if (range.start <= at && at < range.end) hit = { seat, range };
@@ -440,7 +572,8 @@ export class SurfaceHub {
     let range: Range | null = null;
     for (const seat of this.seats.values()) range ??= this.rangeOf(seat, key, rangeId);
     // The element holding the range's first text node: a long answer's top may be a screen away from it.
-    (range?.startContainer.parentElement ?? s.root).scrollIntoView({ block: "center" });
+    if (range && s.reveal) s.reveal(range);
+    else (range?.startContainer.parentElement ?? s.root).scrollIntoView({ block: "center" });
     const reg = registry();
     if (!reg || !range) return;
     if (!this.flashSheet) {
@@ -458,34 +591,41 @@ export class SurfaceHub {
     return s && r ? rangeAt(s.index, r.start, r.end) : null;
   }
 
-  private allActions(): SurfaceAction[] {
-    return [...this.seats.values()].sort((a, b) => (a.id < b.id ? -1 : 1)).flatMap((seat) => seat.actions.map((a) => ({ plugin: seat.id, ...a })));
+  private allActions(): SurfaceSnapshot["actions"] {
+    const seats = [...this.seats.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+    const over = (kind: SurfaceId["kind"]): SurfaceAction[] => seats.filter((seat) => hears(seat.api, kind)).flatMap((seat) => seat.actions.map((a) => ({ plugin: seat.id, ...a })));
+    return { answer: over("answer"), note: over("note") };
   }
 
-  private repaintAll(): void {
-    for (const seat of this.seats.values()) this.repaint(seat);
-  }
-
-  private repaint(seat: Seat): void {
+  /**
+   * Redraws `seat`'s paint on surface `key` from its offsets: the ranges it drew there leave the
+   * highlights and new ones go in, while every other surface's ranges stay as they are. A
+   * keystroke in a note costs its own ranges, not every open answer's.
+   */
+  private repaint(seat: Seat, key: string): void {
     const reg = registry();
     if (!reg) return;
-    const byStyle = new Map<string, Range[]>([...seat.styles.keys()].map((s) => [s, []]));
-    for (const [key, ranges] of seat.paints) {
-      const s = this.surfaces.get(key);
-      if (!s) continue;
-      for (const r of ranges) {
-        const range = rangeAt(s.index, r.start, r.end);
-        if (range) byStyle.get(r.style)!.push(range);
-      }
+    for (const d of seat.drawn.get(key) ?? []) reg.get(highlightName(seat.id, d.style))?.delete(d.range);
+    const s = this.surfaces.get(key);
+    const drawn: Drawn[] = [];
+    for (const r of (s && seat.paints.get(key)) ?? []) {
+      const range = s && rangeAt(s.index, r.start, r.end);
+      if (!range) continue;
+      highlightFor(reg, seat.id, r.style).add(range);
+      drawn.push({ range, style: r.style });
     }
-    for (const [style, ranges] of byStyle) reg.set(highlightName(seat.id, style), new Highlight(...ranges));
+    if (drawn.length) seat.drawn.set(key, drawn);
+    else seat.drawn.delete(key);
   }
 
   /**
    * Rewrites `seat`'s sheet: one rule per style, each inserted on its own, so a rule the engine
    * rejects is the only one lost. The name is an identifier and the color passed `isPaintColor`.
+   * Each style also gets its highlight in the registry, so the rule has something to paint.
    */
   private restyle(seat: Seat): void {
+    const reg = registry();
+    if (reg) for (const style of seat.styles.keys()) highlightFor(reg, seat.id, style);
     const sheet = seat.sheet;
     if (!sheet) return;
     sheet.replaceSync("");

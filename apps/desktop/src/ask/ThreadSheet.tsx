@@ -2,8 +2,9 @@ import { useEffect, useRef, useSyncExternalStore, type RefObject } from "react";
 import { ArrowDown } from "lucide-react";
 import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { askAction, SelectionBar, type SelectionAction } from "@/selection/SelectionBar";
-import { useTextSelection, type SelectionRect } from "@/selection/useTextSelection";
-import { surfaceHub, type SurfaceMenu } from "@/surfaces/surfaceHub";
+import { useTextSelection } from "@/selection/useTextSelection";
+import { surfaceHub } from "@/surfaces/surfaceHub";
+import { menuRect, useRangeMenu } from "@/surfaces/useRangeMenu";
 import type { Live } from "./asksStore";
 import type { NoteTargetOf, TurnHeader } from "./askSubjects";
 import { PendingTurn, Turn } from "./Turn";
@@ -47,36 +48,6 @@ function useFollow(sheet: RefObject<HTMLDivElement | null>, turns: AskTurn[], li
   return follow;
 }
 
-/** Where a plugin's menu goes: under the last line of its range, relative to `box`. */
-function menuRect(menu: SurfaceMenu, box: HTMLElement): SelectionRect {
-  const rects = menu.range.getClientRects();
-  const r = rects.length ? rects[rects.length - 1] : menu.range.getBoundingClientRect();
-  const b = box.getBoundingClientRect();
-  return { x: r.left - b.left, y: r.top - b.top, w: r.width, h: r.height };
-}
-
-/** A plugin's menu over one of its painted ranges in this sheet, until a click elsewhere or Esc. */
-function useRangeMenu(sheet: RefObject<HTMLDivElement | null>): SurfaceMenu | null {
-  const { menu } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
-  const mine = menu && sheet.current?.contains(menu.range.startContainer) ? menu : null;
-  useEffect(() => {
-    if (!mine) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (!(e.target instanceof Element) || !e.target.closest("[data-selection-ask]")) surfaceHub.closeMenu();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") surfaceHub.closeMenu();
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [mine]);
-  return mine;
-}
-
 /**
  * A thread above the ask bar: its turns, a question on its way, and a bar over text selected in
  * an answer: "Ask" (it becomes a quote), then the buttons of the plugins that mark answers.
@@ -100,7 +71,7 @@ export function ThreadSheet({ turns, scope, header, noteTarget, live, loadError,
   const sheet = useRef<HTMLDivElement>(null);
   const { away, toBottom } = useFollow(sheet, turns, live, !!pending);
   const selection = useTextSelection(sheet, box, true, surfaceHub.locate);
-  const { actions: surfaceActions } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
+  const { actions: { answer: surfaceActions } } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
   const menu = useRangeMenu(sheet);
   const last = turns.at(-1);
   const head = last ? header(last) : null;
@@ -139,8 +110,10 @@ export function ThreadSheet({ turns, scope, header, noteTarget, live, loadError,
         <SelectionBar
           rect={selection.picked.rect}
           actions={[
+            // Each action reads the selection as it is when the button runs, not the pick the bar was shown for: see useTextSelection.
             askAction(() => {
-              onQuote(selection.picked!.text);
+              const pick = selection.live();
+              if (pick) onQuote(pick.text);
               document.getSelection()?.removeAllRanges();
               selection.dismiss();
             }),
@@ -151,7 +124,8 @@ export function ThreadSheet({ turns, scope, header, noteTarget, live, loadError,
                     title: a.title,
                     color: a.color,
                     run: () => {
-                      surfaceHub.runAction(a.plugin, a.id, selection.picked!.span!);
+                      const span = selection.live()?.span;
+                      if (span) surfaceHub.runAction(a.plugin, a.id, span);
                       document.getSelection()?.removeAllRanges();
                       selection.dismiss();
                     },

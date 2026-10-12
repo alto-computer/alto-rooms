@@ -1,0 +1,9 @@
+{
+  "id": "oldhand",
+  "name": "Oldhand",
+  "version": "0.1.0",
+  "minAppVersion": "0.1.0",
+  "description": "A background page shaped like SDK 0.5: no hello and no api on its messages. For the end-to-end test that such a plugin hears answers and never notes.",
+  "permissions": ["surfaces.text"],
+  "background": "background.html"
+}

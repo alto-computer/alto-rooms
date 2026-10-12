@@ -743,7 +743,7 @@ describe("background frames", () => {
     });
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "New plugin: Tagger" });
-    expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Can read and mark chat answers"]);
+    expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Can read and mark chat answers and notes"]);
     expect(screen.queryByTitle("Tagger"), "nothing runs before the user says so").toBeNull();
     await act(async () => {
       fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
@@ -763,7 +763,7 @@ describe("background frames", () => {
   });
 
   it("takes surface messages from the background frame's window only, never from the page or another frame", async () => {
-    vi.stubGlobal("Highlight", class { constructor(..._r: Range[]) {} });
+    vi.stubGlobal("Highlight", class extends Set<Range> {});
     vi.stubGlobal("CSS", { highlights: new Map(), supports: () => true });
     await renderWithStores(<AppShell />, { rooms: [room("r1", "Bench")], plugins: [tagger()] });
     await act(async () => {});
