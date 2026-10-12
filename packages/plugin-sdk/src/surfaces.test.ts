@@ -81,4 +81,23 @@ describe("surface names", () => {
     expect(surfacePath(answer)).toBe("answer/room/r1/t1");
     expect(surfacePath({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "V1StGXR8_Z5jdHi6" })).toBe("answer/day/2026-10-10/V1StGXR8_Z5jdHi6");
   });
+
+  it("names a note by its folded file name, and as a path segment the storage rules admit", () => {
+    const plan: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    expect(surfaceKey(plan)).toBe("note:2026-10-10/plan.md");
+    expect(surfaceKey({ ...plan, name: "PLAN.md" }), "one file on a case-insensitive disk").toBe(surfaceKey(plan));
+    expect(surfaceKey({ ...plan, name: "계획.md".normalize("NFD") })).toBe(surfaceKey({ ...plan, name: "계획.md" }));
+    const segment = /^[A-Za-z0-9._-]{1,200}$/;
+    for (const name of ["Plan.md", "New Note 2.md", "계획.md", "회의 메모 (2).md", "a".repeat(60) + ".md", "-.md"]) {
+      const path = surfacePath({ ...plan, name });
+      const [kind, date, seg, ...rest] = path.split("/");
+      expect([kind, date, rest], name).toEqual(["note", "2026-10-10", []]);
+      expect(seg, name).toMatch(segment);
+      expect(seg, "not a dot segment").not.toMatch(/^\.\.?$/);
+    }
+    expect(surfacePath(plan)).toMatch(/^note\/2026-10-10\/plan\.md-[0-9a-f]{8}$/);
+    expect(surfacePath({ ...plan, name: "PLAN.md" })).toBe(surfacePath(plan));
+    expect(surfacePath({ ...plan, name: "Plan 2.md" })).not.toBe(surfacePath(plan));
+    expect(surfacePath({ ...plan, name: "계획.md" })).not.toBe(surfacePath({ ...plan, name: "회고.md" }));
+  });
 });

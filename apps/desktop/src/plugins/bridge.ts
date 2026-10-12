@@ -28,6 +28,7 @@ export type BridgeDeps = {
     deletePluginData(id: string, path: string): Promise<void>;
     listArtifacts(roomId: string): Promise<{ data: Artifact[] }>;
     findArtifactByFileKey(fileKey: string): Promise<Artifact | null>;
+    getNote(date: string, name: string): Promise<string>;
   };
   /** A write or delete of `path` in the plugin's data went through. */
   changed(path: string): void;
@@ -104,8 +105,13 @@ export function relay<T>(promise: Promise<T>): Promise<T> {
   });
 }
 
-/** The tab whose ask bar holds the surface's thread. */
+/** The tab that shows the surface: the note itself, or the one whose ask bar holds the answer's thread. */
 async function surfaceTab(surface: SurfaceId, deps: BridgeDeps): Promise<TabInput> {
+  if (surface.kind === "note") {
+    // A note tab for a name that is not on disk would be a new, empty note; roomsd's 404 refuses it.
+    await relay(deps.client.getNote(surface.date, surface.name));
+    return { kind: "note", date: surface.date, name: surface.name };
+  }
   const { scope } = surface;
   switch (scope.kind) {
     case "doc": {
@@ -176,7 +182,7 @@ export async function handleBridgeCall(p: PluginInfo, call: BridgeCall, deps: Br
         needs(p, "surfaces.text");
         const surface = parseSurfaceId(field(call.params, "surface"));
         const rangeId = field(call.params, "rangeId");
-        if (!surface || typeof rangeId !== "string" || !RANGE_ID.test(rangeId)) throw new BridgeError("bad_request", "surface must name an answer and rangeId one of its ranges");
+        if (!surface || typeof rangeId !== "string" || !RANGE_ID.test(rangeId)) throw new BridgeError("bad_request", "surface must name an answer or a note and rangeId one of its ranges");
         const tab = await surfaceTab(surface, deps);
         if (deps.slot === "tab") viewer.open(tab, { nextToActive: true });
         else viewer.navigate(tab);

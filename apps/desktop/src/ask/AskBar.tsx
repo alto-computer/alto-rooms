@@ -177,7 +177,7 @@ function useFocusRules({ open, shown, quoteCount, runningId, input, container, s
 /** A plugin opened this thread at one of its ranges: the thread unfolds so the answer can show it. */
 function useUnfoldForReveal(key: string, setUnfolded: (v: boolean) => void) {
   const { reveal } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
-  const mine = reveal && scopeKey(reveal.id.scope) === key;
+  const mine = reveal?.id.kind === "answer" && scopeKey(reveal.id.scope) === key;
   useEffect(() => {
     if (mine) setUnfolded(true);
   }, [mine, setUnfolded]);

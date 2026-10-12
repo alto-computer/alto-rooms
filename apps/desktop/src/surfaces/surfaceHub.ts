@@ -14,13 +14,15 @@
 import type { AskScope } from "@alto-rooms/protocol-ts";
 import { scopeKey } from "@alto-rooms/protocol-ts";
 import { isAgent } from "@/lib/agents";
+import { noteKey } from "@/lib/notes";
 import { isColor, parseActions, type ContentAction } from "@/plugins/contentChannel";
 import { buildIndex, offsetOf, rangeAt, type TextIndex } from "./surfaceIndex";
 
-export type SurfaceId = { kind: "answer"; scope: AskScope; turnId: string };
+/** A finished chat answer, or a note's body; `name` is the note's on-disk file name, `.md` included. */
+export type SurfaceId = { kind: "answer"; scope: AskScope; turnId: string } | { kind: "note"; date: string; name: string };
 
-/** `answer:<scopeKey>/<turnId>`: the one name a surface has while open. */
-export const surfaceKey = (s: SurfaceId): string => `${s.kind}:${scopeKey(s.scope)}/${s.turnId}`;
+/** `answer:<scopeKey>/<turnId>` or `note:<date>/<folded file name>`: the one name a surface has while open. */
+export const surfaceKey = (s: SurfaceId): string => (s.kind === "answer" ? `answer:${scopeKey(s.scope)}/${s.turnId}` : `note:${noteKey(s.date, s.name)}`);
 
 const FLASH = "rooms-flash";
 
@@ -36,6 +38,8 @@ const STYLE = /^[a-z][a-z0-9-]{0,31}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 /** roomsd's session id rule. */
 const SESSION = /^[A-Za-z0-9_-]{1,128}$/;
+/** A note file name as roomsd admits it: one path segment, no control characters, no leading dot or `..`, within 80 characters (roomsd allows 60 plus `.md`). */
+const NOTE_NAME = /^(?![.])(?!.*\.\.)[^\p{Cc}/\\:]{1,80}$/u;
 
 export type SurfaceRange = { id: string; start: number; end: number; style: string };
 /** Where a selection lies: inside one open surface, as offsets into its text, with that slice of it. */
@@ -69,7 +73,55 @@ type FrameMessage =
   | { type: "paint"; key: string; styles: Styles; ranges: SurfaceRange[]; dropped: number }
   | { type: "menu"; key: string; rangeId: string; items: ContentAction[] };
 
-type OpenSurface = { id: SurfaceId; key: string; root: HTMLElement; index: TextIndex };
+export type OpenOptions = {
+  /**
+   * How long the text must stay still before plugins hear a change. 0 tells them at once; a note
+   * passes 300, so a run of keystrokes is one message. The paint keeps up either way: core moves
+   * it through each edit itself.
+   */
+  quietMs?: number;
+  /** Brings a range into view for a flash. The default scrolls the element holding its first text node. */
+  reveal?: (range: Range) => void;
+};
+
+type OpenSurface = OpenOptions & {
+  id: SurfaceId;
+  key: string;
+  root: HTMLElement;
+  index: TextIndex;
+  /** The text plugins last heard for this surface, null before the first `surface.open`. */
+  told: string | null;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+/** One replacement that turns `before` into `after`: `[start, end)` of `before` became `inserted` characters. */
+export type TextEdit = { start: number; end: number; inserted: number };
+
+/** The edit between two texts, read off their common prefix and suffix; a typed keystroke is one. */
+export function editBetween(before: string, after: string): TextEdit {
+  const shortest = Math.min(before.length, after.length);
+  let start = 0;
+  while (start < shortest && before.charCodeAt(start) === after.charCodeAt(start)) start++;
+  let suffix = 0;
+  while (suffix < shortest - start && before.charCodeAt(before.length - 1 - suffix) === after.charCodeAt(after.length - 1 - suffix)) suffix++;
+  return { start, end: before.length - suffix, inserted: after.length - suffix - start };
+}
+
+/**
+ * `ranges` as they lie after `edit`: one before it stays, one after it moves by the edit's growth,
+ * and one the edit cut into is gone, since its plugin re-anchors from the quote once it hears the
+ * text. Typing at a range's edge counts as outside it, so a word stays painted while the user
+ * types up to and away from it.
+ */
+export function shiftRanges(ranges: readonly SurfaceRange[], edit: TextEdit): SurfaceRange[] {
+  const delta = edit.inserted - (edit.end - edit.start);
+  const out: SurfaceRange[] = [];
+  for (const r of ranges) {
+    if (r.end <= edit.start) out.push(r);
+    else if (r.start >= edit.end) out.push({ ...r, start: r.start + delta, end: r.end + delta });
+  }
+  return out;
+}
 type Seat = {
   id: string;
   post: (m: HostMessage) => void;
@@ -123,7 +175,10 @@ function dropSheet(sheet: CSSStyleSheet | null): void {
 /** The surface a plugin named, as JSON from its frame, or null. */
 export function parseSurfaceId(v: unknown): SurfaceId | null {
   if (!v || typeof v !== "object") return null;
-  const { kind, scope, turnId } = v as Record<string, unknown>;
+  const { kind, scope, turnId, date, name } = v as Record<string, unknown>;
+  if (kind === "note") {
+    return typeof date === "string" && DATE.test(date) && typeof name === "string" && NOTE_NAME.test(name) ? { kind: "note", date, name } : null;
+  }
   if (kind !== "answer" || typeof turnId !== "string" || !ID.test(turnId) || !scope || typeof scope !== "object") return null;
   const s = scope as Record<string, unknown>;
   const str = (x: unknown): x is string => typeof x === "string" && x.length > 0 && x.length <= 200;
@@ -227,31 +282,48 @@ export class SurfaceHub {
   getSnapshot = (): SurfaceSnapshot => this.snapshot;
 
   /**
-   * A surface's element and text are on screen: every background frame hears `surface.open`. The
-   * same text in new nodes (React swapped them) re-anchors the paint and posts nothing; new text
-   * drops the paint, since its offsets no longer mean anything. Either way a menu over the surface
-   * pointed into the old nodes and closes.
+   * A surface's element and text are on screen: every background frame hears `surface.open`, at
+   * once or after `quietMs` of still text. The same text in new nodes (React swapped them)
+   * re-anchors the paint and tells no plugin; changed text moves the paint through the edit now,
+   * and the plugins re-anchor from their quotes when they hear it. Either way a menu over the
+   * surface pointed into the old nodes and closes.
    */
-  open(id: SurfaceId, root: HTMLElement): void {
+  open(id: SurfaceId, root: HTMLElement, opts: OpenOptions = {}): void {
     const key = surfaceKey(id);
     const index = buildIndex(root);
     const was = this.surfaces.get(key);
-    this.surfaces.set(key, { id, key, root, index });
+    const s: OpenSurface = { ...opts, id, key, root, index, told: was?.told ?? null, timer: was?.timer ?? null };
+    this.surfaces.set(key, s);
     if (this.snapshot.menu?.key === key) this.set({ menu: null });
-    if (was?.index.text === index.text) {
-      this.repaintAll();
-      return;
-    }
-    for (const seat of this.seats.values()) {
-      if (was) seat.paints.delete(key);
-      seat.post({ type: "surface.open", surface: id, text: index.text });
+    if (was && was.index.text !== index.text) {
+      const edit = editBetween(was.index.text, index.text);
+      for (const seat of this.seats.values()) {
+        const ranges = seat.paints.get(key);
+        if (ranges) seat.paints.set(key, shiftRanges(ranges, edit));
+      }
     }
     if (was) this.repaintAll();
+    this.tell(s);
+  }
+
+  /** Plugins hear `s`'s text once it differs from what they last heard: the first text now, a change after the quiet time. */
+  private tell(s: OpenSurface): void {
+    if (s.timer) clearTimeout(s.timer);
+    s.timer = null;
+    if (s.told === s.index.text) return;
+    const post = () => {
+      s.timer = null;
+      s.told = s.index.text;
+      for (const seat of this.seats.values()) seat.post({ type: "surface.open", surface: s.id, text: s.told });
+    };
+    if (s.quietMs && s.told !== null) s.timer = setTimeout(post, s.quietMs);
+    else post();
   }
 
   close(key: string): void {
     const s = this.surfaces.get(key);
     if (!s) return;
+    if (s.timer) clearTimeout(s.timer);
     this.surfaces.delete(key);
     for (const seat of this.seats.values()) {
       seat.paints.delete(key);
@@ -259,6 +331,13 @@ export class SurfaceHub {
     }
     this.repaintAll();
     if (this.snapshot.menu?.key === key) this.set({ menu: null });
+  }
+
+  /** `text.slice(start, end)` of open surface `key` as a span for a button, with its DOM range for placing the bar; null outside the text. */
+  span(key: string, start: number, end: number): (SurfaceSpan & { range: Range }) | null {
+    const s = this.surfaces.get(key);
+    const range = s && rangeAt(s.index, start, end);
+    return s && range ? { key, start, end, text: s.index.text.slice(start, end), range } : null;
   }
 
   /**
@@ -356,7 +435,13 @@ export class SurfaceHub {
     if (!s) return false;
     const caret = caretAt(s.root.ownerDocument, x, y);
     if (!caret || !s.root.contains(caret.node)) return false;
-    const at = offsetOf(s.index, caret.node, caret.offset);
+    return this.clickAt(key, offsetOf(s.index, caret.node, caret.offset));
+  }
+
+  /** `click` for a surface whose caret the browser reports as an offset, as a textarea does. */
+  clickAt(key: string, at: number): boolean {
+    const s = this.surfaces.get(key);
+    if (!s) return false;
     let hit: { seat: Seat; range: SurfaceRange } | null = null;
     for (const seat of this.seats.values()) {
       for (const range of seat.paints.get(key) ?? []) if (range.start <= at && at < range.end) hit = { seat, range };
@@ -408,7 +493,8 @@ export class SurfaceHub {
     let range: Range | null = null;
     for (const seat of this.seats.values()) range ??= this.rangeOf(seat, key, rangeId);
     // The element holding the range's first text node: a long answer's top may be a screen away from it.
-    (range?.startContainer.parentElement ?? s.root).scrollIntoView({ block: "center" });
+    if (range && s.reveal) s.reveal(range);
+    else (range?.startContainer.parentElement ?? s.root).scrollIntoView({ block: "center" });
     const reg = registry();
     if (!reg || !range) return;
     if (!this.flashSheet) {

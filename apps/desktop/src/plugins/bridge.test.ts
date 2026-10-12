@@ -25,6 +25,10 @@ function deps() {
     deletePluginData: vi.fn(async () => undefined),
     listArtifacts: vi.fn(async () => ({ data: [art("old", "2026-01-01T00:00:00Z"), art("new", "2026-02-01T00:00:00Z")], seq: 1 })),
     findArtifactByFileKey: vi.fn(async (k: string) => (k === "key-new" ? art("new", "2026-02-01T00:00:00Z") : null)),
+    getNote: vi.fn(async (_date: string, name: string) => {
+      if (name !== "Plan.md") throw new RoomsApiError(404, "not found", "not_found");
+      return "# Plan";
+    }),
   };
   const rooms: Room[] = [{ id: "r1", name: "Bench", kind: "owned", path: "/h/r1", status: "ok", artifactCount: 2, updatedAt: null, color: null }];
   const viewer = { navigate: vi.fn(() => "current"), open: vi.fn(() => "opened"), reveal: vi.fn() };
@@ -57,7 +61,7 @@ describe("frameAttrs", () => {
       clipboard: "Can copy and paste",
       downloads: "Can save files you export",
       "artifact.content": "Can read the text of artifacts and use the network inside them",
-      "surfaces.text": "Can read and mark chat answers",
+      "surfaces.text": "Can read and mark chat answers and notes",
     });
   });
   it("has copy for exactly the permissions the core accepts", () => {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { surfaceKey as sdkSurfaceKey } from "@alto-rooms/plugin-sdk";
-import { isPaintColor, parseSurfaceId, SurfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
+import { editBetween, isPaintColor, parseSurfaceId, shiftRanges, SurfaceHub, surfaceKey, type SurfaceId } from "./surfaceHub";
 
 /** A stand-in for the CSS Custom Highlight API: what the hub registered under which name. */
 class FakeHighlight {
@@ -59,6 +59,31 @@ function surface(hub: SurfaceHub, id: SurfaceId, html: string) {
   hub.open(id, root);
   return root;
 }
+
+describe("editBetween and shiftRanges", () => {
+  it("reads a keystroke, a deletion, a paste over a selection and a repeated character as one edit", () => {
+    expect(editBetween("the fox", "the quick fox")).toEqual({ start: 4, end: 4, inserted: 6 });
+    expect(editBetween("the quick fox", "the fox")).toEqual({ start: 4, end: 10, inserted: 0 });
+    expect(editBetween("the quick fox", "the slow fox")).toEqual({ start: 4, end: 9, inserted: 4 });
+    expect(editBetween("aa", "aaa"), "a character typed among its own kind lands at the end of the run").toEqual({ start: 2, end: 2, inserted: 1 });
+    expect(editBetween("same", "same")).toEqual({ start: 4, end: 4, inserted: 0 });
+    expect(editBetween("", "new")).toEqual({ start: 0, end: 0, inserted: 3 });
+  });
+
+  it("keeps a range before the edit, moves one after it, and drops one the edit cut into", () => {
+    const ranges = [
+      { id: "a", start: 0, end: 3, style: "s" },
+      { id: "b", start: 10, end: 15, style: "s" },
+      { id: "c", start: 20, end: 25, style: "s" },
+    ];
+    expect(shiftRanges(ranges, { start: 5, end: 5, inserted: 2 })).toEqual([ranges[0], { id: "b", start: 12, end: 17, style: "s" }, { id: "c", start: 22, end: 27, style: "s" }]);
+    expect(shiftRanges(ranges, { start: 16, end: 19, inserted: 0 })).toEqual([ranges[0], ranges[1], { id: "c", start: 17, end: 22, style: "s" }]);
+    expect(shiftRanges(ranges, { start: 12, end: 12, inserted: 1 }), "typed inside b").toEqual([ranges[0], { id: "c", start: 21, end: 26, style: "s" }]);
+    expect(shiftRanges(ranges, { start: 3, end: 3, inserted: 4 }), "typed right after a: a stays, nothing grows").toEqual([ranges[0], { id: "b", start: 14, end: 19, style: "s" }, { id: "c", start: 24, end: 29, style: "s" }]);
+    expect(shiftRanges(ranges, { start: 10, end: 10, inserted: 4 }), "typed right before b: b moves whole").toEqual([ranges[0], { id: "b", start: 14, end: 19, style: "s" }, { id: "c", start: 24, end: 29, style: "s" }]);
+    expect(shiftRanges(ranges, { start: 8, end: 22, inserted: 0 }), "a deletion across b and into c drops both").toEqual([ranges[0]]);
+  });
+});
 
 describe("SurfaceHub", () => {
   it("tells a ready frame about open surfaces, and later surfaces as they open and close", () => {
@@ -338,15 +363,89 @@ describe("SurfaceHub", () => {
     vi.useRealTimers();
   });
 
-  it("re-reads a surface that opens again with new text and asks plugins to paint it afresh", () => {
+  it("moves the paint through an edit when a surface opens again with new text, and tells plugins the new text", () => {
     const hub = new SurfaceHub();
     const root = surface(hub, answer("t1"), "<p>the quick brown fox</p>");
     const tagger = seat(hub);
-    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }, { id: "f", start: 16, end: 19, style: "amber" }] });
     root.innerHTML = "<p>a longer answer, the quick brown fox</p>";
     hub.open(answer("t1"), root);
-    expect(painted("rooms-tagger-amber"), "old offsets are not re-applied to new text").toEqual([]);
+    expect(painted("rooms-tagger-amber"), "text inserted before the ranges moves them").toEqual(["quick", "fox"]);
     expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.open", text: "a longer answer, the quick brown fox" });
+    root.innerHTML = "<p>a longer answer, the quiet brown fox</p>";
+    hub.open(answer("t1"), root);
+    expect(painted("rooms-tagger-amber"), "a range typed inside is gone until the plugin paints again; one after the edit stays put").toEqual(["fox"]);
+    expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.open", text: "a longer answer, the quiet brown fox" });
+  });
+
+  it("tells plugins a note's text only after it has been still for the surface's quiet time, while the paint keeps up", () => {
+    vi.useFakeTimers();
+    const hub = new SurfaceHub();
+    const tagger = seat(hub);
+    const note: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    const root = document.createElement("div");
+    root.textContent = "the quick brown fox";
+    document.body.appendChild(root);
+    hub.open(note, root, { quietMs: 300 });
+    expect(tagger.sent.at(-1), "the first text is told at once").toMatchObject({ type: "surface.open", surface: note, text: "the quick brown fox" });
+    tagger.say({ type: "paint", surface: note, ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    for (const text of ["Athe quick brown fox", "ABthe quick brown fox", "ABCthe quick brown fox"]) {
+      root.textContent = text;
+      hub.open(note, root, { quietMs: 300 });
+      vi.advanceTimersByTime(100);
+      expect(painted("rooms-tagger-amber"), "each keystroke moves the paint now").toEqual(["quick"]);
+    }
+    expect(tagger.types().filter((t) => t === "surface.open"), "no keystroke posted while typing").toHaveLength(1);
+    vi.advanceTimersByTime(300);
+    expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.open", text: "ABCthe quick brown fox" });
+    expect(tagger.types().filter((t) => t === "surface.open")).toHaveLength(2);
+    root.textContent = "ABCthe quick brown fox!";
+    hub.open(note, root, { quietMs: 300 });
+    hub.close(surfaceKey(note));
+    vi.advanceTimersByTime(1000);
+    expect(tagger.types().filter((t) => t === "surface.open"), "a close cancels the pending text").toHaveLength(2);
+    expect(tagger.sent.at(-1)).toMatchObject({ type: "surface.close", surface: note });
+    vi.useRealTimers();
+  });
+
+  it("gives a span of an open surface by offsets, with a range to place the bar, and nothing past the text", () => {
+    const hub = new SurfaceHub();
+    const key = surfaceKey(answer("t1"));
+    surface(hub, answer("t1"), "<p>the quick brown fox</p>");
+    const span = hub.span(key, 4, 9);
+    expect(span).toMatchObject({ key, start: 4, end: 9, text: "quick" });
+    expect(span!.range.toString()).toBe("quick");
+    expect(hub.span(key, 4, 40)).toBeNull();
+    expect(hub.span("answer:room:r1/none", 0, 1)).toBeNull();
+  });
+
+  it("routes a click given as an offset, as a textarea reports its caret, to the plugin whose range holds it", () => {
+    const hub = new SurfaceHub();
+    const key = surfaceKey(answer("t1"));
+    surface(hub, answer("t1"), "<p>the quick brown fox</p>");
+    const tagger = seat(hub);
+    tagger.say({ type: "paint", surface: answer("t1"), ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    expect(hub.clickAt(key, 2)).toBe(false);
+    expect(hub.clickAt(key, 9), "the end offset is outside the range").toBe(false);
+    expect(hub.clickAt(key, 6)).toBe(true);
+    expect(tagger.sent.at(-1)).toMatchObject({ type: "range.click", surface: answer("t1"), rangeId: "q" });
+  });
+
+  it("reveals a range through the surface's own scroller when it has one", () => {
+    vi.useFakeTimers();
+    const hub = new SurfaceHub();
+    const scrolled: string[] = [];
+    const root = document.createElement("div");
+    root.textContent = "the quick brown fox";
+    document.body.appendChild(root);
+    const note: SurfaceId = { kind: "note", date: "2026-10-10", name: "Plan.md" };
+    hub.open(note, root, { reveal: (range) => void scrolled.push(range.toString()) });
+    const tagger = seat(hub);
+    tagger.say({ type: "paint", surface: note, ranges: [{ id: "q", start: 4, end: 9, style: "amber" }] });
+    hub.reveal(note, "q");
+    expect(scrolled).toEqual(["quick"]);
+    expect(painted("rooms-flash")).toEqual(["quick"]);
+    vi.useRealTimers();
   });
 
   it("re-anchors the paint to new nodes that hold the same text, and tells no plugin", () => {
@@ -393,17 +492,38 @@ describe("surfaceKey", () => {
       { kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t1" } as SurfaceId,
       { kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" } as SurfaceId,
       { kind: "answer", scope: { kind: "conversation", agent: "claude-code", session: "abc-123" }, turnId: "t1" } as SurfaceId,
+      { kind: "note", date: "2026-10-10", name: "Plan.md" } as SurfaceId,
+      { kind: "note", date: "2026-10-10", name: "계획.md".normalize("NFD") } as SurfaceId,
     ]) {
       expect(surfaceKey(id)).toBe(sdkSurfaceKey(id));
     }
+    expect(surfaceKey({ kind: "note", date: "2026-10-10", name: "Plan.md" })).toBe("note:2026-10-10/plan.md");
+    expect(surfaceKey({ kind: "note", date: "2026-10-10", name: "계획.md".normalize("NFD") }), "one file on disk, one surface").toBe(surfaceKey({ kind: "note", date: "2026-10-10", name: "계획.md" }));
   });
 });
 
 describe("parseSurfaceId", () => {
+  it("accepts a note by date and file name, and nothing a path could not hold", () => {
+    expect(parseSurfaceId({ kind: "note", date: "2026-10-10", name: "New Note 2.md", extra: 1 })).toEqual({ kind: "note", date: "2026-10-10", name: "New Note 2.md" });
+    expect(parseSurfaceId({ kind: "note", date: "2026-10-10", name: "계획.md" })).toEqual({ kind: "note", date: "2026-10-10", name: "계획.md" });
+    for (const bad of [
+      { kind: "note", date: "today", name: "Plan.md" },
+      { kind: "note", date: "2026-10-10", name: "" },
+      { kind: "note", date: "2026-10-10", name: "a/b.md" },
+      { kind: "note", date: "2026-10-10", name: "..md" },
+      { kind: "note", date: "2026-10-10", name: ".hidden.md" },
+      { kind: "note", date: "2026-10-10", name: "a\u0000b.md" },
+      { kind: "note", date: "2026-10-10", name: `${"x".repeat(81)}.md` },
+      { kind: "note", date: "2026-10-10" },
+    ]) {
+      expect(parseSurfaceId(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
   it("accepts an answer in a doc, room, day or conversation thread and nothing else", () => {
     expect(parseSurfaceId({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" })).toEqual({ kind: "answer", scope: { kind: "doc", fileKey: "0123456789abcdef" }, turnId: "t_1-2" });
-    expect(parseSurfaceId({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" })!.scope).toEqual({ kind: "day", date: "2026-10-10" });
-    expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })!.scope).toEqual({ kind: "conversation", agent: "codex", session: "s_1-2" });
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "day", date: "2026-10-10" }, turnId: "t1" })).toMatchObject({ scope: { kind: "day", date: "2026-10-10" } });
+    expect(parseSurfaceId({ kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s_1-2" }, turnId: "t1" })).toMatchObject({ scope: { kind: "conversation", agent: "codex", session: "s_1-2" } });
     for (const bad of [
       { kind: "answer", scope: { kind: "conversation", agent: "cursor", session: "s1" }, turnId: "t1" },
       { kind: "answer", scope: { kind: "conversation", agent: "codex", session: "s 1" }, turnId: "t1" },

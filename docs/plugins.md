@@ -64,7 +64,7 @@ Storing your own files is always allowed. Everything else is declared, and the u
 | `clipboard` | Can copy and paste | clipboard access in the frame |
 | `downloads` | Can save files you export | file downloads from the frame |
 | `artifact.content` | Can read the text of documents and use the network inside them | your `contentScripts` run inside documents |
-| `surfaces.text` | Can read and mark chat answers | your `background` page hears the text of chat answers and paints them |
+| `surfaces.text` | Can read and mark chat answers and notes | your `background` page hears the text of chat answers and open notes, and paints them |
 
 If a new version asks for more permissions, Rooms asks the user again.
 
@@ -189,7 +189,7 @@ The document's own script shares the window with your content script and can pos
 
 ## Host text surfaces
 
-Text the app itself shows, like a chat answer, is host DOM: no plugin code runs there. A plugin that declares `surfaces.text` and a `background` page can still read and mark it. The app runs the page in a hidden frame, under the same sandbox and CSP as a tab or panel, for as long as the plugin is on. One frame per plugin, next to the one its tab or panel may have.
+Text the app itself shows, like a chat answer or a note in the Journal, is host DOM: no plugin code runs there. A plugin that declares `surfaces.text` and a `background` page can still read and mark it. The app runs the page in a hidden frame, under the same sandbox and CSP as a tab or panel, for as long as the plugin is on. One frame per plugin, next to the one its tab or panel may have.
 
 ```json
 "permissions": ["surfaces.text"],
@@ -216,23 +216,23 @@ surfaces.ready();
 
 | Call | What it does |
 | --- | --- |
-| `onOpen(cb)` | Calls `cb(surface, text)` when an answer is on screen, for every open answer right after `ready()`, and again when an answer's text changes. `surface` is `{ kind: "answer", scope, turnId }`, `scope` one of `{ kind: "doc", fileKey }`, `{ kind: "room", roomId }`, `{ kind: "day", date }`, `{ kind: "conversation", agent, session }`. `text` is the answer's text content, so offsets you store point into it; keep the quote and some context too, and re-anchor on each open |
-| `onClose(cb)` | The answer left the screen. Its paint went with it |
+| `onOpen(cb)` | Calls `cb(surface, text)` when a surface is on screen, for every open surface right after `ready()`, and again when its text changes. `surface` is `{ kind: "answer", scope, turnId }`, `scope` one of `{ kind: "doc", fileKey }`, `{ kind: "room", roomId }`, `{ kind: "day", date }`, `{ kind: "conversation", agent, session }`; or `{ kind: "note", date, name }` for a note's body, `name` its file name with `.md`. `text` is the text content, so offsets you store point into it; keep the quote and some context too, and re-anchor on each open. A note's text comes again once the user pauses typing for 300 ms; the app moves your paint through each keystroke meanwhile, and drops a range the user typed inside until you paint it again |
+| `onClose(cb)` | The surface left the screen. Its paint went with it |
 | `setActions(items)` | Replaces your buttons in the selection bar over answers, shown after Ask: up to 6 `{ id, title, color? }`, as for content scripts |
 | `onAction(cb)` | Calls `cb(id, { surface, start, end, text })` when one of your buttons is clicked over a selection in an answer |
 | `paint(surface, ranges, styles?)` | Replaces your ranges on that answer: up to 1,000 `{ id, start, end, style }`. `styles` maps each style name (up to 32 of `a-z 0-9 -`, starting with a letter) to a color the browser accepts: hex, a name, or `rgb`, `hsl`, `hwb`, `lab`, `lch`, `oklab`, `oklch`, `color`, `color-mix` or `light-dark`, up to 64 characters, never `var()`, `env()` or another substitution; names stay declared for later paints, up to 16 per plugin. The app draws each style as one `::highlight` rule with that `background-color`, in a stylesheet of the plugin's own, so the answer's DOM never changes. A range outside the text, a repeated id, or an undeclared style is dropped and the rest paint; a bad style name or color refuses the whole paint |
 | `onRangeClick(cb)` | The user clicked one of your painted ranges. Answer with `menu(surface, rangeId, items)` to show up to 6 buttons there, or do nothing |
 | `onRangeAction(cb)` | Calls `cb(surface, rangeId, actionId)` when the user picks from that menu |
-| `rooms.open({ surface, rangeId })` | Opens the thread that holds the answer, unfolds it, and flashes your range once you have painted it |
-| `surfaceKey(surface)`, `surfacePath(surface)` | The answer's name, `answer:doc:<fileKey>/<turnId>`, and the same as a storage path, `answer/doc/<fileKey>/<turnId>` |
+| `rooms.open({ surface, rangeId })` | Opens the thread that holds the answer and unfolds it, or the note's tab, and flashes your range once you have painted it |
+| `surfaceKey(surface)`, `surfacePath(surface)` | The surface's name, `answer:doc:<fileKey>/<turnId>` or `note:<date>/<name>`, and the same as a storage path, `answer/doc/<fileKey>/<turnId>` or `note/<date>/<name as a path segment>`. Two spellings of one note file (case, Unicode form) share both |
 
-Messages are `{ rooms: "surface", v: 1, type, … }` posted to `window.parent`, and the SDK trusts only messages whose source is `window.parent`. The background frame has no network and no token, like every plugin frame, so what it reads stays in your `data/`. Notes become a surface in a later release; the `surface.kind` tells them apart.
+Messages are `{ rooms: "surface", v: 1, type, … }` posted to `window.parent`, and the SDK trusts only messages whose source is `window.parent`. The background frame has no network and no token, like every plugin frame, so what it reads stays in your `data/`. A note's file never changes for a paint: what you mark lives in your `data/`, and the user's text stays theirs.
 
 ## Rules of the sandbox
 
 - **Paths** are relative to `data/`: 1–200 characters, `/`-separated segments of `A–Z a–z 0–9 . _ -`, no `.` or `..`, at most 8 deep.
 - **No network** in the plugin frame. `fetch` to anywhere is blocked. Bundle your fonts, images and wasm into the plugin folder.
-- **Your files only.** You can't read other plugins' data or Rooms' own state. Only content scripts see document contents, and only a background page with `surfaces.text` sees chat answers.
+- **Your files only.** You can't read other plugins' data or Rooms' own state. Only content scripts see document contents, and only a background page with `surfaces.text` sees chat answers and notes.
 - **Save as you go.** Switching tabs closes your frame right away; `onBeforeClose` is reliable when the panel closes or the app quits, but not on a tab switch. Debounce writes to a few hundred milliseconds.
 - **Stay responsive.** If your frame stops answering pings, Rooms shows "This plugin stopped responding" with a Reload button.
 

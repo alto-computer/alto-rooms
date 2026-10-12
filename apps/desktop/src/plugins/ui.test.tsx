@@ -743,7 +743,7 @@ describe("background frames", () => {
     });
     await act(async () => {});
     const card = screen.getByRole("dialog", { name: "New plugin: Tagger" });
-    expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Can read and mark chat answers"]);
+    expect(within(card).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Can read and mark chat answers and notes"]);
     expect(screen.queryByTitle("Tagger"), "nothing runs before the user says so").toBeNull();
     await act(async () => {
       fireEvent.click(within(card).getByRole("button", { name: "Turn on" }));
