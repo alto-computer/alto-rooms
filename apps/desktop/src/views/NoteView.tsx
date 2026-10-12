@@ -216,7 +216,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const surface = { kind: "note", date, name: fileName } as const;
   const key = surfaceKey(surface);
   const box = useRef<HTMLDivElement>(null);
-  const { actions: surfaceActions } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
+  const { actions: { note: surfaceActions } } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
   // Where the bar sits: over the selection as it was once the pointer or key was up, as `useTextSelection` reads DOM text.
   const [picked, setPicked] = useState<SelectionRect | null>(null);
   const menu = useRangeMenu(box);

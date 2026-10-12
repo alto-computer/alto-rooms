@@ -71,7 +71,7 @@ export function ThreadSheet({ turns, scope, header, noteTarget, live, loadError,
   const sheet = useRef<HTMLDivElement>(null);
   const { away, toBottom } = useFollow(sheet, turns, live, !!pending);
   const selection = useTextSelection(sheet, box, true, surfaceHub.locate);
-  const { actions: surfaceActions } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
+  const { actions: { answer: surfaceActions } } = useSyncExternalStore(surfaceHub.subscribe, surfaceHub.getSnapshot);
   const menu = useRangeMenu(sheet);
   const last = turns.at(-1);
   const head = last ? header(last) : null;

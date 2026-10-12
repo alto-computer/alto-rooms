@@ -9,7 +9,9 @@
  * A frame built on SDK 0.6 or later says `hello` when it connects and puts `api: 2` on every
  * message; it hears artifact and session scopes by those names. A frame that never does is on SDK
  * 0.5 and hears them as `doc` and as `conversation` with the id in `session`, the shapes its
- * `surfacePath` reads.
+ * `surfacePath` reads. Such a frame hears nothing of a note: 0.5's `surfacePath` reads `scope` off
+ * every surface and throws on a note, so a note's text, bar buttons, clicks and menus are for
+ * frames on API 2 only (`hears`).
  *
  * Each plugin's `::highlight` rules live in a constructed stylesheet of its own, written one rule
  * at a time, so nothing a plugin declares can reach another plugin's rules. A constructed sheet
@@ -25,6 +27,7 @@ import { buildIndex, offsetOf, rangeAt, type TextIndex } from "./surfaceIndex";
 
 /** A finished chat answer, or a note's body; `name` is the note's on-disk file name, `.md` included. */
 export type SurfaceId = { kind: "answer"; scope: AskScope; turnId: string } | { kind: "note"; date: string; name: string };
+type AnswerId = Extract<SurfaceId, { kind: "answer" }>;
 
 /** `answer:<scopeKey>/<turnId>` or `note:<date>/<folded file name>`: the one name a surface has while open. */
 export const surfaceKey = (s: SurfaceId): string => (s.kind === "answer" ? `answer:${scopeKey(s.scope)}/${s.turnId}` : `note:${noteKey(s.date, s.name)}`);
@@ -50,8 +53,8 @@ export type SurfaceMenu = { plugin: string; key: string; rangeId: string; range:
 export type SurfaceReveal = { id: SurfaceId; rangeId: string };
 
 export type SurfaceSnapshot = {
-  /** Every plugin's declared buttons, in plugin id order. */
-  actions: SurfaceAction[];
+  /** The buttons for a selection in a surface of each kind, in plugin id order: every plugin's over an answer, the API 2 plugins' over a note. */
+  actions: Record<SurfaceId["kind"], SurfaceAction[]>;
   /** A menu a plugin answered a range click with. */
   menu: SurfaceMenu | null;
   /** An `open({ surface, rangeId })` on its way to a surface that is not open yet. */
@@ -186,12 +189,11 @@ function dropSheet(sheet: CSSStyleSheet | null): void {
   if (sheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== sheet);
 }
 
-/**
- * `id` as SDK 0.5 names it, for a plugin that never said it reads API 2. A note goes as it is:
- * 0.5 had no note kind, and its docs told plugins that `surface.kind` would tell notes apart.
- */
-function surfaceForApi1(id: SurfaceId): unknown {
-  if (id.kind !== "answer") return id;
+/** Whether a plugin on `api` can take a surface of `kind`: a note is API 2 only, since SDK 0.5's `surfacePath` throws on one. */
+const hears = (api: Seat["api"], kind: SurfaceId["kind"]): boolean => api === 2 || kind === "answer";
+
+/** `id` as SDK 0.5 names it, for a plugin that never said it reads API 2. */
+function surfaceForApi1(id: AnswerId): unknown {
   const { scope } = id;
   if (scope.kind === "artifact") return { ...id, scope: { kind: "doc", fileKey: scope.fileKey } };
   if (scope.kind === "session") return { ...id, scope: { kind: "conversation", agent: scope.agent, session: scope.id } };
@@ -254,7 +256,8 @@ function parseRanges(v: unknown, length: number, styles: Styles): { ranges: Surf
   return { ranges, dropped };
 }
 
-function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurface>, known: Styles): FrameMessage | null {
+/** A message from `seat`'s frame, or null; one about a surface the seat cannot hear (a note, from SDK 0.5) is null too. */
+function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurface>, seat: Pick<Seat, "api" | "styles">): FrameMessage | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
   if (d.rooms !== "surface" || d.v !== 1) return null;
@@ -265,11 +268,11 @@ function parseFrameMessage(data: unknown, surfaces: ReadonlyMap<string, OpenSurf
     return items ? { type: "actions", items } : null;
   }
   const id = parseSurfaceId(d.surface);
-  const open = id && surfaces.get(surfaceKey(id));
+  const open = id && hears(seat.api, id.kind) ? surfaces.get(surfaceKey(id)) : undefined;
   if (!open) return null;
   if (d.type === "paint") {
     if (d.version !== undefined && d.version !== open.version) return isInt(d.version) ? { type: "stale" } : null;
-    const styles = parseStyles(d.styles, known);
+    const styles = parseStyles(d.styles, seat.styles);
     const parsed = styles && parseRanges(d.ranges, (open.told ?? open.index.text).length, styles);
     return styles && parsed ? { type: "paint", key: open.key, styles, ...parsed } : null;
   }
@@ -310,7 +313,7 @@ export class SurfaceHub {
   private surfaces = new Map<string, OpenSurface>();
   private seats = new Map<string, Seat>();
   private listeners = new Set<() => void>();
-  private snapshot: SurfaceSnapshot = { actions: [], menu: null, reveal: null };
+  private snapshot: SurfaceSnapshot = { actions: { answer: [], note: [] }, menu: null, reveal: null };
   /** The flash rule, in a sheet of its own like each plugin's; made on the first flash. */
   private flashSheet: CSSStyleSheet | null = null;
   private flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -409,7 +412,11 @@ export class SurfaceHub {
     const seat: Seat = {
       id: plugin,
       api: 1,
-      post: (m) => post({ rooms: "surface", v: 1, ...m, surface: seat.api === 2 ? m.surface : surfaceForApi1(m.surface) }),
+      // `hears`, spelled so the type narrows: on API 1 an answer goes under 0.5's names and a note goes nowhere.
+      post: (m) => {
+        if (seat.api === 2) post({ rooms: "surface", v: 1, ...m });
+        else if (m.surface.kind === "answer") post({ rooms: "surface", v: 1, ...m, surface: surfaceForApi1(m.surface) });
+      },
       actions: [],
       styles: new Map(),
       paints: new Map(),
@@ -423,7 +430,7 @@ export class SurfaceHub {
         if (!data || typeof data !== "object" || (data as { rooms?: unknown }).rooms !== "surface") return;
         const { api } = data as { api?: unknown };
         if (isInt(api) && api >= 2) seat.api = 2;
-        const m = parseFrameMessage(data, this.surfaces, seat.styles);
+        const m = parseFrameMessage(data, this.surfaces, seat);
         if (!m) {
           this.dropped++;
           return;
@@ -481,12 +488,12 @@ export class SurfaceHub {
   /**
    * A button of `plugin` was clicked over `span`: the plugin hears where and what, in the text on
    * screen, which it hears first if a quiet time still held it. A span whose text is no longer at
-   * its offsets (the text changed under a bar) is not a click.
+   * its offsets (the text changed under a bar), or in a surface the plugin cannot hear, is not a click.
    */
   runAction(plugin: string, actionId: string, span: SurfaceSpan): void {
     const seat = this.seats.get(plugin);
     const s = this.surfaces.get(span.key);
-    if (!seat || !s || !seat.actions.some((a) => a.id === actionId) || s.index.text.slice(span.start, span.end) !== span.text) return;
+    if (!seat || !s || !hears(seat.api, s.id.kind) || !seat.actions.some((a) => a.id === actionId) || s.index.text.slice(span.start, span.end) !== span.text) return;
     this.tell(s, true);
     seat.gestureAt = Date.now();
     seat.post({ type: "selection.action", surface: s.id, actionId, start: span.start, end: span.end, text: span.text });
@@ -584,8 +591,10 @@ export class SurfaceHub {
     return s && r ? rangeAt(s.index, r.start, r.end) : null;
   }
 
-  private allActions(): SurfaceAction[] {
-    return [...this.seats.values()].sort((a, b) => (a.id < b.id ? -1 : 1)).flatMap((seat) => seat.actions.map((a) => ({ plugin: seat.id, ...a })));
+  private allActions(): SurfaceSnapshot["actions"] {
+    const seats = [...this.seats.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+    const over = (kind: SurfaceId["kind"]): SurfaceAction[] => seats.filter((seat) => hears(seat.api, kind)).flatMap((seat) => seat.actions.map((a) => ({ plugin: seat.id, ...a })));
+    return { answer: over("answer"), note: over("note") };
   }
 
   /**
