@@ -14,6 +14,7 @@ pub mod filter;
 pub mod ingest;
 pub mod js;
 pub mod pathutil;
+pub mod published;
 pub mod reader;
 pub mod search;
 pub mod sessions;

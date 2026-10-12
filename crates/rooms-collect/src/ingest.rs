@@ -185,12 +185,12 @@ fn expire(c: &Connection, path: &str) -> rusqlite::Result<()> {
 /// Inserts one event (ignored when its id is already stored) and, when new, its index row.
 fn insert_event(c: &Connection, agent: &str, file: &LogFile, path: &str, e: &Event) -> rusqlite::Result<bool> {
     let n = c.execute(
-        "INSERT OR IGNORE INTO events(id, kind, agent, session, ts, cwd, path, explicit, role, src_path, file_key, src_offset, src_len, preview)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        "INSERT OR IGNORE INTO events(id, kind, agent, session, ts, cwd, path, explicit, role, src_path, file_key, src_offset, src_len, preview, publish)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![e.id(agent, &file.key), e.kind.as_str(), agent, e.session, e.ts.as_ref().map(fmt_ts), e.cwd,
             e.path.as_ref().map(|p| p.to_string_lossy().into_owned()), e.explicit as i64,
             e.role.map(|r| if r == Role::User { "user" } else { "assistant" }), path, file.key,
-            e.line_offset as i64, e.line_len as i64, e.preview()],
+            e.line_offset as i64, e.line_len as i64, e.preview(), e.publish.as_ref().and_then(|p| serde_json::to_string(p).ok())],
     )?;
     if n == 0 { return Ok(false); }
     let rowid = c.last_insert_rowid();

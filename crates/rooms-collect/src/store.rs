@@ -1,5 +1,6 @@
 //! `collect.db`: events, per-log cursors, sink cursors and the search index. A cache over the
 //! agents' logs: a different schema version or a broken file is deleted and rebuilt.
+use crate::event::{Kind, Publish};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 
@@ -7,7 +8,7 @@ pub const SCHEMA_VERSION: &str = "1";
 /// Changed when an adapter learns to read more from lines it has already read (titles). Every
 /// log in the search window is then read again from the start; inserts skip events already
 /// stored, and the archive is kept (a schema bump would delete it).
-pub const REINDEX: &str = "titles";
+pub const REINDEX: &str = "published";
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -31,7 +32,7 @@ CREATE TABLE IF NOT EXISTS events(
   id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, agent TEXT NOT NULL, session TEXT,
   ts TEXT, cwd TEXT, path TEXT, explicit INTEGER NOT NULL DEFAULT 0, role TEXT,
   src_path TEXT NOT NULL, file_key TEXT NOT NULL, src_offset INTEGER NOT NULL, src_len INTEGER NOT NULL,
-  preview TEXT);
+  preview TEXT, publish TEXT);
 CREATE INDEX IF NOT EXISTS events_kind_rowid ON events(kind, rowid);
 CREATE INDEX IF NOT EXISTS events_kind_ts ON events(kind, ts);
 CREATE INDEX IF NOT EXISTS events_session ON events(agent, session);
@@ -76,6 +77,8 @@ fn try_open(path: &Path) -> rusqlite::Result<Connection> {
     c.pragma_update(None, "busy_timeout", 5000)?;
     c.pragma_update(None, "cache_size", -4000)?; // ~4 MB page cache
     c.execute_batch(SCHEMA)?;
+    let has_publish: bool = c.query_row("SELECT count(*) FROM pragma_table_info('events') WHERE name='publish'", [], |r| r.get::<_, i64>(0))? > 0;
+    if !has_publish { c.execute("ALTER TABLE events ADD COLUMN publish TEXT", [])?; }
     c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?1)", [SCHEMA_VERSION])?;
     let reindexed: Option<String> = c.query_row("SELECT value FROM meta WHERE key='reindex'", [], |r| r.get(0)).optional()?;
     if reindexed.as_deref() != Some(REINDEX) {
@@ -154,23 +157,27 @@ pub struct StoredEvent {
     pub cwd: Option<String>,
     pub path: Option<String>,
     pub explicit: bool,
+    pub publish: Option<Publish>,
 }
 
-/// Events of `kind` after `after`, oldest first, at most `limit`.
-pub fn events_after(c: &Connection, kind: &str, after: i64, limit: i64) -> rusqlite::Result<Vec<StoredEvent>> {
-    let mut st = c.prepare_cached("SELECT rowid, kind, agent, session, ts, cwd, path, explicit FROM events WHERE kind=?1 AND rowid>?2 ORDER BY rowid LIMIT ?3")?;
-    let rows = st.query_map(params![kind, after, limit], row_event)?;
+/// Events of the given kinds after `after`, oldest first, at most `limit`.
+pub fn events_after(c: &Connection, kinds: &[Kind], after: i64, limit: i64) -> rusqlite::Result<Vec<StoredEvent>> {
+    let names = serde_json::to_string(&kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>()).unwrap_or_default();
+    let mut st = c.prepare_cached("SELECT rowid, kind, agent, session, ts, cwd, path, explicit, publish FROM events
+        WHERE kind IN (SELECT value FROM json_each(?1)) AND rowid>?2 ORDER BY rowid LIMIT ?3")?;
+    let rows = st.query_map(params![names, after, limit], row_event)?;
     rows.collect()
 }
 
 pub fn event_by_rowid(c: &Connection, rowid: i64) -> rusqlite::Result<Option<StoredEvent>> {
-    c.query_row("SELECT rowid, kind, agent, session, ts, cwd, path, explicit FROM events WHERE rowid=?1", [rowid], row_event).optional()
+    c.query_row("SELECT rowid, kind, agent, session, ts, cwd, path, explicit, publish FROM events WHERE rowid=?1", [rowid], row_event).optional()
 }
 
 fn row_event(r: &rusqlite::Row) -> rusqlite::Result<StoredEvent> {
     Ok(StoredEvent {
         rowid: r.get(0)?, kind: r.get(1)?, agent: r.get(2)?, session: r.get(3)?, ts: r.get(4)?,
         cwd: r.get(5)?, path: r.get(6)?, explicit: r.get::<_, i64>(7)? != 0,
+        publish: r.get::<_, Option<String>>(8)?.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 

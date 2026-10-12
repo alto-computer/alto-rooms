@@ -32,6 +32,9 @@ pub struct FileCtx {
     /// Aside repl string constants.
     #[serde(default, skip_serializing_if = "Syms::is_empty")]
     pub js: Syms,
+    /// Claude Code Artifact publishes still waiting for their result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publishing: Vec<claude::Pending>,
 }
 
 pub trait Adapter: Send + Sync {

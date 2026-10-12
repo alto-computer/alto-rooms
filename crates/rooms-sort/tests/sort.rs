@@ -135,6 +135,23 @@ impl Env {
 const OLD: Duration = Duration::minutes(5);
 
 #[test]
+fn a_copy_of_a_published_page_is_filed_by_the_repo_the_agent_worked_in() {
+    let e = Env::new();
+    let copy = e.code.join("store/artifacts/A1/cmp.html");
+    std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    std::fs::write(&copy, "<title>cmp</title>").unwrap();
+    let origin = e.code.join("alto-rooms");
+    std::fs::create_dir_all(origin.join(".git")).unwrap();
+    e.link(&copy, "cmp.html");
+    let real = std::fs::canonicalize(&copy).unwrap();
+    let line = serde_json::json!({"real": real.to_string_lossy(), "link": "", "repo": "A1", "rel": "cmp.html", "origin": origin, "at": (Utc::now() - OLD).to_rfc3339()});
+    std::fs::write(e.home.join(".rooms/collect/linked.jsonl"), format!("{line}\n")).unwrap();
+    let s = e.run(None);
+    assert_eq!(s.moved, 1, "{:?}", s.lines);
+    assert_eq!(e.api.in_room("r_alto"), ["k_cmp.html"]);
+}
+
+#[test]
 fn r1_without_a_key_and_only_collected_settled_documents() {
     let e = Env::new();
     e.collected(Some("alto-rooms"), "spec.html", "spec", OLD);
