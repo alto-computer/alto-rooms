@@ -11,15 +11,15 @@ pub struct Config {
     /// Off: nothing moves, not even by R1 and R2.
     pub enabled: bool,
     pub min_confidence: f64,
-    /// Also read as `new_room_min_docs`, its name before artifacts were called that.
-    #[serde(alias = "new_room_min_docs")]
     pub new_room_min_artifacts: usize,
     pub model: String,
-    /// Also read as `max_docs_per_run`.
-    #[serde(alias = "max_docs_per_run")]
     pub max_artifacts_per_run: usize,
     pub ignore_names: Vec<String>,
 }
+
+/// Keys from before artifacts were called that, and their names now. The new name wins when a
+/// file has both.
+const RENAMED: [(&str, &str); 2] = [("new_room_min_docs", "new_room_min_artifacts"), ("max_docs_per_run", "max_artifacts_per_run")];
 
 impl Default for Config {
     fn default() -> Self {
@@ -30,15 +30,24 @@ impl Default for Config {
 impl Config {
     pub fn path(home: &Path) -> PathBuf { home.join(".rooms/sort.toml") }
 
-    /// Missing file: the defaults. A broken one is reported and ignored.
+    /// Missing file: the defaults. A broken one is reported and turns sorting off, since it may be
+    /// the owner's `enabled = false` that could not be read.
     pub fn load(home: &Path) -> Config {
         match std::fs::read_to_string(Self::path(home)) {
-            Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
-                eprintln!("rooms-sort: ignoring {}: {e}", Self::path(home).display());
-                Config::default()
+            Ok(s) => Self::parse(&s).unwrap_or_else(|e| {
+                eprintln!("rooms-sort: sorting is off until {} is fixed: {e}", Self::path(home).display());
+                Config { enabled: false, ..Config::default() }
             }),
             Err(_) => Config::default(),
         }
+    }
+
+    fn parse(s: &str) -> Result<Config, toml::de::Error> {
+        let mut table: toml::Table = s.parse()?;
+        for (old, new) in RENAMED {
+            if let Some(v) = table.remove(old) { table.entry(new).or_insert(v); }
+        }
+        toml::Value::Table(table).try_into()
     }
 
     pub fn rules(&self) -> crate::rules::Config {
@@ -68,8 +77,10 @@ mod tests {
         std::fs::write(Config::path(d.path()), "min_confidence = 0.8\nignore_names = ['sandbox']\n").unwrap();
         let c = Config::load(d.path());
         assert!(c.enabled && c.min_confidence == 0.8 && c.ignore_names == ["sandbox"] && c.new_room_min_artifacts == 3);
-        std::fs::write(Config::path(d.path()), "api_key = 'x'").unwrap();
-        assert_eq!(Config::load(d.path()), Config::default(), "unknown keys (a key, say) are refused");
+        std::fs::write(Config::path(d.path()), "enabled = false\napi_key = 'x'").unwrap();
+        assert_eq!(Config::load(d.path()), Config { enabled: false, ..Config::default() }, "unknown keys (a key, say) are refused");
+        std::fs::write(Config::path(d.path()), "min_confidence = [").unwrap();
+        assert!(!Config::load(d.path()).enabled, "a file that does not parse turns sorting off, never back on");
     }
 
     #[test]
@@ -82,5 +93,8 @@ mod tests {
         std::fs::write(Config::path(d.path()), "new_room_min_artifacts = 4\nmax_artifacts_per_run = 8\n").unwrap();
         let c = Config::load(d.path());
         assert_eq!((c.new_room_min_artifacts, c.max_artifacts_per_run), (4, 8));
+        std::fs::write(Config::path(d.path()), "enabled = false\nnew_room_min_docs = 5\nnew_room_min_artifacts = 4\nmax_artifacts_per_run = 8\nmax_docs_per_run = 9\n").unwrap();
+        let c = Config::load(d.path());
+        assert_eq!((c.enabled, c.new_room_min_artifacts, c.max_artifacts_per_run), (false, 4, 8), "both names together: the new one wins");
     }
 }

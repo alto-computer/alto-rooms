@@ -61,7 +61,7 @@ roomsd and the app move old names to new ones the first time they meet them. Eac
 - Saved tabs and tab history of kind `conversation` (id in `session`) come back as kind `session` (id in `sessionId`), and kind `doc` comes back as kind `artifact`.
 - An unsent ask draft saved under `alto-rooms.askDraft.conversation:<agent>:<id>` moves to the `session:` key the first time it is read. Artifact drafts keep their bare file key.
 - A surface a plugin names with SDK 0.5 scope kinds (`doc`, or `conversation` with `session`) still parses in `paint`, `menu` and `open` until SDK 0.7. `legacySurfacePath` in the SDK finds data a plugin saved under the 0.5 paths.
-- `sort.toml` still reads `new_room_min_docs` and `max_docs_per_run`, as `new_room_min_artifacts` and `max_artifacts_per_run`.
+- `sort.toml` still reads `new_room_min_docs` and `max_docs_per_run`, as `new_room_min_artifacts` and `max_artifacts_per_run`. A file with both names reads the new one. A file that does not parse turns sorting off.
 - The onboarding skill is v10, so homes with the v9 text get the new words.
 
 ## Enforcement

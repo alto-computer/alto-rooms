@@ -106,7 +106,7 @@ rooms-sort run --dry-run  # what would move now
 rooms-sort undo           # put the last run's artifacts back in the inbox
 ```
 
-Settings live in `~/rooms/.rooms/sort.toml` (all optional): `enabled`, `min_confidence` (0.7), `new_room_min_artifacts` (3), `model`, `max_artifacts_per_run` (50), `ignore_names`. The older names `new_room_min_docs` and `max_docs_per_run` still work.
+Settings live in `~/rooms/.rooms/sort.toml` (all optional): `enabled`, `min_confidence` (0.7), `new_room_min_artifacts` (3), `model`, `max_artifacts_per_run` (50), `ignore_names`. The older names `new_room_min_docs` and `max_docs_per_run` still work; when a file has both names, the new one wins. A file that does not parse turns sorting off until it is fixed.
 
 ## For agents
 
