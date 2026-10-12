@@ -7,7 +7,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Frame, Locator, Page } from "@playwright/test";
-import { expect, FILES_PORT, test, type Daemon } from "./fixtures";
+import { expect, FILES_PORT, test, today, type Daemon } from "./fixtures";
 import { installStreamingAgent } from "./streamingAgent";
 
 /** The highlight the tagger's first style paints into: `rooms-<plugin>-<style>`. */
@@ -28,7 +28,7 @@ async function api(daemon: Daemon, method: string, p: string, body?: unknown) {
 async function turnOn(page: Page, name: string) {
   const card = page.getByRole("dialog", { name: `New plugin: ${name}` });
   await expect(card).toBeVisible({ timeout: 5000 });
-  await expect(card.getByRole("listitem")).toHaveText(["Can read and mark chat answers"]);
+  await expect(card.getByRole("listitem")).toHaveText(["Can read and mark chat answers and notes"]);
   await card.getByRole("button", { name: "Turn on" }).click();
   await expect(card).toBeHidden();
 }
@@ -274,4 +274,197 @@ test("the background frame is sandboxed without network; hostile paint is droppe
   await expect(page.getByRole("button", { name: "Ask" })).toBeVisible();
   await expect(bar(page), "Ask alone, as with no surface plugin").toHaveCount(0);
   await page.keyboard.press("Escape");
+});
+
+/*
+ * A note for the backdrop checks: short lines up to the tagged word on line 40, long lines that
+ * wrap right after it, short lines from 50 on, and two trailing newlines, which a mirror gets wrong
+ * first. The textarea is the oracle for where the long lines wrap, through its scrollHeight.
+ */
+const NOTE_LINES = Array.from({ length: 60 }, (_, i) => {
+  if (i === 39) return "forty marker words here";
+  if (i >= 40 && i < 49) return `Line ${i + 1}. ${"A long sentence that wraps when the window is narrow. ".repeat(6)}`;
+  return `Line ${i + 1}`;
+});
+const NOTE = `${NOTE_LINES.join("\n")}\n\n`;
+/** Visual rows from line 50 to the end: eleven short lines, then the two empty ones the trailing newlines make. */
+const ROWS_FROM_LINE_50 = 11 + 2;
+
+const noteEditor = (page: Page) => page.getByRole("textbox", { name: "Note" });
+
+/** The textarea and its backdrop: the type both set, their widths, their scroll heights, and the textarea's box. */
+const mirror = (page: Page) =>
+  page.evaluate(() => {
+    const ta = document.querySelector("textarea[data-note-editor]") as HTMLTextAreaElement;
+    const bd = document.querySelector("[data-note-backdrop]") as HTMLElement;
+    const type = (el: Element) => {
+      const s = getComputedStyle(el);
+      return {
+        fontFamily: s.fontFamily,
+        fontSize: s.fontSize,
+        fontWeight: s.fontWeight,
+        lineHeight: s.lineHeight,
+        letterSpacing: s.letterSpacing,
+        padding: s.padding,
+        border: s.borderWidth,
+        whiteSpace: s.whiteSpace,
+        overflowWrap: s.overflowWrap,
+        wordBreak: s.wordBreak,
+        tabSize: s.tabSize,
+        textIndent: s.textIndent,
+        width: el.clientWidth,
+      };
+    };
+    return { textarea: type(ta), backdrop: type(bd), scrollHeight: { textarea: ta.scrollHeight, backdrop: bd.scrollHeight }, box: ta.getBoundingClientRect().toJSON() as DOMRect };
+  });
+
+/** The tagger gives its first tag the first style and its second the second. */
+const GREEN = "rooms-tagger-agree";
+
+/** Where the tagger's first two tags sit, in the textarea's own content coordinates (scroll taken out), with its line height. */
+const paintedAt = (page: Page) =>
+  page.evaluate(({ first, second }) => {
+    const ta = document.querySelector("textarea[data-note-editor]") as HTMLTextAreaElement;
+    const box = ta.getBoundingClientRect();
+    const lineHeight = parseFloat(getComputedStyle(ta).lineHeight);
+    const of = (name: string) => Array.from((CSS.highlights.get(name) ?? []) as unknown as Iterable<Range>);
+    const ranges = [...of(first), ...of(second)].map((r) => {
+      const rect = r.getBoundingClientRect();
+      // Chromium reports a textarea's caret as the element with an offset into its value: the painted word is where the textarea's own text is.
+      const caret = typeof document.caretPositionFromPoint === "function" ? document.caretPositionFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
+      // A range's rect is the glyph box, centred in its line box: the centre names the row, the top does not.
+      return { text: r.toString(), centre: rect.top + rect.height / 2 - box.top + ta.scrollTop, left: rect.left - box.left, caretOffset: caret?.offsetNode === ta ? caret.offset : null };
+    });
+    return { ranges, lineHeight, scrollHeight: ta.scrollHeight, scrollTop: ta.scrollTop };
+  }, { first: AMBER, second: GREEN });
+
+/** The textarea's scroll offset once the backdrop has followed it (its scroll handler runs a task after the scroll). */
+async function scrolled(page: Page): Promise<number> {
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const ta = document.querySelector("textarea[data-note-editor]") as HTMLTextAreaElement;
+        return ta.scrollTop - (document.querySelector("[data-note-backdrop]") as HTMLElement).scrollTop;
+      }),
+    )
+    .toBe(0);
+  return noteEditor(page).evaluate((el: HTMLTextAreaElement) => el.scrollTop);
+}
+
+/** Scrolls the textarea so the tagged "marker" is mid-view, and waits for the backdrop to follow. */
+async function showMarker(page: Page) {
+  const { ranges } = await paintedAt(page);
+  await noteEditor(page).evaluate((el: HTMLTextAreaElement, centre) => el.scrollTo({ top: Math.max(0, centre - el.clientHeight / 2) }), ranges[0].centre);
+  await scrolled(page);
+}
+
+/** Selects `word` in the note the way a keyboard does: the caret before it, then Shift+Right over it, so the bar reads the selection on key up. */
+async function selectInNote(page: Page, word: string) {
+  const start = (await noteEditor(page).inputValue()).indexOf(word);
+  await noteEditor(page).evaluate((el: HTMLTextAreaElement, s) => el.setSelectionRange(s, s), start);
+  for (let i = 0; i < word.length; i++) await page.keyboard.press("Shift+ArrowRight");
+  await expect(noteEditor(page)).toHaveJSProperty("selectionEnd", start + word.length);
+}
+
+test("tagging words in a note paints them behind the textarea, aligned through scroll, wrapping, resize and typing, and leaves the file and the textarea as they were", async ({ page, daemon }) => {
+  const date = today();
+  await daemon.installPlugin("tagger");
+  await daemon.saveNote(date, "Plan.md", NOTE);
+  await page.goto("/");
+  await turnOnTagger(page);
+  await backgroundFrame(page);
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
+  await page.getByRole("region", { name: "Your day" }).getByRole("button", { name: "Plan" }).click();
+  await expect(page.getByRole("tab", { name: "Plan", selected: true })).toBeVisible();
+  const ta = noteEditor(page);
+  await expect(ta).toHaveValue(NOTE);
+  await ta.click();
+
+  let m = await mirror(page);
+  expect(m.backdrop, "the mirror wraps as the textarea does: same type, same content width").toEqual(m.textarea);
+  expect(m.scrollHeight.backdrop, "same rows, trailing newlines included").toBe(m.scrollHeight.textarea);
+  expect(m.scrollHeight.textarea, "the long lines wrapped").toBeGreaterThan(62 * parseFloat(m.textarea.lineHeight) + 1);
+
+  await selectInNote(page, "marker");
+  const tagButton = page.getByRole("button", { name: "Tag" });
+  await expect(tagButton).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ask" }), "notes have no Ask").toHaveCount(0);
+  await tagButton.click();
+  await expect(tagButton).toBeHidden();
+  await expect.poll(() => painted(page)).toEqual(["marker"]);
+  await selectInNote(page, "Line 50");
+  await page.getByRole("button", { name: "Tag" }).click();
+  await expect.poll(() => painted(page, GREEN)).toEqual(["Line 50"]);
+  expect(await painted(page)).toEqual(["marker"]);
+  expect(await daemon.read(`journal/${date}/Plan.md`), "a paint never writes the note").toBe(NOTE);
+  expect(await tagFiles(daemon)).toEqual([expect.stringMatching(new RegExp(`^note/${date}/plan\\.md-[0-9a-f]{8}\\.json$`))]);
+
+  const aligned = async (line40Row: number) => {
+    const p = await paintedAt(page);
+    const [marker, line50] = p.ranges;
+    expect(marker.text).toBe("marker");
+    const row = (centre: number) => centre / p.lineHeight - 0.5;
+    expect(row(marker.centre), "line 40 of the note, scroll taken out").toBeCloseTo(line40Row, 1);
+    expect(row(line50.centre), "line 50 sits where the textarea's own wrapping of the long lines puts it").toBeCloseTo(p.scrollHeight / p.lineHeight - ROWS_FROM_LINE_50, 1);
+    expect(line50.left, "a word at the start of a line starts where the textarea's text does").toBeCloseTo(0, 0);
+    if (marker.caretOffset !== null) {
+      const start = (await ta.inputValue()).indexOf("marker");
+      expect(marker.caretOffset, "the textarea's own caret under the paint is inside the word").toBeGreaterThanOrEqual(start);
+      expect(marker.caretOffset).toBeLessThanOrEqual(start + 6);
+    }
+    return p;
+  };
+  await aligned(39);
+
+  await ta.evaluate((el: HTMLTextAreaElement) => el.scrollTo({ top: 0 }));
+  expect(await scrolled(page)).toBe(0);
+  await aligned(39);
+  await ta.evaluate((el: HTMLTextAreaElement) => el.scrollTo({ top: el.scrollHeight }));
+  expect(await scrolled(page), "the note is longer than its box").toBeGreaterThan(0);
+  await aligned(39);
+
+  await page.setViewportSize({ width: 900, height: 900 });
+  const wide = m.textarea.width;
+  await expect.poll(async () => {
+    m = await mirror(page);
+    return m.textarea.width < wide && m.backdrop.width === m.textarea.width;
+  }, "the textarea narrowed and the mirror's ResizeObserver followed").toBe(true);
+  expect(m.backdrop, "narrower window: the mirror follows the textarea's new content width").toEqual(m.textarea);
+  expect(m.scrollHeight.backdrop).toBe(m.scrollHeight.textarea);
+  await aligned(39);
+
+  // Typing a line above the tags: the paint moves with its words at once, and stays after the plugin re-anchors.
+  await ta.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(0, 0));
+  await page.keyboard.type("Intro");
+  await page.keyboard.press("Enter");
+  expect([await painted(page), await painted(page, GREEN)], "right after the keystrokes, before the plugin heard of them").toEqual([["marker"], ["Line 50"]]);
+  await expect(ta).toHaveValue(`Intro\n${NOTE}`);
+  await page.waitForTimeout(400);
+  await expect.poll(async () => [await painted(page), await painted(page, GREEN)]).toEqual([["marker"], ["Line 50"]]);
+  await aligned(40);
+  await expect.poll(() => daemon.read(`journal/${date}/Plan.md`), { timeout: 5000 }).toBe(`Intro\n${NOTE}`);
+  expect(await ta.getAttribute("data-note-editor")).toBe("");
+
+  // A click on a painted word, through the textarea, reaches the plugin: its menu shows; Open flashes; Untag clears.
+  await showMarker(page);
+  await clickPainted(page);
+  await expect(bar(page).getByRole("button")).toHaveText(["Untag", "Open"]);
+  await bar(page).getByRole("button", { name: "Open" }).click();
+  await expect.poll(() => painted(page, "rooms-flash"), { timeout: 1000, intervals: [25] }).toEqual(["marker"]);
+  await expect(page.getByRole("tab", { name: "Plan", selected: true })).toBeVisible();
+  await showMarker(page);
+  await clickPainted(page);
+  await bar(page).getByRole("button", { name: "Untag" }).click();
+  await expect.poll(() => painted(page), "the one tag left takes the first style").toEqual(["Line 50"]);
+  expect(await painted(page, GREEN)).toEqual([]);
+
+  const boxOn = (await mirror(page)).box;
+  await api(daemon, "PATCH", "/v1/plugins/tagger", { enabled: false });
+  await expect(page.locator("[data-note-backdrop]")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => CSS.highlights.has("rooms-tagger-important"))).toBe(false);
+  const boxOff = await ta.evaluate((el) => el.getBoundingClientRect().toJSON() as DOMRect);
+  expect(boxOff, "the textarea sits where it did with the backdrop behind it").toEqual(boxOn);
+  await expect(ta).toHaveValue(`Intro\n${NOTE}`);
+  await selectInNote(page, "marker");
+  await expect(page.getByRole("button", { name: "Tag" })).toHaveCount(0);
 });

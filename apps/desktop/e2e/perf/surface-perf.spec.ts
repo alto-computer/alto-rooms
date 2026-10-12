@@ -12,10 +12,16 @@
  *   - idle: CPU seconds and RSS of this worker's Chromium process tree, five windows of 10 s.
  * One JSON line per metric goes to stdout, prefixed PERF. ROOMS_PERF_MODE=commit runs only the first,
  * which is what e2e/perf/gate.sh alternates between a trunk build and a head build.
+ *
+ * ROOMS_PERF_MODE=note runs the note probe instead: keydown to the frame after the next paint, per
+ * key, while 200 characters are typed at the top of a 50 KB note, with no plugin or, under
+ * ROOMS_PERF_TAGGER=1, with the tagger on and 20 words painted below. gate.sh alternates it too.
  */
 import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { surfacePath } from "@alto-rooms/plugin-sdk";
 import type { Frame, Page } from "@playwright/test";
-import { expect, test, type Daemon } from "../fixtures";
+import { expect, test, today, type Daemon } from "../fixtures";
 
 test.skip(!process.env.ROOMS_PERF, "set ROOMS_PERF=1 to run the perf probe");
 test.setTimeout(400_000);
@@ -26,6 +32,7 @@ const RUNS = 20;
 const IDLE_WINDOWS = 5;
 const IDLE_WINDOW_MS = 10_000;
 const COMMIT_ONLY = process.env.ROOMS_PERF_MODE === "commit";
+const NOTE_ONLY = process.env.ROOMS_PERF_MODE === "note";
 const FRAME_URL = /\/_plugins\/tagger\/background\.html/;
 
 const SENTENCE = "The quick brown fox jumps over the lazy dog while the committee reviews the quarterly report. ";
@@ -241,7 +248,78 @@ async function idle(page: Page, label: string) {
   report("idle-rss-mb", { label, pids: last.pids }, rss);
 }
 
+const NOTE_KEYS = 200;
+const KEY_DELAY_MS = 40;
+const NOTE_TAGS = 20;
+/** The tagger's four styles, which it deals out to tags in turn. */
+const TAGGER_STYLES = ["important", "agree", "disagree", "idk"].map((s) => `rooms-tagger-${s}`);
+/** About 50 KB: 1,000 lines of prose, long enough that some wrap. */
+const NOTE_BODY = Array.from({ length: 1000 }, (_, i) => `Line ${i + 1}. ${SENTENCE.slice(0, 40)}`).join("\n");
+
+test("note perf: keydown to painted frame while typing in a 50 KB note", async ({ page, daemon }) => {
+  test.skip(!NOTE_ONLY, "set ROOMS_PERF_MODE=note to run the note probe");
+  const date = today();
+  await daemon.saveNote(date, "Big.md", NOTE_BODY);
+  const hasTagger = !!process.env.ROOMS_PERF_TAGGER;
+  const label = hasTagger ? `tagger on, ${NOTE_TAGS} tags` : "no plugin";
+  if (hasTagger) {
+    await daemon.installPlugin("tagger");
+    // Twenty tags the way the tagger stores them, on "Line" every 40 lines from line 100, so it re-anchors them on every open.
+    const tags = Array.from({ length: NOTE_TAGS }, (_, i) => {
+      const start = NOTE_BODY.indexOf(`Line ${100 + i * 40}.`);
+      return { id: `t${i}`, quote: "Line", prefix: NOTE_BODY.slice(Math.max(0, start - 40), start), suffix: NOTE_BODY.slice(start + 4, start + 44), start };
+    });
+    await daemon.write(path.join(".rooms", "plugins", "tagger", "data", `${surfacePath({ kind: "note", date, name: "Big.md" })}.json`), JSON.stringify({ version: 1, tags }));
+  }
+  await page.goto("/");
+  let frame: Frame | null = null;
+  if (hasTagger) {
+    await page.getByRole("dialog", { name: "New plugin: Tagger" }).getByRole("button", { name: "Turn on" }).click();
+    await expect.poll(() => page.frame({ url: FRAME_URL }) !== null).toBe(true);
+    frame = page.frame({ url: FRAME_URL })!;
+    await expect.poll(() => frame!.evaluate(() => typeof (window as unknown as { tagger?: unknown }).tagger)).toBe("object");
+  }
+  await page.getByRole("button", { name: "Journal", exact: true }).click();
+  await page.getByRole("region", { name: "Your day" }).getByRole("button", { name: "Big" }).click();
+  const ta = page.getByRole("textbox", { name: "Note" });
+  await expect(ta).toHaveValue(NOTE_BODY);
+  const tagged = () =>
+    page.evaluate((names) => names.flatMap((n) => Array.from((CSS.highlights.get(n) ?? []) as unknown as Iterable<Range>, (r) => r.toString())), TAGGER_STYLES);
+  if (frame) await expect.poll(tagged, "the plugin found its 20 stored tags and painted them").toEqual(Array.from({ length: NOTE_TAGS }, () => "Line"));
+  await ta.click();
+  await ta.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(0, 0));
+  await page.evaluate(() => {
+    const w = window as unknown as { __keys: number[] };
+    w.__keys = [];
+    const el = document.querySelector("textarea[data-note-editor]")!;
+    el.addEventListener("keydown", () => {
+      const at = performance.now();
+      // The frame after this one has painted the keystroke: rAF runs before the paint, a timeout after it.
+      requestAnimationFrame(() => setTimeout(() => w.__keys.push(performance.now() - at), 0));
+    });
+  });
+  const text = Array.from({ length: NOTE_KEYS }, (_, i) => "abcdefghij klmnopqrst "[i % 22]).join("");
+  await page.keyboard.type(text, { delay: KEY_DELAY_MS });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __keys: number[] }).__keys.length)).toBe(NOTE_KEYS);
+  const keys = await page.evaluate(() => (window as unknown as { __keys: number[] }).__keys);
+  await expect(ta).toHaveValue(text + NOTE_BODY);
+  report("note-typing", { label, keys: NOTE_KEYS, delayMs: KEY_DELAY_MS }, keys);
+  if (frame) {
+    await page.waitForTimeout(500);
+    expect(await tagged(), "every tag still sits on its word 500 ms after the burst").toEqual(Array.from({ length: NOTE_TAGS }, () => "Line"));
+    const aligned = await page.evaluate(() => {
+      const ta = document.querySelector("textarea[data-note-editor]") as HTMLTextAreaElement;
+      const bd = document.querySelector("[data-note-backdrop]") as HTMLElement;
+      return { scroll: [ta.scrollTop, bd.scrollTop], height: [ta.scrollHeight, bd.scrollHeight], width: [ta.clientWidth, bd.clientWidth] };
+    });
+    expect(aligned.scroll[1]).toBe(aligned.scroll[0]);
+    expect(aligned.height[1]).toBe(aligned.height[0]);
+    expect(aligned.width[1]).toBe(aligned.width[0]);
+  }
+});
+
 test("surface perf: thread open commit time, selection-to-bar, 200-range paint, idle cost", async ({ page, daemon }) => {
+  test.skip(NOTE_ONLY, "the note probe runs alone");
   const room = await daemon.createRoom("perf");
   await daemon.write("perf/alpha.html", "<html><head><title>Alpha</title></head><body>a</body></html>");
   await writeThread(daemon, room.id, TURNS);
