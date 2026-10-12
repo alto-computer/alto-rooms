@@ -80,23 +80,29 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
 
   // The note's live saver from the registry: reopening a note whose saver is
   // still saving (or retrying) attaches to it instead of reloading from disk.
-  // Unmounting detaches; the saver lives on until its text has landed.
-  const [saver, setSaver] = useState<NoteSaver | null>(null);
+  // Unmounting detaches; the saver lives on until its text has landed. The saver
+  // is held with the file it was attached for, so a render for another file sees
+  // no saver (and none of the old file's text) until its own is attached.
+  const saverKey = noteSaverKey(date, fileName);
+  const [attached, setAttached] = useState<{ key: string; saver: NoteSaver } | null>(null);
+  const saver = attached?.key === saverKey ? attached.saver : null;
   useEffect(() => {
     const key = noteSaverKey(date, fileName);
     const { saver: s } = attachNoteSaver(key, () => createNoteSaver({ save: (text) => client.saveNote(date, name, text), warn }), {
       date,
       name,
     });
-    setSaver(s);
+    setAttached({ key, saver: s });
     // Detached a microtask later: on a rename the re-render attaches under the
     // new key first, so the live saver is kept rather than released and reloaded.
     return () => queueMicrotask(() => detachNoteSaver(key, s));
   }, [client, date, name, fileName]);
   const st = useSaverState(saver);
 
-  // Initial load (and "Try again").
+  // Initial load (and "Try again"). `ready` is the body's state to show and edit: this file's saver
+  // holds its text. `load` alone lags a render behind a change of file.
   const [load, setLoad] = useState<"loading" | "ready" | "error">("loading");
+  const ready = load === "ready" && st.ready;
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!saver) return;
@@ -140,13 +146,13 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const draftChecked = useRef<NoteSaver | null>(null);
   const [offer, setOffer] = useState<NoteDraft | null>(null);
   useEffect(() => {
-    if (!saver || load !== "ready" || readOnly || draftChecked.current === saver) return;
+    if (!saver || !ready || readOnly || draftChecked.current === saver) return;
     draftChecked.current = saver;
     // Checked once per saver (no cleanup: a StrictMode re-run must not drop the answer).
     void checkNoteDraft(saver, date, name).then((r) => {
       if (r.kind === "conflict" && draftChecked.current === saver) setOffer(r.draft);
     });
-  }, [saver, load, readOnly, date, name]);
+  }, [saver, ready, readOnly, date, name]);
 
   // External changes.
   const [focused, setFocused] = useState(false);
@@ -154,7 +160,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
   const reloading = useRef(false);
   const remoteUpdatedAt = day ? findNote(day.notes, name)?.updatedAt : undefined;
   useEffect(() => {
-    if (!saver || load !== "ready" || !remoteUpdatedAt || focused || reloading.current) return;
+    if (!saver || !ready || !remoteUpdatedAt || focused || reloading.current) return;
     if (st.inFlight || st.text !== st.savedText || !saver.isNewer(remoteUpdatedAt)) return;
     let live = true;
     reloading.current = true;
@@ -172,13 +178,13 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
     return () => {
       live = false;
     };
-  }, [saver, load, remoteUpdatedAt, focused, st, client, date, name]);
+  }, [saver, ready, remoteUpdatedAt, focused, st, client, date, name]);
 
   // A new note asks for the cursor in its body once it has loaded.
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (load === "ready" && !readOnly && takeNoteBodyFocus(date, name)) textareaRef.current?.focus();
-  }, [load, readOnly, date, name]);
+    if (ready && !readOnly && takeNoteBodyFocus(date, name)) textareaRef.current?.focus();
+  }, [ready, readOnly, date, name]);
 
   const [renaming, setRenaming] = useState(false);
   const rename = async (next: string) => {
@@ -206,7 +212,7 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
     }
   };
 
-  const editable = load === "ready" && !readOnly && !renaming;
+  const editable = ready && !readOnly && !renaming;
 
   // Plugins that mark host text: the body is a surface only while one is on.
   const surfaced = surfacePlugins(usePlugins().list).length > 0;
@@ -332,13 +338,14 @@ export function NoteView({ tabId, date, name }: { tabId?: string; date: string; 
         </p>
       ) : null}
       <div ref={box} onBlur={onBodyBlur} className="relative min-h-0 flex-1">
-        {surfaced ? <NoteBackdrop id={surface} text={st.text} textarea={textareaRef} className={BODY_TYPE} /> : null}
+        {/* Mounted once the text is this file's, keyed by file: plugins hear a note's own text first, never an empty one or another note's. */}
+        {surfaced && ready ? <NoteBackdrop key={key} id={surface} text={st.text} textarea={textareaRef} className={BODY_TYPE} /> : null}
         <textarea
           aria-label="Note"
           data-note-editor=""
           ref={textareaRef}
           value={st.text}
-          disabled={load !== "ready"}
+          disabled={!ready}
           readOnly={readOnly || renaming}
           onChange={(e) => {
             if (editable) saver?.edit(e.target.value);
