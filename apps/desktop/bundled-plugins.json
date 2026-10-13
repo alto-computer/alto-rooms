@@ -3,20 +3,20 @@
     {
       "id": "goals",
       "repo": "https://github.com/alto-computer/rooms-plugin-goals",
-      "version": "0.1.0",
-      "sha256": "e8beb2f07c6cb21302d00e1af84eff5cd8e4bca0beb2c7bb691754e78251ae2f"
+      "version": "0.2.0",
+      "sha256": "496d92c6264ef9a2dd5c89429f24723cadc15660b6e90b32cd610546dcd987df"
     },
     {
       "id": "excalidraw",
       "repo": "https://github.com/alto-computer/rooms-plugin-excalidraw",
-      "version": "0.2.0",
-      "sha256": "71630c28992bca0a7cf5033245a5ad3f0245015f4f7f54f7d25db5f0682485a4"
+      "version": "0.3.0",
+      "sha256": "562862697224b3ae37eb0c401931f215ac67ce85467973f3bbe3e8a085378091"
     },
     {
       "id": "highlight",
       "repo": "https://github.com/alto-computer/rooms-plugin-highlight",
-      "version": "0.4.0",
-      "sha256": "73ce630b96a9bfdc5509babc0f68439ad5ae58e8465894fde19d44fe6424f475"
+      "version": "0.5.0",
+      "sha256": "835b3a9c2e51d5a8e5a8b5d6a7c957bc244b5a9a1bc4dcf1601c1708e4522ffb"
     }
   ]
 }
