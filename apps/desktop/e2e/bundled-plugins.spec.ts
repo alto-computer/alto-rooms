@@ -74,6 +74,8 @@ test("Excalidraw notes come with the app: a drawing is saved per document and ex
 
   const frame = page.frameLocator('iframe[title="Excalidraw notes"]');
   const canvas = frame.locator("canvas.interactive");
+  // A document with no drawing yet loads Excalidraw only on request (plugin 0.3.0).
+  await frame.getByRole("button", { name: "Click to sketch" }).click();
   await expect(canvas).toBeVisible({ timeout: 15_000 });
   // Its handwriting font comes from the plugin folder: the sandbox has no network.
   const plugin = page.frames().find((f) => f.url().includes("/_plugins/excalidraw/"))!;
@@ -96,7 +98,7 @@ test("Excalidraw notes come with the app: a drawing is saved per document and ex
   await frame.getByText("Export PNG").click();
   expect((await download).suggestedFilename()).toBe("Latency report notes.png");
 
-  // Closing the panel and opening it again shows the same drawing.
+  // Closing the panel and opening it again shows the same drawing, without the "Click to sketch" step.
   await page.getByRole("button", { name: "Close Notes" }).click();
   await page.getByRole("button", { name: "Open Notes" }).click();
   await expect(frame.locator("canvas.interactive")).toBeVisible({ timeout: 15_000 });
@@ -138,7 +140,9 @@ test("Notes resize follows across both frames, persists once per drag and cancel
   await notNow(highlightsCard);
   await openArtifact(page);
   await page.getByRole("button", { name: "Open Notes" }).click();
-  await expect(page.frameLocator('iframe[title="Excalidraw notes"]').locator("canvas.interactive")).toBeVisible();
+  const notesFrame = page.frameLocator('iframe[title="Excalidraw notes"]');
+  await notesFrame.getByRole("button", { name: "Click to sketch" }).click();
+  await expect(notesFrame.locator("canvas.interactive")).toBeVisible({ timeout: 15_000 });
   const handle = page.getByRole("separator", { name: "Resize panel" });
   const panel = page.getByRole("complementary", { name: "Notes" });
   await page.evaluate(() => {
