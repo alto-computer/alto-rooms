@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-collect"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "chrono",
  "dirs",
@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "chrono",
  "hex",
@@ -1398,7 +1398,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-mcp"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "rooms-protocol",
  "serde_json",
@@ -1407,7 +1407,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-protocol"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "dirs",
  "insta",
@@ -1419,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-sort"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "chrono",
  "dirs",
@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "roomsd"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "axum",
  "dirs",
