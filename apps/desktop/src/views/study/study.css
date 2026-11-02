@@ -100,8 +100,8 @@
 
 /* ───── LIBRARY: wall shelving ───── */
 .study .st-scroll{min-height:0;flex:1;overflow-y:auto;scrollbar-width:thin}
-.study .st-lib{position:relative;display:flex;justify-content:center;gap:clamp(40px,7vw,120px);padding:92px 48px 96px;min-height:100%}
-.study .st-lib::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 30% -10%,var(--st-wash),transparent 70%),linear-gradient(180deg,transparent 60%,var(--st-floor))}
+.study .st-lib{position:relative;isolation:isolate;display:flex;justify-content:center;gap:clamp(40px,7vw,120px);padding:92px 48px 96px;min-height:100%}
+.study .st-lib::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(900px 620px at 30% -10%,var(--st-wash),transparent 70%),linear-gradient(180deg,transparent 60%,var(--st-floor))}
 .study .st-lede{position:sticky;top:150px;align-self:flex-start;width:260px;flex:none;margin-top:58px}
 .study .st-lede .st-big{margin-top:10px}
 .study .st-wall{position:relative;flex:0 1 640px;min-width:420px;max-width:640px}
@@ -289,6 +289,14 @@
   .study .st-lib .st-lede{position:static;margin:0;width:100%;max-width:640px;display:flex;align-items:baseline;gap:20px}
   .study .st-lib .st-lede .st-big{font-size:72px}
   .study .st-wall{width:100%;min-width:0}
+}
+
+@container (max-width: 1040px){
+  .study .st-arc{transform:scale(.78);transform-origin:75% 50%}
+  .study .st-vol{left:66%}
+  .study .st-room .st-lede{left:48px;width:240px}
+  .study .st-room .st-big{font-size:92px}
+  .study .st-links{right:32px;width:220px}
 }
 
 @media (prefers-reduced-motion:reduce){
