@@ -59,6 +59,13 @@ fn export_typescript_bindings() {
     Session::export_all().unwrap();
     SessionRef::export_all().unwrap();
     JournalSession::export_all().unwrap();
+    StudyIndex::export_all().unwrap();
+    StudyVolume::export_all().unwrap();
+    StudyDay::export_all().unwrap();
+    CreateStudyRoom::export_all().unwrap();
+    UpdateStudyRoom::export_all().unwrap();
+    SaveStudyVolume::export_all().unwrap();
+    SaveStudyDay::export_all().unwrap();
     let list = PERMISSIONS.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
     let ts = format!("// Generated from rooms_protocol::PERMISSIONS by crates/rooms-protocol/tests/shape.rs. Do not edit.\n\nexport const PERMISSIONS = [{list}] as const;\n\nexport type Permission = (typeof PERMISSIONS)[number];\n");
     std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/protocol-ts/src/generated/permissions.ts"), ts).unwrap();
@@ -201,4 +208,43 @@ fn session_moved_is_camel_case_with_the_session_flattened() {
     assert_eq!(v["session"]["roomId"], "r1");
     assert_eq!(v["session"]["artifactsWritten"][0], "/a.html");
     assert_eq!((&v["session"]["agent"], &v["session"]["id"]), (&serde_json::json!("aside"), &serde_json::json!("s1")));
+}
+
+#[test]
+fn study_volume_status_is_one_field_with_published_at_only_when_published() {
+    let card = StudyCard { id: "c1".into(), kind: StudyCardKind::Question, x: 1.5, y: -2.0, width: 240.0, body: "# 왜?".into() };
+    let draft = StudyVolume {
+        number: 1, title: "".into(), status: StudyVolumeStatus::Draft, created_at: "2026-11-03T09:00:00+09:00".into(),
+        cards: vec![card], edges: vec![StudyEdge { id: "e1".into(), source: "c1".into(), target: "c1".into() }],
+    };
+    let v = serde_json::to_value(&draft).unwrap();
+    assert_eq!(v, serde_json::json!({
+        "number": 1, "title": "", "status": "draft", "createdAt": "2026-11-03T09:00:00+09:00",
+        "cards": [{"id": "c1", "kind": "question", "x": 1.5, "y": -2.0, "width": 240.0, "body": "# 왜?"}],
+        "edges": [{"id": "e1", "source": "c1", "target": "c1"}],
+    }));
+    assert_eq!(serde_json::from_value::<StudyVolume>(v).unwrap(), draft);
+    let published = StudyVolume { status: StudyVolumeStatus::Published { published_at: "2026-11-04T10:00:00+09:00".into() }, ..draft };
+    let v = serde_json::to_value(&published).unwrap();
+    assert_eq!((&v["status"], &v["publishedAt"]), (&serde_json::json!("published"), &serde_json::json!("2026-11-04T10:00:00+09:00")));
+    assert_eq!(serde_json::from_value::<StudyVolume>(v).unwrap(), published);
+    let bad = serde_json::json!({"number": 1, "title": "", "status": "published", "createdAt": "t", "cards": [], "edges": []});
+    assert!(serde_json::from_value::<StudyVolume>(bad).is_err(), "published without publishedAt");
+}
+
+#[test]
+fn study_links_are_tagged_by_kind_and_the_event_names_its_room() {
+    let links = [
+        (StudyLink::Room { room_id: "inbox".into() }, serde_json::json!({"kind": "room", "roomId": "inbox"})),
+        (StudyLink::Artifact { file_key: "0123456789abcdef".into() }, serde_json::json!({"kind": "artifact", "fileKey": "0123456789abcdef"})),
+    ];
+    for (link, json) in links {
+        assert_eq!(serde_json::to_value(&link).unwrap(), json);
+        assert_eq!(serde_json::from_value::<StudyLink>(json).unwrap(), link);
+    }
+    assert!(serde_json::from_str::<StudyLink>(r#"{"kind":"folder","path":"/x"}"#).is_err());
+    let e = serde_json::to_value(RoomsEvent { seq: 2, kind: EventKind::StudyChanged { room_id: Some("abcde12345".into()) } }).unwrap();
+    assert_eq!(e, serde_json::json!({"seq": 2, "type": "study.changed", "roomId": "abcde12345"}));
+    let day = serde_json::to_value(RoomsEvent { seq: 3, kind: EventKind::StudyChanged { room_id: None } }).unwrap();
+    assert_eq!(day["roomId"], serde_json::Value::Null);
 }
