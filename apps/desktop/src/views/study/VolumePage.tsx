@@ -23,6 +23,8 @@ import "@xyflow/react/dist/base.css";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
+import { AskBar } from "@/ask/AskBar";
+import { useFrameAfter } from "@/ask/useFrameAfter";
 import { useClient, useReadOnly, useRoomsStore, useStudy, useStudyStore, useViewerStore } from "@/data/hooks";
 import { errorCopy } from "@/lib/errors";
 import { dottedDate, newId, versionOf } from "./study";
@@ -95,6 +97,13 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
   const appReadOnly = useReadOnly();
   const room = useStudy().rooms?.find((r) => r.id === roomId);
   const flow = useReactFlow();
+  // The ask bar comes a frame after the canvas, over the sheet's foot; the canvas tools stay in the bar on top.
+  const barReady = useFrameAfter(!!room);
+  const roomName = room?.name;
+  const bar = useMemo(
+    () => (roomName === undefined ? null : <AskBar subject={{ kind: "studyVolume", roomId, number: volume.number, roomName }} />),
+    [roomId, volume.number, roomName],
+  );
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<CardNode>(volume.cards.map(toNode));
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>(volume.edges.map(toEdge));
@@ -287,7 +296,7 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
 
   const version = `v${versionOf(volume.number)}`;
   return (
-    // Relative, with the sheet ending above the bottom, for the ask bar the volume will get.
+    // Relative, with the sheet ending above the bottom, for the ask bar.
     <div className={readOnly ? "relative flex min-h-0 flex-1 flex-col st-readonly" : "relative flex min-h-0 flex-1 flex-col"}>
       <header className="st-vbar">
         <button type="button" className="st-backlink" onClick={(e) => go({ page: "room", roomId }, e)}>
@@ -367,6 +376,7 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
           />
         </CanvasContext.Provider>
       </div>
+      {barReady && !appReadOnly ? bar : null}
     </div>
   );
 }

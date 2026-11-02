@@ -22,7 +22,8 @@ function page(tab: Extract<Tab, { kind: "study" }>) {
     case "volume":
       return (
         <Suspense fallback={null}>
-          <VolumePage roomId={tab.roomId} number={tab.number} />
+          {/* Keyed: a volume's saves and its ask bar never pair one volume with another's room or number. */}
+          <VolumePage key={`${tab.roomId}:${tab.number}`} roomId={tab.roomId} number={tab.number} />
         </Suspense>
       );
     case "day":

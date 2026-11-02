@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { AskBar } from "@/ask/AskBar";
+import { useFrameAfter } from "@/ask/useFrameAfter";
 import type { Artifact, StudyLink, StudyRoomSummary } from "@alto-rooms/protocol-ts";
 import { FileText, Folder, X } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -21,10 +23,15 @@ export function RoomPage({ roomId }: { roomId: string }) {
   const { rooms, failed } = useStudy();
   const room = rooms?.find((r) => r.id === roomId);
   const go = useStudyGo();
+  const readOnly = useReadOnly();
   const missing = rooms ? "없는 방이에요" : failed ? "서재를 불러오지 못했어요" : null;
+  // The ask bar comes a frame after the room first paints.
+  const barReady = useFrameAfter(!!room);
+  const name = room?.name;
+  const bar = useMemo(() => (name === undefined ? null : <AskBar subject={{ kind: "studyRoom", roomId, roomName: name }} />), [roomId, name]);
 
   return (
-    // Relative, with room at the bottom, for the ask bar the room will get.
+    // Relative, with room at the bottom for the ask bar.
     <div className="st-room">
       <button type="button" className="st-back" onClick={(e) => go({ page: "library" }, e)}>
         ← 서재
@@ -32,6 +39,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
       <Axes on="library" />
       {room ? <Volumes key={room.id} room={room} /> : missing ? <p className="st-lede st-sub">{missing}</p> : null}
       {room ? <Links room={room} /> : null}
+      {barReady && !readOnly ? bar : null}
     </div>
   );
 }

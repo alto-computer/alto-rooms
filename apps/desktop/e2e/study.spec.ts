@@ -2,6 +2,7 @@
  * The Study (서재) end to end, under the app's CSP: TipTap and React Flow must render with no
  * injected <style>, and every write must land in the files under .rooms/study.
  */
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { artifactHtml, expect, test, today, type Daemon } from "./fixtures";
@@ -151,6 +152,59 @@ test("a study room links a Rooms room and opens it in a tab", async ({ page, dae
   expect(JSON.parse(await daemon.read(`.rooms/study/rooms/${room.id}/room.json`)).links).toEqual([{ kind: "room", roomId: expect.any(String) }]);
   await links.getByRole("button", { name: "리서치", exact: true }).click();
   await expect(page.getByRole("tab", { name: "리서치", selected: true })).toBeVisible();
+});
+
+/** The default agent for asks: it answers with the prompt's Study lines, so the test reads what roomsd sent. */
+function installEchoAgent(daemon: Daemon) {
+  const bin = path.join(daemon.home, "echo-study.sh");
+  writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$1" | grep -E '^(Study room: |Volume: |Card [0-9]+ |- card |- v0[.]|Documents [(])'\n`);
+  chmodSync(bin, 0o755);
+  mkdirSync(path.join(daemon.home, ".rooms"), { recursive: true });
+  writeFileSync(path.join(daemon.home, ".rooms/agents.toml"), `default = "echo"\n[agents.echo]\nnew = ["${bin}", "{prompt}", "--settings", "{scope_settings}"]\n`);
+}
+
+test("the one ask bar asks about a volume with its cards and lines, and about its room with its volumes", async ({ page, daemon }, info) => {
+  installEchoAgent(daemon);
+  const r = await api<Summary>(daemon, "POST", "/v1/study/rooms", { name: "어텐션" });
+  await api(daemon, "PUT", `/v1/study/rooms/${r.id}/volumes/1`, {
+    title: "병목",
+    cards: [
+      { id: "a", kind: "ink", x: 40, y: 60, width: 280, body: "# Router와 Worker\n\nRouter는 배분만 한다." },
+      { id: "b", kind: "question", x: 420, y: 60, width: 240, body: "Router가 하나면 병목 아닌가" },
+    ],
+    edges: [{ id: "e1", source: "a", target: "b" }],
+  });
+  await openStudy(page);
+  await page.getByRole("button", { name: "어텐션 v0.1" }).click();
+  await expect(page.getByTestId("ink-card")).toHaveCount(1);
+
+  const input = page.getByPlaceholder("Ask about this volume…");
+  await expect(input).toBeVisible();
+  await expect(page.getByPlaceholder(/^Ask about/)).toHaveCount(1);
+  // The canvas tools sit in the bar on top, where the ask bar never covers them.
+  for (const name of ["+ 카드", "+ ?", "발행"]) await page.getByRole("button", { name, exact: true }).click({ trial: true });
+  await input.fill("이 판을 요약해줘");
+  // The Study's button reset stops at the bar: Send keeps the app's filled circle.
+  const send = page.getByRole("button", { name: "Send", exact: true });
+  expect(await send.evaluate((b) => [getComputedStyle(b).backgroundColor, getComputedStyle(b).borderRadius])).not.toContain("rgba(0, 0, 0, 0)");
+  await input.press("Enter");
+  const answer = page.getByText(/Volume: v0\.1 "병목" \(draft\)/);
+  await expect(answer).toBeVisible({ timeout: 10_000 });
+  await expect(answer).toContainText("Card 1 (ink):");
+  await expect(answer).toContainText("Card 2 (question):");
+  await expect(page.getByRole("listitem").filter({ hasText: "card 1 → card 2" })).toBeVisible();
+  if (info.project.name === "chromium") await page.screenshot({ path: path.join(SCREENS, "volume-ask.png") });
+  expect(await daemon.read(`.rooms/asks/study-volume-${r.id}-1.jsonl`)).toContain("이 판을 요약해줘");
+  await expect(page.getByTestId("ink-card")).toHaveCount(1);
+
+  await page.getByRole("button", { name: "← 어텐션" }).click();
+  const roomInput = page.getByPlaceholder("Ask about this Study room…");
+  await expect(roomInput).toBeVisible();
+  await roomInput.fill("판이 몇 개야?");
+  await roomInput.press("Enter");
+  await expect(page.getByText(/Study room: "어텐션"/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/v0\.1 "병목" \(draft\)/)).toBeVisible();
+  await expect(page.getByText("이 판을 요약해줘")).toHaveCount(0);
 });
 
 /** A Study with some history: rooms with published volumes and drafts, cards, a day with memos. */

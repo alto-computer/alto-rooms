@@ -114,6 +114,28 @@ describe("a draft volume", () => {
   });
 });
 
+describe("the volume's ask bar", () => {
+  it("asks about this volume, outside the canvas: typing in it adds no card and deletes none", async () => {
+    const { client } = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(true)] });
+    const input = await screen.findByPlaceholderText("Ask about this volume…");
+    expect(input.closest(".st-sheet")).toBeNull();
+    fireEvent.doubleClick(input);
+    fireEvent.change(input, { target: { value: "왜 하나일까?" } });
+    fireEvent.keyDown(input, { key: "Backspace" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope: { kind: "studyVolume", roomId: "s000000101", number: 1 }, question: "왜 하나일까?", model: null }));
+    expect(screen.getAllByTestId("ink-card")).toHaveLength(1);
+    expect(screen.getByRole("textbox", { name: "질문" })).toBeInTheDocument();
+  });
+
+  it("is not there in a read-only window", async () => {
+    await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(false)], readOnly: true });
+    await screen.findByTestId("ink-card");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(screen.queryByPlaceholderText("Ask about this volume…")).toBeNull();
+  });
+});
+
 describe("a draft another writer changes", () => {
   it("keeps an untouched card's markdown byte for byte when another card is saved", async () => {
     const r = room(false);

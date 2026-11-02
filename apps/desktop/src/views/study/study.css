@@ -77,8 +77,9 @@
 .study [data-cloth="teal"]{--c:#2f4b4c;--cover:#d9e4e1}
 .study [data-cloth="plum"]{--c:#55384a;--cover:#ebdde1}
 
-.study button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
-.study :focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:2px}
+/* The Study's own controls only: the ask bar on its pages keeps the app's look. */
+.study button:where(:not([data-ask-bar] *)){font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.study :focus-visible:where(:not([data-ask-bar] *)){outline:2px solid var(--ink);outline-offset:2px;border-radius:2px}
 .study .st-swap{animation:st-swap .45s var(--st-ease)}
 @keyframes st-swap{from{opacity:0;transform:translateY(6px)}}
 

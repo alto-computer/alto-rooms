@@ -20,9 +20,9 @@ const QuickFind = lazy(() => import("@/views/QuickFind").then((m) => ({ default:
 
 const SIDEBAR_STYLE = { "--sidebar-width": "248px" } as CSSProperties;
 
-/** Tab kinds with an ask bar for ⌘J to toggle (in the Study, only the calendar has one yet). */
+/** Tab kinds with an ask bar for ⌘J to toggle (in the Study, every page but the library). */
 const ASKABLE = new Set<Tab["kind"]>(["artifact", "session", "room", "journal"]);
-const askable = (tab: Tab | undefined) => !!tab && (ASKABLE.has(tab.kind) || (tab.kind === "study" && tab.page === "day"));
+const askable = (tab: Tab | undefined) => !!tab && (ASKABLE.has(tab.kind) || (tab.kind === "study" && tab.page !== "library"));
 
 export function AppShell() {
   const { tabs, activeId, sidebarOpen } = useViewer();

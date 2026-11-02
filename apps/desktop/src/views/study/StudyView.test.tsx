@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useViewer, useViewerStore } from "@/data/hooks";
 import type { StudyPage } from "@/data/viewerStore";
 import { localDate } from "@/lib/dates";
-import { renderWithStores, room, studyVolume, type FakeStudyRoom } from "@/test/fakes";
+import { ViewerStore } from "@/data/viewerStore";
+import { AppShell } from "@/shell/AppShell";
+import { memoryStorage, renderWithStores, room, studyVolume, type FakeStudyRoom } from "@/test/fakes";
 import { StudyView } from "./StudyView";
 
 vi.mock("@/lib/native", () => ({
@@ -106,6 +108,45 @@ describe("the room page", () => {
     const links = await screen.findByRole("list", { name: "연결된 방과 아티팩트" });
     fireEvent.click(within(links).getByRole("button", { name: "리서치 연결 끊기" }));
     await waitFor(() => expect(r.client.updateStudyRoom).toHaveBeenLastCalledWith("s000000101", { name: "어텐션", links: [] }));
+  });
+
+  it("asks about the Study room from the one ask bar, and the library has none", async () => {
+    const r = await renderStudy({ page: "room", roomId: "s000000101" }, { studyRooms: [attention()] });
+    const input = await screen.findByPlaceholderText("Ask about this Study room…");
+    expect(screen.getAllByRole("textbox").filter((t) => t.tagName === "TEXTAREA")).toHaveLength(1);
+    fireEvent.change(input, { target: { value: "v0.2에서 뭐가 바뀌었지?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(r.client.startAsk).toHaveBeenCalledWith({ scope: { kind: "studyRoom", roomId: "s000000101" }, question: "v0.2에서 뭐가 바뀌었지?", model: null }));
+    // The arrow keys that turn the covers leave the question being typed alone.
+    const current = () => screen.getByRole("button", { current: true }).getAttribute("aria-label");
+    const before = current();
+    fireEvent.keyDown(input, { key: "ArrowLeft" });
+    expect(current()).toBe(before);
+    act(() => void r.viewer.navigate({ kind: "study", page: "library" }));
+    expect(await screen.findByRole("button", { name: "새 방" })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/^Ask about/)).toBeNull();
+  });
+
+  it("shows no ask bar in a read-only window", async () => {
+    await renderStudy({ page: "room", roomId: "s000000101" }, { studyRooms: [attention()], readOnly: true });
+    expect(await screen.findByRole("button", { name: "펼쳐 읽기 →" })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(screen.queryByPlaceholderText("Ask about this Study room…")).toBeNull();
+  });
+});
+
+describe("⌘J in the Study", () => {
+  const cmdJ = () => fireEvent.keyDown(window, { key: "j", code: "KeyJ", metaKey: true });
+
+  it("toggles the ask bar on a Study room's page, the same bar as everywhere else", async () => {
+    const viewer = new ViewerStore(memoryStorage());
+    viewer.replace(viewer.getState().activeId!, { kind: "study", page: "room", roomId: "s000000101" });
+    await renderWithStores(<AppShell />, { viewer, studyRooms: [attention()] });
+    await screen.findByPlaceholderText("Ask about this Study room…");
+    act(cmdJ);
+    expect(screen.queryByPlaceholderText("Ask about this Study room…")).toBeNull();
+    act(cmdJ);
+    expect(await screen.findByPlaceholderText("Ask about this Study room…")).toHaveFocus();
   });
 });
 

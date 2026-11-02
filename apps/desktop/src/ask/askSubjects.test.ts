@@ -67,6 +67,19 @@ describe("frameSubject", () => {
     expect(f.header(turn({ mode: "new" }))).toEqual({ text: "claude-code · Haiku" });
   });
 
+  it("frames a Study volume and a Study room by the keys roomsd parses, each its own thread", () => {
+    const volume = frameSubject({ kind: "studyVolume", roomId: "a1b2c3d4e5", number: 12, roomName: "어텐션" });
+    expect(volume.scope).toEqual({ kind: "studyVolume", roomId: "a1b2c3d4e5", number: 12 });
+    expect(scopeKey(volume.scope)).toBe("study-volume:a1b2c3d4e5:12");
+    expect(volume.placeholder).toBe("Ask about this volume…");
+    expect(volume.agent).toBe("Default agent");
+    expect(volume.header(turn({ mode: "new" }))).toEqual({ text: "claude-code · Haiku" });
+    const studyRoom = frameSubject({ kind: "studyRoom", roomId: "a1b2c3d4e5", roomName: "어텐션" });
+    expect(scopeKey(studyRoom.scope)).toBe("study-room:a1b2c3d4e5");
+    expect(studyRoom.placeholder).toBe("Ask about this Study room…");
+    expect(scopeKey(frameSubject({ kind: "studyVolume", roomId: "a1b2c3d4e5", number: 1, roomName: "" }).scope)).not.toBe(scopeKey(volume.scope));
+  });
+
   describe("noteTarget", () => {
     it("saves no doc answer", () => {
       expect(frameSubject({ kind: "artifact", artifact: artifact }).noteTarget).toBeNull();
@@ -83,6 +96,11 @@ describe("frameSubject", () => {
       expect(frameSubject({ kind: "session", session }).noteTarget!(late, [room])).toEqual({ date: "2026-10-09", source: "Session: Fix the sync bug" });
       const untitled = frameSubject({ kind: "session", session: { ...session, title: null } }).noteTarget!(late, [room]);
       expect(untitled.source).toBe("Session: Untitled session");
+    });
+
+    it("saves a Study answer into today's Journal, named by the Study room and the volume", () => {
+      expect(frameSubject({ kind: "studyVolume", roomId: "a1b2c3d4e5", number: 3, roomName: "어텐션" }).noteTarget!(late, [room])).toEqual({ date: "2026-10-09", source: "Study: 어텐션 v0.3" });
+      expect(frameSubject({ kind: "studyRoom", roomId: "a1b2c3d4e5", roomName: "어텐션" }).noteTarget!(late, [room])).toEqual({ date: "2026-10-09", source: "Study: 어텐션" });
     });
 
     it("saves a day answer into the viewed day, whatever today is, with no source line", () => {
