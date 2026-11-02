@@ -24,7 +24,7 @@ import type { UpdateStudyRoom } from "./generated/UpdateStudyRoom";
 
 export type Snapshot<T> = { data: T; seq: number };
 
-/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `session:<agent>:<id>`. */
+/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `session:<agent>:<id>`, `study-volume:<studyRoomId>:<n>`, `study-room:<studyRoomId>`. */
 export function scopeKey(scope: AskScope): string {
   switch (scope.kind) {
     case "artifact":
@@ -35,6 +35,10 @@ export function scopeKey(scope: AskScope): string {
       return `day:${scope.date}`;
     case "session":
       return `session:${scope.agent}:${scope.id}`;
+    case "studyVolume":
+      return `study-volume:${scope.roomId}:${scope.number}`;
+    case "studyRoom":
+      return `study-room:${scope.roomId}`;
   }
 }
 

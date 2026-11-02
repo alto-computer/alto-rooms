@@ -107,6 +107,8 @@ fn ask_scope_is_tagged_by_kind_and_round_trips() {
         (AskScope::Room { room_id: "연구-도구".into() }, serde_json::json!({"kind": "room", "roomId": "연구-도구"})),
         (AskScope::Day { date: "2026-10-09".into() }, serde_json::json!({"kind": "day", "date": "2026-10-09"})),
         (AskScope::Session(SessionRef { agent: Agent::Codex, id: SessionId::parse("s-1").unwrap() }), serde_json::json!({"kind": "session", "agent": "codex", "id": "s-1"})),
+        (AskScope::StudyVolume { room_id: "a1b2c3d4e5".into(), number: 3 }, serde_json::json!({"kind": "studyVolume", "roomId": "a1b2c3d4e5", "number": 3})),
+        (AskScope::StudyRoom { room_id: "a1b2c3d4e5".into() }, serde_json::json!({"kind": "studyRoom", "roomId": "a1b2c3d4e5"})),
     ];
     for (scope, json) in cases {
         assert_eq!(serde_json::to_value(&scope).unwrap(), json);
@@ -115,6 +117,8 @@ fn ask_scope_is_tagged_by_kind_and_round_trips() {
     assert!(serde_json::from_str::<AskScope>(r#"{"kind":"artifact","roomId":"r"}"#).is_err());
     assert!(serde_json::from_str::<AskScope>(r#"{"fileKey":"k"}"#).is_err());
     assert!(serde_json::from_str::<AskScope>(r#"{"kind":"week","date":"2026-10-09"}"#).is_err());
+    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"studyvolume","roomId":"a1b2c3d4e5","number":3}"#).is_err(), "the kind is camelCase");
+    assert!(serde_json::from_str::<AskScope>(r#"{"kind":"studyVolume","roomId":"a1b2c3d4e5","number":-1}"#).is_err());
     assert!(serde_json::from_str::<AskScope>(r#"{"kind":"session","agent":"codex","id":"--yolo x"}"#).is_err(), "a session id never reaches an argv unchecked");
     assert!(serde_json::from_str::<AskScope>(r#"{"kind":"session","agent":"codex","id":"-x"}"#).is_err(), "nor one that reads as a flag");
     assert!(serde_json::from_str::<AskScope>(r#"{"kind":"session","agent":"gemini","id":"s"}"#).is_err());

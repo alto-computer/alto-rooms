@@ -11,10 +11,11 @@
 //! so the two files a publish writes are never seen apart. Writes are a hidden temp file plus a
 //! rename, and refuse any symlink under the study root.
 
+use crate::asks::prompt::{ContextEntry, StudyRoomListing};
 use crate::core::RoomsCore;
 use crate::error::CoreError;
 use crate::lock::lock;
-use crate::rules::{valid_room_id, validate_iso_date};
+use crate::rules::{local_day, valid_room_id, validate_iso_date};
 use rooms_protocol::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -61,7 +62,7 @@ struct VolumeHead {
 enum StatusWord { Draft, Published }
 
 /// A study room id as roomsd mints them: 10 chars of `[a-z0-9]`. Nothing else names a path.
-fn valid_study_room_id(s: &str) -> bool {
+pub(crate) fn valid_study_room_id(s: &str) -> bool {
     s.len() == 10 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
@@ -118,12 +119,14 @@ fn now() -> String { chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat:
 
 fn volume_file(number: u32) -> String { format!("{number}.json") }
 
-/// `<n>.json` with `n` ≥ 1 and no leading zero; hidden temp files and anything else are not volumes.
-fn volume_number(file_name: &str) -> Option<u32> {
-    let n = file_name.strip_suffix(".json")?;
+/// A volume number as a file or an ask scope key writes it: decimal, ≥ 1, no leading zero.
+pub(crate) fn parse_volume_number(n: &str) -> Option<u32> {
     if n.starts_with('0') || !n.bytes().all(|b| b.is_ascii_digit()) { return None; }
     n.parse().ok()
 }
+
+/// `<n>.json`; hidden temp files and anything else are not volumes.
+fn volume_number(file_name: &str) -> Option<u32> { parse_volume_number(file_name.strip_suffix(".json")?) }
 
 /// Pretty JSON for people and agents reading the files, refused past `max` bytes.
 fn encode<T: Serialize>(v: &T, max: usize) -> Result<Vec<u8>, CoreError> {
@@ -339,6 +342,57 @@ impl RoomsCore {
             Some(day) => Ok(day),
             None => Ok(StudyDay { date: date.clone(), memos: vec![], todos: vec![] }),
         }
+    }
+
+    /// What a volume ask is about: the room's name and the volume as stored.
+    pub(crate) fn study_volume_context(&self, id: &str, number: u32) -> Result<(String, StudyVolume), CoreError> {
+        let _study = lock(&self.study_lock);
+        let room = self.study_room_file(id)?;
+        Ok((room.name, self.read_study_volume(id, number)?))
+    }
+
+    /// What a Study room ask is about: its volumes and links, and the documents it links to in
+    /// Rooms, each once: the linked artifacts, then each linked room's documents, newest first.
+    pub(crate) fn study_room_context(&self, id: &str) -> Result<(StudyRoomListing, Vec<ContextEntry>), CoreError> {
+        let summary = {
+            let _study = lock(&self.study_lock);
+            let room = self.study_room_file(id)?;
+            self.study_summary(room)?
+        };
+        let (mut entries, mut rooms, mut missing) = (Vec::new(), Vec::new(), 0);
+        for link in &summary.links {
+            if let StudyLink::Artifact { file_key } = link {
+                match self.linked_artifact(file_key) {
+                    Some(e) => entries.push(e),
+                    None => missing += 1,
+                }
+            }
+        }
+        for link in &summary.links {
+            if let StudyLink::Room { room_id } = link {
+                match self.room_context(room_id) {
+                    Ok((name, docs)) => {
+                        rooms.push(name);
+                        entries.extend(docs);
+                    }
+                    // Gone from Rooms, or the Journal, which is asked by day.
+                    Err(CoreError::RoomNotFound | CoreError::InvalidInput(_)) => missing += 1,
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        let mut seen = HashSet::new();
+        entries.retain(|e| seen.insert(e.path.clone()));
+        Ok((StudyRoomListing { name: summary.name, volumes: summary.volumes, rooms, missing }, entries))
+    }
+
+    /// A linked artifact as the first of its rooms whose file still resolves lists it.
+    fn linked_artifact(&self, file_key: &str) -> Option<ContextEntry> {
+        let (a, path) = self.artifacts_by_file_key(file_key).into_iter().find_map(|a| self.resolve_file(&a.room_id, &a.rel_path).ok().map(|p| (a, p)))?;
+        let label = if a.room_id == JOURNAL_ROOM_ID { "Journal".to_string() } else {
+            lock(&self.inner).state.find(&a.room_id).map_or_else(|| a.room_id.clone(), |r| r.name.clone())
+        };
+        Some(ContextEntry { label, day: local_day(&a.created_at).unwrap_or_default(), title: a.title, path })
     }
 
     pub fn save_study_day(&self, date: &IsoDate, save: SaveStudyDay) -> Result<StudyDay, CoreError> {

@@ -27,6 +27,10 @@ pub(crate) const DEFAULT_PREAMBLE: &str =
 pub(crate) const SCOPE_PREAMBLE: &str =
     "[Rooms] The user is looking at the room or Journal day below in the Rooms app and asking about its documents. Read only the files listed below; each line gives a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder, not even the folder a listed file is in, and never search without a path. A Journal day also lists its agent sessions, each by its quoted title with the start of its last reply; a session has no file here, so don't look for one. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";
 
+/// A Study room or volume ask's preamble: the user's own notes, which the agent reads and never writes.
+pub(crate) const STUDY_PREAMBLE: &str =
+    "[Rooms] The user is looking at their own Study notes in the Rooms app and asking about them: a Study room with its volumes, or one volume's canvas, below. On a canvas, ink cards are notes the user wrote and question cards are questions they are holding; each card's markdown is quoted line by line after \"> \", and lines join related cards. A Study room lists the documents it links to in Rooms: read only those files, each line giving a quoted path, then the quoted document title. Give Read and Grep one listed file path per call; never pass a folder and never search without a path. Answer briefly in Markdown, in the language of the question. Don't create or edit files: the Study is the user's to write, and your answer stays in this chat.";
+
 /// A session ask's preamble; agents.toml's `preamble` is about artifacts.
 pub(crate) const SESSION_PREAMBLE: &str =
     "[Rooms] The user is looking back at this agent session in the Rooms app and asking about it. Answer briefly in Markdown, in the language of the question. Don't create or edit files.";

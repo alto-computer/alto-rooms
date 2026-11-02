@@ -26,7 +26,14 @@ import { isColor, parseActions, type ContentAction } from "@/plugins/contentChan
 import { buildIndex, offsetOf, rangeAt, type TextIndex } from "./surfaceIndex";
 
 /** A finished chat answer, or a note's body; `name` is the note's on-disk file name, `.md` included. */
-export type SurfaceId = { kind: "answer"; scope: AskScope; turnId: string } | { kind: "note"; date: string; name: string };
+export type SurfaceId = { kind: "answer"; scope: SurfaceScope; turnId: string } | { kind: "note"; date: string; name: string };
+
+/**
+ * The threads whose answers plugins may read and mark: the SDK's `AnswerScope`. A Study answer is no
+ * surface until the SDK names its scope; a plugin built before then would key it by an id it can't read.
+ */
+export type SurfaceScope = Exclude<AskScope, { kind: "studyVolume" | "studyRoom" }>;
+export const isSurfaceScope = (s: AskScope): s is SurfaceScope => s.kind !== "studyVolume" && s.kind !== "studyRoom";
 type AnswerId = Extract<SurfaceId, { kind: "answer" }>;
 
 /** `answer:<scopeKey>/<turnId>` or `note:<date>/<folded file name>`: the one name a surface has while open. */
@@ -214,7 +221,7 @@ export function parseSurfaceId(v: unknown): SurfaceId | null {
   if (kind !== "answer" || typeof turnId !== "string" || !ID.test(turnId) || !scope || typeof scope !== "object") return null;
   const s = scope as Record<string, unknown>;
   const str = (x: unknown): x is string => typeof x === "string" && x.length > 0 && x.length <= 200;
-  const answer = (scope: AskScope): SurfaceId => ({ kind: "answer", scope, turnId });
+  const answer = (scope: SurfaceScope): SurfaceId => ({ kind: "answer", scope, turnId });
   if ((s.kind === "artifact" || s.kind === "doc") && str(s.fileKey)) return answer({ kind: "artifact", fileKey: s.fileKey });
   if (s.kind === "room" && str(s.roomId)) return answer({ kind: "room", roomId: s.roomId });
   if (s.kind === "day" && typeof s.date === "string" && DATE.test(s.date)) return answer({ kind: "day", date: s.date });

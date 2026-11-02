@@ -1,5 +1,6 @@
 //! v2 ask: send a question about an artifact to the agent CLI that made it (spec 2026-10-06 v2 ask).
-//! Every thread belongs to an `AskScope`: an artifact, a room, a Journal day or a session.
+//! Every thread belongs to an `AskScope`: an artifact, a room, a Journal day, a session, or a
+//! Study room or volume.
 //! `Asks` is the only entry point; templates, prompt, log and process stay inside this module.
 pub(crate) mod agents;
 pub mod images;
@@ -14,6 +15,7 @@ pub use run::Limits;
 use crate::error::CoreError;
 use crate::lock::lock;
 use crate::rules::{slug_key, valid_room_id, validate_iso_date};
+use crate::study::{parse_volume_number, valid_study_room_id};
 use crate::RoomsCore;
 use agents::{claude_read_scope, AgentProfiles, Plan, Vars};
 use log::AskLog;
@@ -66,8 +68,8 @@ struct Invocation { argv: Vec<String>, stdin: Option<String> }
 /// the earlier Q&A sent along.
 struct Fallback { run: Invocation, mode: AskMode, left_out: u32 }
 
-/// A scope as one string, `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>` or
-/// `session:<agent>:<id>`: what
+/// A scope as one string, `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`,
+/// `session:<agent>:<id>`, `study-volume:<studyRoomId>:<n>` or `study-room:<studyRoomId>`: what
 /// `GET /v1/asks?scope=` takes and what the app keys its threads by.
 pub trait ScopeKey: Sized {
     fn key(&self) -> String;
@@ -83,6 +85,8 @@ impl ScopeKey for AskScope {
             AskScope::Room { room_id } => format!("room:{room_id}"),
             AskScope::Day { date } => format!("day:{date}"),
             AskScope::Session(session_ref) => format!("session:{}", session_ref.key()),
+            AskScope::StudyVolume { room_id, number } => format!("study-volume:{room_id}:{number}"),
+            AskScope::StudyRoom { room_id } => format!("study-room:{room_id}"),
         }
     }
 
@@ -95,6 +99,11 @@ impl ScopeKey for AskScope {
                 Some(session_ref) => AskScope::Session(session_ref),
                 None => return Err(AskError::BadRequest("bad scope key".into())),
             },
+            Some(("study-volume", k)) => match k.split_once(':').and_then(|(r, n)| Some((r, parse_volume_number(n)?))) {
+                Some((room_id, number)) => AskScope::StudyVolume { room_id: room_id.into(), number },
+                None => return Err(AskError::BadRequest("bad scope key".into())),
+            },
+            Some(("study-room", r)) => AskScope::StudyRoom { room_id: r.into() },
             _ => return Err(AskError::BadRequest("bad scope key".into())),
         };
         scope.validate()?;
@@ -108,6 +117,8 @@ impl ScopeKey for AskScope {
             AskScope::Day { date } => validate_iso_date(date).is_ok(),
             // Its agent and id were checked when it was parsed.
             AskScope::Session(_) => true,
+            AskScope::StudyVolume { room_id, number } => valid_study_room_id(room_id) && *number >= 1,
+            AskScope::StudyRoom { room_id } => valid_study_room_id(room_id),
         };
         if ok { Ok(()) } else { Err(AskError::BadRequest("bad scope key".into())) }
     }
@@ -121,6 +132,7 @@ pub enum AskError {
     #[error("Can't find this artifact")] NotFound,
     #[error("Can't find this room")] RoomNotFound,
     #[error("Can't find this session")] SessionNotFound,
+    #[error("Can't find this volume")] VolumeNotFound,
     #[error("Waiting for an answer")] Busy,
     #[error("Too many questions running — try again when one finishes")] Capacity,
     #[error("Couldn't read agent settings: {0}")] AgentConfig(String),
@@ -132,7 +144,7 @@ impl AskError {
     pub fn code(&self) -> &'static str {
         match self {
             AskError::BadRequest(_) => "bad_request",
-            AskError::NotFound | AskError::RoomNotFound | AskError::SessionNotFound => "not_found",
+            AskError::NotFound | AskError::RoomNotFound | AskError::SessionNotFound | AskError::VolumeNotFound => "not_found",
             AskError::Busy => "ask_busy",
             AskError::Capacity => "ask_capacity",
             AskError::AgentConfig(_) => "agent_config",
@@ -143,7 +155,7 @@ impl AskError {
     pub fn status(&self) -> u16 {
         match self {
             AskError::BadRequest(_) => 400,
-            AskError::NotFound | AskError::RoomNotFound | AskError::SessionNotFound => 404,
+            AskError::NotFound | AskError::RoomNotFound | AskError::SessionNotFound | AskError::VolumeNotFound => 404,
             AskError::Busy | AskError::Capacity => 409,
             AskError::AgentConfig(_) => 422,
             AskError::Io(_) | AskError::Listing(_) => 500,
@@ -188,7 +200,8 @@ impl<'a> Request<'a> {
 
 struct Entry { scope: AskScope, killer: Killer }
 
-/// What a question is about: one artifact, one session, or the files of a room or a Journal day.
+/// What a question is about: one artifact, one session, or a listing: the files of a room or a
+/// Journal day, or a Study room or volume.
 enum Subject {
     Artifact { file_key: String, file_abs: PathBuf },
     Session(Session),
@@ -291,8 +304,8 @@ impl Asks {
 
     fn config_path(&self) -> PathBuf { self.0.core.home().join(".rooms/agents.toml") }
 
-    /// Which subject, agent, template, session and cwd an ask in `scope` would use. A room or a day
-    /// has no source session: the default agent starts a new session in an empty folder, so a
+    /// Which subject, agent, template, session and cwd an ask in `scope` would use. A room, a day
+    /// or the Study has no source session: the default agent starts a new session in an empty folder, so a
     /// search without a path finds nothing. `start` creates that folder; `target` writes nothing.
     fn resolve(&self, scope: &AskScope) -> Result<Resolved, AskError> {
         scope.validate()?;
@@ -307,6 +320,14 @@ impl Asks {
             AskScope::Day { date } => {
                 let (entries, sessions) = core.day_context(date).map_err(listing_error)?;
                 (Listing::Day { date: date.clone(), sessions }, entries)
+            }
+            AskScope::StudyRoom { room_id } => {
+                let (room, entries) = core.study_room_context(room_id).map_err(listing_error)?;
+                (Listing::StudyRoom(room), entries)
+            }
+            AskScope::StudyVolume { room_id, number } => {
+                let (room, volume) = core.study_volume_context(room_id, *number).map_err(listing_error)?;
+                (Listing::StudyVolume { room, volume }, Vec::new())
             }
         };
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
@@ -415,7 +436,7 @@ impl Asks {
             Subject::Session(session) => (String::new(), build_session_prompt(session, &ctx, &asked), String::new()),
             Subject::Listing { listing, entries } => {
                 private_dir(&cwd).map_err(|e| AskError::Io(e.to_string()))?;
-                let settings = claude_read_scope(listed(entries).iter().map(|e| e.path.as_path()));
+                let settings = claude_read_scope(listed(listing, entries).iter().map(|e| e.path.as_path()));
                 (String::new(), build_scope_prompt(listing, entries, &ctx, &asked), settings)
             }
         };
@@ -636,7 +657,8 @@ impl Asks {
 /// fix, and anything else (the index, the disk) is reported as what it is.
 fn listing_error(e: CoreError) -> AskError {
     match e {
-        CoreError::RoomNotFound => AskError::RoomNotFound,
+        CoreError::RoomNotFound | CoreError::StudyRoomNotFound => AskError::RoomNotFound,
+        CoreError::VolumeNotFound => AskError::VolumeNotFound,
         CoreError::InvalidInput(m) | CoreError::BadRequest(m) => AskError::BadRequest(m),
         // Their own text says "write failed", which a listing never does.
         CoreError::Io(e) => AskError::Listing(e.to_string()),
@@ -663,6 +685,7 @@ mod tests {
         assert_eq!(wire(AskError::NotFound), (404, "not_found", "Can't find this artifact".into()));
         assert_eq!(wire(AskError::RoomNotFound), (404, "not_found", "Can't find this room".into()));
         assert_eq!(wire(AskError::SessionNotFound), (404, "not_found", "Can't find this session".into()));
+        assert_eq!(wire(AskError::VolumeNotFound), (404, "not_found", "Can't find this volume".into()));
         assert_eq!(wire(AskError::Busy), (409, "ask_busy", "Waiting for an answer".into()));
         assert_eq!(wire(AskError::Capacity), (409, "ask_capacity", "Too many questions running — try again when one finishes".into()));
         assert_eq!(wire(AskError::AgentConfig("x".into())), (422, "agent_config", "Couldn't read agent settings: x".into()));
@@ -711,6 +734,9 @@ mod tests {
             (AskScope::Room { room_id: "_abc".into() }, "room:_abc"),
             (AskScope::Day { date: "2026-10-09".into() }, "day:2026-10-09"),
             (AskScope::Session(SessionRef::parse_key("claude-code:7f3a-b_2").unwrap()), "session:claude-code:7f3a-b_2"),
+            (AskScope::StudyVolume { room_id: "a1b2c3d4e5".into(), number: 1 }, "study-volume:a1b2c3d4e5:1"),
+            (AskScope::StudyVolume { room_id: "0000000000".into(), number: u32::MAX }, "study-volume:0000000000:4294967295"),
+            (AskScope::StudyRoom { room_id: "a1b2c3d4e5".into() }, "study-room:a1b2c3d4e5"),
         ];
         for (scope, key) in good {
             assert_eq!(scope.key(), key);
@@ -718,11 +744,19 @@ mod tests {
         }
         let long_artifact = format!("artifact:{}", "a".repeat(65));
         let long_room = format!("room:{}", "a".repeat(65));
-        for bad in ["../x", "artifact:../x", "room:journal", "room:Journal", "room:JOURNAL", "room:a b", "room:a.b", "room:a/b", "day:2026-13-01", "day:2026-1-1", long_artifact.as_str(), long_room.as_str(), "artifact:", "room:", "0123456789abcdef", "week:2026-10-09", "session:claude-code", "session:cursor:s1", "session:codex:s;1", "session:codex:", "session:codex:-x", "doc:0123456789abcdef", "conversation:codex:s1", ""] {
+        for bad in ["../x", "artifact:../x", "room:journal", "room:Journal", "room:JOURNAL", "room:a b", "room:a.b", "room:a/b", "day:2026-13-01", "day:2026-1-1", long_artifact.as_str(), long_room.as_str(), "artifact:", "room:", "0123456789abcdef", "week:2026-10-09", "session:claude-code", "session:cursor:s1", "session:codex:s;1", "session:codex:", "session:codex:-x", "doc:0123456789abcdef", "conversation:codex:s1", "",
+            "study-volume:a1b2c3d4e5", "study-volume:a1b2c3d4e5:", "study-volume:a1b2c3d4e5:0", "study-volume:a1b2c3d4e5:01", "study-volume:a1b2c3d4e5:-1",
+            "study-volume:a1b2c3d4e5:+1", "study-volume:a1b2c3d4e5:1.5", "study-volume:a1b2c3d4e5:4294967296", "study-volume:a1b2c3d4e5:1:2",
+            "study-volume:A1B2C3D4E5:1", "study-volume:a1b2c3d4e:1", "study-volume:../../etc:1", "study-volume::1",
+            "study-room:", "study-room:a1b2c3d4e", "study-room:a1b2c3d4e5f", "study-room:a1b2c3d4-5", "study-room:../a1b2c3d", "study-room:a1b2c3d4e5:1", "study:a1b2c3d4e5"] {
             assert!(matches!(AskScope::parse_key(bad), Err(AskError::BadRequest(_))), "{bad}");
         }
         assert!(AskScope::Room { room_id: JOURNAL_ROOM_ID.into() }.validate().is_err());
         assert!(AskScope::Artifact { file_key: "a.b".into() }.validate().is_err());
+        // A scope that arrives as JSON is held to the same rules.
+        assert!(AskScope::StudyVolume { room_id: "a1b2c3d4e5".into(), number: 0 }.validate().is_err());
+        assert!(AskScope::StudyVolume { room_id: "../x/../y".into(), number: 1 }.validate().is_err());
+        assert!(AskScope::StudyRoom { room_id: "A1B2C3D4E5".into() }.validate().is_err());
     }
 
     #[tokio::test]
@@ -787,6 +821,93 @@ mod tests {
         assert_eq!(std::fs::read_dir(&cwd).unwrap().count(), 0);
     }
 
+    /// The fake agent's answer to `q` in `scope`: its argv, so the prompt and the scope settings.
+    async fn fake_answer(asks: &Asks, core: &RoomsCore, scope: &AskScope, q: &str) -> String {
+        let mut rx = core.subscribe();
+        asks.start(scope, q, None).unwrap();
+        loop {
+            let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().unwrap();
+            if let EventKind::AskDone { turn } = ev.kind { break turn.answer; }
+        }
+    }
+
+    fn fake_default_agent(home: &Path) {
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-agent.sh");
+        std::fs::create_dir_all(home.join(".rooms")).unwrap();
+        std::fs::write(home.join(".rooms/agents.toml"), format!("default = \"mine\"\n[agents.mine]\nnew = [\"{fake}\", \"--settings\", \"{{scope_settings}}\", \"{{prompt}}\"]\n")).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_volume_ask_carries_its_cards_and_lines_and_reads_no_file() {
+        use rooms_protocol::{SaveStudyVolume, StudyCard, StudyCardKind, StudyEdge};
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        fake_default_agent(d.path());
+        let room = core.create_study_room("어텐션").unwrap();
+        let card = |id: &str, kind, body: &str| StudyCard { id: id.into(), kind, x: 0.0, y: 0.0, width: 280.0, body: body.into() };
+        core.save_study_volume(&room.id, 1, SaveStudyVolume {
+            title: "병목".into(),
+            cards: vec![card("c1", StudyCardKind::Ink, "# 제목\n병목이 사라진다"), card("c2", StudyCardKind::Question, "왜 둘이 아닐까")],
+            edges: vec![StudyEdge { id: "e1".into(), source: "c1".into(), target: "c2".into() }],
+        }).unwrap();
+        let asks = Asks::new(core.clone(), None);
+        let scope = AskScope::StudyVolume { room_id: room.id.clone(), number: 1 };
+        assert_eq!((asks.target(&scope).unwrap().agent.as_str(), asks.target(&scope).unwrap().mode), ("mine", AskMode::New));
+        let answer = fake_answer(&asks, &core, &scope, "q").await;
+        assert!(answer.starts_with(r#"ARGV: [--settings] [{"permissions":{"allow":[],"defaultMode":"dontAsk"}}] [[Rooms] The user is looking at their own Study notes"#), "{answer}");
+        assert!(answer.contains(concat!(
+            "Study room: \"어텐션\"\nVolume: v0.1 \"병목\" (draft)\nCards (2):\n",
+            "Card 1 (ink):\n> # 제목\n> 병목이 사라진다\nCard 2 (question):\n> 왜 둘이 아닐까\n",
+            "Lines (1):\n- card 1 → card 2\n\nQuestion: q]",
+        )), "{answer}");
+        assert_eq!(asks.thread(&scope).unwrap().len(), 1);
+        assert!(d.path().join(format!(".rooms/asks/study-volume-{}-1.jsonl", room.id)).is_file());
+        let gone = AskScope::StudyVolume { room_id: room.id.clone(), number: 2 };
+        assert!(matches!(asks.target(&gone), Err(AskError::VolumeNotFound)));
+        assert!(matches!(asks.target(&AskScope::StudyVolume { room_id: "zzzzzzzzzz".into(), number: 1 }), Err(AskError::RoomNotFound)));
+        asks.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_study_room_ask_lists_its_volumes_and_what_it_links_to() {
+        use rooms_protocol::{StudyLink, UpdateStudyRoom};
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        fake_default_agent(d.path());
+        let research = core.create_room("Research").unwrap();
+        let notes = core.create_room("Notes").unwrap();
+        let root = |id: &str| core.room_root(&id.to_string()).unwrap().0;
+        std::fs::write(root(&research.id).join("paper.html"), "<title>Paper</title>").unwrap();
+        std::fs::write(root(&notes.id).join("memo.html"), "<title>Memo</title>").unwrap();
+        core.backfill_all().unwrap();
+        let memo = core.list_artifacts(&notes.id).unwrap().remove(0);
+        let room = core.create_study_room("어텐션").unwrap();
+        core.publish_study_room(&room.id).unwrap();
+        let links = vec![
+            StudyLink::Room { room_id: research.id.clone() },
+            StudyLink::Artifact { file_key: memo.file_key.clone() },
+            StudyLink::Room { room_id: "gone-room".into() },
+            StudyLink::Artifact { file_key: "0123456789abcdef".into() },
+        ];
+        core.update_study_room(&room.id, UpdateStudyRoom { name: "어텐션".into(), links }).unwrap();
+        let asks = Asks::new(core.clone(), None);
+        let scope = AskScope::StudyRoom { room_id: room.id.clone() };
+        let answer = fake_answer(&asks, &core, &scope, "q").await;
+        let real = |id: &str, f: &str| std::fs::canonicalize(root(id).join(f)).unwrap();
+        let (paper, memo_path) = (real(&research.id, "paper.html"), real(&notes.id, "memo.html"));
+        assert!(answer.contains(&format!("\"Read(/{})\",\"Read(/{})\"", memo_path.display(), paper.display())), "the agent may read the linked documents: {answer}");
+        let today = crate::rules::local_day(&chrono::Local::now().to_rfc3339()).unwrap();
+        assert!(answer.contains(&format!(concat!(
+            "Study room: \"어텐션\"\nVolumes (2):\n- v0.1 (published {today})\n- v0.2 (draft)\n",
+            "Linked rooms (1):\n- \"Research\"\n(2 linked rooms or artifacts are no longer in Rooms)\n",
+            "Documents (2):\n- {memo:?} \"Memo\" (Notes, {today})\n- {paper:?} \"Paper\" (Research, {today})\n",
+            "\nQuestion: q]",
+        ), today = today, memo = memo_path, paper = paper)), "{answer}");
+        assert!(d.path().join(format!(".rooms/asks/study-room-{}.jsonl", room.id)).is_file());
+        assert!(matches!(asks.target(&AskScope::StudyRoom { room_id: "zzzzzzzzzz".into() }), Err(AskError::RoomNotFound)));
+        asks.shutdown().await;
+    }
+
     #[test]
     fn private_dir_creates_and_tightens() {
         use std::os::unix::fs::PermissionsExt;
@@ -805,6 +926,8 @@ mod tests {
     #[test]
     fn listing_errors_say_what_failed() {
         assert!(matches!(listing_error(CoreError::RoomNotFound), AskError::RoomNotFound));
+        assert!(matches!(listing_error(CoreError::StudyRoomNotFound), AskError::RoomNotFound));
+        assert!(matches!(listing_error(CoreError::VolumeNotFound), AskError::VolumeNotFound));
         assert!(matches!(listing_error(CoreError::InvalidInput("journal".into())), AskError::BadRequest(m) if m == "journal"));
         let db = listing_error(CoreError::Db(rusqlite::Error::InvalidQuery));
         assert!(matches!(db, AskError::Listing(_)), "{db:?}");

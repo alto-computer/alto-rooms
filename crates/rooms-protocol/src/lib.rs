@@ -318,7 +318,8 @@ pub enum AskKind {
 }
 
 /// What an ask thread is about, and the one thread it keeps: an artifact (by the file key its
-/// rooms share), a room, a Journal day, or a session (asked in a fork of that session).
+/// rooms share), a room, a Journal day, a session (asked in a fork of that session), or the
+/// owner's own Study notes: one volume of a Study room, or the Study room as a whole.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
@@ -327,6 +328,8 @@ pub enum AskScope {
     #[serde(rename_all = "camelCase")] Room { room_id: RoomId },
     Day { date: IsoDate },
     Session(SessionRef),
+    #[serde(rename = "studyVolume", rename_all = "camelCase")] StudyVolume { room_id: StudyRoomId, number: u32 },
+    #[serde(rename = "studyRoom", rename_all = "camelCase")] StudyRoom { room_id: StudyRoomId },
 }
 
 wire!(
