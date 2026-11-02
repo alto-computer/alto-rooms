@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SaveStudyDay, StudyDay } from "@alto-rooms/protocol-ts";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { AskBar } from "@/ask/AskBar";
@@ -6,7 +6,7 @@ import { useFrameAfter } from "@/ask/useFrameAfter";
 import { useClient, useJournalDay, useReadOnly, useRoomsStore, useViewerStore } from "@/data/hooks";
 import { localDate } from "@/lib/dates";
 import { errorCopy } from "@/lib/errors";
-import { addMonths, monthGrid, newId, shortDate, weekdayOf } from "./study";
+import { addMonths, isSubmit, monthGrid, newId, shortDate, weekdayOf } from "./study";
 import { Axes } from "./StudyNav";
 
 /**
@@ -21,12 +21,15 @@ function useStudyDay(date: string) {
   const [error, setError] = useState<string | null>(null);
   const current = useRef<StudyDay | null>(null);
   const writing = useRef(0);
+  /** Changes made so far: a load that started before the latest one is older than the screen. */
+  const edits = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
 
   const load = useCallback(() => {
+    const asOf = edits.current;
     client.studyDay(date).then(
       (d) => {
-        if (writing.current > 0) return;
+        if (writing.current > 0 || edits.current !== asOf) return;
         current.current = d;
         setDay(d);
       },
@@ -48,6 +51,7 @@ function useStudyDay(date: string) {
     current.current = next;
     setDay(next);
     setError(null);
+    edits.current++;
     writing.current++;
     queue.current = queue.current
       .then(() => client.saveStudyDay(date, { memos: next.memos, todos: next.todos }))
@@ -57,9 +61,6 @@ function useStudyDay(date: string) {
 
   return { day, error, update };
 }
-
-/** Enter outside of an IME composition (Korean input commits its syllable with the same Enter). */
-const isSubmit = (e: KeyboardEvent<HTMLInputElement>) => e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229;
 
 /** 달력: one day of the Study, the month around it, and the day's Memo, TODO and Artifacts. */
 export function DayPage({ tabId, date }: { tabId: string; date: string }) {

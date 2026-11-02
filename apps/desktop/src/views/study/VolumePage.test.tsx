@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderWithStores, studyCard, studyVolume, type FakeStudyRoom } from "@/test/fakes";
 import { SAVE_DELAY_MS, VolumePage } from "./VolumePage";
@@ -86,6 +86,19 @@ describe("a draft volume", () => {
     expect(lastSave(client)?.[2]).toMatchObject({ cards: [{ id: "q" }], edges: [] });
   });
 
+  it("stops edits while a publish is under way, so none lands on the frozen volume", async () => {
+    const r = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(false)] });
+    const real = r.client.publishStudyRoom.getMockImplementation()!;
+    let release = () => {};
+    r.client.publishStudyRoom.mockImplementationOnce((id: string) => new Promise((res) => (release = () => res(real(id)))));
+    fireEvent.click(await screen.findByRole("button", { name: "발행" }));
+    fireEvent.click(screen.getByRole("button", { name: "발행하기" }));
+    await waitFor(() => expect(r.client.publishStudyRoom).toHaveBeenCalled());
+    expect(screen.getByRole("textbox", { name: "질문" })).toHaveAttribute("readonly");
+    expect(within(screen.getByTestId("ink-card")).getByRole("textbox", { name: "카드" })).toHaveAttribute("contenteditable", "false");
+    release();
+  });
+
   it("adds a card from the bar and publishes after an inline confirm", async () => {
     const r = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(false)] });
     fireEvent.click(await screen.findByRole("button", { name: "+ ?" }));
@@ -98,6 +111,28 @@ describe("a draft volume", () => {
     expect(r.state.studyRooms[0].volumes[0]).toMatchObject({ status: "published" });
     expect(r.state.studyRooms[0].volumes[0].cards).toHaveLength(3);
     await waitFor(() => expect(r.viewer.getState().tabs.find((t) => t.id === r.viewer.getState().activeId)).toMatchObject({ kind: "study", page: "volume", number: 2 }));
+  });
+});
+
+describe("a draft another writer changes", () => {
+  it("keeps an untouched card's markdown byte for byte when another card is saved", async () => {
+    const r = room(false);
+    r.volumes[0].cards[0].body = "* 하나\n* 둘\n\n| a | b |\n|---|---|\n| 1 | 2 |";
+    const { client } = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [r] });
+    fireEvent.change(await screen.findByRole("textbox", { name: "질문" }), { target: { value: "다른 질문" } });
+    await waitFor(() => expect(client.saveStudyVolume).toHaveBeenCalled(), { timeout: SAVE_DELAY_MS + 1000 });
+    expect((lastSave(client)?.[2] as { cards: { body: string }[] }).cards[0].body).toBe("* 하나\n* 둘\n\n| a | b |\n|---|---|\n| 1 | 2 |");
+  });
+
+  it("shows what roomsd now holds after study.changed, when no edit of ours is pending", async () => {
+    const { state, emit, client } = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(false)] });
+    await screen.findByTestId("ink-card");
+    state.studyRooms[0].volumes[0] = { ...state.studyRooms[0].volumes[0], cards: [studyCard("a", { body: "# 바뀐 제목" }), studyCard("q", { kind: "question", body: "새 질문" })] };
+    await act(async () => emit({ type: "study.changed", roomId: "s000000101" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "질문" })).toHaveValue("새 질문"));
+    await waitFor(() => expect(within(screen.getByTestId("ink-card")).getByRole("heading", { level: 1, name: "바뀐 제목" })).toBeInTheDocument());
+    await new Promise((res) => setTimeout(res, SAVE_DELAY_MS + 100));
+    expect(client.saveStudyVolume).not.toHaveBeenCalled();
   });
 });
 

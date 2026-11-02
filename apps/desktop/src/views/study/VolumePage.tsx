@@ -23,7 +23,7 @@ import "@xyflow/react/dist/base.css";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
-import { useClient, useReadOnly, useStudy, useStudyStore, useViewerStore } from "@/data/hooks";
+import { useClient, useReadOnly, useRoomsStore, useStudy, useStudyStore, useViewerStore } from "@/data/hooks";
 import { errorCopy } from "@/lib/errors";
 import { dottedDate, newId, versionOf } from "./study";
 import { useStudyGo } from "./StudyNav";
@@ -41,6 +41,8 @@ type Canvas = {
   /** The card just added, which takes the caret. */
   fresh: string | null;
   changed: () => void;
+  /** An ink card was typed in: from now on its body is read from its editor. */
+  edited: (id: string) => void;
   /** An ink card's live body, read at save time; null when the card unmounts. */
   register: (id: string, read: (() => string) | null) => void;
   setBody: (id: string, body: string) => void;
@@ -89,9 +91,9 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
   const store = useStudyStore();
   const viewer = useViewerStore();
   const go = useStudyGo();
+  const rooms = useRoomsStore();
   const appReadOnly = useReadOnly();
   const room = useStudy().rooms?.find((r) => r.id === roomId);
-  const readOnly = volume.status === "published" || appReadOnly;
   const flow = useReactFlow();
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<CardNode>(volume.cards.map(toNode));
@@ -101,11 +103,17 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const frozen = volume.status === "published" || appReadOnly;
+  // Nothing changes while a publish is under way: an edit then would land on the frozen volume.
+  const readOnly = frozen || publishing;
 
   // The save reads the latest of everything, whenever it fires.
   const latest = useRef({ nodes, edges, title });
   latest.current = { nodes, edges, title };
   const readers = useRef(new Map<string, () => string>());
+  /** Ink cards typed in. The others keep their stored markdown byte for byte (TipTap would normalize it, and drop what it can't show). */
+  const dirty = useRef(new Set<string>());
+  const inflight = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -117,7 +125,7 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
       x: Math.round(n.position.x),
       y: Math.round(n.position.y),
       width: Math.round(n.width ?? WIDTH[n.type ?? "ink"]),
-      body: readers.current.get(n.id)?.() ?? n.data.body,
+      body: (dirty.current.has(n.id) ? readers.current.get(n.id)?.() : undefined) ?? n.data.body,
     }));
     const ids = new Set(cards.map((c) => c.id));
     // An edge never outlives either of its cards, whatever order React Flow reported the removals in.
@@ -132,22 +140,26 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
     const json = JSON.stringify(body);
     if (json === (saved.current ??= JSON.stringify(volumeBody(volume)))) return queue.current;
     saved.current = json;
+    inflight.current++;
     queue.current = queue.current
       .then(() => client.saveStudyVolume(roomId, volume.number, body))
       .then(
         () => setError(null),
         (e: unknown) => {
-          saved.current = "";
+          // Unknown on disk now, unless a later save has taken over.
+          if (saved.current === json) saved.current = "";
           setError(errorCopy(e));
         },
-      );
+      )
+      .finally(() => inflight.current--);
     return queue.current;
   }, [client, payload, roomId, volume]);
 
   /** Saves a pending change now; resolves once every save so far has landed. */
   const flush = useCallback((): Promise<unknown> => {
-    if (timer.current === null) return queue.current;
-    clearTimeout(timer.current);
+    // A failed save is tried again too, so leaving never drops it silently.
+    if (timer.current === null && saved.current !== "") return queue.current;
+    if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
     return save();
   }, [save]);
@@ -160,6 +172,29 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
       void save();
     }, SAVE_DELAY_MS);
   }, [readOnly, save]);
+
+  // Someone else wrote this draft (an agent, another window): show theirs, unless an edit of ours is
+  // still on its way, in which case ours lands last and wins.
+  useEffect(() => {
+    if (frozen) return;
+    return rooms.onSignal((type, e) => {
+      if (type !== "resync" && !(e.type === "study.changed" && e.roomId === roomId)) return;
+      const busy = () => timer.current !== null || inflight.current > 0;
+      if (busy()) return;
+      client.studyVolume(roomId, volume.number).then(
+        (v) => {
+          const json = JSON.stringify(volumeBody(v));
+          if (busy() || v.status !== "draft" || json === (saved.current ?? JSON.stringify(volumeBody(volume)))) return;
+          saved.current = json;
+          dirty.current.clear();
+          setNodes(v.cards.map(toNode));
+          setEdges(v.edges.map(toEdge));
+          setTitle(v.title);
+        },
+        (err: unknown) => console.warn("rooms: could not reload the volume", err),
+      );
+    });
+  }, [frozen, rooms, client, roomId, volume, setNodes, setEdges]);
 
   // Leaving the tab or the window saves what is pending at once.
   useEffect(() => {
@@ -234,6 +269,10 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
       readOnly,
       fresh,
       changed,
+      edited: (id) => {
+        dirty.current.add(id);
+        changed();
+      },
       register: (id, read) => {
         if (read) readers.current.set(id, read);
         else readers.current.delete(id);
@@ -276,7 +315,7 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
           ) : null}
           {volume.status === "published" ? (
             <span className="st-date">{dottedDate(volume.publishedAt)}</span>
-          ) : readOnly ? null : confirming ? (
+          ) : frozen ? null : confirming ? (
             <>
               <span>{version}을 발행하면 고칠 수 없어요</span>
               <button type="button" onClick={() => setConfirming(false)} disabled={publishing}>
@@ -352,7 +391,9 @@ function useFocusWhenShown(id: string, focusNow: () => void) {
 
 /** An ink card: markdown typed in place. The frame drags the card; the text inside never does. */
 function InkCard({ id, data, width }: NodeProps<CardNode>) {
-  const { readOnly, changed, register } = useCanvas();
+  const { readOnly, edited, register } = useCanvas();
+  const onEdit = useRef(edited);
+  onEdit.current = edited;
   const editor = useEditor({
     extensions: [StarterKit, Markdown],
     content: data.body,
@@ -361,7 +402,7 @@ function InkCard({ id, data, width }: NodeProps<CardNode>) {
     editable: !readOnly,
     shouldRerenderOnTransaction: false,
     editorProps: { attributes: { class: "nodrag nowheel nopan nokey", "aria-label": "카드" } },
-    onUpdate: changed,
+    onUpdate: () => onEdit.current(id),
   });
   useEffect(() => {
     // The empty paragraph TipTap keeps after the last block is not part of what was written.
@@ -369,6 +410,15 @@ function InkCard({ id, data, width }: NodeProps<CardNode>) {
     return () => register(id, null);
   }, [editor, id, register]);
   useEffect(() => editor.setEditable(!readOnly, false), [editor, readOnly]);
+  // A body replaced from outside (the volume reloaded) goes into the editor; typing never changes data.body.
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    editor.commands.setContent(data.body, { contentType: "markdown", emitUpdate: false });
+  }, [editor, data.body]);
   useFocusWhenShown(id, () => !editor.isDestroyed && editor.commands.focus("end"));
   return (
     <div className="st-card" style={{ width }} data-testid="ink-card">

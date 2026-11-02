@@ -18,9 +18,10 @@ const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isCon
 
 /** 방: a study room's volumes as covers on an arc, the focused one large, and what it links to in Rooms. */
 export function RoomPage({ roomId }: { roomId: string }) {
-  const { rooms } = useStudy();
+  const { rooms, failed } = useStudy();
   const room = rooms?.find((r) => r.id === roomId);
   const go = useStudyGo();
+  const missing = rooms ? "없는 방이에요" : failed ? "서재를 불러오지 못했어요" : null;
 
   return (
     // Relative, with room at the bottom, for the ask bar the room will get.
@@ -29,7 +30,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
         ← 서재
       </button>
       <Axes on="library" />
-      {room ? <Volumes key={room.id} room={room} /> : rooms ? <p className="st-lede st-sub">없는 방이에요</p> : null}
+      {room ? <Volumes key={room.id} room={room} /> : missing ? <p className="st-lede st-sub">{missing}</p> : null}
       {room ? <Links room={room} /> : null}
     </div>
   );
@@ -165,14 +166,19 @@ function Links({ room }: { room: StudyRoomSummary }) {
   const artifacts = useLinkedArtifacts(room.links.flatMap((l) => (l.kind === "artifact" ? [l.fileKey] : [])));
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Each change replaces the whole list, built from the one shown: one at a time, so none undoes another.
+  const [saving, setSaving] = useState(false);
 
   const save = async (links: StudyLink[]) => {
     setError(null);
+    setSaving(true);
     try {
       await client.updateStudyRoom(room.id, { name: room.name, links });
       await store.refresh();
     } catch (e) {
       setError(errorCopy(e));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -197,7 +203,7 @@ function Links({ room }: { room: StudyRoomSummary }) {
           <span>{label}</span>
         </button>
         {readOnly ? null : (
-          <button type="button" className="st-x" aria-label={`${label} 연결 끊기`} onClick={() => void save(room.links.filter((x) => linkKey(x) !== linkKey(l)))}>
+          <button type="button" className="st-x" aria-label={`${label} 연결 끊기`} disabled={saving} onClick={() => void save(room.links.filter((x) => linkKey(x) !== linkKey(l)))}>
             <X size={13} strokeWidth={1.5} aria-hidden />
           </button>
         )}
@@ -215,7 +221,7 @@ function Links({ room }: { room: StudyRoomSummary }) {
       {readOnly ? null : (
         <Popover open={picking} onOpenChange={setPicking}>
           <PopoverTrigger asChild>
-            <button type="button" className="st-connect">
+            <button type="button" className="st-connect" disabled={saving}>
               연결
             </button>
           </PopoverTrigger>

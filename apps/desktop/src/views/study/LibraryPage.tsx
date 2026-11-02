@@ -2,7 +2,7 @@ import { useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type
 import type { StudyRoomSummary, StudyVolumeSummary } from "@alto-rooms/protocol-ts";
 import { useClient, useReadOnly, useStudy, useStudyStore } from "@/data/hooks";
 import { errorCopy } from "@/lib/errors";
-import { clothOf, latestVolume, versionOf } from "./study";
+import { clothOf, isSubmit, latestVolume, versionOf } from "./study";
 import { Axes, useStudyGo } from "./StudyNav";
 
 /** Books a board holds: the newest published ones, then the draft. */
@@ -180,9 +180,8 @@ function NewBoard({ onHover }: { onHover: (on: boolean) => void }) {
     }
   };
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return;
-    if (e.key === "Enter") void create();
-    if (e.key === "Escape") close();
+    if (isSubmit(e)) void create();
+    else if (e.key === "Escape") close();
   };
 
   return (

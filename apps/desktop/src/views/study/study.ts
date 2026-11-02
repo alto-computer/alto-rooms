@@ -1,4 +1,11 @@
+import type { KeyboardEvent } from "react";
 import type { StudyRoomSummary, StudyVolumeSummary } from "@alto-rooms/protocol-ts";
+
+/**
+ * Enter outside of an IME composition. Korean input commits its syllable with the same Enter; WebKit
+ * reports that one with isComposing false but keyCode 229.
+ */
+export const isSubmit = (e: KeyboardEvent<HTMLInputElement>): boolean => e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229;
 
 /** How a volume is named on screen: `v0.3` for volume 3. */
 export const versionOf = (n: number): string => `0.${n}`;
