@@ -20,8 +20,9 @@ const QuickFind = lazy(() => import("@/views/QuickFind").then((m) => ({ default:
 
 const SIDEBAR_STYLE = { "--sidebar-width": "248px" } as CSSProperties;
 
-/** Tab kinds with an ask bar for ⌘J to toggle. */
+/** Tab kinds with an ask bar for ⌘J to toggle (in the Study, only the calendar has one yet). */
 const ASKABLE = new Set<Tab["kind"]>(["artifact", "session", "room", "journal"]);
+const askable = (tab: Tab | undefined) => !!tab && (ASKABLE.has(tab.kind) || (tab.kind === "study" && tab.page === "day"));
 
 export function AppShell() {
   const { tabs, activeId, sidebarOpen } = useViewer();
@@ -35,10 +36,10 @@ export function AppShell() {
   const asks = useAsksStore();
   const readOnly = useReadOnly();
   const active = tabs.find((t) => t.id === activeId);
-  const activeKind = active?.kind;
+  const canAsk = askable(active);
   const toggleAsk = useCallback(() => {
-    if (activeKind && ASKABLE.has(activeKind) && !readOnly) asks.toggle();
-  }, [activeKind, readOnly, asks]);
+    if (canAsk && !readOnly) asks.toggle();
+  }, [canAsk, readOnly, asks]);
   useShellKeys(viewer, openFind, toggleAsk);
   const mounted = useMountedTabs(tabs, active);
 

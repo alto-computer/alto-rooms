@@ -1,10 +1,11 @@
 import type { SessionRef } from "@alto-rooms/protocol-ts";
-import { useArtifacts, useInfo, usePlugins, useRoomList } from "@/data/hooks";
+import { useArtifacts, useInfo, usePlugins, useRoomList, useStudy } from "@/data/hooks";
 import { useSession } from "@/data/useSession";
-import type { Tab } from "@/data/viewerStore";
+import type { StudyPage, Tab } from "@/data/viewerStore";
 import { sessionTitle } from "@/lib/sessions";
 import { monthDay } from "@/lib/dates";
 import { noteBase } from "@/lib/notes";
+import { shortDate, versionOf } from "@/views/study/study";
 
 /** Before the first sync we can't tell yet. */
 const PENDING = "…";
@@ -47,7 +48,29 @@ export function TabLabel({ tab }: { tab: Tab }) {
       return <SessionLabel agent={tab.agent} id={tab.sessionId} />;
     case "settings":
       return <>Settings</>;
+    case "study":
+      return <StudyLabel page={tab} />;
   }
+}
+
+function StudyLabel({ page }: { page: StudyPage }) {
+  switch (page.page) {
+    case "library":
+      return <>서재</>;
+    case "day":
+      return <>{`달력 · ${shortDate(page.date)}`}</>;
+    case "room":
+      return <StudyRoomName roomId={page.roomId}>{(name) => `서재 · ${name}`}</StudyRoomName>;
+    case "volume":
+      return <StudyRoomName roomId={page.roomId}>{(name) => `${name} v${versionOf(page.number)}`}</StudyRoomName>;
+  }
+}
+
+function StudyRoomName({ roomId, children }: { roomId: string; children: (name: string) => string }) {
+  const { rooms } = useStudy();
+  if (!rooms) return <>{PENDING}</>;
+  const name = rooms.find((r) => r.id === roomId)?.name;
+  return <>{name === undefined ? GONE_ROOM : children(name)}</>;
 }
 
 function SessionLabel(sessionRef: SessionRef) {

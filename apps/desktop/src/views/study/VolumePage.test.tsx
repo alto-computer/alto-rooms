@@ -1,0 +1,121 @@
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { renderWithStores, studyCard, studyVolume, type FakeStudyRoom } from "@/test/fakes";
+import { SAVE_DELAY_MS, VolumePage } from "./VolumePage";
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+// React Flow measures nodes before it shows them; jsdom has no layout, so every element is 100×40.
+beforeAll(() => {
+  window.ResizeObserver = class {
+    constructor(private cb: ResizeObserverCallback) {}
+    observe(target: Element) {
+      this.cb([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver);
+    }
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+  (globalThis as unknown as { DOMMatrixReadOnly: unknown }).DOMMatrixReadOnly = class {
+    m22 = 1;
+  };
+  Object.defineProperties(HTMLElement.prototype, {
+    offsetWidth: { configurable: true, get: () => 100 },
+    offsetHeight: { configurable: true, get: () => 40 },
+  });
+});
+
+const room = (published: boolean): FakeStudyRoom => ({
+  id: "s000000101",
+  name: "어텐션",
+  createdAt: "2026-10-01T00:00:00Z",
+  links: [],
+  volumes: [
+    studyVolume(1, {
+      title: "병목",
+      ...(published ? { publishedAt: "2026-10-12T00:00:00Z" } : {}),
+      cards: [studyCard("a", { body: "# 제목\n\n본문" }), studyCard("q", { kind: "question", x: 400, body: "왜 하나일까" })],
+      edges: [{ id: "e1", source: "a", target: "q" }],
+    }),
+    ...(published ? [studyVolume(2)] : []),
+  ],
+});
+
+const lastSave = (client: { saveStudyVolume: unknown }) => vi.mocked(client.saveStudyVolume as (...a: unknown[]) => unknown).mock.calls.at(-1);
+
+describe("a draft volume", () => {
+  it("renders an ink card's markdown and saves an edit as the whole volume", async () => {
+    const { client } = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(false)] });
+    const ink = await screen.findByTestId("ink-card");
+    expect(within(ink).getByRole("heading", { level: 1, name: "제목" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "질문" }), { target: { value: "왜 둘이 아닐까" } });
+    expect(client.saveStudyVolume).not.toHaveBeenCalled();
+    await waitFor(() => expect(client.saveStudyVolume).toHaveBeenCalledTimes(1), { timeout: SAVE_DELAY_MS + 1000 });
+    expect(lastSave(client)).toEqual([
+      "s000000101",
+      1,
+      {
+        title: "병목",
+        cards: [
+          { id: "a", kind: "ink", x: 0, y: 0, width: 280, body: "# 제목\n\n본문" },
+          { id: "q", kind: "question", x: 400, y: 0, width: 280, body: "왜 둘이 아닐까" },
+        ],
+        edges: [{ id: "e1", source: "a", target: "q" }],
+      },
+    ]);
+  });
+
+  it("keeps a card when Backspace or Delete is typed inside it; on the selected card itself they delete it and its lines in one save", async () => {
+    const { client } = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(false)] });
+    const ink = await screen.findByTestId("ink-card");
+    fireEvent.click(ink);
+    await waitFor(() => expect(ink.closest(".react-flow__node")).toHaveClass("selected"));
+    const editor = within(ink).getByRole("textbox", { name: "카드" });
+    fireEvent.keyDown(editor, { key: "Backspace" });
+    fireEvent.keyDown(editor, { key: "Delete" });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "질문" }), { key: "Backspace" });
+    await new Promise((r) => setTimeout(r, SAVE_DELAY_MS + 100));
+    expect(screen.getByTestId("ink-card")).toBeInTheDocument();
+    expect(client.saveStudyVolume).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document.body, { key: "Backspace" });
+    await waitFor(() => expect(screen.queryByTestId("ink-card")).toBeNull());
+    await waitFor(() => expect(client.saveStudyVolume).toHaveBeenCalled(), { timeout: SAVE_DELAY_MS + 1000 });
+    expect(lastSave(client)?.[2]).toMatchObject({ cards: [{ id: "q" }], edges: [] });
+  });
+
+  it("adds a card from the bar and publishes after an inline confirm", async () => {
+    const r = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(false)] });
+    fireEvent.click(await screen.findByRole("button", { name: "+ ?" }));
+    expect(await screen.findAllByTestId("question-card")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "발행" }));
+    expect(r.client.publishStudyRoom).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "발행하기" }));
+    await waitFor(() => expect(r.client.publishStudyRoom).toHaveBeenCalledWith("s000000101"));
+    // The pending edit landed before the publish froze the volume.
+    expect(r.state.studyRooms[0].volumes[0]).toMatchObject({ status: "published" });
+    expect(r.state.studyRooms[0].volumes[0].cards).toHaveLength(3);
+    await waitFor(() => expect(r.viewer.getState().tabs.find((t) => t.id === r.viewer.getState().activeId)).toMatchObject({ kind: "study", page: "volume", number: 2 }));
+  });
+});
+
+describe("a published volume", () => {
+  it("only reads: no editing, adding, deleting or publishing, and nothing is saved", async () => {
+    const { client, container } = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(true)] });
+    const ink = await screen.findByTestId("ink-card");
+    await waitFor(() => expect(within(ink).getByRole("textbox", { name: "카드" })).toHaveAttribute("contenteditable", "false"));
+    expect(screen.getByRole("textbox", { name: "질문" })).toHaveAttribute("readonly");
+    expect(screen.getByRole("textbox", { name: "부제" })).toHaveAttribute("readonly");
+    for (const name of ["+ 카드", "+ ?", "발행"]) expect(screen.queryByRole("button", { name })).toBeNull();
+    expect(ink.closest(".react-flow__node")).not.toHaveClass("draggable");
+
+    fireEvent.click(ink);
+    fireEvent.keyDown(document.body, { key: "Backspace" });
+    fireEvent.doubleClick(container.querySelector(".react-flow__pane")!);
+    await new Promise((r) => setTimeout(r, SAVE_DELAY_MS + 100));
+    expect(screen.getAllByTestId("ink-card")).toHaveLength(1);
+    expect(client.saveStudyVolume).not.toHaveBeenCalled();
+  });
+});
