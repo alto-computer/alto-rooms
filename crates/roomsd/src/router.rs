@@ -2,9 +2,14 @@
 use crate::{guard, routes, sse, AppState};
 use axum::http::{header, HeaderName, HeaderValue, Method};
 use axum::routing::{get, patch, post, put};
+use axum::extract::DefaultBodyLimit;
 use axum::Router;
+use rooms_core::study;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
+
+/// A study room's name and links.
+const STUDY_ROOM_BODY: usize = 256 * 1024;
 
 pub fn build_api_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
@@ -29,6 +34,16 @@ pub fn build_api_router(state: AppState) -> Router {
         .route("/v1/journal/{date}", get(routes::journal_day))
         .route("/v1/journal/{date}/notes/{name}", get(routes::get_note).put(routes::put_note))
         .route("/v1/journal/{date}/notes/{name}/rename", post(routes::rename_note))
+        .route("/v1/study", get(routes::study_index))
+        .route("/v1/study/rooms", post(routes::create_study_room).layer(DefaultBodyLimit::max(STUDY_ROOM_BODY)))
+        .route("/v1/study/rooms/{room_id}", put(routes::update_study_room).layer(DefaultBodyLimit::max(STUDY_ROOM_BODY)))
+        .route(
+            "/v1/study/rooms/{room_id}/volumes/{number}",
+            // Twice the stored cap: a body that could still fit reaches the handler, which answers 413 `too_large`.
+            get(routes::study_volume).put(routes::save_study_volume).layer(DefaultBodyLimit::max(2 * study::MAX_VOLUME_BYTES)),
+        )
+        .route("/v1/study/rooms/{room_id}/publish", post(routes::publish_study_room))
+        .route("/v1/study/days/{date}", get(routes::study_day).put(routes::save_study_day).layer(DefaultBodyLimit::max(2 * study::MAX_DAY_BYTES)))
         .route("/v1/artifacts/move", post(routes::move_artifact))
         .route("/v1/artifacts/by-file-key/{key}", get(routes::artifact_by_file_key))
         .route("/v1/asks", get(routes::ask_thread).post(routes::start_ask))

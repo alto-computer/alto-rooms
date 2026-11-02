@@ -304,6 +304,50 @@ pub async fn file(State(st): State<AppState>, Path((room_id, rel)): Path<(String
     Ok(res)
 }
 
+// ---- study ----
+
+pub async fn study_index(State(st): State<AppState>) -> Result<Response, ApiErr> {
+    snapshot(&st, |c| c.study_index()).await
+}
+
+pub async fn create_study_room(State(st): State<AppState>, b: Result<Json<CreateStudyRoom>, JsonRejection>) -> Result<Json<StudyRoomSummary>, ApiErr> {
+    let Json(b) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
+    Ok(Json(blocking(&st, move |c| c.create_study_room(&b.name)).await?))
+}
+
+pub async fn update_study_room(State(st): State<AppState>, Path(room_id): Path<String>, b: Result<Json<UpdateStudyRoom>, JsonRejection>) -> Result<Json<StudyRoomSummary>, ApiErr> {
+    let Json(b) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
+    Ok(Json(blocking(&st, move |c| c.update_study_room(&room_id, b)).await?))
+}
+
+fn volume_number(n: &str) -> Result<u32, CoreError> {
+    n.parse().map_err(|_| CoreError::InvalidInput("volume number".into()))
+}
+
+pub async fn study_volume(State(st): State<AppState>, Path((room_id, n)): Path<(String, String)>) -> Result<Response, ApiErr> {
+    let n = volume_number(&n)?;
+    snapshot(&st, move |c| c.study_volume(&room_id, n)).await
+}
+
+pub async fn save_study_volume(State(st): State<AppState>, Path((room_id, n)): Path<(String, String)>, b: Result<Json<SaveStudyVolume>, JsonRejection>) -> Result<Json<StudyVolume>, ApiErr> {
+    let n = volume_number(&n)?;
+    let Json(b) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
+    Ok(Json(blocking(&st, move |c| c.save_study_volume(&room_id, n, b)).await?))
+}
+
+pub async fn publish_study_room(State(st): State<AppState>, Path(room_id): Path<String>) -> Result<Json<StudyRoomSummary>, ApiErr> {
+    Ok(Json(blocking(&st, move |c| c.publish_study_room(&room_id)).await?))
+}
+
+pub async fn study_day(State(st): State<AppState>, Path(date): Path<String>) -> Result<Response, ApiErr> {
+    snapshot(&st, move |c| c.study_day(&date)).await
+}
+
+pub async fn save_study_day(State(st): State<AppState>, Path(date): Path<String>, b: Result<Json<SaveStudyDay>, JsonRejection>) -> Result<Json<StudyDay>, ApiErr> {
+    let Json(b) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
+    Ok(Json(blocking(&st, move |c| c.save_study_day(&date, b)).await?))
+}
+
 // ---- plugins ----
 
 pub async fn list_tools(State(st): State<AppState>) -> Result<Json<Vec<ToolInfo>>, ApiErr> {

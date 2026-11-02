@@ -1310,3 +1310,104 @@ async fn ask_images_upload_then_serve_from_the_files_origin() {
         assert_eq!(files.clone().oneshot(get(bad, FILES_HOST)).await.unwrap().status(), StatusCode::NOT_FOUND, "{bad}");
     }
 }
+
+async fn respond(app: &axum::Router, r: Request<Body>) -> (StatusCode, serde_json::Value) {
+    let res = app.clone().oneshot(r).await.unwrap();
+    let status = res.status();
+    (status, body_json(res).await)
+}
+
+#[tokio::test]
+async fn study_rooms_volumes_and_days_through_the_router() {
+    let (d, app, st) = app(false, "127.0.0.1:5000");
+    let mut rx = st.core.subscribe();
+    let r = app.clone().oneshot(get("/v1/study", API_HOST)).await.unwrap();
+    assert!(r.headers().get("x-rooms-seq").is_some());
+    assert_eq!(body_json(r).await, serde_json::json!({"rooms": []}));
+
+    let (status, room) = respond(&app, send("POST", "/v1/study/rooms", r#"{"name":"판의 이해"}"#, Some("t0k"))).await;
+    assert_eq!(status, StatusCode::OK, "{room}");
+    let id = room["id"].as_str().unwrap().to_string();
+    assert_eq!((&room["name"], &room["links"], &room["volumes"][0]["number"], &room["volumes"][0]["status"]),
+        (&serde_json::json!("판의 이해"), &serde_json::json!([]), &serde_json::json!(1), &serde_json::json!("draft")));
+    assert!(d.path().join(".rooms/study/rooms").join(&id).join("volumes/1.json").is_file());
+
+    let vol = format!("/v1/study/rooms/{id}/volumes/1");
+    let body = r##"{"title":"첫 판","cards":[{"id":"c1","kind":"ink","x":0,"y":0,"width":280,"body":"# 제목"},{"id":"c2","kind":"question","x":300,"y":0,"width":200,"body":"왜?"}],"edges":[{"id":"e1","source":"c1","target":"c2"}]}"##;
+    let (status, saved) = respond(&app, send("PUT", &vol, body, Some("t0k"))).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (status, got) = respond(&app, get(&vol, API_HOST)).await;
+    assert_eq!((status, &got), (StatusCode::OK, &saved));
+    assert_eq!(got["cards"][0]["body"], "# 제목");
+
+    let (status, published) = respond(&app, send("POST", &format!("/v1/study/rooms/{id}/publish"), "", Some("t0k"))).await;
+    assert_eq!(status, StatusCode::OK, "{published}");
+    let vols = published["volumes"].as_array().unwrap();
+    assert_eq!((vols.len(), &vols[0]["status"], &vols[1]["status"]), (2, &serde_json::json!("published"), &serde_json::json!("draft")));
+    assert!(vols[0]["publishedAt"].is_string());
+    let (_, v2) = respond(&app, get(&format!("/v1/study/rooms/{id}/volumes/2"), API_HOST)).await;
+    assert_eq!((&v2["title"], &v2["cards"], &v2["edges"]), (&serde_json::json!(""), &saved["cards"], &saved["edges"]));
+    let (status, e) = respond(&app, send("PUT", &vol, body, Some("t0k"))).await;
+    assert_eq!((status, &e["error"]), (StatusCode::CONFLICT, &serde_json::json!("volume_published")));
+
+    let links = r#"{"name":"판","links":[{"kind":"room","roomId":"inbox"},{"kind":"artifact","fileKey":"0123456789abcdef"}]}"#;
+    let (status, updated) = respond(&app, send("PUT", &format!("/v1/study/rooms/{id}"), links, Some("t0k"))).await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(updated["links"][1], serde_json::json!({"kind": "artifact", "fileKey": "0123456789abcdef"}));
+
+    let (status, empty) = respond(&app, get("/v1/study/days/2026-11-03", API_HOST)).await;
+    assert_eq!((status, empty), (StatusCode::OK, serde_json::json!({"date": "2026-11-03", "memos": [], "todos": []})));
+    let day = r#"{"memos":[{"id":"m1","text":"궁금한 것","at":"2026-11-03T09:00:00+09:00"}],"todos":[{"id":"t1","text":"발행","done":false,"at":"2026-11-03T09:00:00+09:00"}]}"#;
+    let (status, saved_day) = respond(&app, send("PUT", "/v1/study/days/2026-11-03", day, Some("t0k"))).await;
+    assert_eq!(status, StatusCode::OK, "{saved_day}");
+    assert_eq!(respond(&app, get("/v1/study/days/2026-11-03", API_HOST)).await.1, saved_day);
+
+    let (_, index) = respond(&app, get("/v1/study", API_HOST)).await;
+    assert_eq!(index["rooms"], serde_json::json!([updated]));
+    let events: Vec<serde_json::Value> = std::iter::from_fn(|| rx.try_recv().ok()).map(|e| serde_json::to_value(e).unwrap()).filter(|e| e["type"] == "study.changed").map(|e| e["roomId"].clone()).collect();
+    let room_id = serde_json::json!(id);
+    assert_eq!(events, vec![room_id.clone(), room_id.clone(), room_id.clone(), room_id, serde_json::Value::Null], "create, save, publish, update, day");
+}
+
+#[tokio::test]
+async fn study_writes_go_through_the_write_guard() {
+    let (d, router, st) = app(false, "127.0.0.1:5000");
+    let room = st.core.create_study_room("r").unwrap();
+    let id = room.id;
+    let save = r#"{"title":"x","cards":[],"edges":[]}"#;
+    let writes = [
+        ("POST", "/v1/study/rooms".to_string(), r#"{"name":"b"}"#),
+        ("PUT", format!("/v1/study/rooms/{id}"), r#"{"name":"b","links":[]}"#),
+        ("PUT", format!("/v1/study/rooms/{id}/volumes/1"), save),
+        ("POST", format!("/v1/study/rooms/{id}/publish"), ""),
+        ("PUT", "/v1/study/days/2026-11-03".to_string(), r#"{"memos":[],"todos":[]}"#),
+    ];
+    for (method, uri, body) in &writes {
+        for token in [None, Some("nope")] {
+            let (status, e) = respond(&router, send(method, uri, body, token)).await;
+            assert_eq!((status, &e["error"]), (StatusCode::FORBIDDEN, &serde_json::json!("read_only")), "{method} {uri} {token:?}");
+        }
+        let mut foreign = send(method, uri, body, Some("t0k"));
+        foreign.headers_mut().insert("origin", "https://evil.example".parse().unwrap());
+        assert_eq!(router.clone().oneshot(foreign).await.unwrap().status(), StatusCode::FORBIDDEN, "{method} {uri} from a foreign origin");
+    }
+    assert_eq!(st.core.study_index().unwrap().rooms.len(), 1);
+    assert_eq!((st.core.study_volume(&id, 1).unwrap().title.as_str(), st.core.study_index().unwrap().rooms[0].volumes.len()), ("", 1));
+    assert!(!d.path().join(".rooms/study/days").exists());
+
+    let (_d2, remote, st2) = app(true, "100.64.1.2:5000");
+    let other = st2.core.create_study_room("r").unwrap().id;
+    let (status, _) = respond(&remote, send("PUT", &format!("/v1/study/rooms/{other}/volumes/1"), save, Some("t0k"))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "a read-only daemon takes no study writes");
+    assert_eq!(remote.clone().oneshot(get("/v1/study", "100.64.1.1:4317")).await.unwrap().status(), StatusCode::OK, "but serves reads");
+}
+
+#[tokio::test]
+async fn a_study_volume_body_over_the_cap_is_a_json_413() {
+    let (_d, app, st) = app(false, "127.0.0.1:5000");
+    let id = st.core.create_study_room("r").unwrap().id;
+    let body = format!(r#"{{"title":"","cards":[{{"id":"c1","kind":"ink","x":0,"y":0,"width":1,"body":"{}"}}],"edges":[]}}"#, "x".repeat(rooms_core::study::MAX_VOLUME_BYTES + 1));
+    let (status, e) = respond(&app, send("PUT", &format!("/v1/study/rooms/{id}/volumes/1"), &body, Some("t0k"))).await;
+    assert_eq!((status, &e["error"]), (StatusCode::PAYLOAD_TOO_LARGE, &serde_json::json!("too_large")));
+    assert!(st.core.study_volume(&id, 1).unwrap().cards.is_empty());
+}
