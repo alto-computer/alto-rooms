@@ -24,6 +24,10 @@ pub enum CoreError {
     /// The index (SQLite). On the wire it is `write_failed`, as `Io`.
     #[error("write failed: {0}")] Db(#[from] rusqlite::Error),
     #[error("internal error: {0}")] Internal(String),
+    #[error("study room not found")] StudyRoomNotFound,
+    #[error("volume not found")] VolumeNotFound,
+    /// A write to a volume that was published: published volumes never change.
+    #[error("volume is published")] VolumePublished,
 }
 
 impl CoreError {
@@ -43,13 +47,16 @@ impl CoreError {
             CoreError::PathEscape => "path_escape",
             CoreError::WriteFailed(_) | CoreError::Io(_) | CoreError::Db(_) => "write_failed",
             CoreError::Internal(_) => "internal",
+            CoreError::StudyRoomNotFound => "study_room_not_found",
+            CoreError::VolumeNotFound => "volume_not_found",
+            CoreError::VolumePublished => "volume_published",
         }
     }
 
     pub fn status(&self) -> u16 {
         match self {
-            CoreError::RoomExists | CoreError::NoteExists | CoreError::OverlappingRoom => 409,
-            CoreError::RoomNotFound | CoreError::NotFound => 404,
+            CoreError::RoomExists | CoreError::NoteExists | CoreError::OverlappingRoom | CoreError::VolumePublished => 409,
+            CoreError::RoomNotFound | CoreError::NotFound | CoreError::StudyRoomNotFound | CoreError::VolumeNotFound => 404,
             CoreError::TooLarge => 413,
             CoreError::WriteFailed(_) | CoreError::Io(_) | CoreError::Db(_) | CoreError::Internal(_) => 500,
             CoreError::InvalidRoomName | CoreError::InvalidLinkPath(_) | CoreError::InvalidInput(_)

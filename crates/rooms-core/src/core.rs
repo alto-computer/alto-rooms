@@ -2,7 +2,7 @@
 //!
 //! The operations live in sibling modules, each an `impl RoomsCore` block: `rooms` (the room
 //! list), `home_sync` (folders changed in Finder), `scan` (keeping the index in step with disk),
-//! `artifacts`, `journal` and `plugins`.
+//! `artifacts`, `journal`, `plugins` and `study`.
 
 use crate::dangling::DanglingLinks;
 use crate::error::CoreError;
@@ -40,6 +40,9 @@ pub struct RoomsCore {
     /// Serializes `save_note` (tmp write → rename → emit) so NoteSaved order equals file order.
     /// Lock order: notes_lock → `Inner`.
     pub(crate) notes_lock: Arc<Mutex<()>>,
+    /// Serializes every read and write under `.rooms/study/`, so a publish's two files are seen
+    /// together. Lock order: study_lock → `Inner`.
+    pub(crate) study_lock: Arc<Mutex<()>>,
     pub(crate) tx: broadcast::Sender<RoomsEvent>,
     pub(crate) home: PathBuf,
 }
@@ -52,6 +55,7 @@ pub struct WeakRoomsCore {
     seq: Arc<AtomicU64>,
     scan_locks: Arc<Mutex<HashMap<RoomId, Arc<Mutex<()>>>>>,
     notes_lock: Arc<Mutex<()>>,
+    study_lock: Arc<Mutex<()>>,
     tx: broadcast::WeakSender<RoomsEvent>,
     home: PathBuf,
 }
@@ -66,6 +70,7 @@ impl WeakRoomsCore {
             seq: self.seq.clone(),
             scan_locks: self.scan_locks.clone(),
             notes_lock: self.notes_lock.clone(),
+            study_lock: self.study_lock.clone(),
             tx,
             home: self.home.clone(),
         })
@@ -110,6 +115,7 @@ impl RoomsCore {
             seq: Arc::new(AtomicU64::new(0)),
             scan_locks: Arc::new(Mutex::new(HashMap::new())),
             notes_lock: Arc::new(Mutex::new(())),
+            study_lock: Arc::new(Mutex::new(())),
             tx,
             home,
         })
@@ -123,6 +129,7 @@ impl RoomsCore {
             seq: self.seq.clone(),
             scan_locks: self.scan_locks.clone(),
             notes_lock: self.notes_lock.clone(),
+            study_lock: self.study_lock.clone(),
             tx: self.tx.downgrade(),
             home: self.home.clone(),
         }

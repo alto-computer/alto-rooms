@@ -16,6 +16,7 @@ pub mod rules;
 mod scan;
 mod sessions;
 pub mod state;
+pub mod study;
 pub mod tools;
 pub mod walk;
 pub mod watch;
