@@ -13,6 +13,15 @@ import type {
   Room,
   RoomColor,
   RoomsEvent,
+  SaveStudyDay,
+  SaveStudyVolume,
+  StudyCard,
+  StudyDay,
+  StudyEdge,
+  StudyLink,
+  StudyRoomSummary,
+  StudyVolume,
+  UpdateStudyRoom,
 } from "@alto-rooms/protocol-ts";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -55,6 +64,96 @@ export const session = (id: string, extra: Partial<Session> = {}): Session => ({
   ...extra,
 });
 
+/** A Study room as the fake keeps it: `room.json` plus its volume files, oldest first (the last one the draft). */
+export type FakeStudyRoom = { id: string; name: string; createdAt: string; links: StudyLink[]; volumes: StudyVolume[] };
+
+/** A volume; published when `publishedAt` is given, a draft otherwise. */
+export const studyVolume = (
+  number: number,
+  extra: { title?: string; createdAt?: string; publishedAt?: string; cards?: StudyCard[]; edges?: StudyEdge[] } = {},
+): StudyVolume => ({
+  number,
+  title: extra.title ?? "",
+  createdAt: extra.createdAt ?? "2026-11-03T09:00:00+09:00",
+  cards: extra.cards ?? [],
+  edges: extra.edges ?? [],
+  ...(extra.publishedAt === undefined ? { status: "draft" as const } : { status: "published" as const, publishedAt: extra.publishedAt }),
+});
+
+export const studyCard = (id: string, extra: Partial<StudyCard> = {}): StudyCard => ({ id, kind: "ink", x: 0, y: 0, width: 280, body: "", ...extra });
+
+/** roomsd's Study rules, in memory: one draft per room (the last volume), published volumes frozen, empty unsaved days. */
+function fakeStudy(rooms: FakeStudyRoom[], days: Record<string, StudyDay>) {
+  let minted = 0;
+  const notFound = () => new RoomsApiError(404, "study room not found", "study_room_not_found");
+  const find = (id: string) => {
+    const r = rooms.find((x) => x.id === id);
+    if (!r) throw notFound();
+    return r;
+  };
+  const volume = (r: FakeStudyRoom, number: number) => {
+    const v = r.volumes.find((x) => x.number === number);
+    if (!v) throw new RoomsApiError(404, "volume not found", "volume_not_found");
+    return v;
+  };
+  const name = (raw: string) => {
+    const t = raw.trim().normalize("NFC");
+    const n = [...t].length;
+    if (n === 0 || n > 60) throw new RoomsApiError(400, "invalid input: study room name", "invalid_input");
+    return t;
+  };
+  const summary = (r: FakeStudyRoom): StudyRoomSummary => ({
+    id: r.id,
+    name: r.name,
+    createdAt: r.createdAt,
+    links: [...r.links],
+    volumes: r.volumes.map(({ cards: _c, edges: _e, ...head }) => head),
+  });
+  const linkKey = (l: StudyLink) => (l.kind === "room" ? `room:${l.roomId}` : `artifact:${l.fileKey}`);
+  return {
+    studyIndex: vi.fn(async () => ({ rooms: [...rooms].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(summary) })),
+    createStudyRoom: vi.fn(async (raw: string): Promise<StudyRoomSummary> => {
+      const createdAt = new Date().toISOString();
+      const r: FakeStudyRoom = { id: `s${String(++minted).padStart(9, "0")}`, name: name(raw), createdAt, links: [], volumes: [studyVolume(1, { createdAt })] };
+      rooms.push(r);
+      return summary(r);
+    }),
+    updateStudyRoom: vi.fn(async (id: string, update: UpdateStudyRoom): Promise<StudyRoomSummary> => {
+      const r = find(id);
+      r.name = name(update.name);
+      r.links = update.links.filter((l, i) => update.links.findIndex((m) => linkKey(m) === linkKey(l)) === i);
+      return summary(r);
+    }),
+    studyVolume: vi.fn(async (id: string, number: number): Promise<StudyVolume> => structuredClone(volume(find(id), number))),
+    saveStudyVolume: vi.fn(async (id: string, number: number, save: SaveStudyVolume): Promise<StudyVolume> => {
+      const r = find(id);
+      const old = volume(r, number);
+      if (old.status === "published") throw new RoomsApiError(409, "volume is published", "volume_published");
+      const ids = new Set(save.cards.map((c) => c.id));
+      if (!save.edges.every((e) => ids.has(e.source) && ids.has(e.target))) {
+        throw new RoomsApiError(400, "invalid input: an edge joins a card the volume doesn't have", "invalid_input");
+      }
+      const saved: StudyVolume = { ...old, title: save.title, cards: structuredClone(save.cards), edges: structuredClone(save.edges) };
+      r.volumes[r.volumes.indexOf(old)] = saved;
+      return structuredClone(saved);
+    }),
+    publishStudyRoom: vi.fn(async (id: string): Promise<StudyRoomSummary> => {
+      const r = find(id);
+      const top = r.volumes[r.volumes.length - 1];
+      if (!top) throw new RoomsApiError(404, "volume not found", "volume_not_found");
+      const at = new Date().toISOString();
+      if (top.status === "draft") r.volumes[r.volumes.length - 1] = { ...top, status: "published", publishedAt: at };
+      r.volumes.push(studyVolume(top.number + 1, { createdAt: at, cards: structuredClone(top.cards), edges: structuredClone(top.edges) }));
+      return summary(r);
+    }),
+    studyDay: vi.fn(async (date: string): Promise<StudyDay> => structuredClone(days[date] ?? { date, memos: [], todos: [] })),
+    saveStudyDay: vi.fn(async (date: string, save: SaveStudyDay): Promise<StudyDay> => {
+      days[date] = { date, memos: structuredClone(save.memos), todos: structuredClone(save.todos) };
+      return structuredClone(days[date]);
+    }),
+  };
+}
+
 export function memoryStorage() {
   const data = new Map<string, string>();
   return {
@@ -90,6 +189,10 @@ export function fakeClient(
     sessions?: Session[];
     /** What listing a room's sessions throws, by room id. */
     sessionErrors?: Record<string, Error>;
+    /** Study rooms on disk (`state.studyRooms`, changed in place by the Study writes). */
+    studyRooms?: FakeStudyRoom[];
+    /** Saved Study days by date (`state.studyDays`). */
+    studyDays?: Record<string, StudyDay>;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -103,6 +206,8 @@ export function fakeClient(
     pluginData: opts.pluginData ?? {},
     asks: opts.asks ?? {},
     sessions: opts.sessions ?? [],
+    studyRooms: opts.studyRooms ?? [],
+    studyDays: opts.studyDays ?? {},
   };
   const info: Info = {
     version: "0",
@@ -128,6 +233,8 @@ export function fakeClient(
   };
   const client = {
     info: async () => info,
+    // Like roomsd minus the study.changed events (tests emit them).
+    ...fakeStudy(state.studyRooms, state.studyDays),
     listPlugins: vi.fn(async () => state.plugins.map((p) => ({ ...p }))),
     // Like roomsd: on grants what was shown (still declared); off keeps the approval.
     setPluginEnabled: vi.fn(async (id: string, enabled: boolean, shown?: string[]): Promise<PluginInfo> => {
