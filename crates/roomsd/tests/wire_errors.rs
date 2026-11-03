@@ -189,12 +189,17 @@ async fn study_errors() {
     let dangling = r#"{"title":"","cards":[],"edges":[{"id":"e","source":"a","target":"b"}]}"#;
     assert_eq!(wire(&app, req("PUT", &vol("2"), dangling)).await, w(400, "invalid_input", "invalid input: an edge joins a card the volume doesn't have"));
     assert_eq!(wire(&app, req("GET", "/v1/study/days/2026-13-40", "")).await, w(400, "invalid_input", "invalid input: date"));
+    assert_eq!(wire(&app, req("GET", "/v1/study/books/2026-13-40", "")).await, w(400, "invalid_input", "invalid input: date"));
+    assert_eq!(wire(&app, req("PUT", "/v1/study/books/..%2F2026-11-03", save)).await, w(400, "invalid_input", "invalid input: date"));
+    assert_eq!(wire(&app, req("PUT", "/v1/study/books/2026-11-03", dangling)).await, w(400, "invalid_input", "invalid input: an edge joins a card the book doesn't have"));
     let (status, code, _) = wire(&app, req("POST", "/v1/study/rooms", "not json")).await;
     assert_eq!((status, code.as_str()), (400, "bad_request"));
     let (status, code, _) = wire(&app, req("PUT", &vol("2"), r#"{"title":"","cards":[{"id":"c","kind":"pencil","x":0,"y":0,"width":1,"body":""}],"edges":[]}"#)).await;
     assert_eq!((status, code.as_str()), (400, "bad_request"), "an unknown card kind");
     let big = format!(r#"{{"memos":[{{"id":"m","text":"{}","at":"t"}}],"todos":[]}}"#, "x".repeat(256 * 1024));
     assert_eq!(wire(&app, req("PUT", "/v1/study/days/2026-11-03", &big)).await, w(413, "too_large", "too large"));
+    let big_book = format!(r#"{{"title":"","cards":[{{"id":"c","kind":"ink","x":0,"y":0,"width":1,"body":"{}"}}],"edges":[]}}"#, "x".repeat(2 * 1024 * 1024));
+    assert_eq!(wire(&app, req("PUT", "/v1/study/books/2026-11-03", &big_book)).await, w(413, "too_large", "too large"));
 
     std::fs::write(d.path().join(".rooms/study/rooms").join(&id).join("volumes/1.json"), "{").unwrap();
     let (status, code, message) = wire(&app, req("GET", &vol("1"), "")).await;

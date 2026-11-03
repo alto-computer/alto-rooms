@@ -1362,11 +1362,29 @@ async fn study_rooms_volumes_and_days_through_the_router() {
     assert_eq!(status, StatusCode::OK, "{saved_day}");
     assert_eq!(respond(&app, get("/v1/study/days/2026-11-03", API_HOST)).await.1, saved_day);
 
+    let (status, books) = respond(&app, get("/v1/study/books", API_HOST)).await;
+    assert_eq!((status, books), (StatusCode::OK, serde_json::json!({"books": []})));
+    let (status, empty_book) = respond(&app, get("/v1/study/books/2026-11-03", API_HOST)).await;
+    assert_eq!((status, empty_book), (StatusCode::OK, serde_json::json!({"date": "2026-11-03", "title": "", "cards": [], "edges": []})));
+    let (status, saved_book) = respond(&app, send("PUT", "/v1/study/books/2026-11-03", body, Some("t0k"))).await;
+    assert_eq!(status, StatusCode::OK, "{saved_book}");
+    assert_eq!((&saved_book["date"], &saved_book["title"], &saved_book["cards"]), (&serde_json::json!("2026-11-03"), &serde_json::json!("첫 판"), &saved["cards"]));
+    assert_eq!(respond(&app, get("/v1/study/books/2026-11-03", API_HOST)).await.1, saved_book);
+    respond(&app, send("PUT", "/v1/study/books/2026-11-04", r#"{"title":"","cards":[],"edges":[]}"#, Some("t0k"))).await;
+    respond(&app, send("PUT", "/v1/study/books/2026-10-30", r#"{"title":"지난날","cards":[],"edges":[]}"#, Some("t0k"))).await;
+    assert!(d.path().join(".rooms/study/books/2026-11-03.json").is_file());
+    let (_, books) = respond(&app, get("/v1/study/books", API_HOST)).await;
+    assert_eq!(books, serde_json::json!({"books": [
+        {"date": "2026-11-03", "title": "첫 판", "cardCount": 2},
+        {"date": "2026-10-30", "title": "지난날", "cardCount": 0},
+    ]}), "newest first, the empty book left out");
+
     let (_, index) = respond(&app, get("/v1/study", API_HOST)).await;
     assert_eq!(index["rooms"], serde_json::json!([updated]));
     let events: Vec<serde_json::Value> = std::iter::from_fn(|| rx.try_recv().ok()).map(|e| serde_json::to_value(e).unwrap()).filter(|e| e["type"] == "study.changed").map(|e| e["roomId"].clone()).collect();
     let room_id = serde_json::json!(id);
-    assert_eq!(events, vec![room_id.clone(), room_id.clone(), room_id.clone(), room_id, serde_json::Value::Null], "create, save, publish, update, day");
+    let null = serde_json::Value::Null;
+    assert_eq!(events, vec![room_id.clone(), room_id.clone(), room_id.clone(), room_id, null.clone(), null.clone(), null.clone(), null], "create, save, publish, update, day, three books");
 }
 
 #[tokio::test]
@@ -1381,6 +1399,7 @@ async fn study_writes_go_through_the_write_guard() {
         ("PUT", format!("/v1/study/rooms/{id}/volumes/1"), save),
         ("POST", format!("/v1/study/rooms/{id}/publish"), ""),
         ("PUT", "/v1/study/days/2026-11-03".to_string(), r#"{"memos":[],"todos":[]}"#),
+        ("PUT", "/v1/study/books/2026-11-03".to_string(), save),
     ];
     for (method, uri, body) in &writes {
         for token in [None, Some("nope")] {
@@ -1394,6 +1413,7 @@ async fn study_writes_go_through_the_write_guard() {
     assert_eq!(st.core.study_index().unwrap().rooms.len(), 1);
     assert_eq!((st.core.study_volume(&id, 1).unwrap().title.as_str(), st.core.study_index().unwrap().rooms[0].volumes.len()), ("", 1));
     assert!(!d.path().join(".rooms/study/days").exists());
+    assert!(!d.path().join(".rooms/study/books").exists());
 
     let (_d2, remote, st2) = app(true, "100.64.1.2:5000");
     let other = st2.core.create_study_room("r").unwrap().id;

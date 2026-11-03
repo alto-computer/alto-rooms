@@ -44,6 +44,8 @@ pub fn build_api_router(state: AppState) -> Router {
         )
         .route("/v1/study/rooms/{room_id}/publish", post(routes::publish_study_room))
         .route("/v1/study/days/{date}", get(routes::study_day).put(routes::save_study_day).layer(DefaultBodyLimit::max(2 * study::MAX_DAY_BYTES)))
+        .route("/v1/study/books", get(routes::study_day_books))
+        .route("/v1/study/books/{date}", get(routes::study_day_book).put(routes::save_study_day_book).layer(DefaultBodyLimit::max(2 * study::MAX_BOOK_BYTES)))
         .route("/v1/artifacts/move", post(routes::move_artifact))
         .route("/v1/artifacts/by-file-key/{key}", get(routes::artifact_by_file_key))
         .route("/v1/asks", get(routes::ask_thread).post(routes::start_ask))

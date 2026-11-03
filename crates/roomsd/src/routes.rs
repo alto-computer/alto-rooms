@@ -50,7 +50,7 @@ where
 }
 
 /// `?scope=<key>`: `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `session:<agent>:<id>`,
-/// `study-volume:<studyRoomId>:<n>` or `study-room:<studyRoomId>`.
+/// `study-volume:<studyRoomId>:<n>`, `study-room:<studyRoomId>` or `study-book:<YYYY-MM-DD>`.
 #[derive(Deserialize)]
 pub struct ScopeQuery { scope: String }
 
@@ -347,6 +347,19 @@ pub async fn study_day(State(st): State<AppState>, Path(date): Path<String>) -> 
 pub async fn save_study_day(State(st): State<AppState>, Path(date): Path<String>, b: Result<Json<SaveStudyDay>, JsonRejection>) -> Result<Json<StudyDay>, ApiErr> {
     let Json(b) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
     Ok(Json(blocking(&st, move |c| c.save_study_day(&date, b)).await?))
+}
+
+pub async fn study_day_books(State(st): State<AppState>) -> Result<Response, ApiErr> {
+    snapshot(&st, |c| c.study_day_books()).await
+}
+
+pub async fn study_day_book(State(st): State<AppState>, Path(date): Path<String>) -> Result<Response, ApiErr> {
+    snapshot(&st, move |c| c.study_day_book(&date)).await
+}
+
+pub async fn save_study_day_book(State(st): State<AppState>, Path(date): Path<String>, b: Result<Json<SaveStudyDayBook>, JsonRejection>) -> Result<Json<StudyDayBook>, ApiErr> {
+    let Json(b) = b.map_err(|e| CoreError::BadRequest(e.body_text()))?;
+    Ok(Json(blocking(&st, move |c| c.save_study_day_book(&date, b)).await?))
 }
 
 // ---- plugins ----
