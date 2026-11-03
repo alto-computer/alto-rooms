@@ -30,6 +30,8 @@
   --st-sheet-shadow:0 1px 1px rgb(40 25 10 / .06),0 34px 60px -34px rgb(40 25 10 / .45);
   --st-card:#fffdf9;
   --st-card-shadow:0 6px 14px -10px rgb(40 25 10 / .35);
+  --st-sec-fill:rgb(120 90 60 / .035);
+  --st-sec-edge:rgb(70 48 30 / .13);
   --st-thumb-shadow:0 1px 1px rgb(40 25 10 / .08),0 4px 8px -4px rgb(40 25 10 / .25);
   --st-thumb-line:rgb(70 48 30 / .14);
   --st-cover-filter:none;
@@ -63,6 +65,8 @@
   --st-sheet-shadow:0 1px 1px rgb(0 0 0 / .3),0 34px 60px -34px rgb(0 0 0 / .8);
   --st-card:#322b26;
   --st-card-shadow:0 6px 14px -10px rgb(0 0 0 / .7);
+  --st-sec-fill:rgb(255 235 215 / .025);
+  --st-sec-edge:rgb(255 235 215 / .11);
   --st-thumb-shadow:0 1px 1px rgb(0 0 0 / .3),0 4px 8px -4px rgb(0 0 0 / .5);
   --st-thumb-line:rgb(255 235 215 / .1);
   --st-cover-filter:brightness(.8) saturate(.9);
@@ -222,6 +226,63 @@
 .study .react-flow__handle.react-flow__handle-right{right:-5px}
 .study .st-readonly .react-flow__handle{display:none}
 
+/* text: words straight on the sheet, no paper under them */
+.study .st-text{position:relative;padding:4px 8px;border-radius:3px;cursor:grab;outline:1px dashed transparent;outline-offset:0;transition:outline-color .2s}
+.study .st-text .ProseMirror{font-size:15px}
+.study .react-flow__node:hover .st-text{outline-color:var(--hairline)}
+.study .react-flow__node.selected .st-text{outline:1px solid var(--hairline-strong)}
+.study .react-flow__node.dragging .st-text{cursor:grabbing}
+.study .st-readonly .st-text{cursor:default}
+
+/* section: a quiet titled frame behind the cards; only its title bar and corner take the pointer */
+/* React Flow sets pointer-events inline on every node */
+.study .react-flow__node-section{pointer-events:none!important}
+.study .st-sec{position:relative;box-sizing:border-box;border:1px solid var(--st-sec-edge);border-radius:10px;background:var(--st-sec-fill);transition:border-color .2s}
+.study .react-flow__node.selected .st-sec{border-color:var(--hairline-strong)}
+.study .st-secbar{pointer-events:auto;height:42px;padding:10px 16px 0;cursor:grab}
+.study .react-flow__node.dragging .st-secbar{cursor:grabbing}
+.study .st-readonly .st-secbar{cursor:default}
+.study .st-secname{display:inline-grid;max-width:100%;vertical-align:top}
+.study .st-secname > *{grid-area:1 / 1;min-width:0;padding:0 2px;font:15px/22px var(--st-serif);letter-spacing:.01em}
+.study .st-secname span{visibility:hidden;white-space:pre;overflow:hidden}
+.study .st-secname input{width:100%;border:0;background:transparent;outline:none;color:var(--ink-2);cursor:text}
+.study .st-secname input::placeholder{color:var(--ink-3)}
+.study .st-readonly .st-secname input{cursor:default}
+.study .react-flow__resize-control.handle.st-secrz{pointer-events:auto;width:20px;height:20px;border:0;border-radius:0;background:transparent;translate:-100% -100%}
+.study .react-flow__resize-control.handle.st-secrz::after{content:"";position:absolute;right:6px;bottom:6px;width:7px;height:7px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);border-bottom-right-radius:3px;opacity:.45;transition:opacity .2s}
+.study .react-flow__resize-control.handle.st-secrz:hover::after,.study .react-flow__node.selected .st-secrz::after{opacity:1}
+
+/* a card's or a text's right edge, dragged for its width */
+.study .react-flow__resize-control.line.st-rz{width:10px;border:0;background:transparent}
+.study .react-flow__resize-control.line.st-rz::after{content:"";position:absolute;left:4.5px;top:8px;bottom:8px;width:1px;background:var(--ink-3);opacity:0;transition:opacity .15s}
+.study .react-flow__resize-control.line.st-rz:hover::after{opacity:.6}
+
+/* the open button, on hover; the opened card wears a soft ring */
+.study .st-openbtn{position:absolute;top:6px;right:6px;width:22px;height:22px;display:grid;place-items:center;border-radius:4px;color:var(--ink-3);background:var(--st-card);opacity:0;transition:opacity .15s,color .15s}
+.study .st-text .st-openbtn{background:var(--st-paper)}
+.study .react-flow__node:hover .st-openbtn,.study .st-openbtn:focus-visible{opacity:1}
+.study .st-openbtn:hover{color:var(--ink)}
+.study .react-flow__node .st-card.st-opened{border-color:var(--thread-soft);box-shadow:0 0 0 2px var(--thread-soft),var(--st-card-shadow)}
+.study .react-flow__node .st-text.st-opened{outline:2px solid var(--thread-soft)}
+
+/* the side panel: an opened card as a page, beside the sheet */
+.study .st-stage{display:flex;flex:1;min-height:0}
+.study .st-panel{flex:none;display:flex;flex-direction:column;width:clamp(340px,42%,640px);min-height:0;margin:0 40px 24px -16px;border-radius:4px;background:var(--st-paper);box-shadow:var(--st-sheet-shadow);overflow:hidden}
+.study .st-phead{display:flex;align-items:center;gap:12px;padding:12px 12px 0 32px;min-height:48px}
+.study .st-ptitle{flex:1;min-width:0;font:13px var(--st-serif);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.study .st-pclose{flex:none;width:30px;height:30px;display:grid;place-items:center;border-radius:4px;color:var(--ink-3);transition:color .15s,background .15s}
+.study .st-pclose:hover{color:var(--ink);background:var(--row-hover)}
+.study .st-pscroll{flex:1;min-height:0;overflow:auto}
+.study .st-ppage{max-width:640px;margin:0 auto;padding:24px 48px 120px}
+.study .st-ppage .ProseMirror{min-height:50vh;font:17px/1.75 var(--st-serif)}
+.study .st-ppage .ProseMirror > * + *{margin-top:.7em}
+.study .st-ppage .ProseMirror h1{font:400 30px/1.3 var(--st-serif);letter-spacing:-.005em}
+.study .st-ppage .ProseMirror h2{font:400 23px/1.35 var(--st-serif);margin-top:1.3em}
+.study .st-ppage .ProseMirror h3,.study .st-ppage .ProseMirror h4{font:700 18px/1.45 var(--st-serif);margin-top:1.2em}
+.study .st-ppage .ProseMirror li + li{margin-top:.25em}
+.study .st-ppage .ProseMirror code{font-size:14.5px}
+.study .st-ppage .ProseMirror pre{font-size:14px;padding:12px 14px}
+
 /* ProseMirror, styled here because TipTap's own CSS is off (the app CSP drops injected <style>) */
 .study .ProseMirror{position:relative;outline:none;word-wrap:break-word;white-space:pre-wrap;white-space:break-spaces;font-variant-ligatures:none;font-feature-settings:"liga" 0;cursor:text;min-height:22px;font:14px/1.65 var(--st-serif);color:var(--ink)}
 .study .ProseMirror [contenteditable="false"]{white-space:normal}
@@ -249,6 +310,8 @@
 .study .st-md hr,.study .ProseMirror hr{border:0;border-top:1px solid var(--hairline-strong);margin:10px 0}
 .study .st-md strong,.study .ProseMirror strong{font-weight:700}
 .study .st-ink-empty{color:var(--ink-3)}
+/* TipTap's placeholder: a faint hint in an empty editor that can be written in */
+.study .ProseMirror .is-editor-empty:first-child::before{content:attr(data-placeholder);float:left;height:0;pointer-events:none;color:var(--st-ink-4)}
 
 /* ───── DAY: calendar, Memo, TODO, Artifacts ───── */
 .study .st-day{display:grid;grid-template-columns:250px repeat(3,minmax(0,1fr));column-gap:clamp(24px,3vw,40px);padding:96px 48px 120px 60px;min-height:100%}

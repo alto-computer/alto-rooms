@@ -1,35 +1,37 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { RoomsEvent, StudyCard, StudyCardKind, StudyEdge } from "@alto-rooms/protocol-ts";
 import {
-  BaseEdge,
   ConnectionMode,
-  Handle,
-  Position,
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
-  useInternalNode,
   useNodesState,
   useReactFlow,
   type Connection,
   type Edge,
   type EdgeChange,
-  type EdgeProps,
-  type Node,
   type NodeChange,
-  type NodeProps,
+  type XYPosition,
 } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import { Markdown } from "@tiptap/markdown";
+import type { Editor } from "@tiptap/react";
 import { useRoomsStore } from "@/data/hooks";
 import { errorCopy } from "@/lib/errors";
+import { CanvasContext, EDGE_TYPES, isWritten, markdownOf, NODE_TYPES, type Canvas, type CardNode } from "./canvasNodes";
+import { CardPanel } from "./CardPanel";
 import { newId } from "./study";
 
 /** Edits wait this long for the next one before the canvas is saved. */
 export const SAVE_DELAY_MS = 600;
-const WIDTH: Record<StudyCardKind, number> = { ink: 280, question: 240, text: 280, section: 640 };
+/** A new node's width, and the height the tools centre it by; a section keeps its height as its frame's. */
+const SIZE: Record<StudyCardKind, { width: number; height: number }> = {
+  ink: { width: 280, height: 120 },
+  text: { width: 280, height: 40 },
+  question: { width: 240, height: 44 },
+  section: { width: 560, height: 360 },
+};
+/** Sections lie behind every card, a selected section too (selecting lifts a node by 1000). */
+const SECTION_Z = -1001;
 
 /** What a canvas holds and saves whole: a volume's or a day book's title, cards and lines. */
 export type CanvasContent = { title: string; cards: StudyCard[]; edges: StudyEdge[] };
@@ -50,30 +52,15 @@ export type CanvasFollow = {
   load: () => Promise<CanvasContent | null>;
 };
 
-type CardData = { body: string };
-type CardNode = Node<CardData, StudyCardKind>;
-
-/** What a card needs from its canvas. */
-type Canvas = {
-  readOnly: boolean;
-  /** The card just added, which takes the caret. */
-  fresh: string | null;
-  changed: () => void;
-  /** An ink card was typed in: from now on its body is read from its editor. */
-  edited: (id: string) => void;
-  /** An ink card's live body, read at save time; null when the card unmounts. */
-  register: (id: string, read: (() => string) | null) => void;
-  setBody: (id: string, body: string) => void;
-};
-const CanvasContext = createContext<Canvas | null>(null);
-const useCanvas = () => useContext(CanvasContext)!;
-
-const toNode = (c: StudyCard): CardNode => ({ id: c.id, type: c.kind, position: { x: c.x, y: c.y }, width: c.width, data: { body: c.body } });
+const toNode = (c: StudyCard): CardNode =>
+  c.kind === "section"
+    ? { id: c.id, type: c.kind, position: { x: c.x, y: c.y }, width: c.width, height: c.height ?? SIZE.section.height, zIndex: SECTION_Z, dragHandle: ".st-secbar", data: { body: c.body } }
+    : { id: c.id, type: c.kind, position: { x: c.x, y: c.y }, width: c.width, data: { body: c.body } };
 const toEdge = (e: StudyEdge): Edge => ({ id: e.id, source: e.source, target: e.target, type: "thread" });
 /** Content as a save sends it, to tell whether an edit changed anything. */
 const bodyOf = (c: CanvasContent): CanvasContent => ({
   title: c.title,
-  cards: c.cards.map(({ id, kind, x, y, width, body }) => ({ id, kind, x, y, width, body })),
+  cards: c.cards.map(({ id, kind, x, y, width, body, height }) => ({ id, kind, x, y, width, body, ...(height === undefined ? {} : { height }) })),
   edges: c.edges.map(({ id, source, target }) => ({ id, source, target })),
 });
 
@@ -94,8 +81,8 @@ type CardCanvasProps = {
 };
 
 /**
- * Cards on a dotted sheet, saved whole a moment after each edit, with the page's own header above.
- * A Study volume and a day book are both this canvas.
+ * Cards on a dotted sheet, saved whole a moment after each edit, with the page's own header above and
+ * an opened card's page beside. A Study volume and a day book are both this canvas.
  */
 export function CardCanvas(props: CardCanvasProps) {
   return (
@@ -105,6 +92,38 @@ export function CardCanvas(props: CardCanvasProps) {
   );
 }
 
+/** The tools a page puts in its header for an editable canvas. */
+export function CanvasTools({ add }: { add: CanvasControls["add"] }) {
+  const tools: [StudyCardKind, string][] = [
+    ["ink", "+ Card"],
+    ["text", "+ Text"],
+    ["section", "+ Section"],
+    ["question", "+ ?"],
+  ];
+  return tools.map(([kind, label]) => (
+    <button key={kind} type="button" onClick={() => add(kind)}>
+      {label}
+    </button>
+  ));
+}
+
+/** Where a node lies on the canvas, with the size it shows at (a card grows with its text). */
+const boxOf = (n: CardNode) => ({ x: n.position.x, y: n.position.y, w: n.width ?? n.measured?.width ?? 0, h: n.height ?? n.measured?.height ?? 0 });
+
+/** The nodes lying wholly inside a section's frame, where they are now. */
+function insideOf(section: CardNode, nodes: CardNode[]): Map<string, XYPosition> {
+  const s = boxOf(section);
+  const inside = new Map<string, XYPosition>();
+  for (const n of nodes) {
+    const b = boxOf(n);
+    if (n.id !== section.id && b.x >= s.x && b.y >= s.y && b.x + b.w <= s.x + s.w && b.y + b.h <= s.y + s.h) inside.set(n.id, n.position);
+  }
+  return inside;
+}
+
+/** A drag that carries what lay inside the dragged sections: where `lead` started, and each carried node. */
+type Carry = { lead: string; from: XYPosition; carried: Map<string, XYPosition> };
+
 function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts, bar }: CardCanvasProps) {
   const rooms = useRoomsStore();
   const flow = useReactFlow();
@@ -113,6 +132,7 @@ function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts,
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>(initial.edges.map(toEdge));
   const [title, setTitle] = useState(initial.title);
   const [fresh, setFresh] = useState<string | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // The save reads the latest of everything, whenever it fires.
@@ -122,8 +142,9 @@ function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts,
   writeRef.current = write;
   const followRef = useRef(follow);
   followRef.current = follow;
-  const readers = useRef(new Map<string, () => string>());
-  /** Ink cards typed in. The others keep their stored markdown byte for byte (TipTap would normalize it, and drop what it can't show). */
+  /** Each written card's editors: on the canvas, and in the side panel while it is open. */
+  const editors = useRef(new Map<string, Set<Editor>>());
+  /** Cards typed in. The others keep their stored markdown byte for byte (TipTap would normalize it, and drop what it can't show). */
   const dirty = useRef(new Set<string>());
   const inflight = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -131,14 +152,23 @@ function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts,
 
   const payload = useCallback((): CanvasContent => {
     const { nodes, edges, title } = latest.current;
-    const cards: StudyCard[] = nodes.map((n) => ({
-      id: n.id,
-      kind: n.type ?? "ink",
-      x: Math.round(n.position.x),
-      y: Math.round(n.position.y),
-      width: Math.round(n.width ?? WIDTH[n.type ?? "ink"]),
-      body: (dirty.current.has(n.id) ? readers.current.get(n.id)?.() : undefined) ?? n.data.body,
-    }));
+    const typedBody = (id: string) => {
+      if (!dirty.current.has(id)) return undefined;
+      const [editor] = editors.current.get(id) ?? [];
+      return editor && !editor.isDestroyed ? markdownOf(editor) : undefined;
+    };
+    const cards: StudyCard[] = nodes.map((n) => {
+      const kind = n.type ?? "ink";
+      return {
+        id: n.id,
+        kind,
+        x: Math.round(n.position.x),
+        y: Math.round(n.position.y),
+        width: Math.round(n.width ?? SIZE[kind].width),
+        body: typedBody(n.id) ?? n.data.body,
+        ...(kind === "section" ? { height: Math.round(n.height ?? SIZE.section.height) } : {}),
+      };
+    });
     const ids = new Set(cards.map((c) => c.id));
     // An edge never outlives either of its cards, whatever order React Flow reported the removals in.
     const kept = edges.filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => ({ id: e.id, source: e.source, target: e.target }));
@@ -223,9 +253,32 @@ function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts,
     };
   }, [flush]);
 
+  // Dragging a section carries what lay wholly inside it when the drag started; nothing records it.
+  const carry = useRef<Carry | null>(null);
+  const onNodeDragStart = (_: unknown, node: CardNode, dragged: CardNode[]) => {
+    const moving = new Set(dragged.map((n) => n.id));
+    const carried = new Map<string, XYPosition>();
+    for (const s of dragged) {
+      if (s.type !== "section") continue;
+      for (const [id, at] of insideOf(s, latest.current.nodes)) if (!moving.has(id)) carried.set(id, at);
+    }
+    carry.current = carried.size ? { lead: node.id, from: node.position, carried } : null;
+  };
+  const onNodeDragStop = () => {
+    carry.current = null;
+  };
+
   const onNodesChange = (changes: NodeChange<CardNode>[]) => {
+    const c = carry.current;
+    const moved = c && changes.find((ch) => ch.type === "position" && ch.id === c.lead && ch.position);
+    if (c && moved?.type === "position" && moved.position) {
+      const [dx, dy] = [moved.position.x - c.from.x, moved.position.y - c.from.y];
+      const along = [...c.carried].map(([id, at]): NodeChange<CardNode> => ({ type: "position", id, position: { x: at.x + dx, y: at.y + dy }, dragging: moved.dragging }));
+      changes = [...changes, ...along];
+    }
     onNodesChangeBase(changes);
-    if (changes.some((c) => c.type === "position" || c.type === "remove" || c.type === "add")) changed();
+    // A resize reports `resizing`; React Flow measuring a node reports none and changes nothing saved.
+    if (changes.some((ch) => ch.type === "position" || ch.type === "remove" || ch.type === "add" || (ch.type === "dimensions" && ch.resizing !== undefined))) changed();
   };
   const onEdgesChange = (changes: EdgeChange[]) => {
     onEdgesChangeBase(changes);
@@ -241,58 +294,95 @@ function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts,
     changed();
   };
 
-  const add = (kind: StudyCardKind, at: { x: number; y: number }) => {
+  const add = (kind: StudyCardKind, at: XYPosition) => {
     const id = newId();
-    const card: StudyCard = { id, kind, x: Math.round(at.x), y: Math.round(at.y), width: WIDTH[kind], body: "" };
+    const { width, height } = SIZE[kind];
+    const card: StudyCard = { id, kind, x: Math.round(at.x), y: Math.round(at.y), width, body: "", ...(kind === "section" ? { height } : {}) };
     setNodes((ns) => [...ns.map((n) => (n.selected ? { ...n, selected: false } : n)), toNode(card)]);
     setFresh(id);
     changed();
   };
   const sheetRef = useRef<HTMLDivElement>(null);
-  /** Where the toolbar puts a new card: the middle of the sheet, stepped so cards added in a row don't stack. */
-  const middle = () => {
+  /** Where the tools put a new node: centred on the sheet, stepped so ones added in a row don't stack. */
+  const middle = (kind: StudyCardKind) => {
     const r = sheetRef.current?.getBoundingClientRect();
     const step = (latest.current.nodes.length % 6) * 24;
-    return flow.screenToFlowPosition({ x: (r ? r.left + r.width / 2 : 400) - 140 + step, y: (r ? r.top + r.height / 2 : 300) - 60 + step });
+    const mid = flow.screenToFlowPosition({ x: r ? r.left + r.width / 2 : 400, y: r ? r.top + r.height / 2 : 300 });
+    return { x: mid.x - SIZE[kind].width / 2 + step, y: mid.y - SIZE[kind].height / 2 + step };
   };
   const onDoubleClick = (e: MouseEvent) => {
     if (readOnly || !(e.target instanceof Element) || !e.target.classList.contains("react-flow__pane")) return;
     const p = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
     add("ink", { x: p.x - 20, y: p.y - 20 });
   };
+  // A card's frame, outside its text, opens it beside the canvas.
+  const onNodeDoubleClick = (e: MouseEvent, node: CardNode) => {
+    if (isWritten(node.type) && !(e.target instanceof Element && e.target.closest(".ProseMirror"))) setOpened(node.id);
+  };
 
   const controls: CanvasControls = {
-    add: (kind) => add(kind, middle()),
+    add: (kind) => add(kind, middle(kind)),
     flush,
     unsaved: () => saved.current === "",
     showError: (e) => setError(errorCopy(e)),
   };
 
-  // Stable, so typing in one card never re-renders the others.
+  const attach = useCallback((id: string, editor: Editor) => {
+    const set = editors.current.get(id) ?? new Set();
+    editors.current.set(id, set.add(editor));
+    return () => {
+      set.delete(editor);
+      if (set.size === 0) editors.current.delete(id);
+    };
+  }, []);
+  // Stable apart from what it names, so typing in one card never re-renders the others.
   const canvas = useMemo<Canvas>(
     () => ({
       readOnly,
       fresh,
-      changed,
-      edited: (id) => {
-        dirty.current.add(id);
-        changed();
-      },
-      register: (id, read) => {
-        if (read) readers.current.set(id, read);
-        else readers.current.delete(id);
-      },
+      opened,
+      open: setOpened,
       setBody: (id, body) => {
         setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { body } } : n)));
         changed();
       },
+      attach,
+      typed: (id, from) => {
+        dirty.current.add(id);
+        for (const other of editors.current.get(id) ?? []) {
+          if (other === from || other.isDestroyed) continue;
+          other.chain().setMeta("addToHistory", false).setContent(from.getJSON(), { emitUpdate: false }).run();
+        }
+        changed();
+      },
+      live: (id) => {
+        const [editor] = editors.current.get(id) ?? [];
+        return editor && !editor.isDestroyed ? editor.getJSON() : null;
+      },
     }),
-    [readOnly, fresh, changed, setNodes],
+    [readOnly, fresh, opened, changed, setNodes, attach],
   );
 
+  // The opened card, while it is still on the canvas.
+  const open = nodes.find((n) => n.id === opened);
+  const openKind = open?.type;
+  const close = useCallback(() => setOpened(null), []);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!opened) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || !(e.target instanceof Node)) return;
+      const t = e.target;
+      // Esc on the canvas or in the panel; the ask bar keeps its own.
+      if (t !== document.body && !(wrap.current?.contains(t) && !(t instanceof Element && t.closest("[data-ask-bar]")))) return;
+      close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [opened, close]);
+
   return (
-    // Relative, with the sheet ending above the bottom, for the ask bar.
-    <div className={readOnly ? "relative flex min-h-0 flex-1 flex-col st-readonly" : "relative flex min-h-0 flex-1 flex-col"}>
+    <div ref={wrap} className={readOnly ? "flex min-h-0 flex-1 flex-col st-readonly" : "flex min-h-0 flex-1 flex-col"}>
       <header className="st-vbar">
         {lead}
         <input
@@ -317,144 +407,43 @@ function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts,
           {acts(controls)}
         </div>
       </header>
-      <div ref={sheetRef} className="st-sheet" onDoubleClick={onDoubleClick}>
-        <CanvasContext.Provider value={canvas}>
-          <ReactFlow<CardNode, Edge>
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={NODE_TYPES}
-            edgeTypes={EDGE_TYPES}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            connectionMode={ConnectionMode.Loose}
-            nodesDraggable={!readOnly}
-            nodesConnectable={!readOnly}
-            elementsSelectable={!readOnly}
-            edgesFocusable={!readOnly}
-            deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
-            zoomOnDoubleClick={false}
-            panOnScroll
-            minZoom={0.3}
-            maxZoom={1.6}
-            fitView={initial.cards.length > 0}
-            fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
-            defaultViewport={{ x: 40, y: 40, zoom: 1 }}
-            proOptions={{ hideAttribution: true }}
-          />
-        </CanvasContext.Provider>
-      </div>
-      {bar}
+      <CanvasContext.Provider value={canvas}>
+        <div className="st-stage">
+          {/* Relative, with the sheet ending above the bottom, for the ask bar: it stays over the sheet, beside any panel. */}
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            <div ref={sheetRef} className="st-sheet" onDoubleClick={onDoubleClick}>
+              <ReactFlow<CardNode, Edge>
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={NODE_TYPES}
+                edgeTypes={EDGE_TYPES}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeDragStart={onNodeDragStart}
+                onNodeDragStop={onNodeDragStop}
+                onNodeDoubleClick={onNodeDoubleClick}
+                connectionMode={ConnectionMode.Loose}
+                nodesDraggable={!readOnly}
+                nodesConnectable={!readOnly}
+                elementsSelectable={!readOnly}
+                edgesFocusable={!readOnly}
+                deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
+                zoomOnDoubleClick={false}
+                panOnScroll
+                minZoom={0.3}
+                maxZoom={1.6}
+                fitView={initial.cards.length > 0}
+                fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
+                defaultViewport={{ x: 40, y: 40, zoom: 1 }}
+                proOptions={{ hideAttribution: true }}
+              />
+            </div>
+            {bar}
+          </div>
+          {open && isWritten(openKind) ? <CardPanel key={open.id} id={open.id} kind={openKind} body={open.data.body} onClose={close} /> : null}
+        </div>
+      </CanvasContext.Provider>
     </div>
   );
 }
-
-/**
- * Puts the caret in a card just added, once React Flow shows it: a new node stays hidden until it is
- * measured, and a hidden element can't take focus (WebKit measures later than Chromium).
- */
-function useFocusWhenShown(id: string, focusNow: () => void) {
-  const focus = useRef(focusNow);
-  focus.current = focusNow;
-  const { fresh } = useCanvas();
-  const shown = !!useInternalNode(id)?.measured.width;
-  const done = useRef(false);
-  useEffect(() => {
-    if (fresh !== id || !shown || done.current) return;
-    done.current = true;
-    const frame = requestAnimationFrame(() => focus.current());
-    return () => cancelAnimationFrame(frame);
-  }, [fresh, id, shown]);
-}
-
-/** An ink card: markdown typed in place. The frame drags the card; the text inside never does. */
-function InkCard({ id, data, width }: NodeProps<CardNode>) {
-  const { readOnly, edited, register } = useCanvas();
-  const onEdit = useRef(edited);
-  onEdit.current = edited;
-  const editor = useEditor({
-    extensions: [StarterKit, Markdown],
-    content: data.body,
-    contentType: "markdown",
-    injectCSS: false,
-    editable: !readOnly,
-    shouldRerenderOnTransaction: false,
-    editorProps: { attributes: { class: "nodrag nowheel nopan nokey", "aria-label": "Card" } },
-    onUpdate: () => onEdit.current(id),
-  });
-  useEffect(() => {
-    // The empty paragraph TipTap keeps after the last block is not part of what was written.
-    register(id, () => editor.getMarkdown().trimEnd());
-    return () => register(id, null);
-  }, [editor, id, register]);
-  useEffect(() => editor.setEditable(!readOnly, false), [editor, readOnly]);
-  // A body replaced from outside (the volume reloaded) goes into the editor; typing never changes data.body.
-  const first = useRef(true);
-  useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
-    editor.commands.setContent(data.body, { contentType: "markdown", emitUpdate: false });
-  }, [editor, data.body]);
-  useFocusWhenShown(id, () => !editor.isDestroyed && editor.commands.focus("end"));
-  return (
-    <div className="st-card" style={{ width }} data-testid="ink-card">
-      <Handle type="source" position={Position.Left} id="l" />
-      <EditorContent editor={editor} />
-      <Handle type="source" position={Position.Right} id="r" />
-    </div>
-  );
-}
-
-/** A question card: one line, a heavy border. */
-function QuestionCard({ id, data, width }: NodeProps<CardNode>) {
-  const { readOnly, setBody } = useCanvas();
-  const input = useRef<HTMLInputElement>(null);
-  useFocusWhenShown(id, () => input.current?.focus());
-  return (
-    <div className="st-card st-q" style={{ width }} data-testid="question-card">
-      <Handle type="source" position={Position.Left} id="l" />
-      <b aria-hidden>?</b>
-      <input
-        className="nodrag nopan nokey"
-        aria-label="Question"
-        value={data.body}
-        readOnly={readOnly}
-        ref={input}
-        onChange={(e) => setBody(id, e.target.value.replace(/\n/g, " "))}
-      />
-      <Handle type="source" position={Position.Right} id="r" />
-    </div>
-  );
-}
-
-/** The line between two cards, from the facing sides of each, wherever their handles are. */
-function Thread({ id, source, target, markerEnd, style }: EdgeProps) {
-  const a = useInternalNode(source);
-  const b = useInternalNode(target);
-  if (!a || !b) return null;
-  const box = (n: NonNullable<typeof a>) => {
-    const { x, y } = n.internals.positionAbsolute;
-    return { x, y, w: n.measured.width ?? 0, h: n.measured.height ?? 0 };
-  };
-  const A = box(a);
-  const B = box(b);
-  const [ax, ay, bx, by] = [A.x + A.w / 2, A.y + A.h / 2, B.x + B.w / 2, B.y + B.h / 2];
-  // Side to side, unless one card sits mostly above the other: then bottom to top.
-  const across = Math.abs(bx - ax) - (A.w + B.w) / 4 > Math.abs(by - ay) - (A.h + B.h) / 4;
-  let path: string;
-  if (across) {
-    const [sx, ex] = ax <= bx ? [A.x + A.w, B.x] : [A.x, B.x + B.w];
-    const mx = (sx + ex) / 2;
-    path = `M${sx} ${ay} C ${mx} ${ay}, ${mx} ${by}, ${ex} ${by}`;
-  } else {
-    const [sy, ey] = ay <= by ? [A.y + A.h, B.y] : [A.y, B.y + B.h];
-    const my = (sy + ey) / 2;
-    path = `M${ax} ${sy} C ${ax} ${my}, ${bx} ${my}, ${bx} ${ey}`;
-  }
-  return <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={14} />;
-}
-
-const NODE_TYPES = { ink: InkCard, question: QuestionCard };
-const EDGE_TYPES = { thread: Thread };

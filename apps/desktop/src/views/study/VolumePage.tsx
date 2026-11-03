@@ -3,7 +3,7 @@ import type { StudyVolume } from "@alto-rooms/protocol-ts";
 import { AskBar } from "@/ask/AskBar";
 import { useFrameAfter } from "@/ask/useFrameAfter";
 import { useClient, useReadOnly, useStudy, useStudyStore, useViewerStore } from "@/data/hooks";
-import { CardCanvas, type CanvasControls, type CanvasFollow } from "./CardCanvas";
+import { CanvasTools, CardCanvas, type CanvasControls, type CanvasFollow } from "./CardCanvas";
 import { dottedDate, versionOf } from "./study";
 import { useStudyGo } from "./StudyNav";
 
@@ -110,12 +110,7 @@ function Volume({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
           </>
         ) : (
           <>
-            <button type="button" onClick={() => controls.add("ink")}>
-              + Card
-            </button>
-            <button type="button" onClick={() => controls.add("question")}>
-              + ?
-            </button>
+            <CanvasTools add={controls.add} />
             <button type="button" className="st-pub" onClick={() => setConfirming(true)}>
               Publish
             </button>

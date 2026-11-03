@@ -3,7 +3,7 @@ import type { StudyDayBook } from "@alto-rooms/protocol-ts";
 import { AskBar } from "@/ask/AskBar";
 import { useFrameAfter } from "@/ask/useFrameAfter";
 import { useClient, useReadOnly } from "@/data/hooks";
-import { CardCanvas, type CanvasFollow } from "./CardCanvas";
+import { CanvasTools, CardCanvas, type CanvasFollow } from "./CardCanvas";
 import { shortDate } from "./study";
 import { useStudyGo } from "./StudyNav";
 
@@ -56,16 +56,7 @@ function Book({ date, book }: { date: string; book: StudyDayBook }) {
       }
       titleLabel="Title"
       acts={(controls) =>
-        readOnly ? null : (
-          <>
-            <button type="button" onClick={() => controls.add("ink")}>
-              + Card
-            </button>
-            <button type="button" onClick={() => controls.add("question")}>
-              + ?
-            </button>
-          </>
-        )
+        readOnly ? null : <CanvasTools add={controls.add} />
       }
       bar={barReady && !readOnly ? bar : null}
     />
