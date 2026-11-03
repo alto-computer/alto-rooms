@@ -3,6 +3,7 @@ import { AsksStore, type AsksState } from "@/ask/asksStore";
 import { PluginsStore, type PluginsState } from "@/plugins/pluginsStore";
 import type { Artifact, Info, JournalDay, Room, createRoomsClient } from "@alto-rooms/protocol-ts";
 import type { RoomsState, RoomsStore } from "./roomsStore";
+import { StudyStore, type StudyState } from "./studyStore";
 import type { ViewerState, ViewerStore } from "./viewerStore";
 
 /** The roomsd client. Writes (createRoom, renameRoom, linkFolder, saveNote) go through it; state comes back over SSE. */
@@ -10,7 +11,9 @@ export type RoomsClient = ReturnType<typeof createRoomsClient>;
 
 type Stores = { rooms: RoomsStore; viewer: ViewerStore; client?: RoomsClient };
 
-const StoresContext = createContext<(Stores & { plugins: PluginsStore; asks: AsksStore }) | null>(null);
+type AllStores = Stores & { plugins: PluginsStore; asks: AsksStore; study: StudyStore };
+
+const StoresContext = createContext<AllStores | null>(null);
 
 export function StoresProvider({ rooms, viewer, client, children }: Stores & { children?: ReactNode }) {
   // The plugin list rides the rooms event stream (plugins.changed, resync).
@@ -24,11 +27,17 @@ export function StoresProvider({ rooms, viewer, client, children }: Stores & { c
     asks.start();
     return () => asks.stop();
   }, [asks]);
-  const value = useMemo(() => ({ rooms, viewer, client, plugins, asks }), [rooms, viewer, client, plugins, asks]);
+  // The Study's index rides the same stream (study.changed, resync), loaded once a Study view asks for it.
+  const study = useMemo(() => new StudyStore(client, rooms), [client, rooms]);
+  useEffect(() => {
+    study.start();
+    return () => study.stop();
+  }, [study]);
+  const value = useMemo(() => ({ rooms, viewer, client, plugins, asks, study }), [rooms, viewer, client, plugins, asks, study]);
   return createElement(StoresContext.Provider, { value }, children);
 }
 
-function useStores(): Stores & { plugins: PluginsStore; asks: AsksStore } {
+function useStores(): AllStores {
   const s = useContext(StoresContext);
   if (!s) throw new Error("StoresProvider is missing");
   return s;
@@ -39,6 +48,14 @@ export const useViewerStore = (): ViewerStore => useStores().viewer;
 export const usePluginsStore = (): PluginsStore => useStores().plugins;
 
 export const useAsksStore = (): AsksStore => useStores().asks;
+export const useStudyStore = (): StudyStore => useStores().study;
+
+/** The Study's rooms, oldest first (null before the first load), loading them on first use. */
+export function useStudy(): StudyState {
+  const store = useStudyStore();
+  useEffect(() => store.want(), [store]);
+  return useSyncExternalStore(store.subscribe, store.getState);
+}
 
 /** Whether the ask bar is open, and ask threads by file key. */
 export function useAsks(): AsksState {

@@ -167,3 +167,37 @@ async fn ask_errors() {
     assert_eq!((status, code.as_str()), (422, "agent_config"));
     assert!(message.starts_with("Couldn't read agent settings: "), "{message}");
 }
+
+#[tokio::test]
+async fn study_errors() {
+    let (d, app, st) = app();
+    let id = st.core.create_study_room("r").unwrap().id;
+    let vol = |n: &str| format!("/v1/study/rooms/{id}/volumes/{n}");
+    let save = r#"{"title":"","cards":[],"edges":[]}"#;
+    assert_eq!(wire(&app, req("GET", "/v1/study/rooms/zzzzzzzzzz/volumes/1", "")).await, w(404, "study_room_not_found", "study room not found"));
+    assert_eq!(wire(&app, req("POST", "/v1/study/rooms/zzzzzzzzzz/publish", "")).await, w(404, "study_room_not_found", "study room not found"));
+    assert_eq!(wire(&app, req("PUT", "/v1/study/rooms/zzzzzzzzzz", r#"{"name":"n","links":[]}"#)).await, w(404, "study_room_not_found", "study room not found"));
+    assert_eq!(wire(&app, req("GET", &vol("2"), "")).await, w(404, "volume_not_found", "volume not found"));
+    assert_eq!(wire(&app, req("PUT", &vol("2"), save)).await, w(404, "volume_not_found", "volume not found"));
+    st.core.publish_study_room(&id).unwrap();
+    assert_eq!(wire(&app, req("PUT", &vol("1"), save)).await, w(409, "volume_published", "volume is published"));
+
+    assert_eq!(wire(&app, req("POST", "/v1/study/rooms", r#"{"name":"  "}"#)).await, w(400, "invalid_input", "invalid input: study room name"));
+    assert_eq!(wire(&app, req("GET", "/v1/study/rooms/..%2F..%2Fx/volumes/1", "")).await, w(400, "invalid_input", "invalid input: study room id"));
+    assert_eq!(wire(&app, req("GET", &vol("x"), "")).await, w(400, "invalid_input", "invalid input: volume number"));
+    assert_eq!(wire(&app, req("PUT", &format!("/v1/study/rooms/{id}"), r#"{"name":"n","links":[{"kind":"room","roomId":"../x"}]}"#)).await, w(400, "invalid_input", "invalid input: study link"));
+    let dangling = r#"{"title":"","cards":[],"edges":[{"id":"e","source":"a","target":"b"}]}"#;
+    assert_eq!(wire(&app, req("PUT", &vol("2"), dangling)).await, w(400, "invalid_input", "invalid input: an edge joins a card the volume doesn't have"));
+    assert_eq!(wire(&app, req("GET", "/v1/study/days/2026-13-40", "")).await, w(400, "invalid_input", "invalid input: date"));
+    let (status, code, _) = wire(&app, req("POST", "/v1/study/rooms", "not json")).await;
+    assert_eq!((status, code.as_str()), (400, "bad_request"));
+    let (status, code, _) = wire(&app, req("PUT", &vol("2"), r#"{"title":"","cards":[{"id":"c","kind":"pencil","x":0,"y":0,"width":1,"body":""}],"edges":[]}"#)).await;
+    assert_eq!((status, code.as_str()), (400, "bad_request"), "an unknown card kind");
+    let big = format!(r#"{{"memos":[{{"id":"m","text":"{}","at":"t"}}],"todos":[]}}"#, "x".repeat(256 * 1024));
+    assert_eq!(wire(&app, req("PUT", "/v1/study/days/2026-11-03", &big)).await, w(413, "too_large", "too large"));
+
+    std::fs::write(d.path().join(".rooms/study/rooms").join(&id).join("volumes/1.json"), "{").unwrap();
+    let (status, code, message) = wire(&app, req("GET", &vol("1"), "")).await;
+    assert_eq!((status, code.as_str()), (500, "internal"));
+    assert!(message.starts_with("internal error: unreadable "), "{message}");
+}

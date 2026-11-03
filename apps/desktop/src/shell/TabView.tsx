@@ -6,6 +6,7 @@ import { NoteView } from "@/views/NoteView";
 import { RoomView } from "@/views/RoomView";
 import { SessionView } from "@/views/SessionView";
 import { SettingsView } from "@/views/SettingsView";
+import { StudyView } from "@/views/study/StudyView";
 
 /** The active tab's view. Mounted per tab id and in-tab navigation, so mount = arriving. */
 export function TabView({ tab }: { tab: Tab }) {
@@ -24,5 +25,7 @@ export function TabView({ tab }: { tab: Tab }) {
       return <SessionView sessionRef={{ agent: tab.agent, id: tab.sessionId }} />;
     case "settings":
       return <SettingsView />;
+    case "study":
+      return <StudyView tab={tab} />;
   }
 }

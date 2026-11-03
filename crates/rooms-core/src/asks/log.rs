@@ -39,7 +39,7 @@ struct Stored {
 impl Stored {
     fn of(turn: &AskTurn) -> Self {
         let AskTurn { id, scope, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out, session } = turn.clone();
-        let file_key = match scope { AskScope::Artifact { file_key } => Some(file_key), AskScope::Room { .. } | AskScope::Day { .. } | AskScope::Session(_) => None };
+        let file_key = match scope { AskScope::Artifact { file_key } => Some(file_key), AskScope::Room { .. } | AskScope::Day { .. } | AskScope::Session(_) | AskScope::StudyVolume { .. } | AskScope::StudyRoom { .. } => None };
         Self { id, file_key, question, answer, agent, model, mode, status, error, started_at, ended_at, images, kind, left_out, session }
     }
 
@@ -78,13 +78,15 @@ impl AskLog {
         }
     }
 
-    /// File keys are 16 alphanumerics, so a `room-`, `day-` or `session-` name never names an artifact's file.
+    /// File keys are 16 alphanumerics, so a `room-`, `day-`, `session-` or `study-` name never names an artifact's file.
     fn path(&self, scope: &AskScope) -> PathBuf {
         let name = match scope {
             AskScope::Artifact { file_key } => format!("{file_key}.jsonl"),
             AskScope::Room { room_id } => format!("room-{room_id}.jsonl"),
             AskScope::Day { date } => format!("day-{date}.jsonl"),
             AskScope::Session(r) => format!("session-{}-{}.jsonl", r.agent.as_str(), r.id),
+            AskScope::StudyVolume { room_id, number } => format!("study-volume-{room_id}-{number}.jsonl"),
+            AskScope::StudyRoom { room_id } => format!("study-room-{room_id}.jsonl"),
         };
         self.dir.join(name)
     }
@@ -219,10 +221,20 @@ mod tests {
         log.append(&AskTurn { scope: day.clone(), ..t("d", AskStatus::Done, "D") }).unwrap();
         let talk = AskScope::Session(rooms_protocol::SessionRef::parse_key("codex:s-1").unwrap());
         log.append(&AskTurn { scope: talk.clone(), ..t("c", AskStatus::Done, "C") }).unwrap();
+        let volume = AskScope::StudyVolume { room_id: "a1b2c3d4e5".into(), number: 12 };
+        let study_room = AskScope::StudyRoom { room_id: "a1b2c3d4e5".into() };
+        log.append(&AskTurn { scope: volume.clone(), ..t("v", AskStatus::Done, "V") }).unwrap();
+        log.append(&AskTurn { scope: study_room.clone(), ..t("s", AskStatus::Done, "S") }).unwrap();
         log.append(&t("a", AskStatus::Done, "A")).unwrap();
         let mut names: Vec<_> = std::fs::read_dir(d.path().join("asks")).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         names.sort();
-        assert_eq!(names, [format!("{K1}.jsonl"), "day-2026-10-09.jsonl".to_string(), format!("room-{K1}.jsonl"), "session-codex-s-1.jsonl".to_string()]);
+        assert_eq!(names, [
+            format!("{K1}.jsonl"), "day-2026-10-09.jsonl".to_string(), format!("room-{K1}.jsonl"), "session-codex-s-1.jsonl".to_string(),
+            "study-room-a1b2c3d4e5.jsonl".to_string(), "study-volume-a1b2c3d4e5-12.jsonl".to_string(),
+        ]);
+        assert_eq!(log.read(&volume).unwrap().iter().map(|t| (t.id.as_str(), &t.scope)).collect::<Vec<_>>(), [("v", &volume)]);
+        assert_eq!(log.read(&study_room).unwrap().iter().map(|t| (t.id.as_str(), &t.scope)).collect::<Vec<_>>(), [("s", &study_room)]);
+        assert!(log.read(&AskScope::StudyVolume { room_id: "a1b2c3d4e5".into(), number: 1 }).unwrap().is_empty(), "each volume keeps its own thread");
         assert_eq!(log.read(&artifact()).unwrap().iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a"]);
         let r = log.read(&room).unwrap();
         assert_eq!((r.len(), r[0].id.as_str(), &r[0].scope), (1, "r", &room));

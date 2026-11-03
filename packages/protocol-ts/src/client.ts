@@ -13,11 +13,18 @@ import type { RoomColor } from "./generated/RoomColor";
 import type { RoomsEvent } from "./generated/RoomsEvent";
 import type { Session } from "./generated/Session";
 import type { SessionRef } from "./generated/SessionRef";
+import type { SaveStudyDay } from "./generated/SaveStudyDay";
+import type { SaveStudyVolume } from "./generated/SaveStudyVolume";
 import type { StartAsk } from "./generated/StartAsk";
+import type { StudyDay } from "./generated/StudyDay";
+import type { StudyIndex } from "./generated/StudyIndex";
+import type { StudyRoomSummary } from "./generated/StudyRoomSummary";
+import type { StudyVolume } from "./generated/StudyVolume";
+import type { UpdateStudyRoom } from "./generated/UpdateStudyRoom";
 
 export type Snapshot<T> = { data: T; seq: number };
 
-/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `session:<agent>:<id>`. */
+/** A scope as the one string roomsd's `?scope=` takes and the app keys threads by: `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`, `session:<agent>:<id>`, `study-volume:<studyRoomId>:<n>`, `study-room:<studyRoomId>`. */
 export function scopeKey(scope: AskScope): string {
   switch (scope.kind) {
     case "artifact":
@@ -28,6 +35,10 @@ export function scopeKey(scope: AskScope): string {
       return `day:${scope.date}`;
     case "session":
       return `session:${scope.agent}:${scope.id}`;
+    case "studyVolume":
+      return `study-volume:${scope.roomId}:${scope.number}`;
+    case "studyRoom":
+      return `study-room:${scope.roomId}`;
   }
 }
 
@@ -121,6 +132,28 @@ export function createRoomsClient(baseUrl: string, token?: string) {
      *  404 `room_not_found` / `not_found`. */
     moveArtifact: (roomId: string, artifactId: string, toRoomId: string) =>
       write<Artifact>("POST", "/v1/artifacts/move", JSON.stringify({ roomId, artifactId, toRoomId })),
+    /** Every Study room with its links and volume summaries, oldest first. Study writes emit `study.changed`. */
+    studyIndex: async () => (await get<StudyIndex>("/v1/study")).data,
+    /** A new Study room whose volume 1 is an empty draft. 400 `invalid_input` unless the trimmed name is 1–60 characters. */
+    createStudyRoom: (name: string) => write<StudyRoomSummary>("POST", "/v1/study/rooms", JSON.stringify({ name })),
+    /** Renames a Study room and replaces its links (repeats dropped). 400 `invalid_input` for a bad name or link,
+     *  404 `study_room_not_found`. */
+    updateStudyRoom: (roomId: string, update: UpdateStudyRoom) =>
+      write<StudyRoomSummary>("PUT", `/v1/study/rooms/${encodeURIComponent(roomId)}`, JSON.stringify(update)),
+    /** 404 `study_room_not_found` / `volume_not_found`. */
+    studyVolume: async (roomId: string, number: number) =>
+      (await get<StudyVolume>(`/v1/study/rooms/${encodeURIComponent(roomId)}/volumes/${number}`)).data,
+    /** Replaces a draft's title, cards and edges. 409 `volume_published` for a published volume, 400 `invalid_input` for
+     *  ids not 1–64 of `[A-Za-z0-9_-]` or repeated, an edge to a card the volume lacks, or a title over 200 characters,
+     *  413 `too_large` past 2 MiB. */
+    saveStudyVolume: (roomId: string, number: number, save: SaveStudyVolume) =>
+      write<StudyVolume>("PUT", `/v1/study/rooms/${encodeURIComponent(roomId)}/volumes/${number}`, JSON.stringify(save)),
+    /** Publishes the draft and opens the next volume as a draft with its cards and edges and an empty title. */
+    publishStudyRoom: (roomId: string) => write<StudyRoomSummary>("POST", `/v1/study/rooms/${encodeURIComponent(roomId)}/publish`, ""),
+    /** A day never saved comes back empty. 400 `invalid_input` for a date that isn't `YYYY-MM-DD`. */
+    studyDay: async (date: string) => (await get<StudyDay>(`/v1/study/days/${date}`)).data,
+    /** Replaces the day's memos and todos. 400 `invalid_input` for a bad or repeated id, 413 `too_large` past 256 KiB. */
+    saveStudyDay: (date: string, save: SaveStudyDay) => write<StudyDay>("PUT", `/v1/study/days/${date}`, JSON.stringify(save)),
     startAsk: (req: StartAsk) => write<AskTurn>("POST", "/v1/asks", JSON.stringify(req)),
     /** Which agent an ask in this scope goes to, and the models it can pick from. */
     askTarget: async (scope: AskScope) => (await get<AskTarget>(`/v1/asks/target?scope=${encodeURIComponent(scopeKey(scope))}`)).data,

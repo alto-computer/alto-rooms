@@ -2,17 +2,21 @@ import type { Artifact, AskScope, AskTarget, AskTurn, Room, Session } from "@alt
 import { AGENT_NAMES } from "@/lib/agents";
 import { sessionTitle } from "@/lib/sessions";
 import { localDate } from "@/lib/dates";
+import { versionOf } from "@/views/study/study";
 import { modelLabel } from "./askModel";
 
 /**
  * What an ask bar asks about: the artifact in an artifact tab, the session in a session tab, the
- * room in a room tab, the viewed day in the Journal tab.
+ * room in a room tab, the viewed day in the Journal tab, and in the Study the volume on the canvas
+ * or the Study room shown. A Study subject carries its room's name for the note an answer becomes.
  */
 export type AskSubject =
   | { kind: "artifact"; artifact: Artifact }
   | { kind: "session"; session: Session }
   | { kind: "room"; roomId: string }
-  | { kind: "day"; date: string };
+  | { kind: "day"; date: string }
+  | { kind: "studyVolume"; roomId: string; number: number; roomName: string }
+  | { kind: "studyRoom"; roomId: string; roomName: string };
 
 export type TurnHeader = { text: string; title?: string };
 
@@ -87,6 +91,22 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         header: agentHeader,
         agent: "Default agent",
         noteTarget: () => ({ date: subject.date, source: null }),
+      };
+    case "studyVolume":
+      return {
+        scope: { kind: "studyVolume", roomId: subject.roomId, number: subject.number },
+        placeholder: "Ask about this volume…",
+        header: agentHeader,
+        agent: "Default agent",
+        noteTarget: (now) => ({ date: localDate(now), source: `Study: ${subject.roomName} v${versionOf(subject.number)}` }),
+      };
+    case "studyRoom":
+      return {
+        scope: { kind: "studyRoom", roomId: subject.roomId },
+        placeholder: "Ask about this Study room…",
+        header: agentHeader,
+        agent: "Default agent",
+        noteTarget: (now) => ({ date: localDate(now), source: `Study: ${subject.roomName}` }),
       };
   }
 }

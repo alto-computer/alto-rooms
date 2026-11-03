@@ -2,6 +2,7 @@ import { lazy, memo, Suspense, useState } from "react";
 import type { AskScope, AskTurn } from "@alto-rooms/protocol-ts";
 import { GENERIC_ERROR } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { isSurfaceScope } from "@/surfaces/surfaceHub";
 import { TextSurface } from "@/surfaces/TextSurface";
 import type { Live } from "./asksStore";
 import type { NoteTargetOf } from "./askSubjects";
@@ -67,7 +68,7 @@ function Divider({ children }: { children: string }) {
 
 /**
  * A question and its answer: streaming in with what the agent is doing, then whole, stopped, or
- * failed with Retry. A finished answer is a host text surface plugins can read and mark.
+ * failed with Retry. A finished answer is a host text surface plugins can read and mark, a Study answer aside.
  */
 function QuestionTurn({ t, scope, live, noteTarget, onRetry }: { t: AskTurn; scope: AskScope; live?: Live; noteTarget: NoteTargetOf | null; onRetry: (t: AskTurn) => void }) {
   const running = t.status === "running";
@@ -76,7 +77,7 @@ function QuestionTurn({ t, scope, live, noteTarget, onRetry }: { t: AskTurn; sco
     <>
       <TurnImages ids={t.images ?? []} />
       <QuestionBubble text={t.question} />
-      {answer && t.status === "done" ? (
+      {answer && t.status === "done" && isSurfaceScope(scope) ? (
         <TextSurface id={{ kind: "answer", scope, turnId: t.id }}>
           <Answer text={answer} />
         </TextSurface>

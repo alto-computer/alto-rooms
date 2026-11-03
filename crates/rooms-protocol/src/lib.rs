@@ -318,7 +318,8 @@ pub enum AskKind {
 }
 
 /// What an ask thread is about, and the one thread it keeps: an artifact (by the file key its
-/// rooms share), a room, a Journal day, or a session (asked in a fork of that session).
+/// rooms share), a room, a Journal day, a session (asked in a fork of that session), or the
+/// owner's own Study notes: one volume of a Study room, or the Study room as a whole.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
@@ -327,6 +328,8 @@ pub enum AskScope {
     #[serde(rename_all = "camelCase")] Room { room_id: RoomId },
     Day { date: IsoDate },
     Session(SessionRef),
+    #[serde(rename = "studyVolume", rename_all = "camelCase")] StudyVolume { room_id: StudyRoomId, number: u32 },
+    #[serde(rename = "studyRoom", rename_all = "camelCase")] StudyRoom { room_id: StudyRoomId },
 }
 
 wire!(
@@ -416,6 +419,140 @@ pub struct AskTarget {
     pub scoped: bool,
 });
 
+/// The id of a Study room: 10 chars of `[a-z0-9]`, minted by roomsd. Not a Rooms `RoomId`.
+pub type StudyRoomId = String;
+
+/// What a Study room points at without moving or copying it: a Rooms room, or an artifact by the
+/// file key its rooms share.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum StudyLink {
+    #[serde(rename_all = "camelCase")] Room { room_id: RoomId },
+    #[serde(rename_all = "camelCase")] Artifact { file_key: String },
+}
+
+/// A volume is written while a draft and frozen once published. Each room has exactly one
+/// draft, its highest-numbered volume.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(tag = "status", rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum StudyVolumeStatus {
+    Draft,
+    #[serde(rename_all = "camelCase")] Published { published_at: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
+pub enum StudyCardKind { Ink, Question }
+
+wire!(
+/// A node on a volume's canvas. `body` is markdown. `id` is the client's: 1–64 chars of `[A-Za-z0-9_-]`.
+pub struct StudyCard {
+    pub id: String,
+    pub kind: StudyCardKind,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub body: String,
+});
+
+wire!(
+/// A line between two cards of the same volume.
+pub struct StudyEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+});
+
+wire!(
+/// `<home>/.rooms/study/rooms/<roomId>/volumes/<number>.json`, as stored. Shown as `v0.<number>`.
+pub struct StudyVolume {
+    pub number: u32,
+    pub title: String,
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub status: StudyVolumeStatus,
+    pub created_at: String,
+    pub cards: Vec<StudyCard>,
+    pub edges: Vec<StudyEdge>,
+});
+
+wire!(pub struct StudyVolumeSummary {
+    pub number: u32,
+    pub title: String,
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub status: StudyVolumeStatus,
+    pub created_at: String,
+});
+
+wire!(
+/// A Study room with its links and its volumes, oldest first (the last one is the draft).
+pub struct StudyRoomSummary {
+    pub id: StudyRoomId,
+    pub name: String,
+    pub created_at: String,
+    pub links: Vec<StudyLink>,
+    pub volumes: Vec<StudyVolumeSummary>,
+});
+
+wire!(
+/// `GET /v1/study`: every Study room, oldest first.
+pub struct StudyIndex {
+    pub rooms: Vec<StudyRoomSummary>,
+});
+
+wire!(pub struct StudyMemo {
+    pub id: String,
+    pub text: String,
+    pub at: String,
+});
+
+wire!(pub struct StudyTodo {
+    pub id: String,
+    pub text: String,
+    pub done: bool,
+    pub at: String,
+});
+
+wire!(
+/// `<home>/.rooms/study/days/<date>.json`; a day never saved reads as empty.
+pub struct StudyDay {
+    pub date: IsoDate,
+    pub memos: Vec<StudyMemo>,
+    pub todos: Vec<StudyTodo>,
+});
+
+wire!(
+/// `POST /v1/study/rooms`.
+pub struct CreateStudyRoom {
+    pub name: String,
+});
+
+wire!(
+/// `PUT /v1/study/rooms/{roomId}`: the whole room as it should be.
+pub struct UpdateStudyRoom {
+    pub name: String,
+    pub links: Vec<StudyLink>,
+});
+
+wire!(
+/// `PUT /v1/study/rooms/{roomId}/volumes/{number}`: the draft's whole content.
+pub struct SaveStudyVolume {
+    pub title: String,
+    pub cards: Vec<StudyCard>,
+    pub edges: Vec<StudyEdge>,
+});
+
+wire!(
+/// `PUT /v1/study/days/{date}`: the day's whole content.
+pub struct SaveStudyDay {
+    pub memos: Vec<StudyMemo>,
+    pub todos: Vec<StudyTodo>,
+});
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(tag = "type")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
@@ -443,6 +580,9 @@ pub enum EventKind {
     #[serde(rename = "ask.progress", rename_all = "camelCase")] AskProgress { id: String, scope: AskScope, answer: String, activity: Option<String> },
     /// Exactly once per started turn, after every `ask.progress` of it; `turn.answer` is the whole answer.
     #[serde(rename = "ask.done")] AskDone { turn: AskTurn },
+    /// Something under `.rooms/study/` was written: a room or one of its volumes (`room_id`), or a
+    /// day (`None`).
+    #[serde(rename = "study.changed", rename_all = "camelCase")] StudyChanged { room_id: Option<StudyRoomId> },
     #[serde(rename = "resync", rename_all = "camelCase")] Resync { room_id: Option<RoomId> },
 }
 

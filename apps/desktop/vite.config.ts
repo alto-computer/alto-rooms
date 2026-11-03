@@ -19,7 +19,8 @@ export default defineConfig({
   server: { port: 1420, strictPort: true, watch: { ignored: ["**/src-tauri/**"] } },
   preview: { port: 4173, strictPort: true, headers: previewHeaders },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
-  build: { target: "safari16", outDir: "dist" },
+  // Fonts stay files: the app CSP (font-src 'self') refuses a font inlined as a data: URL.
+  build: { target: "safari16", outDir: "dist", assetsInlineLimit: (file) => (/\.(woff2?|ttf|otf)$/.test(file) ? false : undefined) },
   // The quit-flush verification probe (lib/flushProbe.ts) is compiled in only
   // with ALTO_FLUSH_PROBE=1; otherwise the constant is false and it tree-shakes out.
   // __APP_VERSION__: plugins declare a minAppVersion, checked against this.

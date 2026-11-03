@@ -12,7 +12,15 @@ export type Tab =
   | { id: string; kind: "plugin"; pluginId: string }
   | { id: string; kind: "session"; agent: Agent; sessionId: string }
   /** One per window: opening it again shows the one already open. */
-  | { id: string; kind: "settings" };
+  | { id: string; kind: "settings" }
+  | ({ id: string; kind: "study" } & StudyPage);
+
+/** Where a Study tab is: the library of study rooms, one room, one of its volumes, or a day of the calendar. */
+export type StudyPage =
+  | { page: "library" }
+  | { page: "room"; roomId: string }
+  | { page: "volume"; roomId: string; number: number }
+  | { page: "day"; date: string };
 
 /** `Omit` distributed over the union, so each kind keeps its own id fields. */
 export type TabInput = Tab extends infer T ? (T extends Tab ? Omit<T, "id"> : never) : never;
@@ -62,6 +70,51 @@ function defaultStorage(): StorageLike | undefined {
 }
 
 const isStr = (v: unknown): v is string => typeof v === "string";
+const isVolumeNumber = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 1;
+const isDate = (v: unknown): v is string => isStr(v) && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+/** A Study tab's page from untrusted JSON, with only its own fields. */
+function parseStudyPage(t: Record<string, unknown>): StudyPage | null {
+  switch (t.page) {
+    case "library":
+      return { page: "library" };
+    case "room":
+      return isStr(t.roomId) && t.roomId ? { page: "room", roomId: t.roomId } : null;
+    case "volume":
+      return isStr(t.roomId) && t.roomId && isVolumeNumber(t.number) ? { page: "volume", roomId: t.roomId, number: t.number } : null;
+    case "day":
+      return isDate(t.date) ? { page: "day", date: t.date } : null;
+    default:
+      return null;
+  }
+}
+
+/** The page fields alone, so a tab or history entry never carries another page's leftovers. */
+function studyPage(p: StudyPage): StudyPage {
+  switch (p.page) {
+    case "library":
+      return { page: "library" };
+    case "room":
+      return { page: "room", roomId: p.roomId };
+    case "volume":
+      return { page: "volume", roomId: p.roomId, number: p.number };
+    case "day":
+      return { page: "day", date: p.date };
+  }
+}
+
+function sameStudyPage(a: StudyPage, b: StudyPage): boolean {
+  switch (a.page) {
+    case "library":
+      return b.page === "library";
+    case "room":
+      return b.page === "room" && a.roomId === b.roomId;
+    case "volume":
+      return b.page === "volume" && a.roomId === b.roomId && a.number === b.number;
+    case "day":
+      return b.page === "day" && a.date === b.date;
+  }
+}
 /**
  * Rebuilds a tab from untrusted JSON, keeping only its id fields. The retired New tab
  * (`kind: "new"`) comes back as the Journal for `today`, which took its place as home. Tabs saved
@@ -92,6 +145,10 @@ function parseTab(v: unknown, today: string): Tab | null {
       return isAgent(t.agent) && isSessionId(t.session) ? { id: t.id, kind: "session", agent: t.agent, sessionId: t.session } : null;
     case "settings":
       return { id: t.id, kind: "settings" };
+    case "study": {
+      const page = parseStudyPage(t);
+      return page ? { id: t.id, kind: "study", ...page } : null;
+    }
     default:
       return null;
   }
@@ -181,6 +238,8 @@ function sameTab(a: TabInput | Tab, b: TabInput | Tab): boolean {
       return b.kind === "session" && a.agent === b.agent && a.sessionId === b.sessionId;
     case "settings":
       return b.kind === "settings";
+    case "study":
+      return b.kind === "study" && sameStudyPage(a, b);
   }
 }
 
@@ -207,6 +266,8 @@ function makeTab(id: string, t: TabInput): Tab {
       return { id, kind: "session", agent: t.agent, sessionId: t.sessionId };
     case "settings":
       return { id, kind: "settings" };
+    case "study":
+      return { id, kind: "study", ...studyPage(t) };
   }
 }
 

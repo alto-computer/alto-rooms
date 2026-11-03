@@ -71,6 +71,7 @@ function ScopedAskBar({ framing }: { framing: SubjectFraming }) {
   return (
     <div
       ref={container}
+      data-ask-bar
       className="pointer-events-none absolute inset-x-4 bottom-4 flex flex-col items-center gap-3 px-4 pb-4"
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes("Files")) return;

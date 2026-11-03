@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Room } from "@alto-rooms/protocol-ts";
-import { BookOpen, CircleAlert, Inbox, PanelLeft, Plus, Search, Settings } from "lucide-react";
+import { BookOpen, CircleAlert, Inbox, LibraryBig, PanelLeft, Plus, Search, Settings } from "lucide-react";
 import { Sidebar as ShadcnSidebar } from "@/components/ui/sidebar";
 import { useClient, useReadOnly, useRoomList, useViewer, useViewerStore } from "@/data/hooks";
 import type { ViewerStore } from "@/data/viewerStore";
@@ -31,6 +31,18 @@ export function openJournal(viewer: ViewerStore) {
   }
   viewer.replace(existing.id, { kind: "journal", date: today });
   viewer.activate(existing.id);
+}
+
+/**
+ * Shows the Study in the tab already showing it, else opens one on the library. From inside that tab
+ * it goes back to the library.
+ */
+export function openStudy(viewer: ViewerStore) {
+  const { tabs, activeId } = viewer.getState();
+  const existing = tabs.find((t) => t.kind === "study" && t.id === activeId) ?? tabs.find((t) => t.kind === "study");
+  if (!existing) viewer.open({ kind: "study", page: "library" });
+  else if (existing.id === activeId) viewer.navigate({ kind: "study", page: "library" });
+  else viewer.activate(existing.id);
 }
 
 export function Sidebar({ onFind }: { onFind: () => void }) {
@@ -150,6 +162,16 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
           >
             <BookOpen {...ICON} className={cn("shrink-0", active?.kind === "journal" ? "text-ink" : "text-ink-2")} />
             <span className="truncate">Journal</span>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => (wantsNewTab(e) ? viewer.open({ kind: "study", page: "library" }, { nextToActive: true }) : openStudy(viewer))}
+            onAuxClick={(e) => e.button === 1 && viewer.open({ kind: "study", page: "library" }, { nextToActive: true })}
+            aria-current={active?.kind === "study" ? "page" : undefined}
+            className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "study" && ITEM_CURRENT)}
+          >
+            <LibraryBig {...ICON} className={cn("shrink-0", active?.kind === "study" ? "text-ink" : "text-ink-2")} />
+            <span className="truncate">Study</span>
           </button>
           {inbox ? (
             <button
