@@ -257,16 +257,17 @@
 .study .react-flow__resize-control.line.st-rz::after{content:"";position:absolute;left:4.5px;top:8px;bottom:8px;width:1px;background:var(--ink-3);opacity:0;transition:opacity .15s}
 .study .react-flow__resize-control.line.st-rz:hover::after{opacity:.6}
 
-/* the open button, on hover; the opened card wears a soft ring */
+/* the open button, on hover; the opened card wears a ring */
 .study .st-openbtn{position:absolute;top:6px;right:6px;width:22px;height:22px;display:grid;place-items:center;border-radius:4px;color:var(--ink-3);background:var(--st-card);opacity:0;transition:opacity .15s,color .15s}
 .study .st-text .st-openbtn{background:var(--st-paper)}
 .study .react-flow__node:hover .st-openbtn,.study .st-openbtn:focus-visible{opacity:1}
 .study .st-openbtn:hover{color:var(--ink)}
-.study .react-flow__node .st-card.st-opened{border-color:var(--thread-soft);box-shadow:0 0 0 2px var(--thread-soft),var(--st-card-shadow)}
-.study .react-flow__node .st-text.st-opened{outline:2px solid var(--thread-soft)}
+.study .react-flow__node .st-card.st-opened{border-color:var(--ink-3);box-shadow:0 0 0 1px var(--ink-3),var(--st-card-shadow)}
+.study .react-flow__node .st-text.st-opened{outline:1px solid var(--ink-3)}
 
 /* the side panel: an opened card as a page, beside the sheet */
 .study .st-stage{display:flex;flex:1;min-height:0}
+.study .st-barzone{position:absolute;inset:0 40px;pointer-events:none}
 .study .st-panel{flex:none;display:flex;flex-direction:column;width:clamp(340px,42%,640px);min-height:0;margin:0 40px 24px -16px;border-radius:4px;background:var(--st-paper);box-shadow:var(--st-sheet-shadow);overflow:hidden}
 .study .st-phead{display:flex;align-items:center;gap:12px;padding:12px 12px 0 32px;min-height:48px}
 .study .st-ptitle{flex:1;min-width:0;font:13px var(--st-serif);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

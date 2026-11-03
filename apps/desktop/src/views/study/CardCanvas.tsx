@@ -370,15 +370,16 @@ function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts,
   const wrap = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!opened) return;
+    // Esc on the canvas or in the panel; the ask bar, and a dialog over the page, keep theirs. Caught
+    // before the editors, which take Esc for themselves.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented || !(e.target instanceof Node)) return;
+      if (e.key !== "Escape" || !(e.target instanceof Node)) return;
       const t = e.target;
-      // Esc on the canvas or in the panel; the ask bar keeps its own.
       if (t !== document.body && !(wrap.current?.contains(t) && !(t instanceof Element && t.closest("[data-ask-bar]")))) return;
       close();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [opened, close]);
 
   return (
@@ -409,7 +410,6 @@ function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts,
       </header>
       <CanvasContext.Provider value={canvas}>
         <div className="st-stage">
-          {/* Relative, with the sheet ending above the bottom, for the ask bar: it stays over the sheet, beside any panel. */}
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div ref={sheetRef} className="st-sheet" onDoubleClick={onDoubleClick}>
               <ReactFlow<CardNode, Edge>
@@ -439,7 +439,8 @@ function Sheet({ content, readOnly, save: write, follow, lead, titleLabel, acts,
                 proOptions={{ hideAttribution: true }}
               />
             </div>
-            {bar}
+            {/* The ask bar sits over the sheet's foot, within the sheet's width, beside any panel. */}
+            <div className="st-barzone">{bar}</div>
           </div>
           {open && isWritten(openKind) ? <CardPanel key={open.id} id={open.id} kind={openKind} body={open.data.body} onClose={close} /> : null}
         </div>

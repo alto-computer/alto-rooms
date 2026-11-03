@@ -267,6 +267,119 @@ test("today's book opens from the day page, keeps a heading card across a reload
   for (const line of ["Memo 1:\nquote: 라우터가 하나면 병목 아닌가", '- [x] "리뷰 준비"', "Card 1 (ink):\nquote: # 오늘 정리"]) expect(turn.answer).toContain(line);
 });
 
+/** Drags with the mouse from one point to another, in steps, the way a hand does. */
+async function dragBy(page: Page, from: { x: number; y: number }, dx: number, dy: number) {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(from.x + (dx * i) / 8, from.y + (dy * i) / 8);
+  await page.mouse.up();
+}
+
+test("a section carries the card inside it, a card and a section resize, and a card opened beside edits as a page; all of it survives a reload", async ({ page, daemon }, info) => {
+  const r = await api<Summary>(daemon, "POST", "/v1/study/rooms", { name: "캔버스" });
+  await openStudy(page);
+  await page.getByRole("button", { name: "캔버스 v0.1" }).click();
+  await expect(page.getByRole("tab", { name: "캔버스 v0.1", selected: true })).toBeVisible();
+  const file = async () => JSON.parse(await daemon.read(volumeFile(r.id, 1))) as { cards: { id: string; kind: string; x: number; y: number; width: number; height?: number; body: string }[] };
+  const byKind = async (kind: string) => (await file()).cards.find((c) => c.kind === kind);
+
+  await page.getByRole("button", { name: "+ Section", exact: true }).click();
+  const sectionTitle = page.getByRole("textbox", { name: "Section title" });
+  await expect(sectionTitle).toBeFocused();
+  await page.keyboard.type("읽은 것");
+  const section = page.getByTestId("section");
+  const frame = (await section.boundingBox())!;
+
+  // The frame lets a double-click through to the sheet: the card is made inside it.
+  await page.mouse.dblclick(frame.x + 60, frame.y + 90);
+  const card = page.getByTestId("ink-card");
+  const cardEditor = card.getByRole("textbox", { name: "Card" });
+  await expect(cardEditor).toBeFocused();
+  await expect(card.locator("h1.is-editor-empty")).toHaveAttribute("data-placeholder", "Heading 1");
+  if (info.project.name === "chromium") await page.screenshot({ path: path.join(SCREENS, "canvas-new-card.png") });
+  await page.keyboard.type("카드 제목");
+  await expect(card.getByRole("heading", { level: 1, name: "카드 제목" })).toBeVisible();
+
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
+  const text = page.getByTestId("text-node");
+  await expect(text.getByRole("textbox", { name: "Text" })).toBeFocused();
+  await page.keyboard.type("## 메모");
+  await expect(text.getByRole("heading", { level: 2, name: "메모" })).toBeVisible();
+  // No paper under a text: no background, no border, no shadow.
+  expect(await text.evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderTopWidth, getComputedStyle(el).boxShadow])).toEqual(["rgba(0, 0, 0, 0)", "0px", "none"]);
+
+  await expect.poll(async () => (await byKind("ink"))?.body, { timeout: 5000 }).toBe("# 카드 제목");
+  const before = (await card.boundingBox())!;
+  const savedBefore = (await byKind("ink"))!;
+  const sectionBefore = (await byKind("section"))!;
+  await dragBy(page, { x: frame.x + frame.width - 40, y: frame.y + 20 }, 140, 70);
+  const moved = (await section.boundingBox())!;
+  const [dx, dy] = [moved.x - frame.x, moved.y - frame.y];
+  expect(dx).toBeGreaterThan(100);
+  expect(dy).toBeGreaterThan(50);
+  const after = (await card.boundingBox())!;
+  expect([after.x - before.x, after.y - before.y]).toEqual([dx, dy]);
+  await expect
+    .poll(async () => {
+      const [s, c] = [(await byKind("section"))!, (await byKind("ink"))!];
+      return [c.x - savedBefore.x, c.y - savedBefore.y, s.x - sectionBefore.x, s.y - sectionBefore.y];
+    }, { timeout: 5000 })
+    .toEqual([Math.round(dx), Math.round(dy), Math.round(dx), Math.round(dy)]);
+
+  // The card's right edge widens it; the section's corner grows its frame.
+  await card.hover();
+  const edge = (await card.locator(".st-rz").boundingBox())!;
+  // Above the middle, where the line handle sits.
+  await dragBy(page, { x: edge.x + edge.width / 2, y: edge.y + 10 }, 90, 0);
+  const corner = (await section.locator(".st-secrz").boundingBox())!;
+  await dragBy(page, { x: corner.x + corner.width / 2, y: corner.y + corner.height / 2 }, 100, 60);
+  await expect.poll(async () => (await byKind("section"))?.height ?? 0, { timeout: 5000 }).toBeGreaterThan(400);
+  const grown = await file();
+  const [sec0, ink0] = grown.cards;
+  expect(ink0.width).toBeGreaterThan(350);
+  expect(sec0.width).toBeGreaterThan(640);
+  expect((await byKind("ink"))!.height).toBeUndefined();
+
+  // Opened beside, the card is a page: typed there, it shows in the card at once.
+  await card.hover();
+  await card.getByRole("button", { name: "Open" }).click();
+  const panel = page.getByRole("complementary", { name: "Opened card" });
+  await expect(panel.getByRole("heading", { level: 2, name: "카드 제목" })).toBeVisible();
+  const pageEditor = panel.getByRole("textbox", { name: "Card" });
+  await expect(pageEditor).toBeFocused();
+  expect(await pageEditor.locator("h1").evaluate((el) => getComputedStyle(el).fontSize)).toBe("30px");
+  // The caret waits on the empty line TipTap keeps under the last block.
+  await page.keyboard.type("## 소제목");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- 하나");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("둘");
+  await expect(pageEditor.getByRole("heading", { level: 2, name: "소제목" })).toBeVisible();
+  await expect(card.getByRole("heading", { level: 2, name: "소제목" })).toBeVisible();
+  await expect(card.getByRole("listitem")).toHaveText(["하나", "둘"]);
+  // The ask bar stays over the sheet, clear of the panel.
+  const ask = (await page.getByPlaceholder("Ask about this volume…").boundingBox())!;
+  expect(ask.x + ask.width).toBeLessThanOrEqual((await panel.boundingBox())!.x);
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect.poll(async () => (await byKind("ink"))?.body, { timeout: 5000 }).toBe("# 카드 제목\n\n## 소제목\n\n- 하나\n- 둘");
+
+  await page.reload();
+  await expect(page.getByRole("tab", { name: "캔버스 v0.1", selected: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Section title" })).toHaveValue("읽은 것");
+  await expect(page.getByTestId("ink-card").getByRole("heading", { level: 2, name: "소제목" })).toBeVisible();
+  await expect(page.getByTestId("text-node").getByRole("heading", { level: 2, name: "메모" })).toBeVisible();
+  const saved = await file();
+  expect(saved.cards.map((c) => [c.kind, c.body])).toEqual([["section", "읽은 것"], ["ink", "# 카드 제목\n\n## 소제목\n\n- 하나\n- 둘"], ["text", "## 메모"]]);
+  const [sec, ink] = saved.cards;
+  expect([sec.width, sec.height, ink.width]).toEqual([sec0.width, sec0.height, ink0.width]);
+  // The canvas shows the saved sizes: the frame and the card come back as wide (and tall) as they were left.
+  const zoom = await page.locator(".react-flow__viewport").evaluate((el) => new DOMMatrixReadOnly(getComputedStyle(el).transform).a);
+  const shown = (await page.getByTestId("section").boundingBox())!;
+  expect([Math.round(shown.width / zoom), Math.round(shown.height / zoom)]).toEqual([sec.width, sec.height]);
+  expect(Math.round((await page.getByTestId("ink-card").boundingBox())!.width / zoom)).toBe(ink.width);
+});
+
 /** A Study with some history: rooms with published volumes and drafts, cards, a day with memos. */
 async function seed(daemon: Daemon) {
   const rs = await daemon.createRoom("리서치");
@@ -315,9 +428,11 @@ async function seed(daemon: Daemon) {
   for (const [n, title] of books) {
     const cards = n === 0
       ? [
-          { id: "a", kind: "ink", x: 40, y: 60, width: 280, body: "# 오늘\n\nRouter와 Worker를 나눈 이유를 다시 적었다." },
-          { id: "b", kind: "question", x: 420, y: 80, width: 240, body: "세션은 몇 개까지 따라갈 수 있나" },
-          { id: "c", kind: "ink", x: 60, y: 300, width: 300, body: "- 책 안 캔버스 고르기\n- 로드맵 리뷰 준비" },
+          { id: "s", kind: "section", x: 0, y: 0, width: 700, height: 420, body: "Router와 Worker" },
+          { id: "a", kind: "ink", x: 40, y: 64, width: 300, body: "# 오늘\n\nRouter와 Worker를 나눈 이유를 다시 적었다." },
+          { id: "c", kind: "ink", x: 380, y: 64, width: 280, body: "- 책 안 캔버스 고르기\n- 로드맵 리뷰 준비" },
+          { id: "b", kind: "question", x: 780, y: 120, width: 240, body: "세션은 몇 개까지 따라갈 수 있나" },
+          { id: "t", kind: "text", x: 20, y: 470, width: 420, body: "## 내일\n\n리뷰 전에 따라갈 수 있는 세션 수를 다시 센다." },
         ]
       : [{ id: "a", kind: "ink", x: 40, y: 60, width: 280, body: title || "메모" }];
     const edges = n === 0 ? [{ id: "e1", source: "a", target: "b" }, { id: "e2", source: "a", target: "c" }] : [];
@@ -383,6 +498,21 @@ test("screens of the Study in light and dark", async ({ page, daemon }, info) =>
     await expect(page.getByTestId("ink-card")).toHaveCount(2);
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(SCREENS, `book-${scheme}.png`) });
+    // The canvas: a section holding two cards, a text under it, and a card opened beside.
+    await expect(page.getByTestId("section")).toBeVisible();
+    await expect(page.getByTestId("text-node")).toBeVisible();
+    await page.screenshot({ path: path.join(SCREENS, `canvas-${scheme}.png`) });
+    const first = page.getByTestId("ink-card").filter({ hasText: "오늘" });
+    await first.hover();
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: path.join(SCREENS, `canvas-hover-${scheme}.png`) });
+    await first.getByRole("button", { name: "Open" }).click();
+    await expect(page.getByRole("complementary", { name: "Opened card" })).toBeVisible();
+    await page.mouse.move(5, 890);
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: path.join(SCREENS, `canvas-panel-${scheme}.png`) });
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("complementary")).toHaveCount(0);
 
     const [y, m] = today().split("-").map(Number);
     const nextMonth = today(new Date(y, m, 1));
