@@ -2,13 +2,14 @@ import type { Artifact, AskScope, AskTarget, AskTurn, Room, Session } from "@alt
 import { AGENT_NAMES } from "@/lib/agents";
 import { sessionTitle } from "@/lib/sessions";
 import { localDate } from "@/lib/dates";
-import { versionOf } from "@/views/study/study";
+import { shortDate, versionOf } from "@/views/study/study";
 import { modelLabel } from "./askModel";
 
 /**
  * What an ask bar asks about: the artifact in an artifact tab, the session in a session tab, the
- * room in a room tab, the viewed day in the Journal tab, and in the Study the volume on the canvas
- * or the Study room shown. A Study subject carries its room's name for the note an answer becomes.
+ * room in a room tab, the viewed day in the Journal tab, and in the Study the volume on the canvas,
+ * the Study room shown, or a day's book. A Study room or volume subject carries its room's name for
+ * the note an answer becomes.
  */
 export type AskSubject =
   | { kind: "artifact"; artifact: Artifact }
@@ -16,7 +17,8 @@ export type AskSubject =
   | { kind: "room"; roomId: string }
   | { kind: "day"; date: string }
   | { kind: "studyVolume"; roomId: string; number: number; roomName: string }
-  | { kind: "studyRoom"; roomId: string; roomName: string };
+  | { kind: "studyRoom"; roomId: string; roomName: string }
+  | { kind: "studyDayBook"; date: string };
 
 export type TurnHeader = { text: string; title?: string };
 
@@ -107,6 +109,14 @@ export function frameSubject(subject: AskSubject): SubjectFraming {
         header: agentHeader,
         agent: "Default agent",
         noteTarget: (now) => ({ date: localDate(now), source: `Study: ${subject.roomName}` }),
+      };
+    case "studyDayBook":
+      return {
+        scope: { kind: "studyDayBook", date: subject.date },
+        placeholder: "Ask about this book…",
+        header: agentHeader,
+        agent: "Default agent",
+        noteTarget: () => ({ date: subject.date, source: `Study: Book · ${shortDate(subject.date)}` }),
       };
   }
 }

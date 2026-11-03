@@ -14,9 +14,11 @@ import type {
   RoomColor,
   RoomsEvent,
   SaveStudyDay,
+  SaveStudyDayBook,
   SaveStudyVolume,
   StudyCard,
   StudyDay,
+  StudyDayBook,
   StudyEdge,
   StudyLink,
   StudyRoomSummary,
@@ -82,8 +84,8 @@ export const studyVolume = (
 
 export const studyCard = (id: string, extra: Partial<StudyCard> = {}): StudyCard => ({ id, kind: "ink", x: 0, y: 0, width: 280, body: "", ...extra });
 
-/** roomsd's Study rules, in memory: one draft per room (the last volume), published volumes frozen, empty unsaved days. */
-function fakeStudy(rooms: FakeStudyRoom[], days: Record<string, StudyDay>) {
+/** roomsd's Study rules, in memory: one draft per room (the last volume), published volumes frozen, empty unsaved days and books. */
+function fakeStudy(rooms: FakeStudyRoom[], days: Record<string, StudyDay>, books: Record<string, StudyDayBook>) {
   let minted = 0;
   const notFound = () => new RoomsApiError(404, "study room not found", "study_room_not_found");
   const find = (id: string) => {
@@ -151,6 +153,17 @@ function fakeStudy(rooms: FakeStudyRoom[], days: Record<string, StudyDay>) {
       days[date] = { date, memos: structuredClone(save.memos), todos: structuredClone(save.todos) };
       return structuredClone(days[date]);
     }),
+    studyDayBooks: vi.fn(async () => ({
+      books: Object.values(books)
+        .filter((b) => b.title.trim() || b.cards.length)
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .map((b) => ({ date: b.date, title: b.title, cardCount: b.cards.length })),
+    })),
+    studyDayBook: vi.fn(async (date: string): Promise<StudyDayBook> => structuredClone(books[date] ?? { date, title: "", cards: [], edges: [] })),
+    saveStudyDayBook: vi.fn(async (date: string, save: SaveStudyDayBook): Promise<StudyDayBook> => {
+      books[date] = { date, title: save.title, cards: structuredClone(save.cards), edges: structuredClone(save.edges) };
+      return structuredClone(books[date]);
+    }),
   };
 }
 
@@ -193,6 +206,8 @@ export function fakeClient(
     studyRooms?: FakeStudyRoom[];
     /** Saved Study days by date (`state.studyDays`). */
     studyDays?: Record<string, StudyDay>;
+    /** Saved day books by date (`state.studyBooks`). */
+    studyBooks?: Record<string, StudyDayBook>;
   } = {},
 ) {
   let onEvent: (e: RoomsEvent) => void = () => {};
@@ -208,6 +223,7 @@ export function fakeClient(
     sessions: opts.sessions ?? [],
     studyRooms: opts.studyRooms ?? [],
     studyDays: opts.studyDays ?? {},
+    studyBooks: opts.studyBooks ?? {},
   };
   const info: Info = {
     version: "0",
@@ -234,7 +250,7 @@ export function fakeClient(
   const client = {
     info: async () => info,
     // Like roomsd minus the study.changed events (tests emit them).
-    ...fakeStudy(state.studyRooms, state.studyDays),
+    ...fakeStudy(state.studyRooms, state.studyDays, state.studyBooks),
     listPlugins: vi.fn(async () => state.plugins.map((p) => ({ ...p }))),
     // Like roomsd: on grants what was shown (still declared); off keeps the approval.
     setPluginEnabled: vi.fn(async (id: string, enabled: boolean, shown?: string[]): Promise<PluginInfo> => {

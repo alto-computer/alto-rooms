@@ -32,8 +32,8 @@ export type SurfaceId = { kind: "answer"; scope: SurfaceScope; turnId: string } 
  * The threads whose answers plugins may read and mark: the SDK's `AnswerScope`. A Study answer is no
  * surface until the SDK names its scope; a plugin built before then would key it by an id it can't read.
  */
-export type SurfaceScope = Exclude<AskScope, { kind: "studyVolume" | "studyRoom" }>;
-export const isSurfaceScope = (s: AskScope): s is SurfaceScope => s.kind !== "studyVolume" && s.kind !== "studyRoom";
+export type SurfaceScope = Exclude<AskScope, { kind: "studyVolume" | "studyRoom" | "studyDayBook" }>;
+export const isSurfaceScope = (s: AskScope): s is SurfaceScope => s.kind !== "studyVolume" && s.kind !== "studyRoom" && s.kind !== "studyDayBook";
 type AnswerId = Extract<SurfaceId, { kind: "answer" }>;
 
 /** `answer:<scopeKey>/<turnId>` or `note:<date>/<folded file name>`: the one name a surface has while open. */

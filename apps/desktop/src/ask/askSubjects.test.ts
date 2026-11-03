@@ -80,6 +80,15 @@ describe("frameSubject", () => {
     expect(scopeKey(frameSubject({ kind: "studyVolume", roomId: "a1b2c3d4e5", number: 1, roomName: "" }).scope)).not.toBe(scopeKey(volume.scope));
   });
 
+  it("frames a day book by its date, a thread apart from the Journal day's", () => {
+    const book = frameSubject({ kind: "studyDayBook", date: "2026-11-03" });
+    expect(book.scope).toEqual({ kind: "studyDayBook", date: "2026-11-03" });
+    expect(scopeKey(book.scope)).toBe("study-book:2026-11-03");
+    expect(scopeKey(book.scope)).not.toBe(scopeKey(frameSubject({ kind: "day", date: "2026-11-03" }).scope));
+    expect(book.placeholder).toBe("Ask about this book…");
+    expect(book.agent).toBe("Default agent");
+  });
+
   describe("noteTarget", () => {
     it("saves no doc answer", () => {
       expect(frameSubject({ kind: "artifact", artifact: artifact }).noteTarget).toBeNull();
@@ -101,6 +110,10 @@ describe("frameSubject", () => {
     it("saves a Study answer into today's Journal, named by the Study room and the volume", () => {
       expect(frameSubject({ kind: "studyVolume", roomId: "a1b2c3d4e5", number: 3, roomName: "어텐션" }).noteTarget!(late, [room])).toEqual({ date: "2026-10-09", source: "Study: 어텐션 v0.3" });
       expect(frameSubject({ kind: "studyRoom", roomId: "a1b2c3d4e5", roomName: "어텐션" }).noteTarget!(late, [room])).toEqual({ date: "2026-10-09", source: "Study: 어텐션" });
+    });
+
+    it("saves a day book answer into the book's day, named by it", () => {
+      expect(frameSubject({ kind: "studyDayBook", date: "2026-10-01" }).noteTarget!(late, [room])).toEqual({ date: "2026-10-01", source: "Study: Book · 10.01" });
     });
 
     it("saves a day answer into the viewed day, whatever today is, with no source line", () => {

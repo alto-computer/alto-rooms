@@ -14,9 +14,12 @@ import type { RoomsEvent } from "./generated/RoomsEvent";
 import type { Session } from "./generated/Session";
 import type { SessionRef } from "./generated/SessionRef";
 import type { SaveStudyDay } from "./generated/SaveStudyDay";
+import type { SaveStudyDayBook } from "./generated/SaveStudyDayBook";
 import type { SaveStudyVolume } from "./generated/SaveStudyVolume";
 import type { StartAsk } from "./generated/StartAsk";
 import type { StudyDay } from "./generated/StudyDay";
+import type { StudyDayBook } from "./generated/StudyDayBook";
+import type { StudyDayBooks } from "./generated/StudyDayBooks";
 import type { StudyIndex } from "./generated/StudyIndex";
 import type { StudyRoomSummary } from "./generated/StudyRoomSummary";
 import type { StudyVolume } from "./generated/StudyVolume";
@@ -39,6 +42,8 @@ export function scopeKey(scope: AskScope): string {
       return `study-volume:${scope.roomId}:${scope.number}`;
     case "studyRoom":
       return `study-room:${scope.roomId}`;
+    case "studyDayBook":
+      return `study-book:${scope.date}`;
   }
 }
 
@@ -154,6 +159,12 @@ export function createRoomsClient(baseUrl: string, token?: string) {
     studyDay: async (date: string) => (await get<StudyDay>(`/v1/study/days/${date}`)).data,
     /** Replaces the day's memos and todos. 400 `invalid_input` for a bad or repeated id, 413 `too_large` past 256 KiB. */
     saveStudyDay: (date: string, save: SaveStudyDay) => write<StudyDay>("PUT", `/v1/study/days/${date}`, JSON.stringify(save)),
+    /** Every day book with a title or a card, newest first. */
+    studyDayBooks: async () => (await get<StudyDayBooks>("/v1/study/books")).data,
+    /** A day whose book was never saved comes back with an empty one. 400 `invalid_input` for a date that isn't `YYYY-MM-DD`. */
+    studyDayBook: async (date: string) => (await get<StudyDayBook>(`/v1/study/books/${date}`)).data,
+    /** Replaces the day's book; any day, past ones too. 400 `invalid_input` as for a volume, 413 `too_large` past 2 MiB. */
+    saveStudyDayBook: (date: string, save: SaveStudyDayBook) => write<StudyDayBook>("PUT", `/v1/study/books/${date}`, JSON.stringify(save)),
     startAsk: (req: StartAsk) => write<AskTurn>("POST", "/v1/asks", JSON.stringify(req)),
     /** Which agent an ask in this scope goes to, and the models it can pick from. */
     askTarget: async (scope: AskScope) => (await get<AskTarget>(`/v1/asks/target?scope=${encodeURIComponent(scopeKey(scope))}`)).data,

@@ -22,6 +22,9 @@ describe("client study methods", () => {
     await client.publishStudyRoom("abcde12345");
     await client.studyDay("2026-11-03");
     await client.saveStudyDay("2026-11-03", day);
+    await client.studyDayBooks();
+    await client.studyDayBook("2026-11-03");
+    await client.saveStudyDayBook("2026-11-03", save);
 
     const calls = fetch.mock.calls as unknown as [string, RequestInit | undefined][];
     expect(calls.map(([url, init]) => [url.replace("http://127.0.0.1:4317", ""), init?.method ?? "GET", init?.body])).toEqual([
@@ -33,6 +36,9 @@ describe("client study methods", () => {
       ["/v1/study/rooms/abcde12345/publish", "POST", ""],
       ["/v1/study/days/2026-11-03", "GET", undefined],
       ["/v1/study/days/2026-11-03", "PUT", JSON.stringify(day)],
+      ["/v1/study/books", "GET", undefined],
+      ["/v1/study/books/2026-11-03", "GET", undefined],
+      ["/v1/study/books/2026-11-03", "PUT", JSON.stringify(save)],
     ]);
     for (const [, init] of calls.filter(([, init]) => init?.method)) {
       expect(init?.headers).toMatchObject({ authorization: "Bearer t0k" });
@@ -77,5 +83,17 @@ describe("fake client study", () => {
     const todos = [{ id: "t1", text: "발행", done: true, at: "2026-11-03T09:00:00+09:00" }];
     await client.saveStudyDay("2026-11-03", { memos: [], todos });
     expect((await client.studyDay("2026-11-03")).todos).toEqual(todos);
+  });
+
+  it("keeps a book per day and lists only the ones with a title or a card, newest first", async () => {
+    const { client } = fakeClient();
+    expect(await client.studyDayBook("2026-11-03")).toEqual({ date: "2026-11-03", title: "", cards: [], edges: [] });
+    await client.saveStudyDayBook("2026-11-03", { title: "", cards: [studyCard("c1")], edges: [] });
+    await client.saveStudyDayBook("2026-11-02", { title: " ", cards: [], edges: [] });
+    await client.saveStudyDayBook("2026-10-30", { title: "지난날", cards: [], edges: [] });
+    expect((await client.studyDayBooks()).books).toEqual([
+      { date: "2026-11-03", title: "", cardCount: 1 },
+      { date: "2026-10-30", title: "지난날", cardCount: 0 },
+    ]);
   });
 });
