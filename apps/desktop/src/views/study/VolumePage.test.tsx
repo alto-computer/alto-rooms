@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { fakeFlowLayout } from "@/test/flow";
 import { renderWithStores, studyCard, studyVolume, type FakeStudyRoom } from "@/test/fakes";
 import { SAVE_DELAY_MS, VolumePage } from "./VolumePage";
 
@@ -8,24 +9,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// React Flow measures nodes before it shows them; jsdom has no layout, so every element is 100×40.
-beforeAll(() => {
-  window.ResizeObserver = class {
-    constructor(private cb: ResizeObserverCallback) {}
-    observe(target: Element) {
-      this.cb([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver);
-    }
-    unobserve() {}
-    disconnect() {}
-  } as unknown as typeof ResizeObserver;
-  (globalThis as unknown as { DOMMatrixReadOnly: unknown }).DOMMatrixReadOnly = class {
-    m22 = 1;
-  };
-  Object.defineProperties(HTMLElement.prototype, {
-    offsetWidth: { configurable: true, get: () => 100 },
-    offsetHeight: { configurable: true, get: () => 40 },
-  });
-});
+beforeAll(fakeFlowLayout);
 
 const room = (published: boolean): FakeStudyRoom => ({
   id: "s000000101",

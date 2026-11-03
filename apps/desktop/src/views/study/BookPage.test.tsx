@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { fakeFlowLayout } from "@/test/flow";
 import { renderWithStores, studyCard } from "@/test/fakes";
 import { BookPage } from "./BookPage";
 import { SAVE_DELAY_MS } from "./CardCanvas";
@@ -9,24 +10,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// React Flow measures nodes before it shows them; jsdom has no layout, so every element is 100×40.
-beforeAll(() => {
-  window.ResizeObserver = class {
-    constructor(private cb: ResizeObserverCallback) {}
-    observe(target: Element) {
-      this.cb([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver);
-    }
-    unobserve() {}
-    disconnect() {}
-  } as unknown as typeof ResizeObserver;
-  (globalThis as unknown as { DOMMatrixReadOnly: unknown }).DOMMatrixReadOnly = class {
-    m22 = 1;
-  };
-  Object.defineProperties(HTMLElement.prototype, {
-    offsetWidth: { configurable: true, get: () => 100 },
-    offsetHeight: { configurable: true, get: () => 40 },
-  });
-});
+beforeAll(fakeFlowLayout);
 
 const DATE = "2026-11-02";
 const book = { date: DATE, title: "정리", cards: [studyCard("a", { body: "# 오늘" })], edges: [] };
