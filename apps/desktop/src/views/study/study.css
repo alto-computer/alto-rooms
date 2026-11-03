@@ -134,6 +134,14 @@
 .study .st-bk.st-proof .st-rib{position:absolute;left:12px;bottom:-9px;width:4px;height:14px;background:var(--thread);clip-path:polygon(0 0,100% 0,100% 100%,50% 80%,0 100%)}
 .study .st-end{flex:none;width:14px;height:64px;margin-left:10px;border-left:2px solid var(--st-end);border-bottom:2px solid var(--st-end);border-radius:0 0 0 1px;opacity:.75}
 
+/* ───── SHELF: the day books, a board a month ───── */
+.study .st-shelf .st-cells{grid-template-columns:1fr}
+.study .st-shelf .st-cell{cursor:default}
+.study .st-shelf .st-label{pointer-events:none;font-family:var(--st-num);font-size:15px}
+.study .st-bk.st-proof .st-no{color:var(--ink-2)}
+.dark .study .st-bk.st-proof .st-no{color:#4a423b}
+.study .st-shelf .st-bk.st-proof .st-spine{bottom:30px}
+
 /* ───── ROOM: volume covers on an arc ───── */
 .study .st-room{position:relative;flex:1;min-height:0;overflow:hidden}
 .study .st-room .st-lede{position:absolute;left:64px;top:104px;width:320px;margin:0;z-index:30}
@@ -251,6 +259,8 @@
 .study .st-mh div{display:flex;gap:2px}
 .study .st-mh button{width:24px;height:24px;display:grid;place-items:center;border-radius:4px;color:var(--ink-3);transition:color .2s,background .2s}
 .study .st-mh button:hover{color:var(--ink);background:var(--row-hover)}
+.study .st-mh .st-mlabel{width:auto;height:auto;display:inline;margin-left:-4px;padding:2px 4px;font:inherit;color:var(--ink-2)}
+.study .st-mh .st-mlabel:hover{color:var(--ink);background:var(--row-hover)}
 .study .st-grid{display:grid;grid-template-columns:repeat(7,1fr)}
 .study .st-grid{row-gap:8px;margin-left:-5px}
 .study .st-grid button{position:relative;z-index:0;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;font:15px/1 var(--st-num);color:var(--ink-2);transition:color .2s,background .2s}
@@ -260,6 +270,17 @@
 .study .st-grid button.st-on{color:var(--ink)}
 .study .st-grid button.st-on{box-shadow:inset 0 0 0 1px var(--ink)}
 .study .st-grid button.st-today,.study .st-grid button.st-today:hover{color:var(--on-thread);background:var(--thread)}
+.study .st-grid button.st-has::after{content:"";position:absolute;left:50%;bottom:-5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--ink-3)}
+
+/* the day's book, under the date: its cover, or a dashed outline while it is empty */
+.study .st-cover{position:relative;display:block;width:116px;height:152px;margin-top:24px;border-radius:2px 5px 5px 2px;text-align:left;background:var(--cover);color:var(--st-cover-ink);box-shadow:var(--st-cover-shadow),inset 3px 0 0 rgb(0 0 0 / .06);filter:var(--st-cover-filter);overflow:hidden;transition:transform .45s var(--st-ease)}
+.study .st-cover::before{content:"";position:absolute;left:0;top:0;bottom:0;width:9px;background:linear-gradient(90deg,rgb(0 0 0 / .1),transparent)}
+.study .st-cover:hover{transform:translateY(-3px)}
+.study .st-cover .st-cd{position:absolute;left:15px;top:13px;font:400 28px/1 var(--st-num);letter-spacing:-.01em}
+.study .st-cover .st-ct{position:absolute;left:15px;right:12px;top:50px;font:700 14px/1.4 var(--st-serif);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical}
+.study .st-cover .st-cr{position:absolute;left:15px;bottom:16px;width:28px;height:2px;background:var(--thread)}
+.study .st-cover.st-blank{background:transparent;border:1.5px dashed var(--st-draft-edge);box-shadow:none;filter:none;color:var(--ink-3)}
+.study .st-cover.st-blank::before{display:none}
 .study .st-col{min-width:0}
 .study .st-ch{font:400 30px/1 var(--st-num);letter-spacing:.005em;color:var(--ink);padding-bottom:16px;border-bottom:1px solid var(--hairline);margin-bottom:6px}
 .study .st-cap{width:100%;border:0;border-bottom:1px solid var(--hairline);background:transparent;outline:none;font:16px var(--st-serif);padding:14px 0;color:var(--ink);transition:border-color .2s}

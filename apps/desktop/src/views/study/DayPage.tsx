@@ -6,8 +6,9 @@ import { useFrameAfter } from "@/ask/useFrameAfter";
 import { useClient, useJournalDay, useReadOnly, useRoomsStore, useViewerStore } from "@/data/hooks";
 import { localDate } from "@/lib/dates";
 import { errorCopy } from "@/lib/errors";
-import { addMonths, isSubmit, monthGrid, newId, shortDate, weekdayOf } from "./study";
-import { Axes } from "./StudyNav";
+import { useDayBooks } from "./dayBooks";
+import { addMonths, clothOf, isSubmit, monthGrid, newId, shortDate, weekdayOf } from "./study";
+import { Axes, useStudyGo } from "./StudyNav";
 
 /**
  * A Study day, kept here while it is shown: loaded on arrival and again when roomsd says the Study
@@ -71,6 +72,8 @@ export function DayPage({ tabId, date }: { tabId: string; date: string }) {
   const [memo, setMemo] = useState("");
   const [todo, setTodo] = useState("");
   const barReady = useFrameAfter(day !== null);
+  const books = useDayBooks();
+  const booked = new Set(books?.map((b) => b.date));
 
   const at = () => new Date().toISOString();
   const addMemo = () => {
@@ -96,8 +99,9 @@ export function DayPage({ tabId, date }: { tabId: string; date: string }) {
             <div>
               <div className="st-kick">{weekdayOf(date)}</div>
               <h1 className="st-big">{shortDate(date)}</h1>
+              <Cover date={date} title={books?.find((b) => b.date === date)?.title ?? null} />
             </div>
-            <MonthGrid date={date} onPick={(d) => viewer.replace(tabId, { kind: "study", page: "day", date: d })} />
+            <MonthGrid date={date} booked={booked} onPick={(d) => viewer.replace(tabId, { kind: "study", page: "day", date: d })} />
           </div>
 
           <section className="st-col" aria-label="Memo">
@@ -200,15 +204,37 @@ export function DayPage({ tabId, date }: { tabId: string; date: string }) {
   );
 }
 
+/** The day's book as its cover: the date and the title. `title` is null while the book is empty or unknown. */
+function Cover({ date, title }: { date: string; title: string | null }) {
+  const go = useStudyGo();
+  return (
+    <button
+      type="button"
+      className={title === null ? "st-cover st-blank" : "st-cover"}
+      data-cloth={clothOf(date)}
+      aria-label={`Book · ${shortDate(date)}`}
+      onClick={(e) => go({ page: "book", date }, e)}
+    >
+      <span className="st-cd">{shortDate(date)}</span>
+      {title ? <span className="st-ct">{title}</span> : null}
+      <span className="st-cr" />
+    </button>
+  );
+}
+
 const MONTH_LABEL = (month: string) => month.replace("-", ".");
 
-function MonthGrid({ date, onPick }: { date: string; onPick: (date: string) => void }) {
+/** The month around the day: a day with a book is marked, and the month's name opens the shelf. */
+function MonthGrid({ date, booked, onPick }: { date: string; booked: Set<string>; onPick: (date: string) => void }) {
   const [month, setMonth] = useState(date.slice(0, 7));
   const today = localDate();
+  const go = useStudyGo();
   return (
     <div className="st-mini">
       <div className="st-mh">
-        <span>{MONTH_LABEL(month)}</span>
+        <button type="button" className="st-mlabel" onClick={(e) => go({ page: "shelf" }, e)}>
+          {MONTH_LABEL(month)}
+        </button>
         <div>
           <button type="button" aria-label="Previous month" onClick={() => setMonth((m) => addMonths(m, -1))}>
             <ChevronLeft size={15} strokeWidth={1.5} aria-hidden />
@@ -220,7 +246,7 @@ function MonthGrid({ date, onPick }: { date: string; onPick: (date: string) => v
       </div>
       <div className="st-grid" aria-label={MONTH_LABEL(month)}>
         {monthGrid(month).map((d) => {
-          const cls = [!d.inMonth && "st-out", d.date === today && "st-today", d.date === date && d.date !== today && "st-on"].filter(Boolean).join(" ");
+          const cls = [!d.inMonth && "st-out", d.date === today && "st-today", d.date === date && d.date !== today && "st-on", booked.has(d.date) && "st-has"].filter(Boolean).join(" ");
           return (
             <button
               key={d.date}

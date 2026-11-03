@@ -6,7 +6,7 @@ import type { StudyPage } from "@/data/viewerStore";
 import { localDate } from "@/lib/dates";
 import { ViewerStore } from "@/data/viewerStore";
 import { AppShell } from "@/shell/AppShell";
-import { memoryStorage, renderWithStores, room, studyVolume, type FakeStudyRoom } from "@/test/fakes";
+import { memoryStorage, renderWithStores, room, studyCard, studyVolume, type FakeStudyRoom } from "@/test/fakes";
 import { StudyView } from "./StudyView";
 
 vi.mock("@/lib/native", () => ({
@@ -206,10 +206,62 @@ describe("the calendar's day", () => {
     expect(r.viewer.getState().tabs.some((t) => t.kind === "artifact" && t.artifactId === "a2")).toBe(true);
   });
 
+  it("shows the day's book as a cover under the date, and opens it", async () => {
+    const r = await renderStudy({ page: "day", date: "2026-11-02" }, { studyBooks: { "2026-11-02": { date: "2026-11-02", title: "하루 정리", cards: [], edges: [] } } });
+    const cover = await screen.findByRole("button", { name: "Book · 11.02" });
+    await waitFor(() => expect(cover).toHaveTextContent("11.02하루 정리"));
+    expect(cover).not.toHaveClass("st-blank");
+    fireEvent.click(cover);
+    expect(r.viewer.getState().tabs.find((t) => t.id === r.viewer.getState().activeId)).toMatchObject({ kind: "study", page: "book", date: "2026-11-02" });
+  });
+
+  it("shows an empty book's cover blank, marks the days with a book, and opens the shelf from the month's name", async () => {
+    const books = { "2026-11-02": { date: "2026-11-02", title: "", cards: [studyCard("c")], edges: [] }, "2026-11-05": { date: "2026-11-05", title: " ", cards: [], edges: [] } };
+    const r = await renderStudy({ page: "day", date: "2026-11-05" }, { studyBooks: books });
+    await waitFor(() => expect(screen.getByRole("button", { name: "2026-11-02" })).toHaveClass("st-has"));
+    expect(screen.getByRole("button", { name: "2026-11-05" })).not.toHaveClass("st-has");
+    expect(screen.getByRole("button", { name: "Book · 11.05" })).toHaveClass("st-blank");
+    fireEvent.click(screen.getByRole("button", { name: "2026.11" }));
+    expect(r.viewer.getState().tabs.find((t) => t.id === r.viewer.getState().activeId)).toMatchObject({ kind: "study", page: "shelf" });
+  });
+
   it("goes to the day picked in the month", async () => {
     const r = await renderStudy({ page: "day", date: "2026-11-03" });
     fireEvent.click(await screen.findByRole("button", { name: "2026-11-17" }));
     expect(r.viewer.getState().tabs.find((t) => t.id === r.viewer.getState().activeId)).toMatchObject({ kind: "study", page: "day", date: "2026-11-17" });
     expect(await screen.findByRole("heading", { level: 1, name: "11.17" })).toBeInTheDocument();
+  });
+});
+
+describe("the shelf", () => {
+  const today = localDate();
+  const book = (date: string, title: string) => ({ date, title, cards: [studyCard("c")], edges: [] });
+
+  it("shelves a board a month, newest on top, each day a spine with its title and day, today's leaning as a proof", async () => {
+    const r = await renderStudy({ page: "shelf" }, { studyBooks: { "2025-10-31": book("2025-10-31", "핼러윈"), "2025-11-02": book("2025-11-02", "정리"), "2025-11-01": book("2025-11-01", "") } });
+    const shelf = await screen.findByRole("list", { name: "Shelf" });
+    await waitFor(() => expect(within(shelf).getAllByRole("listitem")).toHaveLength(3));
+    const boards = within(shelf).getAllByRole("listitem");
+    expect(boards.map((b) => b.querySelector(".st-label")?.textContent)).toEqual([today.slice(0, 7).replace("-", "."), "2025.11", "2025.10"]);
+    expect(within(boards[0]).getByRole("button", { name: `Book · ${today.replaceAll("-", ".")}` })).toHaveClass("st-proof");
+    expect(within(boards[1]).getAllByRole("button").map((b) => [b.getAttribute("aria-label"), b.textContent, b.className])).toEqual([
+      ["Book · 2025.11.01", "1", "st-bk"],
+      ["Book · 2025.11.02", "정리2", "st-bk"],
+    ]);
+    expect(screen.getByText("03")).toBeInTheDocument();
+    fireEvent.click(within(boards[1]).getByRole("button", { name: "Book · 2025.11.02" }));
+    expect(r.viewer.getState().tabs.find((t) => t.id === r.viewer.getState().activeId)).toMatchObject({ kind: "study", page: "book", date: "2025-11-02" });
+  });
+
+  it("keeps today's book a proof once it is written, and cuts a full month into more boards", async () => {
+    const month = today.slice(0, 7);
+    const days = Array.from({ length: 12 }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`).filter((d) => d !== today);
+    const books = Object.fromEntries([...days, today].map((d) => [d, book(d, d === today ? "오늘" : "")]));
+    await renderStudy({ page: "shelf" }, { studyBooks: books });
+    const shelf = await screen.findByRole("list", { name: "Shelf" });
+    await waitFor(() => expect(within(shelf).getAllByRole("button").length).toBe(days.length + 1));
+    expect(within(shelf).getAllByRole("listitem").length).toBe(2);
+    expect(within(shelf).getByRole("button", { name: `Book · ${today.replaceAll("-", ".")}` })).toHaveClass("st-proof");
+    expect(within(shelf).getAllByRole("button").filter((b) => b.classList.contains("st-proof"))).toHaveLength(1);
   });
 });

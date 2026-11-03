@@ -3,6 +3,7 @@ import type { Tab } from "@/data/viewerStore";
 import { DayPage } from "./DayPage";
 import { LibraryPage } from "./LibraryPage";
 import { RoomPage } from "./RoomPage";
+import { ShelfPage } from "./ShelfPage";
 import "./study.css";
 
 /** React Flow and TipTap load with the first volume or book opened, not with the app. */
@@ -36,6 +37,6 @@ function page(tab: Extract<Tab, { kind: "study" }>) {
         </Suspense>
       );
     case "shelf":
-      return null;
+      return <ShelfPage />;
   }
 }

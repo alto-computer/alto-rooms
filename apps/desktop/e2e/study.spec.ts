@@ -157,7 +157,7 @@ test("a study room links a Rooms room and opens it in a tab", async ({ page, dae
 /** The default agent for asks: it answers with the prompt's Study lines, so the test reads what roomsd sent. */
 function installEchoAgent(daemon: Daemon) {
   const bin = path.join(daemon.home, "echo-study.sh");
-  writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$1" | grep -E '^(Study room: |Volume: |Card [0-9]+ |- card |- v0[.]|Documents [(])'\n`);
+  writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$1" | grep -E '^(Study room: |Volume: |Study day: |Book: |Memo [0-9]+:|> |- [[]|Card [0-9]+ |- card |- v0[.]|Documents [(])' | sed 's/^> /quote: /'\n`);
   chmodSync(bin, 0o755);
   mkdirSync(path.join(daemon.home, ".rooms"), { recursive: true });
   writeFileSync(path.join(daemon.home, ".rooms/agents.toml"), `default = "echo"\n[agents.echo]\nnew = ["${bin}", "{prompt}", "--settings", "{scope_settings}"]\n`);
@@ -207,6 +207,66 @@ test("the one ask bar asks about a volume with its cards and lines, and about it
   await expect(page.getByText("이 판을 요약해줘")).toHaveCount(0);
 });
 
+test("today's book opens from the day page, keeps a heading card across a reload, shelves as today's proof, and asks with the day", async ({ page, daemon }) => {
+  installEchoAgent(daemon);
+  const date = today();
+  const short = date.slice(5).replace("-", ".");
+  const at = new Date().toISOString();
+  await api(daemon, "PUT", `/v1/study/days/${date}`, {
+    memos: [{ id: "m1", text: "라우터가 하나면 병목 아닌가", at }],
+    todos: [{ id: "t1", text: "리뷰 준비", done: true, at }],
+  });
+  await openStudy(page);
+  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: `Book · ${short}` }).click();
+  const tab = page.getByRole("tab", { name: `Book · ${short}`, selected: true });
+  await expect(tab).toBeVisible();
+  await expect(page.getByRole("button", { name: "Publish" })).toHaveCount(0);
+
+  const pane = page.locator(".react-flow__pane");
+  await expect(pane).toBeVisible();
+  const box = (await pane.boundingBox())!;
+  await page.mouse.dblclick(box.x + 220, box.y + 160);
+  await expect(page.getByTestId("ink-card").getByRole("textbox", { name: "Card" })).toBeFocused();
+  await page.keyboard.type("# 오늘 정리");
+  await page.getByRole("textbox", { name: "Title" }).fill("하루 정리");
+  const bookFile = `.rooms/study/books/${date}.json`;
+  await expect
+    .poll(async () => {
+      const book = JSON.parse(await daemon.read(bookFile).catch(() => "{}"));
+      return [book.date, book.title, book.cards?.map((c: { body: string }) => c.body)];
+    }, { timeout: 5000 })
+    .toEqual([date, "하루 정리", ["# 오늘 정리"]]);
+
+  await page.reload();
+  await expect(tab).toBeVisible();
+  await expect(page.getByTestId("ink-card").getByRole("heading", { level: 1, name: "오늘 정리" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue("하루 정리");
+
+  await page.getByRole("button", { name: `← ${short}` }).click();
+  await expect(page.getByRole("tab", { name: `Calendar · ${short}`, selected: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: `Book · ${short}` })).toContainText("하루 정리");
+  await expect(page.getByRole("button", { name: date, exact: true })).toHaveClass(/st-has/);
+  await page.getByRole("button", { name: date.slice(0, 7).replace("-", "."), exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Shelf", selected: true })).toBeVisible();
+  const spine = page.getByRole("list", { name: "Shelf" }).getByRole("button", { name: `Book · ${date.replaceAll("-", ".")}` });
+  await expect(spine).toHaveClass(/st-proof/);
+  await expect(spine).toContainText("하루 정리");
+
+  await spine.click();
+  await expect(tab).toBeVisible();
+  await expect(page.getByTestId("ink-card").getByRole("heading", { level: 1, name: "오늘 정리" })).toBeVisible();
+  const input = page.getByPlaceholder("Ask about this book…");
+  await input.fill("오늘을 정리해줘");
+  await input.press("Enter");
+  const answer = page.getByText(new RegExp(`Study day: ${date}`));
+  await expect(answer).toBeVisible({ timeout: 10_000 });
+  await expect(answer).toContainText('Book: "하루 정리"');
+  const turn = JSON.parse((await daemon.read(`.rooms/asks/study-book-${date}.jsonl`)).trim().split("\n").at(-1)!);
+  expect(turn.question).toBe("오늘을 정리해줘");
+  for (const line of ["Memo 1:\nquote: 라우터가 하나면 병목 아닌가", '- [x] "리뷰 준비"', "Card 1 (ink):\nquote: # 오늘 정리"]) expect(turn.answer).toContain(line);
+});
+
 /** A Study with some history: rooms with published volumes and drafts, cards, a day with memos. */
 async function seed(daemon: Daemon) {
   const rs = await daemon.createRoom("리서치");
@@ -250,6 +310,19 @@ async function seed(daemon: Daemon) {
       { id: "t2", text: "로드맵 리뷰 준비", done: false, at: new Date().toISOString() },
     ],
   });
+  const ago = (n: number) => today(new Date(Date.now() - n * 86_400_000));
+  const books: [number, string][] = [[0, "하루 정리"], [1, ""], [2, "라우터 다시 보기"], [4, "Weekly review"], [5, "세션은 몇 개까지"], [8, "react-flow 고르기"], [11, "읽기 노트"], [16, "첫 판 발행"], [23, "회고"], [24, "도구 정리"], [37, "A New City"]];
+  for (const [n, title] of books) {
+    const cards = n === 0
+      ? [
+          { id: "a", kind: "ink", x: 40, y: 60, width: 280, body: "# 오늘\n\nRouter와 Worker를 나눈 이유를 다시 적었다." },
+          { id: "b", kind: "question", x: 420, y: 80, width: 240, body: "세션은 몇 개까지 따라갈 수 있나" },
+          { id: "c", kind: "ink", x: 60, y: 300, width: 300, body: "- 책 안 캔버스 고르기\n- 로드맵 리뷰 준비" },
+        ]
+      : [{ id: "a", kind: "ink", x: 40, y: 60, width: 280, body: title || "메모" }];
+    const edges = n === 0 ? [{ id: "e1", source: "a", target: "b" }, { id: "e2", source: "a", target: "c" }] : [];
+    await api(daemon, "PUT", `/v1/study/books/${ago(n)}`, { title, cards, edges });
+  }
   return ids;
 }
 
@@ -291,6 +364,34 @@ test("screens of the Study in light and dark", async ({ page, daemon }, info) =>
     await expect(page.getByRole("region", { name: "Artifacts" }).getByRole("button")).toHaveCount(3, { timeout: 3000 });
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(SCREENS, `day-${scheme}.png`) });
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: path.join(SCREENS, `day-narrow-${scheme}.png`) });
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    await page.getByRole("button", { name: today().slice(0, 7).replace("-", "."), exact: true }).click();
+    await expect(page.getByRole("tab", { name: "Shelf", selected: true })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Shelf" }).getByRole("button")).toHaveCount(11);
+    await page.mouse.move(5, 890);
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: path.join(SCREENS, `shelf-${scheme}.png`) });
+    await page.getByRole("list", { name: "Shelf" }).getByRole("button").nth(1).hover();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: path.join(SCREENS, `shelf-hover-${scheme}.png`) });
+
+    await page.getByRole("list", { name: "Shelf" }).getByRole("button", { name: `Book · ${today().replaceAll("-", ".")}` }).click();
+    await expect(page.getByTestId("ink-card")).toHaveCount(2);
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: path.join(SCREENS, `book-${scheme}.png`) });
+
+    const [y, m] = today().split("-").map(Number);
+    const nextMonth = today(new Date(y, m, 1));
+    await page.getByRole("button", { name: `← ${today().slice(5).replace("-", ".")}` }).click();
+    await page.getByRole("button", { name: "Next month" }).click();
+    await page.getByRole("button", { name: nextMonth, exact: true }).click();
+    await expect(page.getByRole("button", { name: `Book · ${nextMonth.slice(5).replace("-", ".")}` })).toHaveClass(/st-blank/);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: path.join(SCREENS, `day-blank-${scheme}.png`) });
   }
   expect(Object.keys(ids)).toHaveLength(5);
 });
