@@ -14,6 +14,8 @@ const PAGES: TabInput[] = [
   { kind: "study", page: "room", roomId: "s000000001" },
   { kind: "study", page: "volume", roomId: "s000000001", number: 3 },
   { kind: "study", page: "day", date: "2026-11-03" },
+  { kind: "study", page: "book", date: "2026-11-03" },
+  { kind: "study", page: "shelf" },
 ];
 
 describe("Study tabs", () => {
@@ -32,11 +34,14 @@ describe("Study tabs", () => {
     expect(viewer.getState().tabs.find((t) => t.id === id)).toEqual({ id, kind: "study", page: "room", roomId: "s1" });
     expect(viewer.open({ kind: "study", page: "room", roomId: "s1" })).toBe(id);
     expect(viewer.open({ kind: "study", page: "volume", roomId: "s1", number: 1 })).not.toBe(id);
+    const book = viewer.open({ kind: "study", page: "book", date: "2026-11-03" });
+    expect(book).not.toBe(viewer.open({ kind: "study", page: "day", date: "2026-11-03" }));
+    expect(viewer.open({ kind: "study", page: "book", date: "2026-11-03" })).toBe(book);
   });
 
   it("from storage, refuse a page that is unknown or missing its fields", () => {
     const tabs = restartWith([
-      { id: "a", kind: "study", page: "shelf" },
+      { id: "a", kind: "study", page: "attic" },
       { id: "b", kind: "study" },
       { id: "c", kind: "study", page: "room" },
       { id: "d", kind: "study", page: "room", roomId: "" },
@@ -45,6 +50,8 @@ describe("Study tabs", () => {
       { id: "g", kind: "study", page: "volume", roomId: "s1", number: "2" },
       { id: "h", kind: "study", page: "day", date: "11/03/2026" },
       { id: "i", kind: "study", page: "day" },
+      { id: "k", kind: "study", page: "book", date: "2026-11-3" },
+      { id: "l", kind: "study", page: "book" },
       { id: "j", kind: "study", page: "volume", roomId: "s1", number: 2, extra: "kept?" },
     ]);
     expect(tabs).toEqual([{ kind: "study", page: "volume", roomId: "s1", number: 2 }]);

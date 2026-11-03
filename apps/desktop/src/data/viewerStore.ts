@@ -15,12 +15,17 @@ export type Tab =
   | { id: string; kind: "settings" }
   | ({ id: string; kind: "study" } & StudyPage);
 
-/** Where a Study tab is: the library of study rooms, one room, one of its volumes, or a day of the calendar. */
+/**
+ * Where a Study tab is: the library of study rooms, one room, one of its volumes, a day of the
+ * calendar, that day's book, or the shelf of day books.
+ */
 export type StudyPage =
   | { page: "library" }
   | { page: "room"; roomId: string }
   | { page: "volume"; roomId: string; number: number }
-  | { page: "day"; date: string };
+  | { page: "day"; date: string }
+  | { page: "book"; date: string }
+  | { page: "shelf" };
 
 /** `Omit` distributed over the union, so each kind keeps its own id fields. */
 export type TabInput = Tab extends infer T ? (T extends Tab ? Omit<T, "id"> : never) : never;
@@ -84,6 +89,10 @@ function parseStudyPage(t: Record<string, unknown>): StudyPage | null {
       return isStr(t.roomId) && t.roomId && isVolumeNumber(t.number) ? { page: "volume", roomId: t.roomId, number: t.number } : null;
     case "day":
       return isDate(t.date) ? { page: "day", date: t.date } : null;
+    case "book":
+      return isDate(t.date) ? { page: "book", date: t.date } : null;
+    case "shelf":
+      return { page: "shelf" };
     default:
       return null;
   }
@@ -100,6 +109,10 @@ function studyPage(p: StudyPage): StudyPage {
       return { page: "volume", roomId: p.roomId, number: p.number };
     case "day":
       return { page: "day", date: p.date };
+    case "book":
+      return { page: "book", date: p.date };
+    case "shelf":
+      return { page: "shelf" };
   }
 }
 
@@ -113,6 +126,10 @@ function sameStudyPage(a: StudyPage, b: StudyPage): boolean {
       return b.page === "volume" && a.roomId === b.roomId && a.number === b.number;
     case "day":
       return b.page === "day" && a.date === b.date;
+    case "book":
+      return b.page === "book" && a.date === b.date;
+    case "shelf":
+      return b.page === "shelf";
   }
 }
 /**

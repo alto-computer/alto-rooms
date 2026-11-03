@@ -59,6 +59,10 @@ function StudyLabel({ page }: { page: StudyPage }) {
       return <>Study</>;
     case "day":
       return <>{`Calendar · ${shortDate(page.date)}`}</>;
+    case "book":
+      return <>{`Book · ${shortDate(page.date)}`}</>;
+    case "shelf":
+      return <>Shelf</>;
     case "room":
       return <StudyRoomName roomId={page.roomId}>{(name) => `Study · ${name}`}</StudyRoomName>;
     case "volume":
