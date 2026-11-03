@@ -220,7 +220,7 @@ fn session_moved_is_camel_case_with_the_session_flattened() {
 
 #[test]
 fn study_volume_status_is_one_field_with_published_at_only_when_published() {
-    let card = StudyCard { id: "c1".into(), kind: StudyCardKind::Question, x: 1.5, y: -2.0, width: 240.0, body: "# 왜?".into() };
+    let card = StudyCard { id: "c1".into(), kind: StudyCardKind::Question, x: 1.5, y: -2.0, width: 240.0, body: "# 왜?".into(), height: None };
     let draft = StudyVolume {
         number: 1, title: "".into(), status: StudyVolumeStatus::Draft, created_at: "2026-11-03T09:00:00+09:00".into(),
         cards: vec![card], edges: vec![StudyEdge { id: "e1".into(), source: "c1".into(), target: "c1".into() }],
@@ -238,6 +238,17 @@ fn study_volume_status_is_one_field_with_published_at_only_when_published() {
     assert_eq!(serde_json::from_value::<StudyVolume>(v).unwrap(), published);
     let bad = serde_json::json!({"number": 1, "title": "", "status": "published", "createdAt": "t", "cards": [], "edges": []});
     assert!(serde_json::from_value::<StudyVolume>(bad).is_err(), "published without publishedAt");
+}
+
+#[test]
+fn a_study_card_has_a_height_only_when_it_is_given_one() {
+    let section = StudyCard { id: "s1".into(), kind: StudyCardKind::Section, x: 0.0, y: 0.0, width: 640.0, body: "읽기".into(), height: Some(420.0) };
+    assert_eq!(serde_json::to_value(&section).unwrap(), serde_json::json!({"id": "s1", "kind": "section", "x": 0.0, "y": 0.0, "width": 640.0, "body": "읽기", "height": 420.0}));
+    let text = StudyCard { kind: StudyCardKind::Text, height: None, ..section };
+    let v = serde_json::to_value(&text).unwrap();
+    assert_eq!((&v["kind"], v.get("height")), (&serde_json::json!("text"), None));
+    let old = serde_json::json!({"id": "c1", "kind": "ink", "x": 1, "y": 2, "width": 280, "body": "# 제목"});
+    assert_eq!(serde_json::from_value::<StudyCard>(old).unwrap().height, None, "a card saved before heights still reads");
 }
 
 #[test]

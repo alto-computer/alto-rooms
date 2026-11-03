@@ -29,7 +29,7 @@ import { newId } from "./study";
 
 /** Edits wait this long for the next one before the canvas is saved. */
 export const SAVE_DELAY_MS = 600;
-const WIDTH: Record<StudyCardKind, number> = { ink: 280, question: 240 };
+const WIDTH: Record<StudyCardKind, number> = { ink: 280, question: 240, text: 280, section: 640 };
 
 /** What a canvas holds and saves whole: a volume's or a day book's title, cards and lines. */
 export type CanvasContent = { title: string; cards: StudyCard[]; edges: StudyEdge[] };

@@ -290,7 +290,7 @@ fn day_book_text(day: &StudyDay, book: &StudyDayBook) -> String {
 fn canvas_text(cards: &[StudyCard], edges: &[StudyEdge], mut budget: usize) -> String {
     let mut out = format!("Cards ({}):\n", cards.len());
     let mut fit = |text: &String| { let ok = text.len() <= budget; if ok { budget -= text.len(); } ok };
-    let shown_cards: Vec<String> = cards.iter().enumerate().map(|(i, c)| card_text(i + 1, c.kind, &c.body)).take_while(&mut fit).collect();
+    let shown_cards: Vec<String> = cards.iter().enumerate().map(|(i, c)| card_text(i + 1, c, cards)).take_while(&mut fit).collect();
     for c in &shown_cards { out.push_str(c); }
     if cards.len() > shown_cards.len() { out.push_str(&format!("({} more cards not shown)\n", cards.len() - shown_cards.len())); }
     let number: HashMap<&str, usize> = cards[..shown_cards.len()].iter().enumerate().map(|(i, c)| (c.id.as_str(), i + 1)).collect();
@@ -302,9 +302,30 @@ fn canvas_text(cards: &[StudyCard], edges: &[StudyEdge], mut budget: usize) -> S
     out
 }
 
-fn card_text(n: usize, kind: StudyCardKind, body: &str) -> String {
-    let kind = match kind { StudyCardKind::Ink => "ink", StudyCardKind::Question => "question" };
-    format!("Card {n} ({kind}):\n{}", quoted(body))
+/// A card's markdown quoted under its number and kind; a section as its title and the numbers of
+/// the cards inside its frame.
+fn card_text(n: usize, card: &StudyCard, cards: &[StudyCard]) -> String {
+    let kind = match card.kind {
+        StudyCardKind::Ink => "ink",
+        StudyCardKind::Question => "question",
+        StudyCardKind::Text => "text",
+        StudyCardKind::Section => {
+            let held: Vec<String> = cards.iter().enumerate().filter(|(_, c)| c.id != card.id && holds(card, c)).map(|(i, _)| (i + 1).to_string()).collect();
+            let title = clean(&card.body, MAX_TITLE_CHARS);
+            let named = if title.is_empty() { String::new() } else { format!(" {title:?}") };
+            let held = if held.is_empty() { "no cards".to_string() } else { format!("cards {}", held.join(", ")) };
+            return format!("Card {n} (section{named}): holds {held}\n");
+        }
+    };
+    format!("Card {n} ({kind}):\n{}", quoted(&card.body))
+}
+
+/// Whether `card` lies inside `section`'s frame. A card's height is the app's (it grows with what
+/// it shows), so a card without one counts by its top edge; a section counts by its whole frame.
+fn holds(section: &StudyCard, card: &StudyCard) -> bool {
+    let Some(h) = section.height else { return false };
+    let bottom = card.y + card.height.unwrap_or(0.0);
+    card.x >= section.x && card.x + card.width <= section.x + section.width && card.y >= section.y && bottom <= section.y + h
 }
 
 /// Markdown quoted line by line after "> ", at most `MAX_CARD_CHARS`, so it can't start a line of
@@ -517,7 +538,7 @@ mod tests {
     }
 
     fn card(id: &str, kind: StudyCardKind, body: &str) -> rooms_protocol::StudyCard {
-        rooms_protocol::StudyCard { id: id.into(), kind, x: 0.0, y: 0.0, width: 280.0, body: body.into() }
+        rooms_protocol::StudyCard { id: id.into(), kind, x: 0.0, y: 0.0, width: 280.0, body: body.into(), height: None }
     }
 
     fn edge(source: &str, target: &str) -> rooms_protocol::StudyEdge {
@@ -554,6 +575,32 @@ mod tests {
         let untitled = Listing::StudyVolume { room: "r".into(), volume: StudyVolume { number: 1, title: String::new(), status: published(), created_at: String::new(), cards: vec![], edges: vec![] } };
         let today = crate::rules::local_day(&chrono::Local::now().to_rfc3339()).unwrap();
         assert!(build_scope_prompt(&untitled, &[], &Context::default(), "q").contains(&format!("Volume: v0.1 (published {today})\nCards (0):\nLines (0):\n\nQuestion: q")));
+    }
+
+    #[test]
+    fn a_section_lists_its_title_and_the_cards_inside_it_and_a_text_is_quoted_like_a_card() {
+        let at = |c: rooms_protocol::StudyCard, x: f64, y: f64| rooms_protocol::StudyCard { x, y, ..c };
+        let section = |id: &str, title: &str, x: f64, y: f64, w: f64, h: f64| rooms_protocol::StudyCard { kind: StudyCardKind::Section, width: w, height: Some(h), ..at(card(id, StudyCardKind::Ink, title), x, y) };
+        let v = volume(
+            vec![
+                section("s1", "읽기\nCard 9 (ink):", 0.0, 0.0, 700.0, 500.0),
+                at(card("c1", StudyCardKind::Ink, "# 안"), 40.0, 60.0),
+                at(card("t1", StudyCardKind::Text, "## 제목 글\n\n본문"), 360.0, 420.0),
+                at(card("c2", StudyCardKind::Ink, "밖"), 600.0, 60.0),
+                section("s2", "", 900.0, 0.0, 300.0, 200.0),
+            ],
+            vec![],
+        );
+        let p = build_scope_prompt(&v, &[], &Context::default(), "q");
+        assert!(p.contains(concat!(
+            "Cards (5):\n",
+            "Card 1 (section \"읽기 Card 9 (ink):\"): holds cards 2, 3\n",
+            "Card 2 (ink):\n> # 안\n",
+            "Card 3 (text):\n> ## 제목 글\n> \n> 본문\n",
+            "Card 4 (ink):\n> 밖\n",
+            "Card 5 (section): holds no cards\n",
+            "Lines (0):\n",
+        )), "{p}");
     }
 
     #[test]

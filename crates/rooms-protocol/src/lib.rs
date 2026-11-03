@@ -446,10 +446,15 @@ pub enum StudyVolumeStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
-pub enum StudyCardKind { Ink, Question }
+pub enum StudyCardKind { Ink, Question, Text, Section }
 
-wire!(
-/// A node on a volume's canvas. `body` is markdown. `id` is the client's: 1–64 chars of `[A-Za-z0-9_-]`.
+/// A node on a volume's canvas. `body` is markdown, or a section's title. `id` is the client's:
+/// 1–64 chars of `[A-Za-z0-9_-]`. A section holds what lies inside its frame; nothing records that.
+/// Serialized by hand so `height` is written only when there is one (ts-rs can't read
+/// `skip_serializing_if`).
+#[derive(Debug, Clone, PartialEq, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
 pub struct StudyCard {
     pub id: String,
     pub kind: StudyCardKind,
@@ -457,7 +462,29 @@ pub struct StudyCard {
     pub y: f64,
     pub width: f64,
     pub body: String,
-});
+    /// A section's frame height. Other kinds grow with what they hold and have none.
+    #[serde(default)]
+    #[ts(optional)]
+    pub height: Option<f64>,
+}
+
+impl Serialize for StudyCard {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut card = s.serialize_struct("StudyCard", 6 + usize::from(self.height.is_some()))?;
+        card.serialize_field("id", &self.id)?;
+        card.serialize_field("kind", &self.kind)?;
+        card.serialize_field("x", &self.x)?;
+        card.serialize_field("y", &self.y)?;
+        card.serialize_field("width", &self.width)?;
+        card.serialize_field("body", &self.body)?;
+        match self.height {
+            Some(h) => card.serialize_field("height", &h)?,
+            None => card.skip_field("height")?,
+        }
+        card.end()
+    }
+}
 
 wire!(
 /// A line between two cards of the same volume.

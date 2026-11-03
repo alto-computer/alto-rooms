@@ -114,6 +114,7 @@ fn item_ids<'a>(ids: impl Iterator<Item = &'a str>, what: &str) -> Result<HashSe
 fn check_canvas(what: &str, title: &str, cards: &[StudyCard], edges: &[StudyEdge]) -> Result<(), CoreError> {
     if title.chars().count() > MAX_TITLE_CHARS { return Err(CoreError::InvalidInput(format!("{what} title"))); }
     let ids = item_ids(cards.iter().map(|c| c.id.as_str()), "card")?;
+    if cards.iter().any(|c| c.height.is_some_and(|h| !h.is_finite() || h <= 0.0)) { return Err(CoreError::InvalidInput("card height".into())); }
     item_ids(edges.iter().map(|e| e.id.as_str()), "edge")?;
     if !edges.iter().all(|e| ids.contains(e.source.as_str()) && ids.contains(e.target.as_str())) {
         return Err(CoreError::InvalidInput(format!("an edge joins a card the {what} doesn't have")));
@@ -497,7 +498,7 @@ mod tests {
     fn study(core: &RoomsCore) -> PathBuf { core.home().join(".rooms/study") }
 
     fn card(id: &str, body: &str) -> StudyCard {
-        StudyCard { id: id.into(), kind: StudyCardKind::Ink, x: 10.0, y: 20.0, width: 280.0, body: body.into() }
+        StudyCard { id: id.into(), kind: StudyCardKind::Ink, x: 10.0, y: 20.0, width: 280.0, body: body.into(), height: None }
     }
 
     fn two_cards() -> SaveStudyVolume {
@@ -653,6 +654,22 @@ mod tests {
             assert_eq!(code(core.save_study_volume(&room.id, 1, save)), "invalid_input");
         }
         assert!(core.study_volume(&room.id, 1).unwrap().cards.is_empty());
+    }
+
+    #[test]
+    fn a_section_keeps_its_height_and_a_height_must_be_finite_and_positive() {
+        let (_d, core) = core();
+        let room = core.create_study_room("r").unwrap();
+        let section = |height| StudyCard { kind: StudyCardKind::Section, width: 640.0, height, ..card("s1", "읽기") };
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let save = SaveStudyVolume { cards: vec![section(Some(bad))], edges: vec![], ..two_cards() };
+            assert_eq!(code(core.save_study_volume(&room.id, 1, save)), "invalid_input", "{bad}");
+        }
+        let save = SaveStudyVolume { cards: vec![section(Some(420.0)), StudyCard { kind: StudyCardKind::Text, ..card("t1", "## 메모") }], edges: vec![], ..two_cards() };
+        core.save_study_volume(&room.id, 1, save.clone()).unwrap();
+        assert_eq!(core.study_volume(&room.id, 1).unwrap().cards, save.cards);
+        let file: serde_json::Value = serde_json::from_slice(&std::fs::read(study(&core).join(format!("rooms/{}/volumes/1.json", room.id))).unwrap()).unwrap();
+        assert_eq!((&file["cards"][0]["height"], file["cards"][1].get("height")), (&serde_json::json!(420.0), None), "height is written only when a card has one");
     }
 
     #[test]

@@ -2,6 +2,13 @@
 import type { StudyCardKind } from "./StudyCardKind";
 
 /**
- * A node on a volume's canvas. `body` is markdown. `id` is the client's: 1–64 chars of `[A-Za-z0-9_-]`.
+ * A node on a volume's canvas. `body` is markdown, or a section's title. `id` is the client's:
+ * 1–64 chars of `[A-Za-z0-9_-]`. A section holds what lies inside its frame; nothing records that.
+ * Serialized by hand so `height` is written only when there is one (ts-rs can't read
+ * `skip_serializing_if`).
  */
-export type StudyCard = { id: string, kind: StudyCardKind, x: number, y: number, width: number, body: string, };
+export type StudyCard = { id: string, kind: StudyCardKind, x: number, y: number, width: number, body: string, 
+/**
+ * A section's frame height. Other kinds grow with what they hold and have none.
+ */
+height?: number, };

@@ -855,7 +855,7 @@ mod tests {
         let core = RoomsCore::open(d.path()).unwrap();
         fake_default_agent(d.path());
         let room = core.create_study_room("어텐션").unwrap();
-        let card = |id: &str, kind, body: &str| StudyCard { id: id.into(), kind, x: 0.0, y: 0.0, width: 280.0, body: body.into() };
+        let card = |id: &str, kind, body: &str| StudyCard { id: id.into(), kind, x: 0.0, y: 0.0, width: 280.0, body: body.into(), height: None };
         core.save_study_volume(&room.id, 1, SaveStudyVolume {
             title: "병목".into(),
             cards: vec![card("c1", StudyCardKind::Ink, "# 제목\n병목이 사라진다"), card("c2", StudyCardKind::Question, "왜 둘이 아닐까")],
@@ -890,7 +890,7 @@ mod tests {
             memos: vec![StudyMemo { id: "m1".into(), text: "판은 왜 필요할까".into(), at: "t".into() }],
             todos: vec![StudyTodo { id: "t1".into(), text: "발행".into(), done: true, at: "t".into() }, StudyTodo { id: "t2".into(), text: "읽기".into(), done: false, at: "t".into() }],
         }).unwrap();
-        let card = |id: &str, kind, body: &str| StudyCard { id: id.into(), kind, x: 0.0, y: 0.0, width: 280.0, body: body.into() };
+        let card = |id: &str, kind, body: &str| StudyCard { id: id.into(), kind, x: 0.0, y: 0.0, width: 280.0, body: body.into(), height: None };
         core.save_study_day_book(&date, SaveStudyDayBook {
             title: "하루 정리".into(),
             cards: vec![card("c1", StudyCardKind::Ink, "# 오늘"), card("c2", StudyCardKind::Question, "내일은?")],
