@@ -1,6 +1,6 @@
 //! v2 ask: send a question about an artifact to the agent CLI that made it (spec 2026-10-06 v2 ask).
 //! Every thread belongs to an `AskScope`: an artifact, a room, a Journal day, a session, or a
-//! Study room or volume.
+//! Study room, volume or day book.
 //! `Asks` is the only entry point; templates, prompt, log and process stay inside this module.
 pub(crate) mod agents;
 pub mod images;
@@ -69,7 +69,8 @@ struct Invocation { argv: Vec<String>, stdin: Option<String> }
 struct Fallback { run: Invocation, mode: AskMode, left_out: u32 }
 
 /// A scope as one string, `artifact:<fileKey>`, `room:<roomId>`, `day:<YYYY-MM-DD>`,
-/// `session:<agent>:<id>`, `study-volume:<studyRoomId>:<n>` or `study-room:<studyRoomId>`: what
+/// `session:<agent>:<id>`, `study-volume:<studyRoomId>:<n>`, `study-room:<studyRoomId>` or
+/// `study-book:<YYYY-MM-DD>`: what
 /// `GET /v1/asks?scope=` takes and what the app keys its threads by.
 pub trait ScopeKey: Sized {
     fn key(&self) -> String;
@@ -87,6 +88,7 @@ impl ScopeKey for AskScope {
             AskScope::Session(session_ref) => format!("session:{}", session_ref.key()),
             AskScope::StudyVolume { room_id, number } => format!("study-volume:{room_id}:{number}"),
             AskScope::StudyRoom { room_id } => format!("study-room:{room_id}"),
+            AskScope::StudyDayBook { date } => format!("study-book:{date}"),
         }
     }
 
@@ -104,6 +106,7 @@ impl ScopeKey for AskScope {
                 None => return Err(AskError::BadRequest("bad scope key".into())),
             },
             Some(("study-room", r)) => AskScope::StudyRoom { room_id: r.into() },
+            Some(("study-book", d)) => AskScope::StudyDayBook { date: d.into() },
             _ => return Err(AskError::BadRequest("bad scope key".into())),
         };
         scope.validate()?;
@@ -119,6 +122,7 @@ impl ScopeKey for AskScope {
             AskScope::Session(_) => true,
             AskScope::StudyVolume { room_id, number } => valid_study_room_id(room_id) && *number >= 1,
             AskScope::StudyRoom { room_id } => valid_study_room_id(room_id),
+            AskScope::StudyDayBook { date } => validate_iso_date(date).is_ok(),
         };
         if ok { Ok(()) } else { Err(AskError::BadRequest("bad scope key".into())) }
     }
@@ -328,6 +332,10 @@ impl Asks {
             AskScope::StudyVolume { room_id, number } => {
                 let (room, volume) = core.study_volume_context(room_id, *number).map_err(listing_error)?;
                 (Listing::StudyVolume { room, volume }, Vec::new())
+            }
+            AskScope::StudyDayBook { date } => {
+                let (day, book) = core.study_day_book_context(date).map_err(listing_error)?;
+                (Listing::StudyDayBook { day, book }, Vec::new())
             }
         };
         let profiles = AgentProfiles::load(&self.config_path()).map_err(AskError::AgentConfig)?;
@@ -737,6 +745,7 @@ mod tests {
             (AskScope::StudyVolume { room_id: "a1b2c3d4e5".into(), number: 1 }, "study-volume:a1b2c3d4e5:1"),
             (AskScope::StudyVolume { room_id: "0000000000".into(), number: u32::MAX }, "study-volume:0000000000:4294967295"),
             (AskScope::StudyRoom { room_id: "a1b2c3d4e5".into() }, "study-room:a1b2c3d4e5"),
+            (AskScope::StudyDayBook { date: "2026-11-03".into() }, "study-book:2026-11-03"),
         ];
         for (scope, key) in good {
             assert_eq!(scope.key(), key);
@@ -748,7 +757,8 @@ mod tests {
             "study-volume:a1b2c3d4e5", "study-volume:a1b2c3d4e5:", "study-volume:a1b2c3d4e5:0", "study-volume:a1b2c3d4e5:01", "study-volume:a1b2c3d4e5:-1",
             "study-volume:a1b2c3d4e5:+1", "study-volume:a1b2c3d4e5:1.5", "study-volume:a1b2c3d4e5:4294967296", "study-volume:a1b2c3d4e5:1:2",
             "study-volume:A1B2C3D4E5:1", "study-volume:a1b2c3d4e:1", "study-volume:../../etc:1", "study-volume::1",
-            "study-room:", "study-room:a1b2c3d4e", "study-room:a1b2c3d4e5f", "study-room:a1b2c3d4-5", "study-room:../a1b2c3d", "study-room:a1b2c3d4e5:1", "study:a1b2c3d4e5"] {
+            "study-room:", "study-room:a1b2c3d4e", "study-room:a1b2c3d4e5f", "study-room:a1b2c3d4-5", "study-room:../a1b2c3d", "study-room:a1b2c3d4e5:1", "study:a1b2c3d4e5",
+            "study-book:", "study-book:2026-13-01", "study-book:2026-11-3", "study-book:../2026-11-03", "study-book:2026-11-03:1", "study-books:2026-11-03"] {
             assert!(matches!(AskScope::parse_key(bad), Err(AskError::BadRequest(_))), "{bad}");
         }
         assert!(AskScope::Room { room_id: JOURNAL_ROOM_ID.into() }.validate().is_err());
@@ -757,6 +767,7 @@ mod tests {
         assert!(AskScope::StudyVolume { room_id: "a1b2c3d4e5".into(), number: 0 }.validate().is_err());
         assert!(AskScope::StudyVolume { room_id: "../x/../y".into(), number: 1 }.validate().is_err());
         assert!(AskScope::StudyRoom { room_id: "A1B2C3D4E5".into() }.validate().is_err());
+        assert!(AskScope::StudyDayBook { date: "../../x".into() }.validate().is_err());
     }
 
     #[tokio::test]
@@ -865,6 +876,41 @@ mod tests {
         let gone = AskScope::StudyVolume { room_id: room.id.clone(), number: 2 };
         assert!(matches!(asks.target(&gone), Err(AskError::VolumeNotFound)));
         assert!(matches!(asks.target(&AskScope::StudyVolume { room_id: "zzzzzzzzzz".into(), number: 1 }), Err(AskError::RoomNotFound)));
+        asks.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_day_book_ask_carries_the_days_memos_todos_and_the_books_cards() {
+        use rooms_protocol::{SaveStudyDay, SaveStudyDayBook, StudyCard, StudyCardKind, StudyEdge, StudyMemo, StudyTodo};
+        let d = tempfile::tempdir().unwrap();
+        let core = RoomsCore::open(d.path()).unwrap();
+        fake_default_agent(d.path());
+        let date = "2026-11-03".to_string();
+        core.save_study_day(&date, SaveStudyDay {
+            memos: vec![StudyMemo { id: "m1".into(), text: "판은 왜 필요할까".into(), at: "t".into() }],
+            todos: vec![StudyTodo { id: "t1".into(), text: "발행".into(), done: true, at: "t".into() }, StudyTodo { id: "t2".into(), text: "읽기".into(), done: false, at: "t".into() }],
+        }).unwrap();
+        let card = |id: &str, kind, body: &str| StudyCard { id: id.into(), kind, x: 0.0, y: 0.0, width: 280.0, body: body.into() };
+        core.save_study_day_book(&date, SaveStudyDayBook {
+            title: "하루 정리".into(),
+            cards: vec![card("c1", StudyCardKind::Ink, "# 오늘"), card("c2", StudyCardKind::Question, "내일은?")],
+            edges: vec![StudyEdge { id: "e1".into(), source: "c1".into(), target: "c2".into() }],
+        }).unwrap();
+        let asks = Asks::new(core.clone(), None);
+        let scope = AskScope::StudyDayBook { date: date.clone() };
+        let answer = fake_answer(&asks, &core, &scope, "q").await;
+        assert!(answer.starts_with(r#"ARGV: [--settings] [{"permissions":{"allow":[],"defaultMode":"dontAsk"}}] [[Rooms] The user is looking at their own Study notes"#), "{answer}");
+        assert!(answer.contains(concat!(
+            "Study day: 2026-11-03\nBook: \"하루 정리\"\nMemos (1):\nMemo 1:\n> 판은 왜 필요할까\n",
+            "TODOs (2):\n- [x] \"발행\"\n- [ ] \"읽기\"\n",
+            "Cards (2):\nCard 1 (ink):\n> # 오늘\nCard 2 (question):\n> 내일은?\n",
+            "Lines (1):\n- card 1 → card 2\n\nQuestion: q]",
+        )), "{answer}");
+        assert!(d.path().join(".rooms/asks/study-book-2026-11-03.jsonl").is_file());
+        assert_eq!(asks.thread(&scope).unwrap().len(), 1);
+        let empty = AskScope::StudyDayBook { date: "2026-11-04".into() };
+        let answer = fake_answer(&asks, &core, &empty, "q").await;
+        assert!(answer.contains("Study day: 2026-11-04\nMemos (0):\nTODOs (0):\nCards (0):\nLines (0):\n\nQuestion: q]"), "a day with nothing written can still be asked: {answer}");
         asks.shutdown().await;
     }
 

@@ -4,6 +4,6 @@ import type { SessionRef } from "./SessionRef";
 /**
  * What an ask thread is about, and the one thread it keeps: an artifact (by the file key its
  * rooms share), a room, a Journal day, a session (asked in a fork of that session), or the
- * owner's own Study notes: one volume of a Study room, or the Study room as a whole.
+ * owner's own Study notes: one volume of a Study room, the Study room as a whole, or one day's book.
  */
-export type AskScope = { "kind": "artifact", fileKey: string, } | { "kind": "room", roomId: string, } | { "kind": "day", date: string, } | { "kind": "session" } & SessionRef | { "kind": "studyVolume", roomId: string, number: number, } | { "kind": "studyRoom", roomId: string, };
+export type AskScope = { "kind": "artifact", fileKey: string, } | { "kind": "room", roomId: string, } | { "kind": "day", date: string, } | { "kind": "session" } & SessionRef | { "kind": "studyVolume", roomId: string, number: number, } | { "kind": "studyRoom", roomId: string, } | { "kind": "studyDayBook", date: string, };

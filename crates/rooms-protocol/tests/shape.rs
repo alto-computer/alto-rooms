@@ -66,6 +66,9 @@ fn export_typescript_bindings() {
     UpdateStudyRoom::export_all().unwrap();
     SaveStudyVolume::export_all().unwrap();
     SaveStudyDay::export_all().unwrap();
+    StudyDayBook::export_all().unwrap();
+    StudyDayBooks::export_all().unwrap();
+    SaveStudyDayBook::export_all().unwrap();
     let list = PERMISSIONS.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
     let ts = format!("// Generated from rooms_protocol::PERMISSIONS by crates/rooms-protocol/tests/shape.rs. Do not edit.\n\nexport const PERMISSIONS = [{list}] as const;\n\nexport type Permission = (typeof PERMISSIONS)[number];\n");
     std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/protocol-ts/src/generated/permissions.ts"), ts).unwrap();
@@ -109,6 +112,7 @@ fn ask_scope_is_tagged_by_kind_and_round_trips() {
         (AskScope::Session(SessionRef { agent: Agent::Codex, id: SessionId::parse("s-1").unwrap() }), serde_json::json!({"kind": "session", "agent": "codex", "id": "s-1"})),
         (AskScope::StudyVolume { room_id: "a1b2c3d4e5".into(), number: 3 }, serde_json::json!({"kind": "studyVolume", "roomId": "a1b2c3d4e5", "number": 3})),
         (AskScope::StudyRoom { room_id: "a1b2c3d4e5".into() }, serde_json::json!({"kind": "studyRoom", "roomId": "a1b2c3d4e5"})),
+        (AskScope::StudyDayBook { date: "2026-11-03".into() }, serde_json::json!({"kind": "studyDayBook", "date": "2026-11-03"})),
     ];
     for (scope, json) in cases {
         assert_eq!(serde_json::to_value(&scope).unwrap(), json);

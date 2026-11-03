@@ -319,7 +319,7 @@ pub enum AskKind {
 
 /// What an ask thread is about, and the one thread it keeps: an artifact (by the file key its
 /// rooms share), a room, a Journal day, a session (asked in a fork of that session), or the
-/// owner's own Study notes: one volume of a Study room, or the Study room as a whole.
+/// owner's own Study notes: one volume of a Study room, the Study room as a whole, or one day's book.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 #[ts(export, export_to = "../../../packages/protocol-ts/src/generated/")]
@@ -330,6 +330,7 @@ pub enum AskScope {
     Session(SessionRef),
     #[serde(rename = "studyVolume", rename_all = "camelCase")] StudyVolume { room_id: StudyRoomId, number: u32 },
     #[serde(rename = "studyRoom", rename_all = "camelCase")] StudyRoom { room_id: StudyRoomId },
+    #[serde(rename = "studyDayBook")] StudyDayBook { date: IsoDate },
 }
 
 wire!(
@@ -526,6 +527,28 @@ pub struct StudyDay {
 });
 
 wire!(
+/// `<home>/.rooms/study/books/<date>.json`: the canvas a day is wrapped up on, cards and lines like a
+/// volume's but with no versions and never published. A day never written reads as an empty book.
+pub struct StudyDayBook {
+    pub date: IsoDate,
+    pub title: String,
+    pub cards: Vec<StudyCard>,
+    pub edges: Vec<StudyEdge>,
+});
+
+wire!(pub struct StudyDayBookSummary {
+    pub date: IsoDate,
+    pub title: String,
+    pub card_count: u32,
+});
+
+wire!(
+/// `GET /v1/study/books`: every book with a title or a card, newest first.
+pub struct StudyDayBooks {
+    pub books: Vec<StudyDayBookSummary>,
+});
+
+wire!(
 /// `POST /v1/study/rooms`.
 pub struct CreateStudyRoom {
     pub name: String,
@@ -551,6 +574,14 @@ wire!(
 pub struct SaveStudyDay {
     pub memos: Vec<StudyMemo>,
     pub todos: Vec<StudyTodo>,
+});
+
+wire!(
+/// `PUT /v1/study/books/{date}`: the book's whole content.
+pub struct SaveStudyDayBook {
+    pub title: String,
+    pub cards: Vec<StudyCard>,
+    pub edges: Vec<StudyEdge>,
 });
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -581,7 +612,7 @@ pub enum EventKind {
     /// Exactly once per started turn, after every `ask.progress` of it; `turn.answer` is the whole answer.
     #[serde(rename = "ask.done")] AskDone { turn: AskTurn },
     /// Something under `.rooms/study/` was written: a room or one of its volumes (`room_id`), or a
-    /// day (`None`).
+    /// day or its book (`None`).
     #[serde(rename = "study.changed", rename_all = "camelCase")] StudyChanged { room_id: Option<StudyRoomId> },
     #[serde(rename = "resync", rename_all = "camelCase")] Resync { room_id: Option<RoomId> },
 }

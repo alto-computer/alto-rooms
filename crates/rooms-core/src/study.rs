@@ -1,10 +1,11 @@
-//! The Study: rooms the user fills by understanding, their volumes, and the Study's days, kept as
-//! plain JSON files under `<home>/.rooms/study/` (outside `home_sync` and the watcher):
+//! The Study: rooms the user fills by understanding, their volumes, and the Study's days and day
+//! books, kept as plain JSON files under `<home>/.rooms/study/` (outside `home_sync` and the watcher):
 //!
 //! ```text
 //! rooms/<roomId>/room.json         { id, name, createdAt, links }
 //! rooms/<roomId>/volumes/<n>.json  StudyVolume
 //! days/<YYYY-MM-DD>.json           StudyDay
+//! books/<YYYY-MM-DD>.json          StudyDayBook
 //! ```
 //!
 //! Every read and write holds `study_lock` (lock order: study_lock → `Inner`, taken only to emit),
@@ -17,7 +18,7 @@ use crate::error::CoreError;
 use crate::lock::lock;
 use crate::rules::{local_day, valid_room_id, validate_iso_date};
 use rooms_protocol::*;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, IgnoredAny};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -27,6 +28,8 @@ use unicode_normalization::UnicodeNormalization;
 pub const MAX_VOLUME_BYTES: usize = 2 * 1024 * 1024;
 /// Largest day file, in bytes as stored.
 pub const MAX_DAY_BYTES: usize = 256 * 1024;
+/// Largest day book file, in bytes as stored.
+pub const MAX_BOOK_BYTES: usize = 2 * 1024 * 1024;
 const MAX_NAME_CHARS: usize = 60;
 const MAX_TITLE_CHARS: usize = 200;
 const MAX_LINKS: usize = 1000;
@@ -60,6 +63,14 @@ struct VolumeHead {
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum StatusWord { Draft, Published }
+
+/// What the book list reads of a book file: its cards are counted, never kept.
+#[derive(Deserialize)]
+struct BookHead {
+    date: IsoDate,
+    title: String,
+    cards: Vec<IgnoredAny>,
+}
 
 /// A study room id as roomsd mints them: 10 chars of `[a-z0-9]`. Nothing else names a path.
 pub(crate) fn valid_study_room_id(s: &str) -> bool {
@@ -99,12 +110,13 @@ fn item_ids<'a>(ids: impl Iterator<Item = &'a str>, what: &str) -> Result<HashSe
     Ok(seen)
 }
 
-fn check_volume(save: &SaveStudyVolume) -> Result<(), CoreError> {
-    if save.title.chars().count() > MAX_TITLE_CHARS { return Err(CoreError::InvalidInput("volume title".into())); }
-    let cards = item_ids(save.cards.iter().map(|c| c.id.as_str()), "card")?;
-    item_ids(save.edges.iter().map(|e| e.id.as_str()), "edge")?;
-    if !save.edges.iter().all(|e| cards.contains(e.source.as_str()) && cards.contains(e.target.as_str())) {
-        return Err(CoreError::InvalidInput("an edge joins a card the volume doesn't have".into()));
+/// A volume's or a book's title, cards and edges: `what` names which in the error.
+fn check_canvas(what: &str, title: &str, cards: &[StudyCard], edges: &[StudyEdge]) -> Result<(), CoreError> {
+    if title.chars().count() > MAX_TITLE_CHARS { return Err(CoreError::InvalidInput(format!("{what} title"))); }
+    let ids = item_ids(cards.iter().map(|c| c.id.as_str()), "card")?;
+    item_ids(edges.iter().map(|e| e.id.as_str()), "edge")?;
+    if !edges.iter().all(|e| ids.contains(e.source.as_str()) && ids.contains(e.target.as_str())) {
+        return Err(CoreError::InvalidInput(format!("an edge joins a card the {what} doesn't have")));
     }
     Ok(())
 }
@@ -301,7 +313,7 @@ impl RoomsCore {
 
     /// Replaces a draft volume's title, cards and edges. `volume_published` for a published one.
     pub fn save_study_volume(&self, id: &str, number: u32, save: SaveStudyVolume) -> Result<StudyVolume, CoreError> {
-        check_volume(&save)?;
+        check_canvas("volume", &save.title, &save.cards, &save.edges)?;
         let _study = lock(&self.study_lock);
         self.study_room_file(id)?;
         let old = self.read_study_volume(id, number)?;
@@ -336,6 +348,10 @@ impl RoomsCore {
     pub fn study_day(&self, date: &IsoDate) -> Result<StudyDay, CoreError> {
         validate_iso_date(date)?;
         let _study = lock(&self.study_lock);
+        self.read_study_day(date)
+    }
+
+    fn read_study_day(&self, date: &IsoDate) -> Result<StudyDay, CoreError> {
         let path = self.study_path(&["days", &format!("{date}.json")])?;
         match read_json::<StudyDay>(&path)? {
             Some(day) if &day.date != date => Err(corrupt(&path, "its date is not its name's")),
@@ -404,6 +420,67 @@ impl RoomsCore {
         write_atomic(&self.study_path(&["days", &format!("{date}.json")])?, &bytes)?;
         self.emit_study_changed(None);
         Ok(day)
+    }
+
+    /// Every book with a title or a card, newest first. A file not named `<YYYY-MM-DD>.json` is
+    /// not a book.
+    pub fn study_day_books(&self) -> Result<StudyDayBooks, CoreError> {
+        let _study = lock(&self.study_lock);
+        let dir = self.study_path(&["books"])?;
+        let dates: Vec<String> = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd.flatten()
+                .filter_map(|e| Some(e.file_name().to_string_lossy().strip_suffix(".json")?.to_string()))
+                .filter(|d| validate_iso_date(d).is_ok())
+                .collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e.into()),
+        };
+        let mut books = Vec::new();
+        for date in dates {
+            let path = self.study_path(&["books", &format!("{date}.json")])?;
+            let Some(head) = read_json::<BookHead>(&path)? else { continue };
+            if head.date != date { return Err(corrupt(&path, "its date is not its name's")); }
+            // A book with no title and no card is not on the shelf.
+            if head.title.trim().is_empty() && head.cards.is_empty() { continue; }
+            books.push(StudyDayBookSummary { date, title: head.title, card_count: u32::try_from(head.cards.len()).unwrap_or(u32::MAX) });
+        }
+        books.sort_by(|a, b| b.date.cmp(&a.date));
+        Ok(StudyDayBooks { books })
+    }
+
+    /// The day's book as saved, or an empty one.
+    pub fn study_day_book(&self, date: &IsoDate) -> Result<StudyDayBook, CoreError> {
+        validate_iso_date(date)?;
+        let _study = lock(&self.study_lock);
+        self.read_study_day_book(date)
+    }
+
+    fn read_study_day_book(&self, date: &IsoDate) -> Result<StudyDayBook, CoreError> {
+        let path = self.study_path(&["books", &format!("{date}.json")])?;
+        match read_json::<StudyDayBook>(&path)? {
+            Some(book) if &book.date != date => Err(corrupt(&path, "its date is not its name's")),
+            Some(book) => Ok(book),
+            None => Ok(StudyDayBook { date: date.clone(), title: String::new(), cards: vec![], edges: vec![] }),
+        }
+    }
+
+    /// Replaces the day's book. Any day can be written, past ones included.
+    pub fn save_study_day_book(&self, date: &IsoDate, save: SaveStudyDayBook) -> Result<StudyDayBook, CoreError> {
+        validate_iso_date(date)?;
+        check_canvas("book", &save.title, &save.cards, &save.edges)?;
+        let book = StudyDayBook { date: date.clone(), title: save.title, cards: save.cards, edges: save.edges };
+        let bytes = encode(&book, MAX_BOOK_BYTES)?;
+        let _study = lock(&self.study_lock);
+        write_atomic(&self.study_path(&["books", &format!("{date}.json")])?, &bytes)?;
+        self.emit_study_changed(None);
+        Ok(book)
+    }
+
+    /// What a day book ask is about: the day's memos and TODOs and its book, read together.
+    pub(crate) fn study_day_book_context(&self, date: &IsoDate) -> Result<(StudyDay, StudyDayBook), CoreError> {
+        validate_iso_date(date)?;
+        let _study = lock(&self.study_lock);
+        Ok((self.read_study_day(date)?, self.read_study_day_book(date)?))
     }
 }
 
@@ -620,6 +697,63 @@ mod tests {
         assert_eq!(core.study_day(&date).unwrap().memos[0].text.len(), MAX_DAY_BYTES - 1024);
     }
 
+    fn book(title: &str, cards: Vec<StudyCard>) -> SaveStudyDayBook { SaveStudyDayBook { title: title.into(), cards, edges: vec![] } }
+
+    #[test]
+    fn day_books_round_trip_and_only_written_ones_are_listed_newest_first() {
+        let (_d, core) = core();
+        let date = "2026-11-03".to_string();
+        assert_eq!(core.study_day_book(&date).unwrap(), StudyDayBook { date: date.clone(), title: String::new(), cards: vec![], edges: vec![] });
+        assert!(!study(&core).join("books").exists(), "reading an empty book writes nothing");
+        assert_eq!(core.study_day_books().unwrap().books, vec![]);
+
+        let mut rx = core.subscribe();
+        let two = two_cards();
+        let saved = core.save_study_day_book(&date, SaveStudyDayBook { title: "정리".into(), cards: two.cards.clone(), edges: two.edges.clone() }).unwrap();
+        assert_eq!(study_events(&mut rx), vec![None]);
+        assert_eq!((saved.title.as_str(), &saved.cards, &saved.edges), ("정리", &two.cards, &two.edges));
+        assert_eq!(core.study_day_book(&date).unwrap(), saved);
+        let json: serde_json::Value = serde_json::from_slice(&std::fs::read(study(&core).join("books/2026-11-03.json")).unwrap()).unwrap();
+        assert_eq!(json, serde_json::to_value(&saved).unwrap(), "the file is the book: date, title, cards, edges");
+
+        core.save_study_day_book(&"2026-10-31".to_string(), book("", vec![card("c1", "a")])).unwrap();
+        core.save_study_day_book(&"2026-11-01".to_string(), book("only a title", vec![])).unwrap();
+        core.save_study_day_book(&"2026-11-02".to_string(), book("  ", vec![])).unwrap();
+        std::fs::write(study(&core).join("books/notes.json"), "{}").unwrap();
+        let listed: Vec<(String, String, u32)> = core.study_day_books().unwrap().books.into_iter().map(|b| (b.date, b.title, b.card_count)).collect();
+        assert_eq!(listed, vec![
+            ("2026-11-03".to_string(), "정리".to_string(), 2),
+            ("2026-11-01".to_string(), "only a title".to_string(), 0),
+            ("2026-10-31".to_string(), String::new(), 1),
+        ], "an empty book and a file not named by a date are not listed");
+
+        let emptied = core.save_study_day_book(&date, book("", vec![])).unwrap();
+        assert_eq!(core.study_day_book(&date).unwrap(), emptied, "a past or present day can always be written again");
+        assert_eq!(core.study_day_books().unwrap().books.len(), 2);
+    }
+
+    #[test]
+    fn day_books_refuse_bad_dates_and_canvases_and_files_over_two_mib() {
+        let (_d, core) = core();
+        for bad in ["2026-13-01", "2026-1-01", "../2026-11-03", "2026-11-03.json", ""] {
+            assert_eq!(code(core.study_day_book(&bad.to_string())), "invalid_input", "{bad:?}");
+            assert_eq!(code(core.save_study_day_book(&bad.to_string(), book("t", vec![]))), "invalid_input", "{bad:?}");
+        }
+        let date = "2026-11-03".to_string();
+        let dangling = SaveStudyDayBook { edges: vec![StudyEdge { id: "e1".into(), source: "c1".into(), target: "gone".into() }], ..book("", vec![card("c1", "a")]) };
+        for save in [book(&"t".repeat(201), vec![]), book("", vec![card("c1", "a"), card("c1", "b")]), dangling] {
+            assert_eq!(code(core.save_study_day_book(&date, save)), "invalid_input");
+        }
+        core.save_study_day_book(&date, book("", vec![card("c1", &"x".repeat(MAX_BOOK_BYTES - 1024))])).unwrap();
+        assert_eq!(code(core.save_study_day_book(&date, book("", vec![card("c1", &"x".repeat(MAX_BOOK_BYTES))]))), "too_large");
+        assert_eq!(core.study_day_book(&date).unwrap().cards[0].body.len(), MAX_BOOK_BYTES - 1024, "the refused save wrote nothing");
+        assert!(!study(&core).join("books").read_dir().unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with('.')), "no temp files left");
+
+        std::fs::write(study(&core).join("books/2026-11-04.json"), r#"{"date":"2026-11-05","title":"x","cards":[],"edges":[]}"#).unwrap();
+        assert_eq!(code(core.study_day_book(&"2026-11-04".to_string())), "internal", "a book filed under another date");
+        assert_eq!(code(core.study_day_books()), "internal");
+    }
+
     #[test]
     fn symlinks_under_the_study_root_are_refused() {
         let (_d, core) = core();
@@ -629,6 +763,9 @@ mod tests {
         let date = "2026-11-03".to_string();
         assert_eq!(code(core.save_study_day(&date, SaveStudyDay { memos: vec![], todos: vec![] })), "invalid_path");
         assert_eq!(code(core.study_day(&date)), "invalid_path");
+        std::os::unix::fs::symlink(outside.path(), study(&core).join("books")).unwrap();
+        assert_eq!(code(core.save_study_day_book(&date, book("t", vec![]))), "invalid_path");
+        assert_eq!(code(core.study_day_books()), "invalid_path");
         assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none(), "nothing written through the link");
 
         let room = core.create_study_room("r").unwrap();
