@@ -24,7 +24,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
   const room = rooms?.find((r) => r.id === roomId);
   const go = useStudyGo();
   const readOnly = useReadOnly();
-  const missing = rooms ? "없는 방이에요" : failed ? "서재를 불러오지 못했어요" : null;
+  const missing = rooms ? "Room not found" : failed ? "Couldn't load the Study" : null;
   // The ask bar comes a frame after the room first paints.
   const barReady = useFrameAfter(!!room);
   const name = room?.name;
@@ -34,7 +34,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
     // Relative, with room at the bottom for the ask bar.
     <div className="st-room">
       <button type="button" className="st-back" onClick={(e) => go({ page: "library" }, e)}>
-        ← 서재
+        ← Study
       </button>
       <Axes on="library" />
       {room ? <Volumes key={room.id} room={room} /> : missing ? <p className="st-lede st-sub">{missing}</p> : null}
@@ -128,13 +128,13 @@ function Volumes({ room }: { room: StudyRoomSummary }) {
           {v.status === "published" ? (
             <div className="st-meta">
               <div>
-                <span>발행</span>
+                <span>Published</span>
                 {dottedDate(v.publishedAt)}
               </div>
             </div>
           ) : null}
           <button type="button" className="st-go" onClick={(e) => go({ page: "volume", roomId: room.id, number: v.number }, e)}>
-            {v.status === "draft" ? "이어 쓰기 →" : "펼쳐 읽기 →"}
+            {v.status === "draft" ? "Continue →" : "Read →"}
           </button>
         </div>
       </div>
@@ -196,12 +196,12 @@ function Links({ room }: { room: StudyRoomSummary }) {
     let open: (() => void) | null = null;
     if (l.kind === "room") {
       const r = roomsList.find((x) => x.id === l.roomId);
-      label = r?.name ?? "없는 방";
+      label = r?.name ?? "Missing room";
       if (r) open = () => viewer.open({ kind: "room", roomId: r.id }, { nextToActive: true });
     } else {
       icon = <FileText size={14} strokeWidth={1.5} aria-hidden />;
       const a = artifacts.get(l.fileKey);
-      label = a === undefined ? "…" : (a?.title ?? "없는 아티팩트");
+      label = a === undefined ? "…" : (a?.title ?? "Missing artifact");
       if (a) open = () => viewer.open({ kind: "artifact", roomId: a.roomId, artifactId: a.id }, { nextToActive: true });
     }
     return (
@@ -211,7 +211,7 @@ function Links({ room }: { room: StudyRoomSummary }) {
           <span>{label}</span>
         </button>
         {readOnly ? null : (
-          <button type="button" className="st-x" aria-label={`${label} 연결 끊기`} disabled={saving} onClick={() => void save(room.links.filter((x) => linkKey(x) !== linkKey(l)))}>
+          <button type="button" className="st-x" aria-label={`Unlink ${label}`} disabled={saving} onClick={() => void save(room.links.filter((x) => linkKey(x) !== linkKey(l)))}>
             <X size={13} strokeWidth={1.5} aria-hidden />
           </button>
         )}
@@ -222,7 +222,7 @@ function Links({ room }: { room: StudyRoomSummary }) {
   return (
     <div className="st-links">
       {room.links.length > 0 ? (
-        <ul aria-label="연결된 방과 아티팩트" className="flex flex-col">
+        <ul aria-label="Linked rooms and artifacts" className="flex flex-col">
           {room.links.map(row)}
         </ul>
       ) : null}
@@ -230,7 +230,7 @@ function Links({ room }: { room: StudyRoomSummary }) {
         <Popover open={picking} onOpenChange={setPicking}>
           <PopoverTrigger asChild>
             <button type="button" className="st-connect" disabled={saving}>
-              연결
+              Link
             </button>
           </PopoverTrigger>
           <PopoverContent align="end" side="top" className="w-80 p-0">
@@ -278,9 +278,9 @@ function Picker({ linked, onPick }: { linked: ReadonlySet<string>; onPick: (l: S
 
   return (
     <Command shouldFilter={false}>
-      <CommandInput placeholder="방이나 아티팩트 찾기" value={query} onValueChange={setQuery} />
+      <CommandInput placeholder="Find a room or artifact" value={query} onValueChange={setQuery} />
       <CommandList>
-        <CommandEmpty>없어요</CommandEmpty>
+        <CommandEmpty>No matches</CommandEmpty>
         {roomHits.length > 0 ? (
           <CommandGroup heading="Rooms">
             {roomHits.map((r) => (

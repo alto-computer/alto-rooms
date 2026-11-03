@@ -69,15 +69,15 @@ describe("the library", () => {
 
   it("makes a room from the empty board's name field, and only on an Enter that ends no composition", async () => {
     const { client } = await renderStudy({ page: "library" });
-    fireEvent.click(await screen.findByRole("button", { name: "새 방" }));
-    const input = screen.getByRole("textbox", { name: "새 방 이름" });
+    fireEvent.click(await screen.findByRole("button", { name: "New room" }));
+    const input = screen.getByRole("textbox", { name: "New room name" });
     fireEvent.change(input, { target: { value: "제1원리" } });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     expect(client.createStudyRoom).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(client.createStudyRoom).toHaveBeenCalledWith("제1원리"));
     expect(await screen.findByRole("button", { name: "제1원리 v0.1" })).toHaveClass("st-proof");
-    expect(screen.queryByRole("textbox", { name: "새 방 이름" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "New room name" })).toBeNull();
   });
 
   it("opens the volume a book is, and the room a board is", async () => {
@@ -101,12 +101,12 @@ describe("the library", () => {
 describe("the room page", () => {
   it("links a Rooms room picked from the list, and unlinks it", async () => {
     const r = await renderStudy({ page: "room", roomId: "s000000101" }, { studyRooms: [attention()], rooms: [room("r1", "리서치")] });
-    expect(await screen.findByRole("button", { name: "펼쳐 읽기 →" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "연결" }));
+    expect(await screen.findByRole("button", { name: "Read →" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Link" }));
     fireEvent.click(await screen.findByRole("option", { name: "리서치" }));
     await waitFor(() => expect(r.client.updateStudyRoom).toHaveBeenCalledWith("s000000101", { name: "어텐션", links: [{ kind: "room", roomId: "r1" }] }));
-    const links = await screen.findByRole("list", { name: "연결된 방과 아티팩트" });
-    fireEvent.click(within(links).getByRole("button", { name: "리서치 연결 끊기" }));
+    const links = await screen.findByRole("list", { name: "Linked rooms and artifacts" });
+    fireEvent.click(within(links).getByRole("button", { name: "Unlink 리서치" }));
     await waitFor(() => expect(r.client.updateStudyRoom).toHaveBeenLastCalledWith("s000000101", { name: "어텐션", links: [] }));
   });
 
@@ -123,13 +123,13 @@ describe("the room page", () => {
     fireEvent.keyDown(input, { key: "ArrowLeft" });
     expect(current()).toBe(before);
     act(() => void r.viewer.navigate({ kind: "study", page: "library" }));
-    expect(await screen.findByRole("button", { name: "새 방" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "New room" })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/^Ask about/)).toBeNull();
   });
 
   it("shows no ask bar in a read-only window", async () => {
     await renderStudy({ page: "room", roomId: "s000000101" }, { studyRooms: [attention()], readOnly: true });
-    expect(await screen.findByRole("button", { name: "펼쳐 읽기 →" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Read →" })).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 150));
     expect(screen.queryByPlaceholderText("Ask about this Study room…")).toBeNull();
   });
@@ -189,7 +189,7 @@ describe("the calendar's day", () => {
     const { client, state } = await renderStudy({ page: "day", date }, { studyDays: { [date]: saved(["하나", "둘"], [["리뷰 준비", false]]) } });
     fireEvent.click(await screen.findByRole("checkbox", { name: "리뷰 준비" }));
     await waitFor(() => expect(state.studyDays[date].todos[0].done).toBe(true));
-    fireEvent.click(screen.getByRole("button", { name: "하나 지우기" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete 하나" }));
     await waitFor(() => expect(state.studyDays[date].memos.map((m) => m.text)).toEqual(["둘"]));
     expect(state.studyDays[date].todos[0].done).toBe(true);
     expect(client.saveStudyDay).toHaveBeenCalledTimes(2);

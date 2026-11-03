@@ -14,12 +14,12 @@ export function useStudyGo(): (page: StudyPage, e?: Pick<MouseEvent, "metaKey" |
 export function Axes({ on }: { on: "library" | "day" }) {
   const go = useStudyGo();
   return (
-    <nav className="st-axes" aria-label="서재 · 달력">
+    <nav className="st-axes" aria-label="Library · Calendar">
       <button type="button" aria-current={on === "library" ? "page" : undefined} onClick={(e) => go({ page: "library" }, e)}>
-        서재
+        Library
       </button>
       <button type="button" aria-current={on === "day" ? "page" : undefined} onClick={(e) => go({ page: "day", date: localDate() }, e)}>
-        달력
+        Calendar
       </button>
     </nav>
   );

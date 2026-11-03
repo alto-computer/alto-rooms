@@ -48,9 +48,9 @@ export function dottedDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? "" : `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
 }
 
-const WEEKDAYS = ["일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일"] as const;
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 
-/** `월요일` for a `YYYY-MM-DD` date. */
+/** `Monday` for a `YYYY-MM-DD` date. */
 export function weekdayOf(date: string): string {
   const [y, m, d] = date.split("-").map(Number);
   return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];

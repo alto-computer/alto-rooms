@@ -56,11 +56,11 @@ export function TabLabel({ tab }: { tab: Tab }) {
 function StudyLabel({ page }: { page: StudyPage }) {
   switch (page.page) {
     case "library":
-      return <>서재</>;
+      return <>Study</>;
     case "day":
-      return <>{`달력 · ${shortDate(page.date)}`}</>;
+      return <>{`Calendar · ${shortDate(page.date)}`}</>;
     case "room":
-      return <StudyRoomName roomId={page.roomId}>{(name) => `서재 · ${name}`}</StudyRoomName>;
+      return <StudyRoomName roomId={page.roomId}>{(name) => `Study · ${name}`}</StudyRoomName>;
     case "volume":
       return <StudyRoomName roomId={page.roomId}>{(name) => `${name} v${versionOf(page.number)}`}</StudyRoomName>;
   }

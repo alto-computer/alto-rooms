@@ -50,7 +50,7 @@ describe("a draft volume", () => {
     const { client } = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(false)] });
     const ink = await screen.findByTestId("ink-card");
     expect(within(ink).getByRole("heading", { level: 1, name: "제목" })).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox", { name: "질문" }), { target: { value: "왜 둘이 아닐까" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "왜 둘이 아닐까" } });
     expect(client.saveStudyVolume).not.toHaveBeenCalled();
     await waitFor(() => expect(client.saveStudyVolume).toHaveBeenCalledTimes(1), { timeout: SAVE_DELAY_MS + 1000 });
     expect(lastSave(client)).toEqual([
@@ -72,10 +72,10 @@ describe("a draft volume", () => {
     const ink = await screen.findByTestId("ink-card");
     fireEvent.click(ink);
     await waitFor(() => expect(ink.closest(".react-flow__node")).toHaveClass("selected"));
-    const editor = within(ink).getByRole("textbox", { name: "카드" });
+    const editor = within(ink).getByRole("textbox", { name: "Card" });
     fireEvent.keyDown(editor, { key: "Backspace" });
     fireEvent.keyDown(editor, { key: "Delete" });
-    fireEvent.keyDown(screen.getByRole("textbox", { name: "질문" }), { key: "Backspace" });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Question" }), { key: "Backspace" });
     await new Promise((r) => setTimeout(r, SAVE_DELAY_MS + 100));
     expect(screen.getByTestId("ink-card")).toBeInTheDocument();
     expect(client.saveStudyVolume).not.toHaveBeenCalled();
@@ -91,11 +91,11 @@ describe("a draft volume", () => {
     const real = r.client.publishStudyRoom.getMockImplementation()!;
     let release = () => {};
     r.client.publishStudyRoom.mockImplementationOnce((id: string) => new Promise((res) => (release = () => res(real(id)))));
-    fireEvent.click(await screen.findByRole("button", { name: "발행" }));
-    fireEvent.click(screen.getByRole("button", { name: "발행하기" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
     await waitFor(() => expect(r.client.publishStudyRoom).toHaveBeenCalled());
-    expect(screen.getByRole("textbox", { name: "질문" })).toHaveAttribute("readonly");
-    expect(within(screen.getByTestId("ink-card")).getByRole("textbox", { name: "카드" })).toHaveAttribute("contenteditable", "false");
+    expect(screen.getByRole("textbox", { name: "Question" })).toHaveAttribute("readonly");
+    expect(within(screen.getByTestId("ink-card")).getByRole("textbox", { name: "Card" })).toHaveAttribute("contenteditable", "false");
     release();
   });
 
@@ -103,9 +103,9 @@ describe("a draft volume", () => {
     const r = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(false)] });
     fireEvent.click(await screen.findByRole("button", { name: "+ ?" }));
     expect(await screen.findAllByTestId("question-card")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "발행" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
     expect(r.client.publishStudyRoom).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "발행하기" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
     await waitFor(() => expect(r.client.publishStudyRoom).toHaveBeenCalledWith("s000000101"));
     // The pending edit landed before the publish froze the volume.
     expect(r.state.studyRooms[0].volumes[0]).toMatchObject({ status: "published" });
@@ -125,7 +125,7 @@ describe("the volume's ask bar", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(client.startAsk).toHaveBeenCalledWith({ scope: { kind: "studyVolume", roomId: "s000000101", number: 1 }, question: "왜 하나일까?", model: null }));
     expect(screen.getAllByTestId("ink-card")).toHaveLength(1);
-    expect(screen.getByRole("textbox", { name: "질문" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Question" })).toBeInTheDocument();
   });
 
   it("is not there in a read-only window", async () => {
@@ -141,7 +141,7 @@ describe("a draft another writer changes", () => {
     const r = room(false);
     r.volumes[0].cards[0].body = "* 하나\n* 둘\n\n| a | b |\n|---|---|\n| 1 | 2 |";
     const { client } = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [r] });
-    fireEvent.change(await screen.findByRole("textbox", { name: "질문" }), { target: { value: "다른 질문" } });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Question" }), { target: { value: "다른 질문" } });
     await waitFor(() => expect(client.saveStudyVolume).toHaveBeenCalled(), { timeout: SAVE_DELAY_MS + 1000 });
     expect((lastSave(client)?.[2] as { cards: { body: string }[] }).cards[0].body).toBe("* 하나\n* 둘\n\n| a | b |\n|---|---|\n| 1 | 2 |");
   });
@@ -151,7 +151,7 @@ describe("a draft another writer changes", () => {
     await screen.findByTestId("ink-card");
     state.studyRooms[0].volumes[0] = { ...state.studyRooms[0].volumes[0], cards: [studyCard("a", { body: "# 바뀐 제목" }), studyCard("q", { kind: "question", body: "새 질문" })] };
     await act(async () => emit({ type: "study.changed", roomId: "s000000101" }));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "질문" })).toHaveValue("새 질문"));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Question" })).toHaveValue("새 질문"));
     await waitFor(() => expect(within(screen.getByTestId("ink-card")).getByRole("heading", { level: 1, name: "바뀐 제목" })).toBeInTheDocument());
     await new Promise((res) => setTimeout(res, SAVE_DELAY_MS + 100));
     expect(client.saveStudyVolume).not.toHaveBeenCalled();
@@ -162,10 +162,10 @@ describe("a published volume", () => {
   it("only reads: no editing, adding, deleting or publishing, and nothing is saved", async () => {
     const { client, container } = await renderWithStores(<VolumePage roomId="s000000101" number={1} />, { studyRooms: [room(true)] });
     const ink = await screen.findByTestId("ink-card");
-    await waitFor(() => expect(within(ink).getByRole("textbox", { name: "카드" })).toHaveAttribute("contenteditable", "false"));
-    expect(screen.getByRole("textbox", { name: "질문" })).toHaveAttribute("readonly");
-    expect(screen.getByRole("textbox", { name: "부제" })).toHaveAttribute("readonly");
-    for (const name of ["+ 카드", "+ ?", "발행"]) expect(screen.queryByRole("button", { name })).toBeNull();
+    await waitFor(() => expect(within(ink).getByRole("textbox", { name: "Card" })).toHaveAttribute("contenteditable", "false"));
+    expect(screen.getByRole("textbox", { name: "Question" })).toHaveAttribute("readonly");
+    expect(screen.getByRole("textbox", { name: "Subtitle" })).toHaveAttribute("readonly");
+    for (const name of ["+ Card", "+ ?", "Publish"]) expect(screen.queryByRole("button", { name })).toBeNull();
     expect(ink.closest(".react-flow__node")).not.toHaveClass("draggable");
 
     fireEvent.click(ink);

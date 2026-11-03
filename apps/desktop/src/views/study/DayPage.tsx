@@ -104,7 +104,7 @@ export function DayPage({ tabId, date }: { tabId: string; date: string }) {
             <h2 className="st-ch">Memo</h2>
             <input
               className="st-cap"
-              placeholder="떠오른 것"
+              placeholder="New memo"
               aria-label="Memo"
               value={memo}
               disabled={readOnly || !day}
@@ -119,7 +119,7 @@ export function DayPage({ tabId, date }: { tabId: string; date: string }) {
                     <button
                       type="button"
                       className="st-x"
-                      aria-label={`${m.text} 지우기`}
+                      aria-label={`Delete ${m.text}`}
                       onClick={() => update((d) => ({ memos: d.memos.filter((x) => x.id !== m.id), todos: d.todos }))}
                     >
                       <X size={13} strokeWidth={1.5} aria-hidden />
@@ -147,7 +147,7 @@ export function DayPage({ tabId, date }: { tabId: string; date: string }) {
                       <button
                         type="button"
                         className="st-x"
-                        aria-label={`${t.text} 지우기`}
+                        aria-label={`Delete ${t.text}`}
                         onClick={(e) => {
                           e.preventDefault();
                           update((d) => ({ memos: d.memos, todos: d.todos.filter((x) => x.id !== t.id) }));
@@ -162,7 +162,7 @@ export function DayPage({ tabId, date }: { tabId: string; date: string }) {
             </ul>
             <input
               className="st-cap"
-              placeholder="할 일"
+              placeholder="New TODO"
               aria-label="TODO"
               value={todo}
               disabled={readOnly || !day}
@@ -210,10 +210,10 @@ function MonthGrid({ date, onPick }: { date: string; onPick: (date: string) => v
       <div className="st-mh">
         <span>{MONTH_LABEL(month)}</span>
         <div>
-          <button type="button" aria-label="지난달" onClick={() => setMonth((m) => addMonths(m, -1))}>
+          <button type="button" aria-label="Previous month" onClick={() => setMonth((m) => addMonths(m, -1))}>
             <ChevronLeft size={15} strokeWidth={1.5} aria-hidden />
           </button>
-          <button type="button" aria-label="다음 달" onClick={() => setMonth((m) => addMonths(m, 1))}>
+          <button type="button" aria-label="Next month" onClick={() => setMonth((m) => addMonths(m, 1))}>
             <ChevronRight size={15} strokeWidth={1.5} aria-hidden />
           </button>
         </div>

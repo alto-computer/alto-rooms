@@ -27,8 +27,8 @@ const volumeFile = (roomId: string, n: number) => `.rooms/study/rooms/${roomId}/
 
 async function openStudy(page: Page) {
   await page.goto("/");
-  await page.getByRole("navigation").first().getByRole("button", { name: "서재", exact: true }).click();
-  await expect(page.getByRole("tab", { name: "서재", selected: true })).toBeVisible();
+  await page.getByRole("navigation").first().getByRole("button", { name: "Study", exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Study", selected: true })).toBeVisible();
 }
 
 test("a room made on the wall gets a draft; a card typed in it saves as markdown, survives a reload, and publishing shelves v0.1", async ({ page, daemon }) => {
@@ -39,8 +39,8 @@ test("a room made on the wall gets a draft; a card typed in it saves as markdown
   });
   await openStudy(page);
 
-  await page.getByRole("button", { name: "새 방" }).click();
-  const name = page.getByLabel("새 방 이름");
+  await page.getByRole("list", { name: "Study rooms" }).getByRole("button", { name: "New room" }).click();
+  const name = page.getByLabel("New room name");
   await name.fill("어텐션");
   await name.press("Enter");
   const proof = page.getByRole("button", { name: "어텐션 v0.1" });
@@ -56,7 +56,7 @@ test("a room made on the wall gets a draft; a card typed in it saves as markdown
   await page.mouse.dblclick(box.x + 220, box.y + 160);
   const card = page.getByTestId("ink-card");
   await expect(card).toHaveCount(1);
-  const editor = card.getByRole("textbox", { name: "카드" });
+  const editor = card.getByRole("textbox", { name: "Card" });
   await expect(editor).toBeFocused();
   await page.keyboard.type("# 제목");
   await page.keyboard.press("Enter");
@@ -85,23 +85,23 @@ test("a room made on the wall gets a draft; a card typed in it saves as markdown
   await expect(page.getByRole("tab", { name: "어텐션 v0.1", selected: true })).toBeVisible();
   await expect(page.getByTestId("ink-card").getByRole("heading", { level: 1, name: "제목" })).toBeVisible();
 
-  await page.getByRole("button", { name: "발행", exact: true }).click();
-  await page.getByRole("button", { name: "발행하기" }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish" }).click();
   await expect(page.getByRole("tab", { name: "어텐션 v0.2", selected: true })).toBeVisible();
   await expect(page.getByTestId("ink-card").getByRole("heading", { level: 1, name: "제목" })).toBeVisible();
   const v1 = JSON.parse(await daemon.read(volumeFile(room.id, 1)));
   expect(v1.status).toBe("published");
 
-  await page.getByRole("navigation").first().getByRole("button", { name: "서재", exact: true }).click();
-  await expect(page.getByRole("tab", { name: "서재", selected: true })).toBeVisible();
+  await page.getByRole("navigation").first().getByRole("button", { name: "Study", exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Study", selected: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "어텐션 v0.1" })).toHaveClass(/st-bk(?! st-proof)/);
   await expect(page.getByRole("button", { name: "어텐션 v0.2" })).toHaveClass(/st-proof/);
 
   // A published volume reads only: no editing, no adding.
   await page.getByRole("button", { name: "어텐션 v0.1" }).click();
   await expect(page.getByRole("tab", { name: "어텐션 v0.1", selected: true })).toBeVisible();
-  await expect(page.getByTestId("ink-card").getByRole("textbox", { name: "카드" })).toHaveAttribute("contenteditable", "false");
-  await expect(page.getByRole("button", { name: "+ 카드" })).toHaveCount(0);
+  await expect(page.getByTestId("ink-card").getByRole("textbox", { name: "Card" })).toHaveAttribute("contenteditable", "false");
+  await expect(page.getByRole("button", { name: "+ Card" })).toHaveCount(0);
   // Nothing the CSP refuses: no inlined font, no <style> from TipTap or React Flow. (The app's toaster
   // injects one from the main bundle at startup, which the CSP drops; that one is not the Study's.)
   const violations = await page.evaluate(() => (window as unknown as { cspViolations: string[] }).cspViolations);
@@ -114,8 +114,8 @@ test("a memo and a todo on the calendar's day are saved to the day's file and co
   await daemon.createRoom("벤치마크");
   await daemon.write("벤치마크/report.html", artifactHtml("주간 리포트"));
   await openStudy(page);
-  await page.getByRole("button", { name: "달력", exact: true }).click();
-  await expect(page.getByRole("tab", { name: /^달력 · /, selected: true })).toBeVisible();
+  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await expect(page.getByRole("tab", { name: /^Calendar · /, selected: true })).toBeVisible();
 
   const memo = page.getByRole("textbox", { name: "Memo" });
   await memo.fill("라우터가 하나면 병목 아닌가");
@@ -143,10 +143,10 @@ test("a study room links a Rooms room and opens it in a tab", async ({ page, dae
   await api(daemon, "POST", "/v1/study/rooms", { name: "제1원리" });
   await openStudy(page);
   await page.getByRole("listitem").filter({ hasText: "제1원리" }).getByRole("button", { name: "제1원리", exact: true }).click();
-  await expect(page.getByRole("tab", { name: "서재 · 제1원리", selected: true })).toBeVisible();
-  await page.getByRole("button", { name: "연결" }).click();
+  await expect(page.getByRole("tab", { name: "Study · 제1원리", selected: true })).toBeVisible();
+  await page.getByRole("button", { name: "Link" }).click();
   await page.getByRole("option", { name: "리서치" }).click();
-  const links = page.getByRole("list", { name: "연결된 방과 아티팩트" });
+  const links = page.getByRole("list", { name: "Linked rooms and artifacts" });
   await expect(links.getByRole("button", { name: "리서치", exact: true })).toBeVisible();
   const [room] = await studyRooms(daemon);
   expect(JSON.parse(await daemon.read(`.rooms/study/rooms/${room.id}/room.json`)).links).toEqual([{ kind: "room", roomId: expect.any(String) }]);
@@ -182,7 +182,7 @@ test("the one ask bar asks about a volume with its cards and lines, and about it
   await expect(input).toBeVisible();
   await expect(page.getByPlaceholder(/^Ask about/)).toHaveCount(1);
   // The canvas tools sit in the bar on top, where the ask bar never covers them.
-  for (const name of ["+ 카드", "+ ?", "발행"]) await page.getByRole("button", { name, exact: true }).click({ trial: true });
+  for (const name of ["+ Card", "+ ?", "Publish"]) await page.getByRole("button", { name, exact: true }).click({ trial: true });
   await input.fill("이 판을 요약해줘");
   // The Study's button reset stops at the bar: Send keeps the app's filled circle.
   const send = page.getByRole("button", { name: "Send", exact: true });
@@ -269,11 +269,11 @@ test("screens of the Study in light and dark", async ({ page, daemon }, info) =>
     await page.screenshot({ path: path.join(SCREENS, `library-hover-${scheme}.png`) });
 
     await page.getByRole("listitem").filter({ hasText: "어텐션" }).getByRole("button", { name: "어텐션", exact: true }).click();
-    await expect(page.getByRole("tab", { name: "서재 · 어텐션", selected: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Study · 어텐션", selected: true })).toBeVisible();
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(SCREENS, `room-${scheme}.png`) });
 
-    await page.getByRole("button", { name: "펼쳐 읽기 →" }).click();
+    await page.getByRole("button", { name: "Read →" }).click();
     await expect(page.getByRole("tab", { name: "어텐션 v0.3", selected: true })).toBeVisible();
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(SCREENS, `volume-published-${scheme}.png`) });
@@ -287,7 +287,7 @@ test("screens of the Study in light and dark", async ({ page, daemon }, info) =>
     await page.screenshot({ path: path.join(SCREENS, `volume-${scheme}.png`) });
 
     await openStudy(page);
-    await page.getByRole("button", { name: "달력", exact: true }).click();
+    await page.getByRole("button", { name: "Calendar", exact: true }).click();
     await expect(page.getByRole("region", { name: "Artifacts" }).getByRole("button")).toHaveCount(3, { timeout: 3000 });
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(SCREENS, `day-${scheme}.png`) });

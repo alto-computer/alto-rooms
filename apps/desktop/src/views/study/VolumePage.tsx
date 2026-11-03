@@ -80,7 +80,7 @@ export function VolumePage({ roomId, number }: { roomId: string; number: number 
   }, [client, roomId, number]);
 
   if (volume === null) return null;
-  if (volume === "missing") return <p className="st-lede st-sub p-16">없는 판이에요</p>;
+  if (volume === "missing") return <p className="st-lede st-sub p-16">Volume not found</p>;
   return (
     <ReactFlowProvider>
       <Sheet roomId={roomId} volume={volume} />
@@ -300,13 +300,13 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
     <div className={readOnly ? "relative flex min-h-0 flex-1 flex-col st-readonly" : "relative flex min-h-0 flex-1 flex-col"}>
       <header className="st-vbar">
         <button type="button" className="st-backlink" onClick={(e) => go({ page: "room", roomId }, e)}>
-          ← {room?.name ?? "서재"}
+          ← {room?.name ?? "Study"}
         </button>
         <span className="st-ver">{version}</span>
         <input
           className="st-title"
-          aria-label="부제"
-          placeholder={readOnly ? "" : "부제"}
+          aria-label="Subtitle"
+          placeholder={readOnly ? "" : "Subtitle"}
           maxLength={200}
           value={title}
           readOnly={readOnly}
@@ -326,24 +326,24 @@ function Sheet({ roomId, volume }: { roomId: string; volume: StudyVolume }) {
             <span className="st-date">{dottedDate(volume.publishedAt)}</span>
           ) : frozen ? null : confirming ? (
             <>
-              <span>{version}을 발행하면 고칠 수 없어요</span>
+              <span>Once published, {version} can't be edited</span>
               <button type="button" onClick={() => setConfirming(false)} disabled={publishing}>
-                취소
+                Cancel
               </button>
               <button type="button" className="st-pub" onClick={() => void publish()} disabled={publishing}>
-                발행하기
+                Publish
               </button>
             </>
           ) : (
             <>
               <button type="button" onClick={() => add("ink", middle())}>
-                + 카드
+                + Card
               </button>
               <button type="button" onClick={() => add("question", middle())}>
                 + ?
               </button>
               <button type="button" className="st-pub" onClick={() => setConfirming(true)}>
-                발행
+                Publish
               </button>
             </>
           )}
@@ -411,7 +411,7 @@ function InkCard({ id, data, width }: NodeProps<CardNode>) {
     injectCSS: false,
     editable: !readOnly,
     shouldRerenderOnTransaction: false,
-    editorProps: { attributes: { class: "nodrag nowheel nopan nokey", "aria-label": "카드" } },
+    editorProps: { attributes: { class: "nodrag nowheel nopan nokey", "aria-label": "Card" } },
     onUpdate: () => onEdit.current(id),
   });
   useEffect(() => {
@@ -450,7 +450,7 @@ function QuestionCard({ id, data, width }: NodeProps<CardNode>) {
       <b aria-hidden>?</b>
       <input
         className="nodrag nopan nokey"
-        aria-label="질문"
+        aria-label="Question"
         value={data.body}
         readOnly={readOnly}
         ref={input}

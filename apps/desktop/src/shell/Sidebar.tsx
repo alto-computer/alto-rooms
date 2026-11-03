@@ -171,7 +171,7 @@ export function Sidebar({ onFind }: { onFind: () => void }) {
             className={cn(ITEM, ITEM_INTERACTIVE, active?.kind === "study" && ITEM_CURRENT)}
           >
             <LibraryBig {...ICON} className={cn("shrink-0", active?.kind === "study" ? "text-ink" : "text-ink-2")} />
-            <span className="truncate">서재</span>
+            <span className="truncate">Study</span>
           </button>
           {inbox ? (
             <button

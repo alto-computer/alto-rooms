@@ -37,7 +37,7 @@ export function LibraryPage() {
             <div className="st-rail" style={{ left: 0 }} />
             <div className="st-rail" style={{ left: "50%" }} />
             <div className="st-rail" style={{ left: "100%" }} />
-            <div className="st-cells" role="list" aria-label="서재의 방">
+            <div className="st-cells" role="list" aria-label="Study rooms">
               {list.map((room, k) => (
                 <Board key={room.id} room={room} index={k} onHover={(on) => setLede(on ? { kind: "room", room } : { kind: "count" })} />
               ))}
@@ -62,7 +62,7 @@ function LedeBlock({ lede, count, loaded }: { lede: Lede; count: number; loaded:
       body = loaded ? (
         <>
           <div className="st-big">{two(count)}</div>
-          <div className="st-sub">방</div>
+          <div className="st-sub">{count === 1 ? "room" : "rooms"}</div>
         </>
       ) : null;
       break;
@@ -85,7 +85,7 @@ function LedeBlock({ lede, count, loaded }: { lede: Lede; count: number; loaded:
     case "new":
       body = (
         <>
-          <div className="st-kick">새 방</div>
+          <div className="st-kick">New room</div>
           <div className="st-big">+</div>
         </>
       );
@@ -151,7 +151,7 @@ function Board({ room, index, onHover }: { room: StudyRoomSummary; index: number
   );
 }
 
-/** The empty board: "새 방", which turns into a name field and makes the room on Enter. */
+/** The empty board: "New room", which turns into a name field and makes the room on Enter. */
 function NewBoard({ onHover }: { onHover: (on: boolean) => void }) {
   const client = useClient();
   const store = useStudyStore();
@@ -190,8 +190,8 @@ function NewBoard({ onHover }: { onHover: (on: boolean) => void }) {
       {naming ? (
         <input
           className="st-name"
-          aria-label="새 방 이름"
-          placeholder="방 이름"
+          aria-label="New room name"
+          placeholder="Room name"
           autoFocus
           maxLength={60}
           value={name}
@@ -203,7 +203,7 @@ function NewBoard({ onHover }: { onHover: (on: boolean) => void }) {
         />
       ) : (
         <button type="button" className="st-label" onFocus={() => onHover(true)} onBlur={() => onHover(false)}>
-          새 방
+          New room
         </button>
       )}
       {error ? (
